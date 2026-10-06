@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from functools import cache, partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from textual import events
 from textual.binding import Binding
@@ -50,6 +50,7 @@ from ...Chat.provider_readiness import (
     default_api_key_env_var,
     get_provider_readiness,
     provider_config_key,
+    provider_credential_source,
 )
 from ...config import provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
@@ -170,7 +171,7 @@ class ProviderFilterInput(PickerSearchInput):
     provider.
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding("down", "move_highlight(1)", "Next provider", show=False),
         Binding("up", "move_highlight(-1)", "Previous provider", show=False),
     ]
@@ -246,7 +247,7 @@ class ApiKeyInput(Input):
     (parent AC#2), so this key is the keyboard's way to clear one.
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[Binding]] = [
         Binding(API_KEY_CLEAR_KEY, "clear_saved_key", "Clear saved key", show=False)
     ]
 
@@ -465,8 +466,13 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
         return "cleared *", "s removes the saved key"
     if screen._provider_saved_api_key_present(provider):
         return "saved in config", f"masked · {API_KEY_KEYS_HINT}"
-    if (readiness.api_key_source or "").startswith("env:"):
-        return "from env var", f"{readiness.env_var} in your shell"
+    # The table, not readiness, says where the key is: readiness drops the
+    # source while a base URL is still to set (Azure, Cloudflare, Databricks).
+    source = provider_credential_source(
+        provider, screen._provider_readiness_app_config()
+    )
+    if (source or "").startswith("env:"):
+        return "from env var", f"{source.removeprefix('env:')} in your shell"
     if not readiness.requires_api_key:
         return "not required", "this provider needs no key"
     if readiness.env_var:
@@ -590,9 +596,7 @@ def refresh_connect_rows(screen: SettingsScreen, provider: str, endpoint: str) -
         "#settings-model-source", selection_source_word(resolved.model_source)
     )
     try:
-        env_var = screen.query_one(
-            "#settings-provider-credential-env-var", Input
-        ).value
+        env_var = screen.query_one("#settings-provider-credential-env-var", Input).value
     except QueryError:
         env_var = ""
     screen._set_static_text(
@@ -666,16 +670,19 @@ def applies_to_copy(screen: SettingsScreen, provider: str, model: str) -> str:
         # The pair is the point of the row; a long title gives way to it.
         title = title[: _APPLIES_TO_TITLE_LIMIT - 1].rstrip() + "…"
     generation = getattr(screen.app_instance, "console_new_chat_default_generation", 0)
-    if follows_saved_defaults(
+    own = session.settings
+    chat = f"{APPLIES_TO_NEW_CHATS} Open chat “{title}”"
+    if not follows_saved_defaults(
         store, session, generation if type(generation) is int else 0
     ):
-        pair = provider_model_pair(screen, provider, model)
-        return (
-            f"{APPLIES_TO_NEW_CHATS} Open chat “{title}” is unused and will use {pair}."
-        )
-    own = session.settings
-    pair = provider_model_pair(screen, own.provider, own.model)
-    return f"{APPLIES_TO_NEW_CHATS} Open chat “{title}” keeps {pair}."
+        if own is None:  # made before the Console's last Make default
+            return f"{chat} has no settings of its own and does not take this default."
+        return f"{chat} keeps {provider_model_pair(screen, own.provider, own.model)}."
+    pair = provider_model_pair(screen, provider, model)
+    if own is None and (session.has_user_work or store.has_messages(session.id)):
+        # The Console gives a chat with no settings the saved defaults, work or not.
+        return f"{chat} has no settings of its own and will use {pair}."
+    return f"{chat} is unused and will use {pair}."
 
 
 def next_new_chat_lines(screen: SettingsScreen) -> tuple[str, str]:
@@ -1153,9 +1160,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         # arrives too early (pre-mount) to serve as the only source.
         screen._apply_provider_picker_highlight(picker)
         yield picker
-        with Horizontal(
-            classes="settings-input-row settings-provider-manual-hidden"
-        ):
+        with Horizontal(classes="settings-input-row settings-provider-manual-hidden"):
             yield Select(
                 screen._provider_select_options(),
                 value=screen._provider_select_value_for_provider(provider),
@@ -1237,7 +1242,9 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             ),
         )
         key_word, key_help = api_key_row_copy(screen, provider)
-        with Horizontal(id="settings-provider-api-key-row", classes="settings-input-row"):
+        with Horizontal(
+            id="settings-provider-api-key-row", classes="settings-input-row"
+        ):
             yield Static("API key", classes="settings-input-label")
             yield ApiKeyInput(
                 value=str(values.get("api_key") or ""),
@@ -1251,7 +1258,8 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 "Clear",
                 id="settings-provider-api-key-clear",
                 compact=True,
-                disabled=subscription_selected or (
+                disabled=subscription_selected
+                or (
                     not screen._provider_saved_api_key_present(provider)
                     and not bool(str(values.get("api_key") or "").strip())
                 ),
@@ -1276,7 +1284,9 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 classes="settings-row-help",
                 markup=False,
             )
-        with Horizontal(id="settings-provider-env-var-row", classes="settings-input-row"):
+        with Horizontal(
+            id="settings-provider-env-var-row", classes="settings-input-row"
+        ):
             yield Static("Env var", classes="settings-input-label")
             yield Input(
                 value=str(values["credential_env_var"]),
@@ -1302,7 +1312,9 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         endpoint_word, endpoint_help = endpoint_row_copy(
             screen, provider, str(values["endpoint"])
         )
-        with Horizontal(id="settings-provider-endpoint-row", classes="settings-input-row"):
+        with Horizontal(
+            id="settings-provider-endpoint-row", classes="settings-input-row"
+        ):
             yield Static("Endpoint", classes="settings-input-label")
             yield SettingsURLInput(
                 value=str(values["endpoint"]),
@@ -1425,55 +1437,6 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         )
         existing_changes.display = screen._provider_same_target_has_draft()
         yield existing_changes
-        conflict_target = screen._provider_navigation_conflict_target
-        conflict = Vertical(id="settings-provider-navigation-conflict")
-        conflict.display = conflict_target is not None
-        with conflict:
-            yield Static(
-                screen._provider_navigation_conflict_copy(),
-                id="settings-provider-navigation-conflict-summary",
-                classes="settings-status-row",
-                markup=False,
-            )
-            yield Button(
-                "Review existing changes",
-                id="settings-provider-conflict-review",
-            )
-            yield Button(
-                screen._provider_conflict_discard_label(),
-                id="settings-provider-conflict-discard",
-            )
-            yield Button(
-                "Return to Chat settings",
-                id="settings-provider-conflict-return",
-                disabled=screen._provider_return_actions_disabled(),
-            )
-        continuation = Vertical(id="settings-provider-return-continuation")
-        continuation.display = screen._provider_return_outcome is not None
-        with continuation:
-            yield Static(
-                screen._provider_return_continuation_copy(),
-                id="settings-provider-return-continuation-status",
-                classes="settings-status-row",
-                markup=False,
-            )
-            yield Button(
-                "Return to Chat settings",
-                id="settings-provider-return",
-                variant="primary",
-                disabled=screen._provider_return_actions_disabled(),
-            )
-            yield Button(
-                "Stay in Settings",
-                id="settings-provider-stay",
-            )
-        return_without_saving = Button(
-            "Return without saving",
-            id="settings-provider-return-without-save",
-            disabled=screen._provider_return_actions_disabled(),
-        )
-        return_without_saving.display = screen._provider_can_return_without_saving()
-        yield return_without_saving
         yield Static(
             "Default model for new chats",
             id="settings-default-model-title",
@@ -1531,6 +1494,56 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 classes="settings-applies-to",
                 markup=False,
             )
+        # Parent AC#2: the return to Chat settings comes after Default model,
+        # so its buttons never sit on the Tab walk from Provider to Model.
+        conflict = Vertical(id="settings-provider-navigation-conflict")
+        conflict.display = screen._provider_navigation_conflict_target is not None
+        with conflict:
+            yield Static(
+                screen._provider_navigation_conflict_copy(),
+                id="settings-provider-navigation-conflict-summary",
+                classes="settings-status-row",
+                markup=False,
+            )
+            yield Button(
+                "Review existing changes",
+                id="settings-provider-conflict-review",
+            )
+            yield Button(
+                screen._provider_conflict_discard_label(),
+                id="settings-provider-conflict-discard",
+            )
+            yield Button(
+                "Return to Chat settings",
+                id="settings-provider-conflict-return",
+                disabled=screen._provider_return_actions_disabled(),
+            )
+        continuation = Vertical(id="settings-provider-return-continuation")
+        continuation.display = screen._provider_return_outcome is not None
+        with continuation:
+            yield Static(
+                screen._provider_return_continuation_copy(),
+                id="settings-provider-return-continuation-status",
+                classes="settings-status-row",
+                markup=False,
+            )
+            yield Button(
+                "Return to Chat settings",
+                id="settings-provider-return",
+                variant="primary",
+                disabled=screen._provider_return_actions_disabled(),
+            )
+            yield Button(
+                "Stay in Settings",
+                id="settings-provider-stay",
+            )
+        return_without_saving = Button(
+            "Return without saving",
+            id="settings-provider-return-without-save",
+            disabled=screen._provider_return_actions_disabled(),
+        )
+        return_without_saving.display = screen._provider_can_return_without_saving()
+        yield return_without_saving
         # TASK-33007.5: Model defaults follows Default model, open, titled
         # with the pair it edits; core rows first, then a closed Sampling
         # disclosure that names what the provider does not accept.
@@ -1783,7 +1796,6 @@ def compose_custom_endpoints_section(screen: SettingsScreen) -> ComposeResult:
         id="settings-custom-endpoints",
         classes="settings-instant-apply-group",
     )
-
 
 
 def compose_custom_endpoints_children(screen: SettingsScreen) -> ComposeResult:

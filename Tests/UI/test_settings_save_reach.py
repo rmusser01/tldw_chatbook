@@ -134,6 +134,62 @@ async def test_a_long_chat_title_wraps_the_row_rather_than_cut_the_pair(request)
 
 @pytest.mark.asyncio
 @private_profile_test
+@pytest.mark.parametrize(
+    ("generation", "message", "says"),
+    [
+        pytest.param(
+            1,
+            False,
+            "has no settings of its own and does not take this default.",
+            id="before-make-default",
+        ),
+        pytest.param(
+            0,
+            True,
+            "has no settings of its own and will use {pair}.",
+            id="with-messages",
+        ),
+        pytest.param(0, False, "is unused and will use {pair}.", id="unused"),
+    ],
+)
+async def test_an_open_chat_with_no_settings_of_its_own_is_described_not_crashed(
+    request, generation, message, says
+):
+    """Final review finding 1: the store admits a chat with no settings
+    snapshot (``create_session`` and an agent-created chat default to none).
+    Once a Console "Make default" has run, rendering the Applies-to row for
+    one raised AttributeError at card compose and on every keystroke; and one
+    with messages must never read "unused"."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    app = _app()
+    store = ConsoleChatStore()
+    session = store.create_session(title="Old chat")
+    assert session.settings is None
+    if message:
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+    app.console_runtime.set_chat_store(store)
+    app.console_new_chat_default_generation = generation
+    host = _SettingsCssHarness(app, "settings")
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        chat = f"{_NEW_CHATS} Open chat “Old chat” "
+
+        assert _text(screen, "#settings-model-applies-to") == chat + says.format(
+            pair="OpenAI · gpt-4o"
+        )
+
+        # A keystroke re-says the row (``_update_provider_dynamic_widgets``).
+        screen.query_one("#settings-model-value", Input).value = "gpt-4.1"
+        await pilot.pause()
+        assert _text(screen, "#settings-model-applies-to") == chat + says.format(
+            pair="OpenAI · gpt-4.1"
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_inspector_leads_with_reach_then_the_next_new_chat_then_the_field(
     request,
 ):

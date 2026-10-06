@@ -33,6 +33,9 @@ def _assert_projection(screen, provider, model, endpoint):
     )
     assert screen._provider_widget_value() == provider
     assert screen.query_one("#settings-model-value", Input).value == model
+    # Final review finding 10 (R8): the picker the user sees, not only the
+    # hidden adapter; every caller has let its load worker settle first.
+    assert screen.query_one("#settings-model-picker").value == model
     assert (
         screen.query_one("#settings-provider-endpoint-value", Input).value == endpoint
     )

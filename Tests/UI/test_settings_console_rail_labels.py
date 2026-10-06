@@ -67,7 +67,10 @@ async def test_console_rail_layout_scope_is_global_nonblank_and_under_presentati
         scope = screen.query_one(RAIL_LAYOUT_SCOPE, Select)
         card = screen.query_one("#settings-console-behavior-card")
         children = list(card.children)
-        scope_index = children.index(scope)
+        # TASK-33007 parent AC#7, rewritten on purpose: the Select sits in a
+        # one-row labelled row, so the row is the card's child.
+        row = scope.parent
+        scope_index = children.index(row)
 
         assert scope.value == "global"
         assert scope._allow_blank is False
@@ -75,8 +78,9 @@ async def test_console_rail_layout_scope_is_global_nonblank_and_under_presentati
             ("Global", "global"),
             ("Per workspace", "workspace"),
         ]
-        assert isinstance(children[scope_index - 1], Static)
-        assert str(children[scope_index - 1].content) == "Rail layout scope"
+        label = row.children[0]
+        assert isinstance(label, Static)
+        assert str(label.content) == "Rail layout scope"
         rail_heading_index = next(
             index
             for index, child in enumerate(children)

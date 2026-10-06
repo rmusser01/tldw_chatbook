@@ -212,8 +212,10 @@ async def test_core_rows_come_first_each_one_row_with_source_and_help(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_every_select_row_is_one_row_on_both_cards(request):
-    """AC#3: every Select row on Providers & Models and Console Behavior paints
-    one row tall at 211x44; the three-row select-row height no longer applies."""
+    """AC#3, parent AC#7: every Select on Providers & Models and Console
+    Behavior -- not only those already in a select row -- paints one row tall
+    at 211x44 in a one-row labelled row; closed disclosures are opened first
+    so the Selects inside them are measured too."""
     host = _SettingsCssHarness(_app("anthropic", "claude-sonnet-4-5"), "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
@@ -228,18 +230,21 @@ async def test_every_select_row_is_one_row_on_both_cards(request):
                 await host.workers.wait_for_complete()
                 await pilot.pause()
             card = screen.query_one(card_id)
-            for row in card.query(".settings-select-row"):
-                if not row.display or row.has_class("settings-gated-profile-hidden"):
+            for disclosure in card.query(Collapsible):
+                disclosure.collapsed = False
+            await pilot.pause()
+            for select in card.query(Select):
+                row = select.parent
+                if not select.display or any(
+                    not node.display or node.has_class("settings-gated-profile-hidden")
+                    for node in (row, *row.ancestors)
+                ):
                     continue
-                for select in row.query(Select):
-                    assert select.region.height == 1, (
-                        card_id,
-                        select.id,
-                        select.region,
-                    )
-                assert row.region.height == 1, (card_id, row.id, row.region)
+                assert row.has_class("settings-select-row"), (card_id, select.id)
+                assert select.region.height == 1, (card_id, select.id, select.region)
+                assert row.region.height == 1, (card_id, select.id, row.region)
                 checked += 1
-        assert checked >= 15, checked
+        assert checked >= 18, checked
 
 
 @pytest.mark.asyncio

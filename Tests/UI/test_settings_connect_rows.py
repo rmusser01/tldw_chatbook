@@ -458,10 +458,10 @@ async def test_every_cloud_provider_reaches_model_within_five_tab_presses(
         assert not over_budget, over_budget
         # The saved-key walk means something only while Clear is still live
         # after each provider switch, not just on the provider mounted first.
-        # Measured 41 of 44: Azure, Cloudflare and Databricks read as keyless
-        # until their endpoint is set.
+        # Final review finding 2, rewritten on purpose: Azure, Cloudflare and
+        # Databricks used to read as keyless until their endpoint was set.
         if keyed:
-            assert len(clearable) > len(providers) // 2, clearable
+            assert clearable == providers, sorted(set(providers) - set(clearable))
         else:
             assert clearable == []
 
@@ -557,6 +557,137 @@ async def test_clear_is_not_a_tab_stop_stays_clickable_and_the_row_names_its_key
         await pilot.pause()
         assert _text(screen, "#settings-provider-key-status") == "cleared *"
         assert host.focused is not clear
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_an_emptied_api_key_field_keeps_the_saved_key_and_only_clear_removes_it(
+    request, monkeypatch
+):
+    """Final review finding 5: typing a character and deleting it is no edit
+    (Web Search's rule); it used to stage removal, so s deleted the key."""
+    from Tests.UI.test_settings_configuration_hub import (
+        _capture_provider_settings_mutations,
+    )
+    from Tests.UI.test_settings_provider_keyboard_journeys import _settle
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        clear = screen.query_one("#settings-provider-api-key-clear", Button)
+        screen.query_one("#settings-provider-api-key", Input).focus()
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        assert _text(screen, "#settings-provider-key-status") == "edited *"
+
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert _text(screen, "#settings-provider-key-status") == "saved in config"
+        assert not screen._settings_drafts
+        assert not clear.disabled
+        await pilot.press("escape", "s")
+        await _settle(host, pilot)
+        assert mutations == []
+        assert app.app_config["api_settings"]["openai"]["api_key"] == _FAKE_KEY
+
+        screen.query_one("#settings-provider-api-key", Input).focus()
+        await pilot.pause()
+        await pilot.press(_CLEAR_KEY)
+        await pilot.pause()
+        assert _text(screen, "#settings-provider-key-status") == "cleared *"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("provider", ["azure", "cloudflare", "databricks"])
+@pytest.mark.parametrize("where", ["config", "env"])
+async def test_a_key_reads_saved_before_its_base_url_is_set(
+    request, monkeypatch, provider, where
+):
+    """Final review finding 2 (AC#2, AC#4): readiness drops the key's source
+    for these three until a base URL is set, but the key is there all the
+    same -- the row says where, Clear clears a saved one, and the provider
+    leads the list as Configured."""
+    from tldw_chatbook.Chat.provider_readiness import default_api_key_env_var
+
+    env_var = default_api_key_env_var(provider)
+    assert env_var
+    monkeypatch.delenv(env_var, raising=False)
+    if where == "env":
+        monkeypatch.setenv(env_var, _FAKE_KEY)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": provider, "model": "m-1"}
+    app.app_config["api_settings"] = {
+        provider: dict(_SAVED_KEY) if where == "config" else {}
+    }
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        clear = screen.query_one("#settings-provider-api-key-clear", Button)
+
+        assert _text(screen, "#settings-provider-key-status") == (
+            "saved in config" if where == "config" else "from env var"
+        )
+        assert clear.disabled is (where != "config")
+        assert _text(screen, "#settings-provider-search-status").startswith(
+            f"configured: {screen._provider_display_label(provider)} ·"
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("provider", "stops_before_model"),
+    [
+        ("anthropic", _ANTHROPIC_STOPS),
+        ("openai", _OPENAI_STOPS),
+        ("qwencloud", _QWENCLOUD_STOPS),
+    ],
+)
+async def test_model_stays_within_five_presses_while_a_return_is_pending(
+    request, monkeypatch, provider, stops_before_model
+):
+    """Final review finding 4 (parent AC#2): with a Chat-settings return
+    pending and an unsaved key edit, Return without saving used to be a stop
+    between Endpoint and Model (6 presses); it now follows Default model."""
+    from Tests.UI.test_settings_configuration_hub import (
+        _stage_conversation_settings_return_intent,
+    )
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": provider, "model": "m-1"}
+    app.app_config["api_settings"] = {provider: {}}
+    _intent, target = _stage_conversation_settings_return_intent(app, provider=provider)
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        screen.apply_navigation_context(target.to_context())
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        screen.query_one("#settings-provider-api-key", Input).value = "sk-unsaved-1234"
+        await pilot.pause()
+        return_without_saving = screen.query_one(
+            "#settings-provider-return-without-save", Button
+        )
+        assert return_without_saving.display and not return_without_saving.disabled
+
+        stops = await _tab_stops_to_model(host, pilot, screen)
+
+        assert stops == [*stops_before_model, "model-search-picker-input"]
+        chain = screen.focus_chain
+        model = screen.query_one("#model-search-picker-input", Input)
+        assert chain.index(return_without_saving) > chain.index(model)
 
 
 @pytest.mark.asyncio

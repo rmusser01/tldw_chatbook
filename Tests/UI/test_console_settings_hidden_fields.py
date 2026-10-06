@@ -294,6 +294,28 @@ def test_the_sampling_title_names_what_fits_and_counts_the_rest() -> None:
     assert title.endswith(" does not accept 1 field (open to list them)")
 
 
+@pytest.mark.parametrize("cells", [90, 70, 66, 60, 50, 30])
+@pytest.mark.parametrize("state", ["", "all inherit", "Top P 0.95 · others inherit"])
+def test_a_narrow_sampling_title_never_overruns_its_budget(
+    cells: int, state: str
+) -> None:
+    """Final review finding 8: when the count form's fixed part fills the
+    budget, the title gives up the state, then the hidden-field part, rather
+    than cut the provider name from its end and overrun (79 cells at 70)."""
+    title = hidden_fields_line("Anthropic", _ANTHROPIC_HIDDEN, cells=cells, state=state)
+
+    assert cell_len(title) <= cells, title
+    assert title.startswith("Sampling")
+    if " does not accept " in title:
+        assert title.endswith(" does not accept 7 fields (open to list them)")
+        assert " · Anthropic does" in title or " · Ant…" in title, title
+    if cells in (70, 66):
+        # The widths the review measured: the state goes, the name stays whole.
+        assert title == (
+            "Sampling · Anthropic does not accept 7 fields (open to list them)"
+        )
+
+
 def test_every_closed_sampling_title_fits_one_row() -> None:
     """Owner ruling census: for every PROVIDER_PARAM_MAP provider, with its
     shipped default model and with every field hidden (any model's worst
