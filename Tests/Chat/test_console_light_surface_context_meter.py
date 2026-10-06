@@ -182,6 +182,32 @@ def test_a_window_too_small_for_the_light_set_counts_what_the_plan_sends(tmp_pat
     assert plan.schemas.system_prompt == "You are a helpful assistant."
 
 
+def test_a_local_reasoning_resolution_still_counts_the_light_set(tmp_path):
+    """Live on llama.cpp (review round 1): the gateway pins a reasoning-replay
+    policy on every local resolution, and with one the planner's token count
+    needs an active request. Re-run with no messages, it raised inside the
+    planner, the planner fell back to no tools, and the meter counted none
+    for requests that carried the light set (evidence g53-r1-llama 13)."""
+    from dataclasses import replace
+
+    from Tests.Chat.test_console_agent_bridge import _test_resolution
+    from tldw_chatbook.Chat.local_reasoning import resolve_reasoning_policy
+
+    bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
+    resolution = replace(
+        _test_resolution(
+            model="qwen2.5-0.5b-instruct-q4_k_m.gguf",
+            max_tokens=4096,
+            context_window=ContextWindowResolution(8_192, "server metadata", True),
+        ),
+        reasoning_replay=resolve_reasoning_policy("auto", template=None),
+    )
+
+    rows = _preflight_tools(bridge, resolution, session_id=session.id)
+
+    assert _row_names(rows) == LIGHT
+
+
 def _roomy_native():
     """A native-tools resolution with a verified 1M window: the full
     catalog fits, so the planner discloses it directly."""
