@@ -14635,8 +14635,11 @@ class SettingsScreen(BaseAppScreen):
 
         return "" if value == shown_provider_label(self) else value
 
-    def _apply_provider_picker_highlight(self, picker: OptionList) -> None:
-        """Highlight the current provider's option, else the first selectable.
+    def _apply_provider_picker_highlight(
+        self, picker: OptionList, query: str = ""
+    ) -> None:
+        """Highlight the option named exactly by ``query``, else the current
+        provider's, else the first selectable.
 
         task-16480: factored out of ``_refresh_provider_picker`` so the
         COMPOSE-time picker can carry the right highlight too -- the
@@ -14644,12 +14647,21 @@ class SettingsScreen(BaseAppScreen):
         category body (and the picker) is mounted, its QueryError is
         swallowed, and the fresh picker used to keep the compose default
         (first selectable) instead of the configured provider.
+
+        TASK-33007.9: a display name or id typed exactly wins, so "OpenAI"
+        then Enter chooses OpenAI, not "Azure OpenAI" listed above it.
+
+        Args:
+            picker: The provider list, already filled.
+            query: The filter it was built from ("" for none).
         """
-        current_provider = str(
-            self._provider_display_setting_values().get("provider") or ""
+        current_key = provider_config_key(
+            str(self._provider_display_setting_values().get("provider") or "")
         )
+        wanted = query.strip().casefold()
         first_selectable: int | None = None
-        selected_index: int | None = None
+        current_index: int | None = None
+        exact_index: int | None = None
         for index in range(picker.option_count):
             option = picker.get_option_at_index(index)
             if option.disabled:
@@ -14657,13 +14669,25 @@ class SettingsScreen(BaseAppScreen):
             if first_selectable is None:
                 first_selectable = index
             option_provider = getattr(option, "provider_id", None)
-            if option_provider is not None and provider_config_key(
-                option_provider
-            ) == provider_config_key(current_provider):
-                selected_index = index
+            if option_provider is None:
+                continue
+            if wanted and wanted in (
+                str(option.prompt).casefold(),
+                option_provider.casefold(),
+            ):
+                exact_index = index
                 break
-        picker.highlighted = (
-            selected_index if selected_index is not None else first_selectable
+            if current_index is None and (
+                provider_config_key(option_provider) == current_key
+            ):
+                current_index = index
+        picker.highlighted = next(
+            (
+                index
+                for index in (exact_index, current_index, first_selectable)
+                if index is not None
+            ),
+            None,
         )
 
     def _refresh_provider_picker(self, query: str | None = None) -> None:
@@ -14676,7 +14700,7 @@ class SettingsScreen(BaseAppScreen):
         groups = self._provider_picker_groups(search_query)
         picker.clear_options()
         picker.add_options(self._provider_picker_options(groups))
-        self._apply_provider_picker_highlight(picker)
+        self._apply_provider_picker_highlight(picker, search_query)
 
         normalized_query = search_query.strip()
         if normalized_query and not self._provider_picker_has_catalog_matches(groups):

@@ -338,10 +338,16 @@ def close_provider_list(screen: SettingsScreen) -> None:
     """
     try:
         screen.query_one("#settings-provider-picker", OptionList).display = False
+        control = screen.query_one("#settings-provider-search", Input)
     except QueryError:
         return
     if not sync_provider_control(screen):
         screen._refresh_provider_picker("")
+    if control.has_focus:
+        # A choice or Esc closed it: the next key filters afresh, also when
+        # the name typed was the held one's exactly, so nothing was rewritten
+        # (a blur close runs after focus has left).
+        control.select_all()
 
 
 def shown_provider_label(screen: SettingsScreen) -> str:
@@ -384,7 +390,9 @@ def sync_provider_control(screen: SettingsScreen) -> bool:
         # (force: Textual does not scroll a disabled widget without it).
         control.scroll_to(x=0, animate=False, force=True)
     elif changed:
-        control.select_all()  # After a choice, typing filters afresh.
+        # A choice landing renames it under focus, so typing filters afresh;
+        # close_provider_list selects a name it did not rewrite.
+        control.select_all()
     if changed:
         screen._refresh_provider_picker("")
     return changed
