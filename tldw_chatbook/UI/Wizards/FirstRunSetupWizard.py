@@ -61,7 +61,6 @@ from tldw_chatbook.UI.Wizards.first_run_busy_status import (
 )
 from tldw_chatbook.UI.Wizards.first_run_finish_later import finish_later, skip_setup
 from tldw_chatbook.UI.Wizards.first_run_model_step import ModelStep
-from tldw_chatbook.UI.Wizards.first_run_notes_step import NotesSyncStep
 from tldw_chatbook.UI.Wizards.first_run_protect_step import ProtectKeysStep
 from tldw_chatbook.UI.Wizards.first_run_provider_step import ProviderStep
 from tldw_chatbook.UI.Wizards.first_run_rag_step import RagStep
@@ -1269,7 +1268,6 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             wizard_state.STEP_RAG: RagStep,
             wizard_state.STEP_SPEECH: SpeechSetupStep,
             wizard_state.STEP_TOOLS: ToolsStep,
-            wizard_state.STEP_NOTES: NotesSyncStep,
             wizard_state.STEP_APPEARANCE: AppearanceStep,
             wizard_state.STEP_PROTECT: ProtectKeysStep,
             wizard_state.STEP_SUMMARY: SummaryStep,
@@ -1310,14 +1308,9 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             ),
             cfg(wizard_state.STEP_SPEECH, titles[wizard_state.STEP_SPEECH], 6),
             cfg(wizard_state.STEP_TOOLS, titles[wizard_state.STEP_TOOLS], 7),
-            cfg(wizard_state.STEP_NOTES, titles[wizard_state.STEP_NOTES], 8),
-            cfg(
-                wizard_state.STEP_APPEARANCE,
-                titles[wizard_state.STEP_APPEARANCE],
-                9,
-            ),
-            cfg(wizard_state.STEP_PROTECT, titles[wizard_state.STEP_PROTECT], 10),
-            cfg(wizard_state.STEP_SUMMARY, titles[wizard_state.STEP_SUMMARY], 11),
+            cfg(wizard_state.STEP_APPEARANCE, titles[wizard_state.STEP_APPEARANCE], 8),
+            cfg(wizard_state.STEP_PROTECT, titles[wizard_state.STEP_PROTECT], 9),
+            cfg(wizard_state.STEP_SUMMARY, titles[wizard_state.STEP_SUMMARY], 10),
         )
         return [self._build_step(config) for config in configs]
 

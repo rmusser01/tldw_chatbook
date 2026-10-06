@@ -167,29 +167,15 @@ def quick_defaults_note(posture: ToolsPosture, *, auto_retrieve: bool) -> str:
 
 
 def gate_config_view(app_config: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    """The ``[tools]``/``[console]`` sections the step should read gates from.
-
-    ``app_config`` is ``load_settings()``'s projection, which carries no
-    ``[tools]`` table of its own; the full TOML rides along as
-    ``COMPREHENSIVE_CONFIG_RAW``. Sections the wizard mirrored into
-    ``app_config`` after a save win over that snapshot.
+    """The ``[tools]``/``[console]`` sections the step reads gates from.
 
     Args:
         app_config: The app's in-memory config.
 
     Returns:
-        ``{"tools": {...}, "console": {...}}`` for ``all_tool_gates(config=...)``.
+        ``{"tools": {...}, "console": {...}}`` for ``all_tool_gates(config=...)``,
+        read from the full TOML with this run's saves on top.
     """
-    raw = app_config.get("COMPREHENSIVE_CONFIG_RAW") if isinstance(app_config, Mapping) else None
-    raw = raw if isinstance(raw, Mapping) else {}
-    view: dict[str, dict[str, Any]] = {}
-    for section in ("tools", "console"):
-        merged: dict[str, Any] = {}
-        base = raw.get(section)
-        if isinstance(base, Mapping):
-            merged.update(base)
-        live = app_config.get(section) if isinstance(app_config, Mapping) else None
-        if isinstance(live, Mapping):
-            merged.update(live)
-        view[section] = merged
-    return view
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import full_config_sections
+
+    return full_config_sections(app_config, "tools", "console")
