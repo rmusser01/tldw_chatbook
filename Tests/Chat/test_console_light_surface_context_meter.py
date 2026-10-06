@@ -33,7 +33,7 @@ class _Captured(Exception):
     """Stops the preflight once ``prepare`` has seen the tool rows."""
 
 
-def _preflight_tools(bridge, resolution) -> list[dict]:
+def _preflight_tools(bridge, resolution, session_id="s") -> list[dict]:
     """Drive the real capacity preflight up to ``prepare`` and return the
     ``tools=`` rows it would account."""
     names = inspect.signature(ConsoleCompactionPreflight).parameters
@@ -48,7 +48,7 @@ def _preflight_tools(bridge, resolution) -> list[dict]:
 
     with pytest.raises(_Captured):
         preflight._assess_request_capacity_only(
-            session_id="s",
+            session_id=session_id,
             owner=SimpleNamespace(context_policy_overrides=None),
             resolution=resolution,
             provider_messages=[{"role": "user", "content": "Reply with just: hi"}],
@@ -90,7 +90,9 @@ class _AskUserProvider:
             light_surface_local_schemas,
         )
 
-        self._schemas = {schema.name: schema for schema in light_surface_local_schemas()}
+        self._schemas = {
+            schema.name: schema for schema in light_surface_local_schemas(("ask_user",))
+        }
 
     def list_catalog(self):
         from tldw_chatbook.Agents.agent_models import ToolCatalogEntry
@@ -180,19 +182,80 @@ def test_a_window_too_small_for_the_light_set_counts_what_the_plan_sends(tmp_pat
     assert plan.schemas.system_prompt == "You are a helpful assistant."
 
 
+def _roomy_native():
+    """A native-tools resolution with a verified 1M window: the full
+    catalog fits, so the planner discloses it directly."""
+    from Tests.Chat.test_console_agent_bridge import _test_resolution
+
+    return _test_resolution(
+        provider="Groq",
+        execution_key="groq",
+        max_tokens=4096,
+        context_window=ContextWindowResolution(1_047_576, "model catalog", True),
+    )
+
+
 def test_with_full_agent_tools_on_the_meter_counts_the_last_sent_surface(tmp_path):
     """The full surface is composed per send; once one went out, the meter
-    counts exactly what it carried."""
+    counts exactly what it carried for the same window."""
     assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
     bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
-    _send(bridge, session, assistant_id, _openai_native())
+    _send(bridge, session, assistant_id, _roomy_native())
 
-    rows = bridge.preview_tool_schemas(
-        _openai(ContextWindowResolution(1_047_576, "model catalog", True))
-    )
+    rows = bridge.preview_tool_schemas(_roomy_native(), session_id=session.id)
 
     assert _row_names(rows) == _native_names(gateway)
     assert "spawn_subagent" in _row_names(rows)
+    assert "web_search" in _row_names(rows)
+
+
+def test_a_full_surface_preview_is_resized_for_the_current_window(tmp_path):
+    """Review round 1 (F2, major): the meter returned the rows the LAST full
+    send disclosed, for any model. After a send on a 1M window, a switch to
+    an 8,192-token model counted ~9k tokens of direct rows as mandatory
+    input, so the preflight refused the send as unable to fit -- though the
+    planner would disclose discovery tools, or none, on that window. The
+    preview now re-runs the planner against the window it is asked about."""
+    assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+    _send(bridge, session, assistant_id, _roomy_native())
+    big = _preflight_tools(bridge, _roomy_native(), session_id=session.id)
+
+    small = _preflight_tools(
+        bridge,
+        _llama(ContextWindowResolution(8_192, "server metadata", True)),
+        session_id=session.id,
+    )
+
+    assert "web_search" in _row_names(big)
+    # No directly disclosed catalog tool fits 10% of an 8,192-token window.
+    for name in ("web_search", "watchlists_list_sources", "character_save"):
+        assert name not in _row_names(small), sorted(_row_names(small))
+    assert len(small) < len(big)
+
+
+def test_the_meter_counts_the_user_mcp_tools_this_session_carried(tmp_path):
+    """Review round 1 (C-F5): a tool from an MCP server the user added goes
+    out with plain chat's light surface, but the meter counted only the
+    config-derived set. It now also counts the user-source tools the
+    session's last send carried -- for that session only."""
+    from Tests.Chat.test_console_light_tool_surface import _SourcedMCPProvider
+
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+    _send(
+        bridge,
+        session,
+        assistant_id,
+        _openai_native(),
+        mcp_provider=_SourcedMCPProvider(user_server=True),
+    )
+    assert "mcp__weather__forecast" in _native_names(gateway)
+    roomy = _openai(ContextWindowResolution(1_047_576, "model catalog", True))
+
+    rows = _preflight_tools(bridge, roomy, session_id=session.id)
+
+    assert _row_names(rows) == LIGHT | {"mcp__weather__forecast"}
+    assert _row_names(_preflight_tools(bridge, roomy, session_id="other")) == LIGHT
 
 
 def _openai_native():
@@ -201,10 +264,9 @@ def _openai_native():
     return _native_resolution()
 
 
-def test_the_settings_meter_shows_the_tool_share_of_the_last_request():
-    """The Context view's "Request overhead" row read "unknown" even after a
-    send. It now shows the last prepared request's non-conversation tokens
-    and names the tool schemas' share."""
+def _meter_state(tool_schema_tokens: int):
+    """The Context view's state on an 8,192-token llama-server, after one
+    send whose accounting carried ``tool_schema_tokens`` of tools."""
     from tldw_chatbook.Chat.console_prepared_request import (
         ConsoleRequestTokenAccounting,
     )
@@ -216,23 +278,245 @@ def test_the_settings_meter_shows_the_tool_share_of_the_last_request():
         build_console_context_control_state,
     )
 
+    settings = ConsoleSessionSettings(provider="llama_cpp", model="qwen", max_tokens=4096)
+    estimate = ConsoleSettingsContextEstimate(
+        used_tokens=14,
+        token_limit=8_192,
+        label="14 / 8,192 tokens; 4,096 response tokens reserved",
+        token_limit_verified=True,
+    )
     accounting = ConsoleRequestTokenAccounting(
-        total_input_tokens=640,
+        total_input_tokens=10 + tool_schema_tokens + 4,
         system_tokens=10,
         memory_tokens=0,
         mandatory_tokens=0,
         compactable_tokens=0,
-        active_request_tokens=135,
-        tool_schema_tokens=495,
+        active_request_tokens=4,
+        tool_schema_tokens=tool_schema_tokens,
     )
-    estimate = ConsoleSettingsContextEstimate(
-        used_tokens=145, token_limit=1_047_576, label="", token_limit_verified=True
-    )
-    state = build_console_context_control_state(
-        settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1-nano"),
-        estimate=estimate,
-        accounting=accounting,
+    return settings, estimate, build_console_context_control_state(
+        settings=settings, estimate=estimate, accounting=accounting
     )
 
-    assert state.request_overhead_tokens == 505
-    assert state.overhead_label() == "505 tokens (tool schemas 495)"
+
+def test_the_settings_meter_shows_the_tool_share_of_the_last_request():
+    """The Context view's "Request overhead" row read "unknown" even after a
+    send. It now shows the last prepared request's non-conversation tokens
+    and names the tool schemas' share."""
+    _settings, _estimate, state = _meter_state(489)
+
+    assert state.overhead_label() == "499 tokens (tool schemas 489)"
+
+
+def test_the_context_meter_counts_the_tools_the_send_carried():
+    """Review round 1 (B-F1, major): live on an 8,192-token llama-server, the
+    request carried the light tools (733 prompt tokens), yet the status strip
+    read "Context 0%" and the model tab "Request estimate · 14 / 8,192": the
+    headline numbers left the tool schemas out. They now add the last
+    request's tool share, and the percentage moves with the tool surface."""
+    from tldw_chatbook.Chat.console_cost_tracker import ConsoleCostState
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        build_console_context_cost_state,
+        context_token_row,
+    )
+
+    _settings, estimate, with_tools = _meter_state(489)
+    _settings, _estimate, without_tools = _meter_state(0)
+
+    assert with_tools.next_request_tokens == 14 + 489
+    assert without_tools.next_request_tokens == 14
+    # The Context view's "Next request" row (dev retired the dead
+    # ``request_row`` property in TASK-33007; the row is built here).
+    assert (
+        context_token_row("Next request", with_tools.next_request_tokens)
+        == "Next request        503 tokens"
+    )
+    cost = ConsoleCostState(
+        label="$0.00", compact_label="$0.00", tooltip="", alert=False, cold=False
+    )
+    line_with = build_console_context_cost_state(with_tools, cost).tooltip
+    line_without = build_console_context_cost_state(without_tools, cost).tooltip
+    assert "Context: ~503 / " in line_with
+    assert line_with != line_without
+    assert with_tools.request_estimate_label(estimate).startswith(
+        "503 / 8,192 tokens (tool schemas 489); 4,096 response tokens reserved"
+    )
+
+
+def test_the_tool_share_does_not_change_the_conversation_budget():
+    """Review round 1 (F6): deriving the overhead from the accounting also fed
+    it into capacity, so the Effective budget subtracted the system prompt
+    that the Conversation figure already counts. The derived overhead is
+    shown, not subtracted: the budget matches a state with no accounting."""
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        build_console_context_control_state,
+    )
+
+    settings, estimate, with_tools = _meter_state(489)
+    plain = build_console_context_control_state(settings=settings, estimate=estimate)
+
+    assert with_tools.conversation_budget_tokens == plain.conversation_budget_tokens
+    assert with_tools.conversation_tokens == plain.conversation_tokens == 14
+
+
+@pytest.mark.asyncio
+async def test_the_context_view_rows_show_the_tool_share():
+    """Review round 1 (C-F3): the "Request overhead" row the user reads was
+    untested; so were "Next request" and the model tab's Request estimate."""
+    from textual.widgets import Collapsible, Static
+
+    from Tests.UI.test_console_context_controls import _ContextHarness
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    settings, estimate, state = _meter_state(489)
+    app = _ContextHarness()
+    async with app.run_test(size=(120, 42)) as pilot:
+        await app.push_screen(
+            ConsoleSettingsModal(
+                settings=settings,
+                app_config={"api_settings": {"llama_cpp": {}}},
+                providers_models={"llama_cpp": ["qwen"]},
+                context_estimate=estimate,
+                context_state=state,
+                can_save=True,
+                focus_context=True,
+            ),
+            callback=app.capture,
+        )
+        await pilot.pause()
+        screen = app.screen
+
+        def text(selector):
+            return str(screen.query_one(selector, Static).render())
+
+        assert text("#console-context-overhead") == (
+            "Request overhead    499 tokens (tool schemas 489)"
+        )
+        assert text("#console-context-next-request") == "Next request        503 tokens"
+        from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+            REQUEST_ESTIMATE_DISCLOSURE_ID,
+        )
+
+        title = str(
+            screen.query_one(f"#{REQUEST_ESTIMATE_DISCLOSURE_ID}", Collapsible).title
+        )
+        assert "503 / 8,192 tokens (tool schemas 489)" in title
+
+
+# -- one definition: the send, the meter and the Summary agree ---------------
+
+
+def _composed_local_provider(tmp_path):
+    """The local provider as the controller composes it from config: none
+    when the ``[console] local_tools_enabled`` master is off."""
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        LOCAL_TOOLS_DEFAULT_ENABLED,
+        LOCAL_TOOLS_MASTER_KEY,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
+    from tldw_chatbook.config import coerce_bool_setting, get_cli_setting
+
+    if not coerce_bool_setting(
+        get_cli_setting("console", LOCAL_TOOLS_MASTER_KEY, LOCAL_TOOLS_DEFAULT_ENABLED),
+        LOCAL_TOOLS_DEFAULT_ENABLED,
+    ):
+        return None
+    return LocalToolProvider(workspace_root=tmp_path, ask_user=lambda _q: None)
+
+
+def _summary_titles_for(names) -> set[str]:
+    from tldw_chatbook.Agents.plain_chat_tool_surface import LIGHT_SURFACE_TOOL_TITLES
+    from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
+
+    titles = dict(LIGHT_SURFACE_TOOL_TITLES)
+    titles.update({entry.tool_name: entry.title for entry in _GATEABLE_BUILTINS})
+    titles["web_deep_search"] = "Deep web research"
+    return {titles[name] for name in names}
+
+
+def _three_readings(tmp_path):
+    """What the send carried, what the meter counts, what the Summary says."""
+    from tldw_chatbook.Agents.plain_chat_tool_surface import summarize_tool_surface
+    from tldw_chatbook.config import load_cli_config_and_ensure_existence
+
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+    _send(
+        bridge,
+        session,
+        assistant_id,
+        _openai_native(),
+        local_provider=_composed_local_provider(tmp_path),
+    )
+    roomy = _openai(ContextWindowResolution(1_047_576, "model catalog", True))
+    metered = _row_names(_preflight_tools(bridge, roomy, session_id=session.id))
+    summary = summarize_tool_surface(load_cli_config_and_ensure_existence())
+    return _native_names(gateway), metered, set(summary.tools_on)
+
+
+@pytest.mark.parametrize(
+    ("gates", "expected"),
+    [
+        ({}, LIGHT),
+        ({"tools": {"ask_user_enabled": False}}, LIGHT - {"ask_user"}),
+        ({"console": {"local_tools_enabled": False}}, LIGHT - {"ask_user"}),
+        ({"tools": {"web_deep_search_enabled": True}}, LIGHT | {"web_deep_search"}),
+        ({"tools": {"read_file_enabled": True}}, LIGHT | {"read_file"}),
+    ],
+    ids=["fresh", "ask-off", "local-master-off", "deep-research-on", "read-file-on"],
+)
+def test_the_send_the_meter_and_the_summary_agree(tmp_path, gates, expected):
+    """Review round 1 (F7): three paths derived the light surface on their
+    own -- the planner's narrowing, the meter's config read and the
+    Summary's wording. For each gate configuration they now agree, with the
+    real local provider composed from the same config."""
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    if gates:
+        assert save_settings_to_cli_config(gates)
+
+    sent, metered, summary_titles = _three_readings(tmp_path)
+
+    assert sent == expected, sorted(sent)
+    assert metered == sent
+    assert summary_titles == _summary_titles_for(sent)
+
+
+@pytest.mark.parametrize(
+    ("attr", "value", "gates", "dropped"),
+    [
+        (
+            "LIGHT_SURFACE_TOOL_NAMES",
+            ("get_current_datetime", "calculator"),
+            {},
+            "ask_user",
+        ),
+        (
+            "LIGHT_SURFACE_LOCAL_OPT_INS",
+            (),
+            {"tools": {"web_deep_search_enabled": True}},
+            "web_deep_search",
+        ),
+    ],
+    ids=["safe-set", "opt-ins"],
+)
+def test_the_meter_and_the_summary_follow_the_one_named_set(
+    tmp_path, monkeypatch, attr, value, gates, dropped
+):
+    """Review round 1 (F7): the meter hard-coded ``ask_user`` and
+    ``web_deep_search`` and the Summary hard-coded "Deep web research", so a
+    change to the named set changed what was sent but not what was counted
+    or said. Narrowing the set now narrows all three."""
+    from tldw_chatbook.Agents import plain_chat_tool_surface as surface
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    if gates:
+        assert save_settings_to_cli_config(gates)
+    monkeypatch.setattr(surface, attr, value)
+
+    sent, metered, summary_titles = _three_readings(tmp_path)
+
+    assert dropped not in sent
+    assert metered == sent
+    assert summary_titles == _summary_titles_for(sent)

@@ -199,6 +199,44 @@ def user_mcp_tool_names(mcp_provider: Any | None) -> frozenset[str]:
     return frozenset(names)
 
 
+def _bridge_is_light(bridge: Any | None, session_id: str | None) -> bool:
+    check = getattr(bridge, "light_surface_for", None)
+    if not callable(check):
+        return False
+    try:
+        return bool(check((), session_id=session_id))
+    except Exception:  # noqa: BLE001 -- an unreadable bridge counts as before
+        return False
+
+
+def offered_mcp_tool_count(
+    bridge: Any | None, mcp_provider: Any | None, session_id: str | None = None
+) -> int:
+    """How many of a composed MCP catalog's tools the next send is offered.
+
+    Review round 1 (B-F4): the status strip read "Tools: 5 ready" on a
+    light-surface profile -- chatbook's own MCP tools, which plain chat is
+    not offered. With the light surface only the user's own servers count.
+    """
+    if not _bridge_is_light(bridge, session_id):
+        return len(provider_names(mcp_provider))
+    return len(user_mcp_tool_names(mcp_provider))
+
+
+def offered_builtin_tool_count(bridge: Any | None, session_id: str | None = None) -> int:
+    """The light surface's own (non-MCP) tools, for the Tools chip.
+
+    The chip only ever counted MCP tools (task-1234 F7), so the full surface
+    keeps 0 here; the light surface names its own set.
+    """
+    if not _bridge_is_light(bridge, session_id):
+        return 0
+    try:
+        return len(light_surface_tool_schemas())
+    except Exception:  # noqa: BLE001 -- a chip never breaks a send
+        return 0
+
+
 def provider_names(provider: Any | None) -> tuple[str, ...]:
     """The catalog names one composed provider lists (``()`` for none)."""
     if provider is None:
@@ -212,68 +250,51 @@ def provider_names(provider: Any | None) -> tuple[str, ...]:
 # -- what the context meter counts ------------------------------------------
 
 
-def light_surface_tool_schemas() -> tuple[Any, ...]:
+def light_surface_local_names() -> tuple[str, ...]:
+    """Local-provider tools the light surface can carry, in one list.
+
+    The safe set's local member(s) plus ``LIGHT_SURFACE_LOCAL_OPT_INS``; the
+    local provider says which of these it can describe without being
+    composed, and which gate each follows.
+    """
+    return tuple(dict.fromkeys((*LIGHT_SURFACE_TOOL_NAMES, *LIGHT_SURFACE_LOCAL_OPT_INS)))
+
+
+def light_surface_tool_schemas(
+    user_source_schemas: Sequence[Any] = (),
+) -> tuple[Any, ...]:
     """The light surface's tool schemas, read fresh from config.
 
-    The always-on built-ins plus every gated built-in the user switched on
-    (``BuiltinToolProvider`` reads the same gates a send's provider reads),
-    then ``ask_user`` and an opted-in ``web_deep_search``. Library and
-    user-added MCP tools are per-session and are not included.
+    The candidates are what a send's providers would list -- the always-on
+    built-ins plus every gated built-in the user switched on
+    (``BuiltinToolProvider`` reads the same gates), the local tools of
+    ``light_surface_local_names`` whose gates are on, and
+    ``user_source_schemas`` -- and they pass through the SAME
+    ``light_surface_allowed_tools`` narrowing the send applies (review round
+    1, F7: the meter used to rebuild the set on its own).
+
+    Args:
+        user_source_schemas: Tools from the user's own sources (MCP servers
+            they added, Library tools, an armed shell) that the session's
+            last send carried; they are per-session, so config cannot say.
     """
     from tldw_chatbook.Agents.local_tool_provider import light_surface_local_schemas
     from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 
     provider = BuiltinToolProvider()
-    schemas = [provider.load_schema(entry.id) for entry in provider.list_catalog()]
-    schemas.extend(light_surface_local_schemas())
-    return tuple(schemas)
-
-
-def light_surface_schemas_fit(
-    schemas: Sequence[Any], resolution: Any, *, native_tools: bool
-) -> bool:
-    """Whether the first-request planner would disclose ``schemas`` directly.
-
-    The planner's own all-or-nothing test (``probe_initial_catalog`` against
-    ``DIRECT_DISCLOSURE_CONTEXT_FRACTION`` of the planning window); the light
-    surface never falls back to discovery, so a set that does not fit is sent
-    as no tools at all. Without a resolution there is nothing to size
-    against, and the set is assumed to go.
-    """
-    if not schemas or resolution is None:
-        return True
-    from tldw_chatbook.Agents.agent_models import DIRECT_DISCLOSURE_CONTEXT_FRACTION
-    from tldw_chatbook.Agents.agent_service import catalog_schema_tokens
-    from tldw_chatbook.Agents.first_request_window import planning_window
-    from tldw_chatbook.Chat.console_history_budget import DEFAULT_RESPONSE_RESERVATION
-    from tldw_chatbook.Utils.token_counter import get_model_token_limit
-
-    model = str(getattr(resolution, "model", "") or "")
-    endpoint = str(
-        getattr(resolution, "execution_key", "")
-        or getattr(resolution, "provider", "")
-        or ""
+    builtin = [provider.load_schema(entry.id) for entry in provider.list_catalog()]
+    local = list(light_surface_local_schemas(light_surface_local_names()))
+    user = list(user_source_schemas)
+    candidates = [*builtin, *local, *user]
+    keep = frozenset(
+        light_surface_allowed_tools(
+            [schema.name for schema in candidates],
+            builtin_names=[schema.name for schema in builtin],
+            local_names=[schema.name for schema in local],
+            user_source_names=[schema.name for schema in user],
+        )
     )
-    reserve = getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
-    try:
-        planned = planning_window(
-            getattr(resolution, "context_window", None), reserve, provider=endpoint
-        )
-        limit = planned[0] if planned is not None else get_model_token_limit(
-            model, endpoint
-        )
-        if type(limit) is not int or limit <= 0:
-            return True
-        measured = catalog_schema_tokens(
-            tuple(schemas),
-            model=model,
-            api_endpoint=endpoint,
-            native_tools=native_tools,
-            reasoning_replay=getattr(resolution, "reasoning_replay", None),
-        )
-    except Exception:  # noqa: BLE001 -- an unmeasurable set is counted
-        return True
-    return measured <= int(limit * DIRECT_DISCLOSURE_CONTEXT_FRACTION)
+    return tuple(schema for schema in candidates if schema.name in keep)
 
 
 # -- what setup says ---------------------------------------------------------
@@ -320,13 +341,15 @@ def summarize_tool_surface(app_config: Mapping[str, Any]) -> ToolSurfaceSummary:
     Pure: reads only ``app_config`` (setup's Summary renders from the
     persisted, re-loaded config, never from step memory).
     """
-    from tldw_chatbook.Agents.builtin_tool_gate import LOCAL_TOOLS_DEFAULT_ENABLED
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        LOCAL_TOOLS_DEFAULT_ENABLED,
+        all_tool_gates,
+    )
     from tldw_chatbook.Agents.local_tool_provider import (
         ASK_USER_DEFAULT_ENABLED,
         ASK_USER_GATE_KEY,
         CHARACTER_TOOLS_DEFAULT_ENABLED,
         CHARACTER_TOOLS_GATE_KEY,
-        WEB_DEEP_SEARCH_GATE_KEY,
     )
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
     from tldw_chatbook.config import coerce_bool_setting
@@ -347,8 +370,15 @@ def summarize_tool_surface(app_config: Mapping[str, Any]) -> ToolSurfaceSummary:
     switched_on = [
         entry.title for entry in _GATEABLE_BUILTINS if flag(tools, entry.gate_key, False)
     ]
-    if local_on and flag(tools, WEB_DEEP_SEARCH_GATE_KEY, False):
-        switched_on.append("Deep web research")
+    # The local opt-ins come from the one list, named by their own gate rows
+    # ("Deep web research (web_deep_search)" -> "Deep web research").
+    gates = {gate.tool_name: gate for gate in all_tool_gates()}
+    opt_ins_on = [
+        gates[name]
+        for name in LIGHT_SURFACE_LOCAL_OPT_INS
+        if name in gates and local_on and flag(tools, gates[name].key, False)
+    ]
+    switched_on.extend(gate.title.split(" (", 1)[0] for gate in opt_ins_on)
     return ToolSurfaceSummary(
         full_agent=full_agent_tools_enabled(tools),
         light_names=light_names,

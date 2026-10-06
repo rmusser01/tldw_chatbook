@@ -1878,7 +1878,7 @@ class ConsoleSettingsModal(
                             markup=False,
                         )
                         yield Static(
-                            context_token_row("Next request", self._context_state.request_tokens),
+                            context_token_row("Next request", self._context_state.next_request_tokens),
                             id="console-context-next-request",
                             classes="console-settings-modal-row",
                             markup=False,
@@ -5836,7 +5836,7 @@ class ConsoleSettingsModal(
             and self._context_estimate.token_limit is None
         ):
             return "Not estimated"
-        label = self._context_estimate.label.strip() or "Not estimated"
+        label = self._context_state.request_estimate_label(self._context_estimate)
         return label if "token" in label.lower() else f"{label} tokens"
 
     def _build_context_policy_overrides(self) -> ConsoleContextPolicyOverrides:

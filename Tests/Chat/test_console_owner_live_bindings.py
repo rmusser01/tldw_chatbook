@@ -67,10 +67,12 @@ async def test_compaction_reads_replaced_services_globals_and_accounting(
         calls.append(("prepare", kwargs.get("tools")))
         return prepare(*args, **kwargs)
 
-    def preview_call(resolution):
-        # TASK-34100.5.3: the preview is sized against the send's resolution.
+    def preview_call(resolution, *, session_id=None):
+        # TASK-34100.5.3: the preview is sized against the send's resolution,
+        # for the send's own session.
         calls.append("preview")
         assert resolution is not None
+        assert session_id == session.id
         if preview == "raises":
             raise ValueError("controlled optional preview failure")
         return []
