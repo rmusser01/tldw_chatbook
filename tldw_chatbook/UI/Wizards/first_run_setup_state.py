@@ -2185,6 +2185,13 @@ def build_summary_rows(
     # docstring for why the two deliberately disagree on a bare, wizard-
     # committed endpoint (the one-click "Use this server" path).
     provider_ok = provider_summary_configured(app_config, environ)
+    from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+    from tldw_chatbook.UI.Wizards.first_run_tools_posture import (
+        tools_posture,
+        tools_summary_detail,
+    )
+
+    posture = tools_posture(all_tool_gates(config=app_config))
     encryption_on = coerce_wizard_flag(
         _section(app_config, "encryption").get("enabled")
     )
@@ -2319,15 +2326,6 @@ def build_summary_rows(
         raw_name = chat_defaults.get("provider")
         if isinstance(raw_name, str):
             provider_name = raw_name.strip()
-    from tldw_chatbook.Agents.plain_chat_tool_surface import (
-        summarize_tool_surface,
-        tool_surface_detail,
-    )
-
-    # TASK-34100.5.3: the row names exactly the tools plain Console chat is
-    # offered -- the light set, each tool switched on, or the full agent
-    # surface -- read from the same config the send reads.
-    tool_surface = summarize_tool_surface(app_config)
     return (
         SummaryRow(
             "Provider",
@@ -2338,10 +2336,15 @@ def build_summary_rows(
         rag_row,
         speech_row,
         _voice_summary_row(app_config),
+        # TASK-34100.13 (fulltrack-02): derived from all_tool_gates() over
+        # the re-read config, like the Tools step and the Quick note --
+        # never a count of truthy [tools] keys (that missed the default-on
+        # local group) and never "all off". task-32289/32284: the row still
+        # ends on TOOL_GATES_PANE_PATH, the one place every gate lives.
         SummaryRow(
             "Tools",
-            ROW_CONFIGURED if tool_surface.user_turned_on else ROW_DEFAULT,
-            tool_surface_detail(tool_surface),
+            ROW_CONFIGURED if posture.switched_on else ROW_DEFAULT,
+            tools_summary_detail(posture),
         ),
         SummaryRow(
             "Notes folder sync",

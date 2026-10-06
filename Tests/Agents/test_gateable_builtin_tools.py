@@ -100,34 +100,23 @@ def test_every_gateable_tool_carries_display_copy():
         )
 
 
-def test_read_class_blurbs_promise_a_prompt_before_every_run():
-    """task-32282: read-class tools are risk-floored to `ask`, so their copy
-    must say so -- byte-identical to the first-run wizard's sentence, since
-    both surfaces render the same row.
+def test_every_blurb_says_how_often_the_card_asks():
+    """task-32282/32284, then TASK-34100.13: every gateable built-in is
+    risk-tagged, so the approval card offers Once / This session / Deny and
+    asks on each use. The blurb names that in the card's own words, so the
+    wizard row, the MCP Tool gates pane and the card agree.
 
-    The three write-class rows (marked ``⚠``) do NOT carry it: they say what
-    they change on disk, and their approval story is the card itself.
-
-    task-32284 (Qodo #2594 #6): the sentence used to read "Asks you each
-    time before running", which the approval card itself contradicts -- its
-    "Approve for session" and "Always allow" buttons are exactly the longer
-    scopes that stop the asking. The copy now names that escape hatch.
+    task-32284's "unless you approve a longer scope" named no control the
+    built-in card shows; the write-class rows said nothing at all.
     """
-    sentence = "Asks before running unless you approve a longer scope."
-    per_call = {
-        "read_file",
-        "list_directory",
-        "glob_files",
-        "grep_files",
-        "expand_document",
-    }
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+        _DECISION_OPTIONS,
+    )
+
+    session_label = dict((value, label) for label, value in _DECISION_OPTIONS)[
+        "approve_session"
+    ]
+    sentence = f"Asks before each use unless you pick {session_label}."
     for entry in gateable_builtin_tools():
-        if entry.tool_name in per_call:
-            assert entry.blurb.endswith(f" {sentence}"), (
-                f"{entry.tool_name} does not promise per-call approval"
-            )
-        else:
-            assert sentence not in entry.blurb, (
-                f"{entry.tool_name} is not read-class but claims per-call approval"
-            )
-    assert per_call <= {e.tool_name for e in gateable_builtin_tools()}
+        assert entry.blurb.endswith(f" {sentence}"), entry.tool_name
+        assert "longer scope" not in entry.blurb, entry.tool_name

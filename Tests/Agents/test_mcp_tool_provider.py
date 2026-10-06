@@ -523,7 +523,7 @@ def test_pending_gate_for_plain_ask_reason():
     assert pending.reason == "ask"
 
 
-def test_pending_gate_for_builtin_writer_carries_the_mutation_effect():
+def test_pending_gate_for_builtin_writer_carries_the_mutation_effect(monkeypatch):
     """Qodo #1 (task-32278): a mutating BUILT-IN reaching this provider path
     rendered no blast radius at all.
 
@@ -535,10 +535,18 @@ def test_pending_gate_for_builtin_writer_carries_the_mutation_effect():
     without the "Effects: may modify local data" line their write deserves.
     Reads must stay unaffected.
     """
+    from tldw_chatbook.Agents import builtin_tool_gate
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
         format_approval_effects,
     )
 
+    # TASK-34100.13: the built-in create_note is offered only while its
+    # native gate ([tools] create_note_enabled) is on.
+    monkeypatch.setattr(
+        builtin_tool_gate,
+        "_gate_config_snapshot",
+        lambda: ({"create_note_enabled": True}, {}),
+    )
     service = FakeMCPService(
         inventory={
             "tools": [
