@@ -3233,6 +3233,29 @@ class ConsoleTranscript(VerticalScroll):
         """
         _LIVE_TRANSCRIPTS.discard(self)
 
+    def watch_has_focus(self, _has_focus: bool) -> None:
+        """Restyle only the transcript itself when it gains or loses focus.
+
+        Textual's default restyles the whole subtree: every mounted row, 29-37
+        s per focus change at 3,000 rows (TASK-33628.5.1). Only this widget's
+        own ``:focus`` rules use the state, and a fidelity test in
+        ``test_console_long_chat_bounds.py`` fails if a rule ever styles a
+        descendant by it, or makes focus change more than this widget's own
+        frame and scrollbar paint. Textual refreshes every descendant on any
+        colour change (colours inherit): 7.2 s live with a scrolled-back
+        window. No descendant reads a scrollbar colour, so that walk is
+        skipped.
+        """
+        base = self.styles.base
+        refresh = type(base).refresh
+        base.refresh = lambda **kwargs: refresh(base, **{**kwargs, "children": False})
+        try:
+            self.app.stylesheet.update_nodes((self,), animate=True)
+        except NoActiveAppError:
+            pass
+        finally:
+            del base.refresh
+
     @property
     def has_pending_selection_ui(self) -> bool:
         """Whether the screen's click-outside cleanup would change anything.

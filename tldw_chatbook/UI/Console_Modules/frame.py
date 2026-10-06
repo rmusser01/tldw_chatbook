@@ -13,6 +13,7 @@ left divider, and the transcript owns no frame edge.
 from typing import Any
 
 from textual.css.query import QueryError
+from textual.message_pump import NoActiveAppError
 from textual.widgets import Button
 
 #: Canonical home of the Console shell frame color/border constants (moved
@@ -82,6 +83,33 @@ def frame_console_region(
     return widget
 
 
+#: The transcript focus cue; one rule paints it, on the title row.
+TRANSCRIPT_REGION_FOCUSED = "console-transcript-region-focused"
+
+
+def _paint_transcript_region_focus(region: Any, focused: bool) -> None:
+    """Toggle the transcript focus cue without restyling every row.
+
+    The class sits on the region so its one rule reaches the title row, but
+    the region holds every transcript row and a class change restyles its
+    whole subtree: 29-37 s per focus change at 3,000 rows (TASK-33628.5.1).
+    Only the region and the title can match a rule naming the class (pinned
+    by ``Tests/UI/test_console_long_chat_bounds.py``), so only they restyle.
+    """
+    if region.has_class(TRANSCRIPT_REGION_FOCUSED) == focused:
+        return
+    region.set_class(focused, TRANSCRIPT_REGION_FOCUSED, update=False)
+    nodes = [region]
+    try:
+        nodes.append(region.query_one("#console-transcript-title"))
+    except QueryError:
+        pass
+    try:
+        region.app.stylesheet.update_nodes(nodes, animate=True)
+    except NoActiveAppError:
+        pass
+
+
 def sync_console_focus_paint(screen: Any, focused: Any | None) -> None:
     """Paint dimension-stable focus cues on the Console-owned rail edges."""
 
@@ -90,9 +118,9 @@ def sync_console_focus_paint(screen: Any, focused: Any | None) -> None:
     except QueryError:
         pass
     else:
-        transcript_region.set_class(
+        _paint_transcript_region_focus(
+            transcript_region,
             screen._is_descendant_or_self(focused, transcript_region),
-            "console-transcript-region-focused",
         )
     for region_id, accent_edge, control_id in (
         ("console-left-rail", "right", "console-context-rail-collapse"),
