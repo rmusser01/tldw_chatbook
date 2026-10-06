@@ -163,6 +163,8 @@ async def _composer_ready(harness: _Harness, console: ChatScreen, pilot) -> None
         # Every profile carries the template's http://localhost:8080: that is
         # no endpoint the user chose, so it is no task-16476 case either.
         pytest.param(None, id="untouched-shipped-profile"),
+        # Editing another field leaves the endpoint the template's.
+        pytest.param({"temperature": 0.5}, id="shipped-endpoint-other-field-edited"),
     ],
 )
 @private_profile_test
@@ -181,7 +183,7 @@ async def test_detected_stub_server_second_model_is_saved_by_the_real_writer(
         if llama_cpp is not None:
             sections["api_settings.llama_cpp"] = llama_cpp
         app = _console_app(sections, {"llama_cpp": []})
-        if llama_cpp is None:
+        if "api_url" not in (llama_cpp or {}):
             assert _saved()["api_settings"]["llama_cpp"]["api_url"] == (
                 "http://localhost:8080"
             )

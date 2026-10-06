@@ -426,7 +426,10 @@ detected llama.cpp (127.0.0.1:8080)" focused on the first launch. A guess that
 does NOT reproduce it: setting `raw_participants._local.operation` to a stray
 object — `_runtime_operation` ignores an unregistered operation. The mounted
 real-discovery test passes at both base and head, so the thread is pinned by
-recording the discovery thread, not by a reproduction.
+recording the discovery thread, not by a reproduction. The hop moves one
+caller; it does not fix the cause. `raw_participants._local` is a
+`threading.local`, so a raw scope held across an `await` on the UI loop is
+seen, and refused, by every other task on that thread (TASK-33641.6).
 
 **What to do.** Count the stub's requests before reading the card: zero means
 discovery did not run, not that nothing answered. A test that injects the

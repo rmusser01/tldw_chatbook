@@ -270,13 +270,14 @@ while the card waits. Its button follows the current step. **Set up
 provider** opens **Settings ▸ Providers & Models**; **Choose provider** and
 **Choose model** open **Switch model**, where a model is always picked as a
 provider·model pair (Choose model opens with Find on this chat's provider, so
-its models come first; clear Find to see every provider); an endpoint step
-(**Configure endpoint**) opens **Chat settings**. The composer stays locked
-until a provider and model are configured; once they are, the empty transcript
-names what is connected, for example "Setup complete — OpenAI · gpt-4.1-mini.
-Ready — type a message to begin." (a model saved as a file path, as llama.cpp
-models often are, shows its file name). That line is the arrival receipt: it
-shows until your first-ever send, and nothing about it is sent to the model.
+it lists only that provider's models; clear Find to see every provider); an
+endpoint step (**Configure endpoint**) opens **Chat settings**. The composer
+stays locked until a provider and model are configured; once they are, the
+empty transcript names what is connected, for example "Setup complete — OpenAI
+· gpt-4.1-mini. Ready — type a message to begin." (a model saved as a file
+path, as llama.cpp models often are, shows its file name). That line is the
+arrival receipt: it shows until your first-ever send, and nothing about it is
+sent to the model.
 
 
 A pair picked in Switch model from the card applies to this chat. While no
@@ -349,11 +350,15 @@ again applies the highlighted model to this chat, makes the pair the default
 for new chats and saves the server's address; move the highlight first to
 pick another. Nothing is saved until that second Enter, and Esc returns to
 the card. An address still at the shipped default (llama.cpp's
-`http://localhost:8080`) is not one you chose, so the detected one replaces
-it. If you saved a different address for that provider, it is kept: the
-detected server is used for this chat only, until Chatbook restarts, and a
+`http://localhost:8080`) is not one you chose, even after you edited the
+provider's other settings, so the detected one replaces it. If you saved a
+different address for that provider, it is kept: the detected server is
+used for the pair you picked here, in this chat only, until this chat's
+model or settings change (another pick in Switch model, or Apply in Chat
+settings, returns it to the saved address) or Chatbook restarts, and a
 notice says so. If the default cannot be saved, a notice says the pick
-applies to this chat only. Discovery runs once each time Console opens on
+applies to this chat only, and the detected server is used the same way.
+Discovery runs once each time Console opens on
 the card; a well-known port where nothing answers stays silent.
 
 Every action on the card is drawn as a button with a rounded edge, one under

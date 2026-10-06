@@ -44,7 +44,7 @@ from ...Chat.console_provider_endpoints import (
 from ...Chat.console_provider_gateway import normalize_llamacpp_base_url
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import provider_config_key
-from ...config import save_settings_to_cli_config
+from ...config import DEFAULT_CONFIG_FROM_TOML, save_settings_to_cli_config
 from ...DB.base_db import run_owned_db_call
 from ...Utils.timestamps import as_utc
 
@@ -704,9 +704,9 @@ def adopt_detected_local_server(
     snapshots). The full Console sync follows from the switcher's committed
     result, as after any apply.
 
-    A provider still at its shipped template has no endpoint the user chose
-    (every profile carries ``http://localhost:8080`` for llama.cpp), so the
-    detected one is saved.
+    An endpoint still at the shipped template's is not one the user chose
+    (every profile carries ``http://localhost:8080`` for llama.cpp), whatever
+    else in the provider's table was edited, so the detected one is saved.
 
     task-16476: a provider that already has a DIFFERENT user-configured
     endpoint keeps it -- the endpoint write fills only when absent, and the
@@ -714,7 +714,8 @@ def adopt_detected_local_server(
     (``adopt_session_ephemeral_endpoint``, never conversation metadata), so
     the adoption stays effective without clobbering persisted config
     (discovery is loopback-only and can never see the LAN server the
-    configured endpoint may point at).
+    configured endpoint may point at). A failed save uses the same
+    session-only endpoint: the detected one never reached disk.
 
     Args:
         screen: The Console screen that owns the chat.
@@ -724,25 +725,33 @@ def adopt_detected_local_server(
     from ...Chat.console_session_endpoint_policy import (
         ConsoleEphemeralEndpointPolicy,
     )
-    from ...Chat.console_session_settings import provider_left_at_shipped_default
 
     provider_key = provider_config_key(server.provider_key)
-    app_config = screen._provider_readiness_app_config()
-    configured_endpoint = (
-        None
-        if provider_left_at_shipped_default(app_config, provider_key)
-        else first_configured_endpoint(
+
+    def endpoint_in(config: dict[str, object]) -> str | None:
+        return first_configured_endpoint(
             screen._config_section(
-                screen._config_section(app_config, "api_settings"), provider_key
+                screen._config_section(config, "api_settings"), provider_key
             )
         )
-    )
+
+    configured_endpoint = endpoint_in(screen._provider_readiness_app_config())
+    shipped_endpoint = endpoint_in(DEFAULT_CONFIG_FROM_TOML)
     # Qodo review (PR #1720): compare connection identities, not raw
     # strings -- a configured endpoint differing only by a trailing slash (or
     # a llama.cpp endpoint-path suffix) is the SAME server and must not warn
     # or skip the canonicalizing write.
-    keep_saved = bool(configured_endpoint) and adoption_endpoints_differ(
-        provider_key, str(configured_endpoint), server.base_url
+    keep_saved = (
+        configured_endpoint is not None
+        and adoption_endpoints_differ(
+            provider_key, configured_endpoint, server.base_url
+        )
+        and (
+            shipped_endpoint is None
+            or adoption_endpoints_differ(
+                provider_key, configured_endpoint, shipped_endpoint
+            )
+        )
     )
     provider_values: dict[str, object] = {"model": settings.model}
     if keep_saved:
@@ -778,9 +787,10 @@ def adopt_detected_local_server(
             severity="warning",
         )
     chosen = replace(settings, source="user")
-    if keep_saved:
-        # The send path skips its unsaved-endpoint guard for this endpoint,
-        # and readiness reads it as configured (ChatScreen readiness).
+    if keep_saved or not saved:
+        # The detected endpoint is not on disk. The send path skips its
+        # unsaved-endpoint guard for a session-only endpoint, and readiness
+        # reads it as configured (ChatScreen readiness).
         store = screen._ensure_console_chat_store()
         store.adopt_session_ephemeral_endpoint(
             store.active_session_id,

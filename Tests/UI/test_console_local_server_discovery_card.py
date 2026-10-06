@@ -37,6 +37,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderProbeResult,
     ProviderTestEvidenceStore,
 )
+from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
 from tldw_chatbook.Widgets.Console.console_setup_modal import (
@@ -596,6 +597,88 @@ async def test_a_failed_default_save_says_the_pick_applies_to_this_chat_only(
             "warning",
         ) in notices
         assert _pair(console) == ("llama_cpp", "srv-model-a")
+
+
+_DETECTED_OLLAMA = DiscoveredLocalServer(
+    provider_key="ollama",
+    base_url="http://127.0.0.1:11434",
+    model_ids=("llama3.2", "qwen3"),
+)
+
+
+def _shipped_ollama(**edits: object) -> dict:
+    """The template's Ollama table (``http://localhost:11434/v1/...``)."""
+    return {**DEFAULT_CONFIG_FROM_TOML["api_settings"]["ollama"], **edits}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_detected_ollama_replaces_its_shipped_endpoint_after_its_model_changed(
+    monkeypatch,
+    request,
+) -> None:
+    """TASK-33008.3: only the endpoint decides whether the user chose one. An
+    edited model leaves Ollama's endpoint the template's, so the detected
+    address is saved, with no "Keeping the saved endpoint" warning."""
+    app = _blocked_console_app(
+        (_DETECTED_OLLAMA,), ollama=_shipped_ollama(model="qwen3")
+    )
+    saved_sections = _capture_saves(app, monkeypatch)
+    notices = _record_notices(app, monkeypatch)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _enter_enter(host, console, pilot)
+
+        assert saved_sections == [
+            {
+                "api_settings.ollama": {
+                    "model": "llama3.2",
+                    "api_url": _DETECTED_OLLAMA.base_url,
+                },
+                "chat_defaults": {"provider": "ollama", "model": "llama3.2"},
+            }
+        ]
+        assert not [message for message, _ in notices if "Keeping" in message]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_failed_save_keeps_the_detected_ollama_for_this_chat_and_unlocks(
+    monkeypatch,
+    request,
+) -> None:
+    """TASK-33008.3: when the default cannot be saved, the detected endpoint
+    is not on disk either, so it is this chat's session-only endpoint. Before,
+    it sat on the chat as an unsaved endpoint: Ollama read "endpoint not
+    saved" and the card stayed up although the notice said the pick applies."""
+    app = _blocked_console_app((_DETECTED_OLLAMA,), ollama=_shipped_ollama())
+    monkeypatch.setattr(
+        model_switcher_module, "save_settings_to_cli_config", lambda _sections: False
+    )
+    notices = _record_notices(app, monkeypatch)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _enter_enter(host, console, pilot)
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        await _until(pilot, lambda: not modal.is_blocking, "the card to unlock")
+
+        assert (
+            "Default not saved for ollama/llama3.2; it applies to this chat only.",
+            "warning",
+        ) in notices
+        store = console._ensure_console_chat_store()
+        policy = store.session_ephemeral_endpoint_policy(store.active_session_id)
+        assert policy.base_url == _DETECTED_OLLAMA.base_url
+        settings, readiness = console._active_console_settings_readiness()
+        assert (settings.provider, settings.model) == ("ollama", "llama3.2")
+        assert readiness.native_send_supported, readiness.blocker
+        selection = console._build_console_provider_selection()
+        assert selection.base_url == _DETECTED_OLLAMA.base_url
+        assert not selection.configured_endpoint_fallback_allowed
 
 
 @pytest.mark.asyncio
