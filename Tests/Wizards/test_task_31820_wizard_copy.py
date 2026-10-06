@@ -78,7 +78,11 @@ async def test_welcome_does_not_promise_every_step_is_skippable():
         assert "every step can be" not in subtitles, (
             f"Welcome still over-promises skipping: {subtitles!r}"
         )
-        assert "Esc" in subtitles, (
+        # TASK-34100.13: Welcome's time line is the approved setup-shape
+        # spec's D1 copy, which leaves the keys to the hint row under the nav
+        # bar; that row names the universal out on Welcome.
+        hints = str(wizard.query_one("#setup-key-hints", Static).renderable)
+        assert "Esc" in hints, (
             "Welcome should point at the universal out (Esc) once the"
-            f" every-step promise is gone: {subtitles!r}"
+            f" every-step promise is gone: {subtitles!r} / {hints!r}"
         )

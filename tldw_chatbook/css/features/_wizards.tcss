@@ -1255,6 +1255,25 @@ SmartContentTree Tree > .selected-node {
     max-height: $ds-size-9;
 }
 
+/* TASK-34100.13 (entry-exit-handoff-18): Welcome's quiet rows sit BELOW the
+ * nav bar -- Textual's focus order is visual order, so Tab reaches Next first. */
+.setup-welcome-footer {
+    height: auto;
+    padding: $ds-space-0 $ds-space-2;
+    background: $panel;
+}
+.setup-welcome-restore-row {
+    height: auto;
+}
+.setup-welcome-restore-label {
+    width: auto;
+    color: $text-muted;
+    margin-right: $ds-space-1;
+}
+.setup-welcome-restore-row .setup-tertiary-button {
+    margin-top: $ds-space-0;
+}
+
 /* TASK-34100.13 (fulltrack-11): the extras package name, then its copy action. */
 .setup-rag-extras-row {
     height: auto;
