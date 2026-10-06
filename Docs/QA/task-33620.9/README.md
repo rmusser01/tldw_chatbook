@@ -650,3 +650,57 @@ These temporary logs are not portable qualification archives. Existing
 ADR085/120 apply; this corrects a test settlement boundary, not an architectural
 decision. Reproduce the affected behavior with
 `python -m pytest Tests/UI/test_console_rename_consistency.py -p no:cacheprovider --tb=short`.
+
+### Runtime test-owner adoption — 2026-10-05
+
+At published `3e179b0f3a7929de114590c4481d985cfd059066`, the unchanged
+manual-startup case passes in 6.95s but strict retirement exits 1 with private
+Library, Workspace, Evals and Chat files. Its factory alias bypasses the existing
+opt-in `owned_console_apps` capture; the attached Chat owner is also unregistered.
+Using the actual capture binding and registering the exact attached database
+clears that case: **1 passed in 7.10s**, no warnings, strict exit 0.
+
+The first complete runtime/fixture control batch records **97 passed, 1 xfailed,
+4 inherited AST SyntaxWarnings in 146.92s**, strict exit 1. Separate hand-built
+hydration runtimes retain their receipt database. Their unchanged focused
+three-case run passes in 9.18s but exits 1 with `agent_runs.db` files. The two
+runtime tests now release held callbacks, dispose their exact runtime, then use
+the existing close helper. Injected native-start rigs register their exact runs
+and Chat owners for final retirement after successful app-runtime disposal.
+Their existing controller shutdown remains; a mount failure before registration
+retains the original post-shutdown closes. All 461 existing assertions remain
+AST-identical. Shared fixture and production code are unchanged.
+
+Independent review caught the unregistered mount-failure path. One real-SQLite
+control exercises all three actual workflows and captures native handles:
+without fallback cleanup **3 fail in 6.04s** at the closed-handle expectation.
+Final failure controls, both hydration cases, startup/synchronous lifecycle and
+all existing failed-drain/healthy/foreign-owner controls pass **24 in 19.11s**,
+no warnings, strict exit 0, zero DB files at every teardown.
+
+The intermediate complete two-file recheck remains **97 passed, 1 xfailed,
+4 inherited AST SyntaxWarnings in 154.23s**, strict exit 1. Receipt/constructor
+files are absent, but `runs.db` files first appear at the caret-only native-start
+control and reach **15 descriptors** (nine database, three WAL, three SHM).
+AgentRunsDB's close is current-thread only; neither that helper nor cancelled
+hydration-task completion proves physical executor completion or all-thread
+retirement. The final 24-case result does not waive this wider failed gate or
+replace a full corrected rerun. No warning filters, forced GC, timeout/count
+changes or new database-lifetime policy were added. Native, Windows, participant,
+measured-latency, application-retirement and actual external-review HOLDs remain.
+
+Local receipts (temporary, not portable qualification archives):
+`/tmp/pr3024-runtime-owner-{red,green,suite,final,covering}.log`,
+`/tmp/pr3024-runtime-receipt-red.log`, `/tmp/pr3024-runtime-rig-red.log` and
+`/tmp/pr3024-runtime-mount-red.log`. The isolated rig's historical “red” filename
+records a passing 1-case/strict-exit-0 run, not a product RED. Complete failed
+recheck SHA256: `0fc6273b6d4d3e454afb87364b45dddd8ff7e8bfde18b740e5374a6058a41b48`;
+mount-failure RED: `b22e47254f8b81f7654b377f141edebe1906a8da1555122030231d096410570b`.
+Ruff remains 12 inherited findings with no additions; normalized formatter debt
+remains 56 units with identical digest and no changed-line overlap. No new ADR:
+this adopts the incumbent test-owner contract, not a production lifetime policy.
+Independent final review finds no remaining scoped issue for partial draft
+publication. All eleven artifact guards and whitespace checks pass. Covering
+receipt SHA256: `63de612dbc535fbdd89d1429c3703a071ed432d1a6dd98b4e4149b6e36309c2a`;
+artifact receipt `/tmp/pr3024-runtime-owner-preflight.log`:
+`4652125092d82f67edcfc15a51476afdd002998ec9f2cebc1ed69627a585eeb9`.

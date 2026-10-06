@@ -35,10 +35,12 @@ import pytest
 from textual.events import Key
 
 from Tests.app_module_patches import set_app_global
+from Tests.conftest import _close_database_instance
 from Tests.UI.app_factory import (
-    _build_test_app as _build_startup_test_app,
+    _build_test_app,
     persist_seeded_config,
 )
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -72,6 +74,29 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
     classify_console_raw_draft,
 )
 from tldw_chatbook.Widgets.Console import ProjectInstructionSetupResult
+
+
+@pytest.fixture(autouse=True)
+def _register_runtime_database_owners(monkeypatch, owned_console_apps):  # noqa: F811 - pytest fixture dependency
+    """Retire attached test databases after their captured runtime settles.
+
+    Args:
+        monkeypatch: Restore only this module's attachment binding.
+        owned_console_apps: Register exact databases with the existing finalizer.
+
+    Returns:
+        The existing exact-owner registration callback for injected test rigs.
+    """
+    original = _attach_real_dbs
+
+    def attach_owned_database(app, tmp_path):
+        result = original(app, tmp_path)
+        owned_console_apps(app.console_runtime, app.chachanotes_db)
+        return result
+
+    monkeypatch.setitem(globals(), "_attach_real_dbs", attach_owned_database)
+    return owned_console_apps
+
 
 #: Constructor calls that must exist in exactly one place: the runtime.
 #: `ConsoleProviderGateway(` is deliberately NOT here -- the Personas
@@ -317,34 +342,38 @@ async def test_runtime_owns_one_receipt_service_and_coalesces_hydration(
         store_factory=ConsoleChatStore,
         provider_gateway_factory=object,
     )
-
-    assert bridge is not None
-    assert runtime.activity_receipts is not None
-    assert bridge.runs_db is runtime._agent_runs_db
-    assert runtime.profile_authority == str((tmp_path / "chat.db").resolve())
-    assert runtime.authority_token
-
+    runs_db = runtime._agent_runs_db
     entered = threading.Event()
     release = threading.Event()
     calls = {"count": 0}
+    try:
+        assert bridge is not None
+        assert runtime.activity_receipts is not None
+        assert bridge.runs_db is runtime._agent_runs_db
+        assert runtime.profile_authority == str((tmp_path / "chat.db").resolve())
+        assert runtime.authority_token
 
-    def blocked_hydration():
-        calls["count"] += 1
-        entered.set()
-        assert release.wait(5)
-        return 0
+        def blocked_hydration():
+            calls["count"] += 1
+            entered.set()
+            assert release.wait(5)
+            return 0
 
-    monkeypatch.setattr(
-        runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
-    )
-    first = runtime.ensure_activity_hydration()
-    second = runtime.ensure_activity_hydration()
+        monkeypatch.setattr(
+            runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
+        )
+        first = runtime.ensure_activity_hydration()
+        second = runtime.ensure_activity_hydration()
 
-    assert first is second
-    assert await asyncio.to_thread(entered.wait, 5)
-    release.set()
-    assert await first == 0
-    assert calls["count"] == 1
+        assert first is second
+        assert await asyncio.to_thread(entered.wait, 5)
+        release.set()
+        assert await first == 0
+        assert calls["count"] == 1
+    finally:
+        release.set()
+        await runtime.dispose()
+        _close_database_instance(runs_db)
 
 
 @pytest.mark.asyncio
@@ -386,26 +415,32 @@ async def test_runtime_disposal_invalidates_inflight_receipt_hydration(
         store_factory=ConsoleChatStore,
         provider_gateway_factory=object,
     )
+    runs_db = runtime._agent_runs_db
     entered = threading.Event()
     release = threading.Event()
+    try:
 
-    def blocked_hydration():
-        entered.set()
-        assert release.wait(5)
-        return 4
+        def blocked_hydration():
+            entered.set()
+            assert release.wait(5)
+            return 4
 
-    monkeypatch.setattr(
-        runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
-    )
-    task = runtime.ensure_activity_hydration()
-    assert await asyncio.to_thread(entered.wait, 5)
+        monkeypatch.setattr(
+            runtime.activity_receipts, "hydrate_from_storage", blocked_hydration
+        )
+        task = runtime.ensure_activity_hydration()
+        assert await asyncio.to_thread(entered.wait, 5)
 
-    dispose = asyncio.create_task(runtime.dispose())
-    release.set()
-    await dispose
+        dispose = asyncio.create_task(runtime.dispose())
+        release.set()
+        await dispose
 
-    assert task.cancelled() or await task == 0
-    assert runtime.ensure_activity_hydration() is None
+        assert task.cancelled() or await task == 0
+        assert runtime.ensure_activity_hydration() is None
+    finally:
+        release.set()
+        await runtime.dispose()
+        _close_database_instance(runs_db)
 
 
 @pytest.mark.asyncio
@@ -1997,7 +2032,7 @@ def _build_manually_mounted_console_app(**kwargs):
     """Build the app for a test that supplies its own initial content screen."""
     # This fixture supplies the content screen itself. Claim startup before
     # run_test schedules the deferred initial-screen task, not after push_screen.
-    app = _build_startup_test_app(**kwargs)
+    app = _build_test_app(**kwargs)
     app._initial_screen_pushed = True
     return app
 
@@ -2030,9 +2065,7 @@ async def test_manual_console_fixture_owns_startup_before_any_mount(tmp_path):
 @pytest.mark.asyncio
 async def test_public_startup_console_keeps_its_claim_across_navigation(tmp_path):
     """The shipping single retained Console reconciles and resumes delivery."""
-    app = _build_startup_test_app(
-        config_overrides={"splash_screen": {"enabled": False}}
-    )
+    app = _build_test_app(config_overrides={"splash_screen": {"enabled": False}})
     persist_seeded_config(app, "splash_screen")
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
@@ -2484,7 +2517,7 @@ def test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle(
     set_app_global(monkeypatch, "get_cli_setting", no_splash)
     # Shipping CLI construction happens before Textual creates its loop.
     # Home keeps Canvas unwarmed; Console mount itself creates its controller.
-    app = _build_startup_test_app(configured_default="home")
+    app = _build_test_app(configured_default="home")
     runtime = app.console_runtime
     assert isinstance(runtime, ConsoleRuntime)
     assert runtime._canvas_policy_watch_task is None
@@ -2536,9 +2569,7 @@ def test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements():
     next_owner = initializer.index("self.library_new_profile_admission")
     assert config_load < raw_runtime < next_owner, initializer
 
-    app = _build_startup_test_app(
-        config_overrides={"console": {"raw_cli_permitted": True}}
-    )
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
     runtime = app.raw_cli_runtime
     assert runtime.permitted is True
     assert runtime.armed is False
@@ -2564,9 +2595,7 @@ def test_terminal_manager_is_app_owned_unarmed_and_reads_config_replacements():
     console_runtime = initializer.index("self.console_runtime")
     assert config_load < terminal_manager < console_runtime, initializer
 
-    app = _build_startup_test_app(
-        config_overrides={"console": {"raw_cli_permitted": True}}
-    )
+    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
     assert app._terminal_session_manager is None
 
     from tldw_chatbook.Terminal.session_manager import TerminalSessionManager
@@ -3087,7 +3116,9 @@ async def test_clearing_agent_handoff_in_mounted_composer_persists_before_exit(
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(tmp_path):
+async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(
+    tmp_path, _register_runtime_database_owners
+):
     from threading import Event
     from textual.widgets import Button
     from Tests.Chat.test_console_chat_start import _native_start_rig
@@ -3113,6 +3144,7 @@ async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(tmp_
     from tldw_chatbook.config import get_cli_setting
 
     assert get_cli_setting("splash_screen", "enabled", True) is False
+    rig_registered = False
     try:
         async with app.run_test(size=(160, 48)) as pilot:
             chat = ChatScreen(app)
@@ -3129,6 +3161,9 @@ async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(tmp_
             runtime._chat_controller = controller
             runtime._agent_bridge = controller._agent_bridge
             controller.app = app
+            _register_runtime_database_owners(runtime, runs)
+            _register_runtime_database_owners(runtime, store.persistence.db)
+            rig_registered = True
             try:
                 start = asyncio.create_task(controller._chat_start.start(request))
                 assert (await start).launch_status == "started"
@@ -3187,13 +3222,89 @@ async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(tmp_
     finally:
         release.set()
         await controller.shutdown()
-        runs.close()
-        store.persistence.db.close_connection()
+        if not rig_registered:
+            runs.close()
+            store.persistence.db.close_connection()
 
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_prepared_native_start_allows_mounted_manual_send(tmp_path):
+@pytest.mark.parametrize(
+    "case",
+    [
+        "test_accepted_agent_chat_start_has_visible_stop_in_mounted_target",
+        "test_prepared_native_start_allows_mounted_manual_send",
+        "test_native_acceptance_consumes_only_open_target_revision",
+    ],
+)
+async def test_native_rig_mount_failure_retires_unregistered_owners(
+    tmp_path, monkeypatch, case, _register_runtime_database_owners
+):
+    """A failed mount still drains and closes its exact uninstalled rig."""
+    import sqlite3
+    from contextlib import asynccontextmanager
+
+    from Tests.Chat import test_console_chat_start as rigs
+
+    class MountFailure(Exception):
+        pass
+
+    captured = {}
+    original_rig = rigs._native_start_rig
+
+    async def capture_rig(path):
+        result = await original_rig(path)
+        controller, store, runs, *_ = result
+        captured.update(
+            controller=controller,
+            runs=runs,
+            chat=store.persistence.db,
+            runs_connection=runs._held_connection(),
+            chat_connection=store.persistence.db.get_connection(),
+        )
+        return result
+
+    original_app = _build_manually_mounted_console_app
+
+    def failed_mount_app(**kwargs):
+        app = original_app(**kwargs)
+
+        @asynccontextmanager
+        async def failed_mount(**_kwargs):
+            raise MountFailure
+            yield  # pragma: no cover - preserve the async context manager protocol
+
+        monkeypatch.setattr(app, "run_test", failed_mount)
+        return app
+
+    monkeypatch.setattr(rigs, "_native_start_rig", capture_rig)
+    monkeypatch.setitem(
+        globals(), "_build_manually_mounted_console_app", failed_mount_app
+    )
+    kwargs = {
+        "tmp_path": tmp_path,
+        "_register_runtime_database_owners": _register_runtime_database_owners,
+    }
+    if case == "test_native_acceptance_consumes_only_open_target_revision":
+        kwargs["later_edit"] = "unchanged"
+    try:
+        with pytest.raises(MountFailure):
+            await globals()[case](**kwargs)
+        for connection in (captured["runs_connection"], captured["chat_connection"]):
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                connection.execute("SELECT 1")
+    finally:
+        if captured:
+            await captured["controller"].shutdown()
+            captured["runs"].close()
+            captured["chat"].close_connection()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_prepared_native_start_allows_mounted_manual_send(
+    tmp_path, _register_runtime_database_owners
+):
     from textual.widgets import Button
     from Tests.Chat.test_console_chat_start import _native_start_rig
 
@@ -3222,6 +3333,7 @@ async def test_prepared_native_start_allows_mounted_manual_send(tmp_path):
     from tldw_chatbook.config import get_cli_setting
 
     assert get_cli_setting("splash_screen", "enabled", True) is False
+    rig_registered = False
     try:
         async with app.run_test(size=(160, 48)) as pilot:
             chat = ChatScreen(app)
@@ -3238,6 +3350,9 @@ async def test_prepared_native_start_allows_mounted_manual_send(tmp_path):
             runtime._chat_controller = controller
             runtime._agent_bridge = controller._agent_bridge
             controller.app = app
+            _register_runtime_database_owners(runtime, runs)
+            _register_runtime_database_owners(runtime, store.persistence.db)
+            rig_registered = True
             store.switch_session(target.id)
             chat._session._sync_console_session_draft()
             await chat._sync_native_console_chat_ui()
@@ -3292,8 +3407,9 @@ async def test_prepared_native_start_allows_mounted_manual_send(tmp_path):
                 await asyncio.gather(start, return_exceptions=True)
     finally:
         await controller.shutdown()
-        runs.close()
-        store.persistence.db.close_connection()
+        if not rig_registered:
+            runs.close()
+            store.persistence.db.close_connection()
 
 
 @pytest.mark.bootstrap_profile
@@ -3310,7 +3426,7 @@ async def test_prepared_native_start_allows_mounted_manual_send(tmp_path):
     ],
 )
 async def test_native_acceptance_consumes_only_open_target_revision(
-    tmp_path, later_edit
+    tmp_path, later_edit, _register_runtime_database_owners
 ):
     """The accepted handoff cannot resurrect an unchanged visible composer."""
     import json
@@ -3337,6 +3453,7 @@ async def test_native_acceptance_consumes_only_open_target_revision(
     from tldw_chatbook.config import get_cli_setting
 
     assert get_cli_setting("splash_screen", "enabled", True) is False
+    rig_registered = False
     try:
         async with app.run_test(size=(160, 48)) as pilot:
             chat = ChatScreen(app)
@@ -3353,6 +3470,9 @@ async def test_native_acceptance_consumes_only_open_target_revision(
             runtime._chat_controller = controller
             runtime._agent_bridge = controller._agent_bridge
             controller.app = app
+            _register_runtime_database_owners(runtime, runs)
+            _register_runtime_database_owners(runtime, store.persistence.db)
+            rig_registered = True
             await chat._sync_native_console_chat_ui()
             composer = chat.query_one("#console-native-composer", ConsoleComposerBar)
             store.switch_session(source.id)
@@ -3567,5 +3687,6 @@ async def test_native_acceptance_consumes_only_open_target_revision(
     finally:
         release.set()
         await controller.shutdown()
-        runs.close()
-        store.persistence.db.close_connection()
+        if not rig_registered:
+            runs.close()
+            store.persistence.db.close_connection()
