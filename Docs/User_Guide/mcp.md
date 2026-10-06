@@ -263,13 +263,18 @@ shows. The group opens with plain chat's tool surface, then two
 subheadings:
 
 - **Full agent tools** — first in the pane, under a line naming what plain
-  Console chat has without it: date and time, calculator and
-  ask-you-a-question, plus any tool switched on below. Off by default
+  Console chat has without it: the light tools that are on (date and time,
+  calculator, and ask-you-a-question unless its own switch is off), plus any
+  Agent built-in or Deep web research switched on. The local master and
+  **Character cards** switches read "on" by default but add nothing to plain
+  chat: they choose which groups Full agent tools adds. Off by default
   (`[tools] full_agent_tools_enabled`); turning it on gives chat sub-agents,
   skills, web search and fetch, Watchlists, workspace files, character
   cards, Canvas, chat forks and chatbook's own MCP tools on the next send.
   An individual **Agent built-ins** gate (or `web_deep_search`) needs no
-  Full agent tools: plain chat offers that one tool as soon as it is on.
+  Full agent tools: plain chat offers that one tool as soon as it is on. A
+  switch saved here also updates the running app, so re-running setup in the
+  same session shows it the same way.
 - **Agent built-ins** — the app's own file, note and library tools: read /
   list / write a file, glob / grep the workspace, create / update a note,
   and **expand a retrieval hit into its document** (`expand_document`,
