@@ -2086,3 +2086,122 @@ Before acceptance, the same17 unchanged controls must pass, followed by appropri
 The existing Agent section and fleet share one issued, finite historical display state. Their conversation key uses the same normalization for an unpersisted Chat (`None` and `""` denote the empty rail scope). A sibling fleet derivation returning no rows does not invalidate that state's matching source and full local owner key. It clears a mismatched state immediately and never starts an empty-scope worker on its own.
 
 Publication retains the original captured database, owned callback retirement, fresh full-key comparison, and cancellation behavior. Sharing this display state grants no tool, Send, or file permission and reuses no admission proof. The original SQL readers and direct/custom/memory routes remain unchanged. This repairs inconsistent normalization and premature state clearing; whole-probe budgets require separate original-source evidence.
+
+
+## Pending same-owner expired display deferral
+
+ADR required: yes, amendment to the existing checked warm Console display scope.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: narrow clarification of the existing presentation/source boundary; no new
+scope, source capability, timer lifetime or reusable authority is introduced.
+
+An exact standard readiness projection with its genuine issued display proof
+must pass all existing current source, mapping, owner/session/settings key,
+installed participant, pause, UI Thread/Loop and active-projection checks before
+this scheduling distinction applies. If its original real-clock age has expired
+and its refresh scheduling bit was already literally True at synchronous
+display entry and remains True, checked display
+refuses the synchronous body and requests the existing deferred UI retry. It
+does not open a second enclosing native configuration operation while that
+refresh is pending. The bit is a refusal-only scheduling hint; it is never
+evidence of freshness, permission, a live native lease or successful retirement.
+
+The existing one-second (or shorter configured display-age) comparison remains
+unchanged. A mismatched publication timestamp retains its original fallback.
+Expired nonpending display, direct live calls and custom/unqualified projection
+or reader paths retain the original native route or cold deferral. Changed
+source/owner/participant/pause keeps its original earlier refusal. Any actual
+nested guarded disk reader or writer still enters its own fresh native scope.
+
+The original projection schedules and owns its finite reader. Queued refreshes
+are covered before `_read_request` is installed by the async body; requiring
+that later record here would reopen the synchronous UI fallback during the
+queued interval. Cancellation retains pending/settled ownership until the actual
+native callback retires. This change does not alter that worker or publication
+contract, capture any native verdict, or carry a scope across an await.
+
+The existing delayed control-bar/replay request owns the unfinished presentation.
+An unchanged successful mapping refresh issues a new proof/clock without creating
+an additional publication worker. The already requested retry then checks and
+renders that fresh proof. If still pending it defers again through the same
+existing timer; screen teardown retains the original refusal/no-retry behavior.
+No new timer or timer-rate change is introduced.
+
+TASK34406 AC18 native prerequisite `readiness-pending-native-red-1` qualified the
+original mechanism: while the source-current actual reader task remained pending
+after its native operation retired, the original UI performed one enclosing
+config admission and two storage admissions and rendered rather than retrying.
+The receipt completed all seven observed spans with no invalid/source/global
+event/retirement gap and zero ordinary/pending/core/raw/retiring/raw-state census. One intentional startup lease remained separately reported. Direct nonpending native entry,
+the unchanged genuine-expiry control and admitted repeated-cancellation custody
+passed. This is bounded causal evidence, not a whole Send/startup performance
+result. Production acceptance still requires the repaired native controls and
+existing original compatibility checks.
+
+
+### Pending refresh entry distinction (TASK34406 AC18)
+
+The previous pending-expiry proposal is not accepted as compatible:
+`readiness-pending-native-green-1` passed its three added controls but failed the
+unchanged genuine-expiry control. A direct decorated presentation call can start
+its own refresh before entering its original native body. Its preceding native
+fallback contract must remain.
+
+Capture the existing refresh-pending bit at the beginning of the original
+synchronous `ConsoleReadinessConfigProjection.run`, before that call schedules
+any refresh. Install this refusal-only fact only around the same existing active
+display body and restore its prior value in `finally`, including nested calls,
+body errors and cancellation. It contains no mapping, receiver, Task, native
+lease, source verdict or authority. No fact is accepted as display freshness.
+
+After every original genuine-proof/current-source/owner/participant/Thread/Loop/
+active-display/key fence, retain timestamp mismatch's original native fallback.
+On genuine clock expiry, defer only if a refresh is still pending AND it was
+already pending before the current synchronous display entry. A direct call
+that starts its own refresh retains the original native route. Already queued
+and running refreshes are both covered; `_read_request` is not required because
+the queued original Task has not installed it yet.
+
+All original clocks, TTL, fresh display acceptance, custom/unqualified fallback,
+nested live guarded disk scopes, reader retirement/cancellation and UI retry/
+maintenance/replay behavior remain. Equal-result publication continues to issue
+its fresh proof without another publication worker; the already requested
+control-bar timer/replay retries that proof. This scheduling distinction grants
+no permission and does not reuse or extend native authority across an await.
+
+Keep v1's source-qualified compatibility failure as RED evidence. Repaired
+acceptance requires the unchanged original genuine-expiry node, actual running
+and queued preexisting-reader controls, direct native/cancellation positives and
+nested/error restoration controls. No whole performance acceptance is implied.
+
+
+## Fresh Library initialization within the existing creation owner
+
+TASK34406 AC19 moves the stock new-profile Library UNKNOWN stamp into the
+existing exclusive private config creation described by ADR076. Both existing
+creation branches retain `create_private_text`, application-owned directory
+selection, no-follow/private owner checks, flush/barriers, competing-name
+handling and the original refusal/failure contract. Only successful creation
+and posture reporting may add the creation value to the returned mapping and
+publish the original first-profile/bootstrap success facts.
+
+Programmatic/default merge templates remain unchanged. Definition-time plain
+source eligibility may select a creation-only appendix; customization declines
+that optimization and keeps the original App compatibility stamp. No schema,
+second store, permission cache, native verdict, new profile-origin flag or
+deferred writer is introduced. Existing file/custom-parent/cache/generation/
+encryption and source ownership policies remain.
+
+The test factory may use the canonical existing conditional settings mutation
+for an explicitly documented returning-profile fiction. It requires current
+path-bound creation facts and the exact untouched stock document, then checks
+source/path/document again under the original transaction lock. A scalar save
+without a precondition cannot meet this contract. It must not nest another
+interprocess write lock, reinterpret a sticky global flag as path origin, or
+rewrite an edited/custom/preexisting/explicit profile. This fixture write is
+not a user-startup performance saving. Original normal writer publication and
+partial-failure status remain visible.
+
+Actual native creation/old-profile/refusal/origin/reopen checks determine
+acceptance. Original startup/Send/heartbeat/helper/open limits are unchanged
+and remain independent gates.

@@ -69,6 +69,7 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             "db.prompts.primary": "close_connection",
             "db.library_collections": "close",
             "db.evals": "close",
+            "db.subscriptions": "close",
             "notifications.client": "close",
         }
         with storage._lock:
@@ -309,7 +310,11 @@ def _repository_types():
     # optional runtime stacks just to compare an unrelated source's exact type.
     optional = {}
     for module_name, class_name, owner_id in (
-        ("tldw_chatbook.Backup_Recovery.recovered_media", "RecoveredMedia", "recovered.media"),
+        (
+            "tldw_chatbook.Backup_Recovery.recovered_media",
+            "RecoveredMedia",
+            "recovered.media",
+        ),
         ("tldw_chatbook.DB.Evals_DB", "EvalsDB", "db.evals"),
         ("tldw_chatbook.DB.RAG_Indexing_DB", "RAGIndexingDB", "db.rag_indexing"),
         ("tldw_chatbook.DB.Subscriptions_DB", "SubscriptionsDB", "db.subscriptions"),

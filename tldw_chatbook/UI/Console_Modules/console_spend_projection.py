@@ -282,6 +282,7 @@ class ConsoleReadinessConfigProjection:
     def run(self, body: Callable[[], Any]) -> bool:
         """Defer a cold owner; use only its own last mapping during expiry."""
         screen = self.screen
+        pending_at_entry = self.pending
         key = self._key()
         current = _same_readiness_key(key, self.key) and self.value is not None
         if (
@@ -305,16 +306,19 @@ class ConsoleReadinessConfigProjection:
         if not current:
             return False
         previous = getattr(screen, "_console_readiness_projection_active", None)
+        previous_pending = getattr(self, "_display_refresh_pending_at_entry", None)
         screen._console_readiness_projection_active = (
             threading.get_ident(),
             self.value,
             self,
         )
         try:
+            self._display_refresh_pending_at_entry = pending_at_entry
             with screen._console_derivation_scope():
                 return body() is not False
         finally:
             screen._console_readiness_projection_active = previous
+            self._display_refresh_pending_at_entry = previous_pending
 
     async def warm(self) -> bool:
         """Wait for the same checked owner when a modal needs cold display data."""
@@ -545,10 +549,17 @@ def _checked_display_status(projection: Any) -> bool | None:
             return False
     if not _same_readiness_key(projection._key(), projection.key):
         return False
-    if projection.at != proof.at or time.monotonic() - proof.at >= min(
-        1.0, projection.max_age
-    ):
+    if projection.at != proof.at:
         return None
+    if time.monotonic() - proof.at >= min(1.0, projection.max_age):
+        # Defer only a refresh pending before this synchronous display entry;
+        # a direct call that starts its own refresh keeps its native fallback.
+        return (
+            False
+            if projection.pending is True
+            and getattr(projection, "_display_refresh_pending_at_entry", None) is True
+            else None
+        )
     return True
 
 

@@ -138,7 +138,9 @@ class OriginalStorageUnitObserver:
                 (self.context_owner, "__exit__", self.exit_function),
             )
         )
-        for tool in range(5, -1, -1):
+        for tool in range(5, 0, -1):
+            if tool == self.monitor.DEBUGGER_ID:
+                continue
             try:
                 self.monitor.use_tool_id(tool, "original-storage-unit-census")
             except ValueError:

@@ -6574,6 +6574,72 @@ except tomllib.TOMLDecodeError as e:
     DEFAULT_CONFIG_FROM_TOML = {}  # Should not happen with valid TOML string
 
 
+def _creation_library_shape(value: object) -> tuple | None:
+    """Freeze only plain TOML library data; unsupported custom values decline."""
+    kind = type(value)
+    if kind in (str, int, float, bool):
+        return (kind, value)
+    if kind is list:
+        items = tuple(_creation_library_shape(item) for item in value)
+        return (list, items) if all(item is not None for item in items) else None
+    if kind is dict:
+        if any(type(key) is not str for key in value):  # noqa: E721 -- exact plain TOML keys, no custom comparison
+            return None
+        items = tuple(
+            (key, _creation_library_shape(item)) for key, item in value.items()
+        )
+        return (dict, items) if all(item is not None for _, item in items) else None
+    return None
+
+
+# Captured during the defining module's initialization, before any fresh load.
+# This is source eligibility, never a profile-origin or permission verdict.
+_FRESH_LIBRARY_CREATION_SOURCE = (
+    CONFIG_TOML_CONTENT,
+    DEFAULT_CONFIG_FROM_TOML,
+    DEFAULT_CONFIG_FROM_TOML.get("library"),
+    _creation_library_shape(DEFAULT_CONFIG_FROM_TOML.get("library")),
+    CONFIG_TOML_CONTENT + '\n[library.rail_state]\nlifecycle = "unknown"\n',
+)
+
+
+def _fresh_profile_creation_content(
+    loaded_config: Dict[str, Any], _source=_FRESH_LIBRARY_CREATION_SOURCE
+) -> tuple[str, bool]:
+    """Append UNKNOWN only to the unchanged stock fresh-creation document."""
+    if _FRESH_LIBRARY_CREATION_SOURCE is not _source:
+        return CONFIG_TOML_CONTENT, False
+    template, defaults, library, shape, creation = _source
+    current_library = (
+        DEFAULT_CONFIG_FROM_TOML.get("library")
+        if type(DEFAULT_CONFIG_FROM_TOML) is dict  # noqa: E721 -- exact stock dictionary lookup
+        else None
+    )
+    returned_library = (
+        loaded_config.get("library") if type(loaded_config) is dict else None  # noqa: E721 -- exact stock dictionary lookup
+    )
+    eligible = (
+        type(CONFIG_TOML_CONTENT) is str  # noqa: E721 -- exact stock template type
+        and CONFIG_TOML_CONTENT is template
+        and DEFAULT_CONFIG_FROM_TOML is defaults
+        and current_library is library
+        and type(library) is dict  # noqa: E721 -- exact stock dictionary lookup
+        and "rail_state" not in library
+        and shape is not None
+        and _creation_library_shape(current_library) == shape
+        and _creation_library_shape(returned_library) == shape
+    )
+    return (creation, True) if eligible else (CONFIG_TOML_CONTENT, False)
+
+
+_FRESH_LIBRARY_CREATION_SELECTOR = (
+    _fresh_profile_creation_content,
+    _fresh_profile_creation_content.__code__,
+    _fresh_profile_creation_content.__globals__,
+    _fresh_profile_creation_content.__defaults__,
+)
+
+
 # --- Primary Configuration Loading Logic for the CLI ---
 _CONFIG_CACHE: Optional[Dict[str, Any]] = None
 _CONFIG_CACHE_SOURCE: Optional[Path] = None
@@ -7002,13 +7068,18 @@ def _load_cli_config_bootstrap_unlocked(
         logger.info(
             f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
         )
+        creation_content, creation_has_lifecycle = _fresh_profile_creation_content(
+            loaded_config
+        )
         created = create_private_text(
             config_path,
-            CONFIG_TOML_CONTENT,
+            creation_content,
             application_owned_directory=application_directory,
         )
         _report_config_path_posture(created)
         logger.info(f"Created default CLI config file at {config_path}")
+        if creation_has_lifecycle:
+            loaded_config["library"]["rail_state"] = {"lifecycle": "unknown"}
         loaded_config["_first_run"] = True
         _FIRST_PROFILE_CREATED_THIS_SESSION = True
         bootstrap_succeeded = True
@@ -7017,13 +7088,18 @@ def _load_cli_config_bootstrap_unlocked(
             logger.info(
                 f"CLI Config file not found at {config_path}. Creating with default values from CONFIG_TOML_CONTENT."
             )
+            creation_content, creation_has_lifecycle = _fresh_profile_creation_content(
+                loaded_config
+            )
             created = create_private_text(
                 config_path,
-                CONFIG_TOML_CONTENT,
+                creation_content,
                 application_owned_directory=application_directory,
             )
             _report_config_path_posture(created)
             logger.info(f"Created default CLI config file at {config_path}")
+            if creation_has_lifecycle:
+                loaded_config["library"]["rail_state"] = {"lifecycle": "unknown"}
             loaded_config["_first_run"] = True
             _FIRST_PROFILE_CREATED_THIS_SESSION = True
             bootstrap_succeeded = True

@@ -23,6 +23,11 @@ elif route=='evals':
  from tldw_chatbook.DB.Evals_DB import EvalsDB
  db=EvalsDB(root/'evals.db',client_id='test')
  get,close=db.get_connection,db.close
+elif route=='subscriptions':
+ from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+ cls=type('CustomDB',(SubscriptionsDB,),{}) if outcome=='custom' else SubscriptionsDB
+ db=cls(':memory:' if outcome=='memory' else root/'subscriptions.db',client_id='test')
+ get,close=lambda:db.conn,db.close
 elif route=='notifications':
  from tldw_chatbook.Notifications.client_notifications_db import ClientNotificationsDB
  db=ClientNotificationsDB(root/'notifications.db')
@@ -61,6 +66,11 @@ def worker():
   if outcome=='error':
    with __import__('pytest').raises(ValueError,match='injected worker error'):
     run_finite_local_worker(call)
+  elif outcome=='isolated_async':
+   async def async_call():
+    await asyncio.sleep(0)
+    return call()
+   assert run_finite_local_worker(lambda:asyncio.run(async_call()))=='rows'
   else:assert run_finite_local_worker(call)=='rows'
   connection=observed[-1]
   if outcome in {'borrowed','memory','custom','transaction','operation'}:
@@ -94,7 +104,18 @@ print('retired and reopened')
 """
 
 
-@pytest.mark.parametrize("route", ["notes", "media", "prompts", "collections", "evals", "notifications"])
+@pytest.mark.parametrize(
+    "route",
+    [
+        "notes",
+        "media",
+        "prompts",
+        "collections",
+        "evals",
+        "notifications",
+        "subscriptions",
+    ],
+)
 @pytest.mark.parametrize(
     "outcome",
     ["success", "error", "borrowed", "transaction", "operation", "reopen", "cancel"],
@@ -103,6 +124,11 @@ def test_finite_worker_native_cache_lifetime(tmp_path, route, outcome):
     _run(tmp_path, route, outcome, script=_SCRIPT)
 
 
+@pytest.mark.parametrize("route", ["notes", "subscriptions"])
 @pytest.mark.parametrize("outcome", ["memory", "custom"])
-def test_finite_worker_preserves_unowned_lifetimes(tmp_path, outcome):
-    _run(tmp_path, "notes", outcome, script=_SCRIPT)
+def test_finite_worker_preserves_unowned_lifetimes(tmp_path, outcome, route):
+    _run(tmp_path, route, outcome, script=_SCRIPT)
+
+
+def test_finite_isolated_async_subscription_worker_retires_actual_cache(tmp_path):
+    _run(tmp_path, "subscriptions", "isolated_async", script=_SCRIPT)

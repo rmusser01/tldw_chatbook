@@ -418,6 +418,118 @@ def drain_active_service_patches() -> int:
     return drained
 
 
+def _has_explicit_library_lifecycle_override(
+    overrides: Mapping[str, Any] | None,
+) -> bool:
+    """Unknown/custom override shapes are explicit, never fixture-write eligible."""
+    if overrides is None:
+        return False
+    if type(overrides) is not dict:  # noqa: E721 -- decline custom override lookup
+        return True
+    if "library.rail_state" in overrides:
+        return True
+    if "library" not in overrides:
+        return False
+    library = overrides["library"]
+    if type(library) is not dict:  # noqa: E721 -- decline custom override lookup
+        return True
+    if "rail_state" not in library:
+        return False
+    rail = library["rail_state"]
+    return type(rail) is not dict or "lifecycle" in rail  # noqa: E721 -- decline custom override lookup
+
+
+def _prepare_returning_factory_library_lifecycle(
+    *, preserve_profile_admission: bool, explicit_override: bool
+) -> bool:
+    """Declare only an untouched stock-created factory profile as returning."""
+    if preserve_profile_admission or explicit_override:
+        return False
+    from tldw_chatbook import config as source
+    import copy
+    from types import FunctionType
+
+    if not source.first_profile_created_this_session():
+        return False
+    selector = source._fresh_profile_creation_content
+    selector_record = source._FRESH_LIBRARY_CREATION_SELECTOR
+    if type(selector_record) is not tuple or len(selector_record) != 4:  # noqa: E721 -- unknown source record declines.
+        return False
+    original_selector, original_code, original_globals, original_defaults = (
+        selector_record
+    )
+    if (
+        type(selector) is not FunctionType
+        or selector is not original_selector
+        or selector.__code__ is not original_code
+        or selector.__globals__ is not original_globals
+        or selector.__defaults__ is not original_defaults
+        or selector.__globals__ is not vars(source)
+        or type(selector.__defaults__) is not tuple  # noqa: E721 -- exact captured source tuple.
+        or len(selector.__defaults__) != 1
+        or source._FRESH_LIBRARY_CREATION_SOURCE is not selector.__defaults__[0]
+    ):
+        return False
+    cache, cache_source, generation = (
+        source._CONFIG_CACHE,
+        source._CONFIG_CACHE_SOURCE,
+        source._CONFIG_GENERATION,
+    )
+    if (
+        type(cache) is not dict  # noqa: E721 -- plain tagged bootstrap mapping.
+        or cache.get("_first_run") is not True
+        or cache_source != source.get_cli_config_path()
+    ):
+        return False
+    creation, eligible = source._fresh_profile_creation_content(
+        copy.deepcopy(source.DEFAULT_CONFIG_FROM_TOML)
+    )
+    if not eligible:
+        return False
+    expected = source.read_cli_config_snapshot()
+    if (
+        type(expected) is not source.ConfigFileSnapshot
+        or expected.path != cache_source
+        or expected.serialized != creation
+    ):
+        return False
+
+    # The original transaction owns the path and its interprocess write lock.
+    # Re-read the captured path explicitly: no nested write lock or selector ABA.
+    def still_untouched() -> bool:
+        current, current_eligible = source._fresh_profile_creation_content(
+            copy.deepcopy(source.DEFAULT_CONFIG_FROM_TOML)
+        )
+        return (
+            current_eligible
+            and current is creation
+            and source.first_profile_created_this_session()
+            and source._fresh_profile_creation_content is selector
+            and source._FRESH_LIBRARY_CREATION_SELECTOR is selector_record
+            and selector.__code__ is original_code
+            and selector.__globals__ is original_globals
+            and selector.__defaults__ is original_defaults
+            and source._FRESH_LIBRARY_CREATION_SOURCE is original_defaults[0]
+            and source._CONFIG_CACHE is cache
+            and source._CONFIG_CACHE_SOURCE == cache_source
+            and source._CONFIG_GENERATION == generation
+            and cache.get("_first_run") is True
+            and source.get_cli_config_path() == expected.path
+            and source._try_read_cli_config_serialized_unlocked(expected.path)
+            == creation
+        )
+
+    result = source.apply_settings_mutation_to_cli_config(
+        {"library.rail_state": {"lifecycle": "expanded"}},
+        mutation_precondition=still_untouched,
+    )
+    if result.conflict:
+        return False
+    if not result.fully_applied:
+        raise RuntimeError("test_factory_returning_lifecycle_not_saved")
+    return True
+
+
 def _build_test_app(
     configured_default: str | None = None,
     *,
@@ -472,6 +584,13 @@ def _build_test_app(
         except ``get_subscriptions_db_path``, which stays patched for the
         rest of the test (see the comment where it is started, below).
     """
+    explicit_library_lifecycle = _has_explicit_library_lifecycle_override(
+        config_overrides
+    )
+    returning_lifecycle_prepared = _prepare_returning_factory_library_lifecycle(
+        preserve_profile_admission=preserve_profile_admission,
+        explicit_override=explicit_library_lifecycle,
+    )
     user_data_dir = Path(
         tempfile.mkdtemp(prefix="tldw-chatbook-test-")
         # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
@@ -667,5 +786,6 @@ def _build_test_app(
             if isinstance(library_config, dict):
                 rail_state = library_config.get("rail_state")
                 if isinstance(rail_state, dict):
-                    rail_state.pop("lifecycle", None)
+                    if returning_lifecycle_prepared and not explicit_library_lifecycle:
+                        rail_state.pop("lifecycle", None)
         return app

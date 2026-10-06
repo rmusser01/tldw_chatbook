@@ -1527,7 +1527,9 @@ class OriginalPreparedFleetDBLifetime:
     def start(self):
         assert self._current()
         self.tool = next(
-            slot for slot in range(6) if self.monitor.get_tool(slot) is None
+            slot
+            for slot in range(5, 0, -1)
+            if slot != self.monitor.DEBUGGER_ID and self.monitor.get_tool(slot) is None
         )
         self.monitor.use_tool_id(self.tool, "tldw-finite-prepared-fleet-db")
         assert self.monitor.get_events(self.tool) == 0
