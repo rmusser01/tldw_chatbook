@@ -18,7 +18,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_console_settings_readiness,
     readiness_words,
 )
-from tldw_chatbook.Chat.custom_endpoint_registry import entry_for, resolve_entry_credential
+from tldw_chatbook.Chat.custom_endpoint_registry import (
+    entry_for,
+    resolve_entry_credential,
+)
 from tldw_chatbook.Chat.provider_readiness import (
     STILL_ENCRYPTED_REASON,
     get_provider_readiness,
@@ -129,7 +132,9 @@ def test_custom_endpoint_without_any_key_stays_keyless_ready():
 
 
 def test_a_stranded_entry_key_is_never_resolved_as_its_credential():
-    entry = entry_for(_entry_config("llama_cpp", api_key=_ciphertext()), "custom-ep:home")
+    entry = entry_for(
+        _entry_config("llama_cpp", api_key=_ciphertext()), "custom-ep:home"
+    )
 
     assert entry is not None
     assert resolve_entry_credential(entry, environ={}) == (None, None)
