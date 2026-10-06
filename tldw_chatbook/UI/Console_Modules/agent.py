@@ -171,6 +171,11 @@ from textual.worker import get_current_worker
 
 from ...Widgets.Console.console_transcript import CONSOLE_GENERATING_PLACEHOLDER
 
+#: TASK-33620.15: while a run is active the badge counts are re-queried at
+#: most this often (each query is a storage-admitted AgentRunsDB read on the
+#: UI thread); the run's first sync still refreshes at once.
+CONSOLE_SUBAGENT_COUNTS_ACTIVE_REFRESH_SECONDS = 1.0
+
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from ...Agents.fleet_coordinator import FleetHandle
     from ...Chat.console_agent_bridge import AgentLiveSnapshot, SubAgentSummary
@@ -974,6 +979,8 @@ class ConsoleAgentController:
         self._console_subagent_counts_cache: Dict[str, int] = {}
         self._console_subagent_counts_cache_row_ids: frozenset = frozenset()
         self._console_subagent_counts_cache_at: float = 0.0
+        #: Whether that cache was filled while a run was active (TASK-33620.15).
+        self._console_subagent_counts_cache_during_run = False
         #: TASK-915: sticky suppression of the fleet force-open for the rest
         #: of THIS busy window. Written by the screen's own `_toggle_console_
         #: rail_section`, so it is proxied read-write there.
@@ -2306,7 +2313,9 @@ class ConsoleAgentController:
            rows may need counts we have never cached.
         2. A run is actively streaming/validating/retrying for this
            screen -- a just-spawned sub-agent's count should show up
-           promptly rather than wait out the full TTL.
+           promptly rather than wait out the full TTL. The run's first sync
+           refreshes, then at most once per
+           ``CONSOLE_SUBAGENT_COUNTS_ACTIVE_REFRESH_SECONDS`` (TASK-33620.15).
         3. The cache has aged past ``CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS``
            -- a fallback bound covering counts that changed from a
            different Console session/tab or a resumed run, where neither
@@ -2330,14 +2339,22 @@ class ConsoleAgentController:
 
         if row_ids != self._console_subagent_counts_cache_row_ids:
             return True
-        controller = self._console_chat_controller
-        if (
-            controller is not None
-            and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
-        ):
-            return True
         age = time.monotonic() - self._console_subagent_counts_cache_at
+        if self._console_run_active(CONSOLE_ACTIVE_RUN_STATUSES):
+            # TASK-33620.15: the run's first sync refreshes, then at most once
+            # a second -- not every sync (the 0.2 s tick plus each event).
+            return (
+                not self._console_subagent_counts_cache_during_run
+                or age >= CONSOLE_SUBAGENT_COUNTS_ACTIVE_REFRESH_SECONDS
+            )
+        # Seen idle: the next active sync is a new run's first.
+        self._console_subagent_counts_cache_during_run = False
         return age >= CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+
+    def _console_run_active(self, active_statuses: Iterable[Any]) -> bool:
+        """Whether the viewed session's run is in one of ``active_statuses``."""
+        controller = self._console_chat_controller
+        return controller is not None and controller.run_state.status in active_statuses
 
     def _console_subagent_counts_for_rows(
         self,
@@ -2369,11 +2386,16 @@ class ConsoleAgentController:
             cid for row in rows if (cid := getattr(row, "conversation_id", None))
         )
         if self._console_subagent_counts_refresh_needed(row_ids):
+            from ..Screens.chat_screen import CONSOLE_ACTIVE_RUN_STATUSES
+
             self._console_subagent_counts_cache = (
                 bridge.subagent_counts(list(row_ids)) if row_ids else {}
             )
             self._console_subagent_counts_cache_row_ids = row_ids
             self._console_subagent_counts_cache_at = time.monotonic()
+            self._console_subagent_counts_cache_during_run = self._console_run_active(
+                CONSOLE_ACTIVE_RUN_STATUSES
+            )
         return self._console_subagent_counts_cache
 
     def _inject_resume_agent_markers(
