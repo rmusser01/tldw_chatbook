@@ -600,3 +600,273 @@ def test_reason_codes_survive_trace_export_and_import(tmp_path, profile) -> None
         ]
     )
 
+
+# --- Review round 1 (F3/TE-1): every exit keeps its own code. ---
+
+_RUNTIME = _REPO_ROOT / "tldw_chatbook" / "Agents" / "agent_runtime.py"
+
+
+def _runtime_function(tree: ast.Module, name: str) -> ast.FunctionDef:
+    return next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+
+
+def test_every_continuation_error_exit_passes_a_distinct_code() -> None:
+    """A copy-pasted code would make two exits indistinguishable in the log.
+
+    Every ``continuation_error(...)`` call in ``run_agent_loop`` passes either
+    its own string literal or the result of ``_first_final_continuation_problem``
+    (whose return literals are themselves distinct). Nothing else may name an
+    exit, so a new call site must bring a new code.
+    """
+    tree = ast.parse(_RUNTIME.read_text(encoding="utf-8"))
+    loop = _runtime_function(tree, "run_agent_loop")
+    literals: list[str] = []
+    shape_sites = 0
+    for node in ast.walk(loop):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "continuation_error"
+        ):
+            continue
+        assert len(node.args) == 1 and not node.keywords, ast.unparse(node)
+        (argument,) = node.args
+        if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+            literals.append(argument.value)
+        else:
+            assert isinstance(argument, ast.Name), ast.unparse(node)
+            assert argument.id == "shape_problem", ast.unparse(node)
+            shape_sites += 1
+    helper = _runtime_function(tree, "_first_final_continuation_problem")
+    shape_codes = [
+        node.value.value
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Return)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    ]
+
+    assert shape_sites == 1
+    assert len(literals) == 20, sorted(literals)
+    assert len(shape_codes) == 6, shape_codes
+    duplicates = sorted(
+        code for code in set(literals) if literals.count(code) > 1
+    ) + sorted(code for code in set(shape_codes) if shape_codes.count(code) > 1)
+    assert duplicates == []
+    assert set(literals).isdisjoint(shape_codes)
+    assert all(
+        code.replace("_", "").isalnum() and code.islower()
+        for code in (*literals, *shape_codes)
+    )
+
+
+def _pending_round(call_id: str = "a") -> ContinuationRound:
+    return ContinuationRound(
+        "",
+        ("tool reasoning",),
+        (ContinuationCall(call_id, "calculator", '{"expression":"2+2"}', "pending"),),
+    )
+
+
+def _completed_call_round(content: str = "answer") -> ContinuationRound:
+    return ContinuationRound(
+        content,
+        ("private",),
+        (
+            ContinuationCall(
+                "a",
+                "calculator",
+                '{"expression":"2+2"}',
+                "completed",
+                ContinuationResult("4"),
+            ),
+        ),
+    )
+
+
+def _deepseek_complete_checkpoint() -> ProviderContinuationCheckpoint:
+    return ProviderContinuationCheckpoint(
+        schema_version=1,
+        checkpoint_revision=1,
+        provider="deepseek",
+        protocol="responses",
+        model="deepseek-v4-flash",
+        api_base_url="https://api.deepseek.com/v1",
+        state="complete",
+        rounds=(_completed_call_round(),),
+    )
+
+
+# Each candidate below is a checkpoint the serializer accepts (a call-free
+# round must be a moonshot reasoning round, so most shapes carry a completed
+# call), so the run reaches the first-final shape checks themselves.
+@pytest.mark.parametrize(
+    ("checkpoint", "expected"),
+    [
+        pytest.param(
+            _kimi_checkpoint(revision=1, state="active", rounds=(_pending_round(),)),
+            "final_state_not_complete",
+            id="state-not-complete",
+        ),
+        pytest.param(
+            _deepseek_complete_checkpoint(),
+            "final_first_provider_unsupported",
+            id="provider-unsupported",
+        ),
+        pytest.param(
+            _kimi_checkpoint(
+                revision=1,
+                state="complete",
+                rounds=(_completed_call_round(),),
+                model="kimi-latest",
+            ),
+            "final_first_model_unsupported",
+            id="model-unsupported",
+        ),
+        pytest.param(
+            _kimi_checkpoint(
+                revision=1,
+                state="complete",
+                rounds=(_completed_call_round(""), _final_round()),
+            ),
+            "final_first_round_count_invalid",
+            id="round-count",
+        ),
+        pytest.param(
+            _kimi_checkpoint(
+                revision=1,
+                state="complete",
+                rounds=(_completed_call_round(),),
+                model="kimi-k2.6",
+            ),
+            "final_first_round_has_calls",
+            id="round-has-calls",
+        ),
+    ],
+)
+def test_remaining_tool_free_final_exits_record_their_reason(
+    checkpoint, expected, warnings_log
+) -> None:
+    events: list[object] = []
+
+    outcome = _run(
+        [ModelTurn(text="answer", provider_continuation=checkpoint)],
+        persist=events.append,
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert events == []
+    assert _error_states(outcome) == {"continuation_error": expected}
+    assert any(f"reason={expected}" in line for line in warnings_log), warnings_log
+
+
+def _tool_turn(checkpoint: ProviderContinuationCheckpoint) -> ModelTurn:
+    call = ToolCall("calculator", {"expression": "2+2"}, "a", '{"expression":"2+2"}')
+    return _native_turn((call,), checkpoint)
+
+
+@pytest.mark.parametrize(
+    ("turns", "context", "expected"),
+    [
+        pytest.param(
+            [
+                _tool_turn(
+                    _kimi_checkpoint(
+                        revision=1, state="active", rounds=(_pending_round(),)
+                    )
+                )
+            ],
+            ContinuationEventContext(
+                owner_message_id=None,
+                run_id="run-1",
+                agent_kind="primary",
+                durability="persistent",
+            ),
+            "batch_context_invalid",
+            id="batch-context-invalid",
+        ),
+        pytest.param(
+            [
+                _tool_turn(
+                    _kimi_checkpoint(
+                        revision=1, state="active", rounds=(_pending_round("b"),)
+                    )
+                )
+            ],
+            None,
+            "batch_calls_mismatch",
+            id="batch-calls-mismatch",
+        ),
+        pytest.param(
+            [
+                _tool_turn(
+                    _kimi_checkpoint(
+                        revision=2, state="active", rounds=(_pending_round(),)
+                    )
+                )
+            ],
+            None,
+            "batch_revision_invalid",
+            id="batch-revision-invalid",
+        ),
+        pytest.param(
+            [
+                _tool_turn(
+                    _kimi_checkpoint(
+                        revision=1, state="active", rounds=(_pending_round(),)
+                    )
+                ),
+                ModelTurn(
+                    tool_calls=(
+                        ToolCall(
+                            "calculator",
+                            {"expression": "3+3"},
+                            "b",
+                            '{"expression":"3+3"}',
+                        ),
+                    ),
+                    assistant_message={"role": "assistant", "content": ""},
+                ),
+            ],
+            None,
+            "batch_checkpoint_missing",
+            id="batch-checkpoint-missing",
+        ),
+    ],
+)
+def test_batch_exits_record_their_reason(turns, context, expected) -> None:
+    outcome = _run(
+        turns,
+        persist=lambda event: None,
+        context=context,
+        invoke=lambda call: ToolResult(ok=True, content="4"),
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert _error_states(outcome) == {"continuation_error": expected}
+
+
+def test_store_failure_cause_class_is_logged(warnings_log) -> None:
+    """The store's chained cause is named by class, never by its text."""
+
+    def persist(event) -> None:
+        if isinstance(event, ToolBatchReady):
+            try:
+                raise ValueError("PRIVATE-CANARY cause")
+            except ValueError as cause:
+                raise RuntimeError("Continuation revision conflict.") from cause
+
+    outcome = _run(
+        [_pending_tool_turn()],
+        persist=persist,
+        invoke=lambda call: pytest.fail("no tool may run after a failed barrier"),
+    )
+
+    assert outcome.status == RUN_ERROR
+    joined = "\n".join(warnings_log)
+    assert "cause_type=ValueError" in joined
+    assert "PRIVATE-CANARY" not in joined
