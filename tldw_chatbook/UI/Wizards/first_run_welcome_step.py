@@ -83,19 +83,23 @@ class WelcomeFooter(Vertical):
         self._app_instance = app_instance
 
     def compose(self) -> ComposeResult:
-        app_config = _live_app_config(self._app_instance)
-        if app_config is not None:
-            appearance = app_config.get("appearance")
-            current = bool(
-                isinstance(appearance, Mapping) and appearance.get("reduce_motion")
-            )
-            yield SetupCheckbox(
-                "Reduce motion — fewer animations, starting now",
-                current,
-                id="setup-welcome-reduce-motion",
-                compact=True,
-            )
+        # One row, so the step body keeps its height at 80x24 (live: two rows
+        # pushed the track choice below the fold there).
         with Horizontal(classes="setup-welcome-restore-row"):
+            app_config = _live_app_config(self._app_instance)
+            if app_config is not None:
+                appearance = app_config.get("appearance")
+                current = bool(
+                    isinstance(appearance, Mapping) and appearance.get("reduce_motion")
+                )
+                box = SetupCheckbox(
+                    "Reduce motion",
+                    current,
+                    id="setup-welcome-reduce-motion",
+                    compact=True,
+                )
+                box.tooltip = "Fewer animations, starting now."
+                yield box
             yield Static(
                 "Moving from another computer?",
                 classes="setup-welcome-restore-label",
