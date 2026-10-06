@@ -1064,8 +1064,9 @@ configured in **F4 ▸ Providers & Models**.
 - Every model Moonshot lists today (`kimi-k2.6`, `kimi-k2.7-code`,
   `kimi-k2.7-code-highspeed`, `kimi-k3`) returns reasoning even on a plain
   reply. In a saved chat, Console saves that reasoning privately with the reply
-  so the next turn can replay it, exactly as a Temporary chat keeps it for the
-  session. If that optional copy cannot be saved, the reply is still shown and
+  so the next turn can replay it. A Temporary chat keeps no copy, so its later
+  turns are sent without the earlier reasoning; these models answer either
+  way. If that optional copy cannot be saved, the reply is still shown and
   saved as an ordinary assistant message, Send stays available, and the run's
   trace records **Reasoning not preserved for replay**; the reply is never
   held behind a response-recovery card.
@@ -1073,8 +1074,9 @@ configured in **F4 ▸ Providers & Models**.
   sends in a saved Kimi chat stop before the provider with **Trace capture
   blocked** (the provider was not contacted). Choose **Send without capture**
   for that turn; it reaches the provider and the reply is saved normally.
-  **Retry capture** meets the same refusal and leaves a response-recovery card
-  whose only working action is **Discard**, so avoid it on this card.
+  **Retry capture** meets the same refusal: the card stays, says the retry was
+  refused again and the provider was not contacted, and **Send without
+  capture** still works.
 - Private continuation data is assistant/variant-owned, bounded, and omitted
   from the visible transcript, logs, summaries, ordinary exports, and usage
   details. It still counts against the context window and is evicted atomically
