@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-06 18:54'
+updated_date: '2026-10-06 19:23'
 labels:
   - agents
   - console
@@ -27,7 +27,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -1108,4 +1108,6 @@ ADR required: no. Existing ADR094/139 view/runtime boundaries and the existing b
 Affected-source final guards PASS: all12 generated CSS sheets reproduce unchanged from the current source; Textual contract has no synchronous workers,324 post-await lookups/151functions and70 wait-for-dismiss pushes/27entries, noneNEW. All5034 task IDs/paths/readability and whitespace pass. Budget/workflow/CSS/authority sources remain exact; no production logging call or await sequence changes. Current local source is ready for focused immutable review only; fresh CI/current review/task acceptance/merge remain pending.
 
 Shared tab-strip immutable source 2b0de111843bb774e77d8acda57aa223d6804f7a, tree 9d491dc173289df3a7b9b204e540ca6116f71d52, is independently Ready with no actionable findings and all qualification activity settled. Review /private/tmp/pr2918-oct06-tabs-independent-review.json SHA256 14d19a7425bd369dfee3b72f9da122e42c3458704aca344b14e439037a5cfdb0 approves one necessary source publication. The five real interruption boundaries, both previously failing hosted journeys and 17 live controls retain separate local receipts; the initial five setup errors, true five-case RED and corrected NON-GREEN selection remain recorded. The actual hosted barrier-timeout cause and resource qualification remain unqualified. Source full31089/all31081 outside eight bytes/modes and published ancestry are authenticated; Ready receipt preserves all31084 outside five. Parent AC3 and TASK33664.2/.3 stay In Progress pending fresh hosted qualification; parent AC4 and Done33664.1 remain exact. Fresh all four gates/all three UI shards, current Qodo or explicit pending human exception, live protection and qualified concurrency remain required before merge. No source/test edits, completed selection or budget replay, retry, arm, merge or heartbeat operation.
+
+Console lifecycle source publication 50b8cb72d165009030cbf186e5405af3ac67477f passed fresh PR Fast Lane, all three UI shards, latency and Derived artifacts. Immutable source 2b0de111843bb774e77d8acda57aa223d6804f7a independent Ready 14d19a7425bd369dfee3b72f9da122e42c3458704aca344b14e439037a5cfdb0, prepared-close independent review and separate local real-detach/delayed-write/mounted/live-control receipts remain authenticated. Only shared view-liveness guards changed production since ec; prepared-close tests and captured-owner fixture remain exact. Current source hosted qualification /private/tmp/pr2918-oct06-tabs-hosted-qualification.json retains raw logs/hashes and separate counts; selections NEVER SUM. Reader /private/tmp/pr2918-oct06-tabs-source-qualified-20261006-1921 authenticates full pagination/resolved conversations/older nested feedback unchanged/live strict-admin-conversation protection and actual dev 76d5d157aa6a628584ead573976c9adee72f5412. Parent AC3 and TASK33664.2/.3 are closed through CLI only after this source qualification; parent AC4 and Done33664.1 remain exact. Only six owned Markdown records change, preserving full31089/all31083 outside six bytes/modes and all historical prefixes/notes/plans. Fresh documentation-head checks/current Qodo or the unanswered explicit human exception remain merge prerequisites. Original FIVE stays historical only; all initial failed/setup/oracle/config-admission receipts and inherited warnings/FD/resource/timeout-cause/optional/platform/physical/wider limits remain retained. No source/test edits after review, completed selection/budget replay, retry, arm, merge or heartbeat action.
 <!-- SECTION:NOTES:END -->
