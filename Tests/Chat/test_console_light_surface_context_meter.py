@@ -197,3 +197,40 @@ def _openai_native():
     from Tests.Chat.test_console_agent_bridge import _native_resolution
 
     return _native_resolution()
+
+
+def test_the_settings_meter_shows_the_tool_share_of_the_last_request():
+    """The Context view's "Request overhead" row read "unknown" even after a
+    send. It now shows the last prepared request's non-conversation tokens
+    and names the tool schemas' share."""
+    from tldw_chatbook.Chat.console_prepared_request import (
+        ConsoleRequestTokenAccounting,
+    )
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        ConsoleSettingsContextEstimate,
+    )
+    from tldw_chatbook.Widgets.Console.console_context_controls import (
+        build_console_context_control_state,
+    )
+
+    accounting = ConsoleRequestTokenAccounting(
+        total_input_tokens=640,
+        system_tokens=10,
+        memory_tokens=0,
+        mandatory_tokens=0,
+        compactable_tokens=0,
+        active_request_tokens=135,
+        tool_schema_tokens=495,
+    )
+    estimate = ConsoleSettingsContextEstimate(
+        used_tokens=145, token_limit=1_047_576, label="", token_limit_verified=True
+    )
+    state = build_console_context_control_state(
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-4.1-nano"),
+        estimate=estimate,
+        accounting=accounting,
+    )
+
+    assert state.request_overhead_tokens == 505
+    assert state.overhead_label() == "505 tokens (tool schemas 495)"
