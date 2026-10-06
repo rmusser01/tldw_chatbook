@@ -376,9 +376,9 @@ async def test_provider_help_names_a_provider_once_its_save_configures_it(
 # --- TASK-33007.9: the control after a choice or Revert; the list's box ---
 
 
-def _anthropic_host():
+def _anthropic_host(provider: str = "anthropic"):
     app = _build_test_app()
-    app.app_config["chat_defaults"] = {"provider": "anthropic", "model": "claude-x"}
+    app.app_config["chat_defaults"] = {"provider": provider, "model": "claude-x"}
     app.app_config["api_settings"] = {"anthropic": {"api_key": _FAKE_KEY}}
     return _SettingsCssHarness(app, "settings")
 
@@ -543,11 +543,12 @@ async def test_a_provider_name_typed_exactly_is_the_one_chosen(request):
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_typing_a_legacy_alias_id_chooses_the_canonical_provider(request):
-    """TASK-33007.9 (review round 5): "Mistral" is the legacy alias row's id,
-    yet Enter chooses Mistral AI, not "Mistral AI (legacy alias)" listed
-    last."""
-    host = _anthropic_host()
+@pytest.mark.parametrize("held", ["anthropic", "mistral"])
+async def test_typing_a_legacy_alias_id_chooses_the_canonical_provider(request, held):
+    """TASK-33007.9 (review rounds 5 and 6): "Mistral" is the legacy alias
+    row's id, yet Enter chooses Mistral AI, not "Mistral AI (legacy alias)"
+    listed last -- also when the alias is the held provider."""
+    host = _anthropic_host(held)
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
@@ -555,7 +556,7 @@ async def test_typing_a_legacy_alias_id_chooses_the_canonical_provider(request):
 
         await _type_filter(pilot, screen, "Mistral")
         await pilot.press("enter")
-        await _until(pilot, lambda: _held(screen) != "anthropic" and not picker.display)
+        await _until(pilot, lambda: _held(screen) != held and not picker.display)
         assert _held(screen) == "mistralai"
 
 

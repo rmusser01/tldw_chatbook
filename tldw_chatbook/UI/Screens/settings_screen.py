@@ -195,6 +195,7 @@ from ...Chat.provider_catalog import (
     PROVIDER_GROUP_CUSTOM,
     PROVIDER_GROUP_LOCAL,
     PROVIDER_GROUP_ORDER,
+    PROVIDER_LEGACY_ALIAS_KEYS,
     provider_display_name,
 )
 from ...config import (
@@ -14650,8 +14651,9 @@ class SettingsScreen(BaseAppScreen):
 
         TASK-33007.9: a display name or id typed exactly wins, so "OpenAI"
         then Enter chooses OpenAI, not "Azure OpenAI" listed above it. A
-        legacy alias row matches by display name only: "mistral" is its id,
-        but typing it means Mistral AI, not the alias listed last.
+        legacy alias row is highlighted first only by its display name:
+        "mistral" is its id, but typing it means Mistral AI, not the alias
+        listed last, even while the alias is the held provider.
 
         Args:
             picker: The provider list, already filled.
@@ -14661,7 +14663,6 @@ class SettingsScreen(BaseAppScreen):
             str(self._provider_display_setting_values().get("provider") or "")
         )
         wanted = query.strip().casefold()
-        legacy_aliases = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
         first_selectable: int | None = None
         current_index: int | None = None
         exact_index: int | None = None
@@ -14674,16 +14675,16 @@ class SettingsScreen(BaseAppScreen):
             option_provider = getattr(option, "provider_id", None)
             if option_provider is None:
                 continue
+            is_alias_id = option_provider in PROVIDER_LEGACY_ALIAS_KEYS and (
+                wanted == option_provider.casefold()
+            )
             if wanted and (
                 wanted == str(option.prompt).casefold()
-                or (
-                    option_provider not in legacy_aliases
-                    and wanted == option_provider.casefold()
-                )
+                or (not is_alias_id and wanted == option_provider.casefold())
             ):
                 exact_index = index
                 break
-            if current_index is None and (
+            if current_index is None and not is_alias_id and (
                 provider_config_key(option_provider) == current_key
             ):
                 current_index = index

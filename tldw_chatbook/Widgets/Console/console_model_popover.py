@@ -67,7 +67,7 @@ from tldw_chatbook.Chat.console_settings_apply import (
     remember_model_draft,
 )
 from tldw_chatbook.Chat.provider_catalog import (
-    PROVIDER_CUSTOM_GROUP_KEYS,
+    PROVIDER_LEGACY_ALIAS_KEYS,
     provider_display_name,
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import URL_BASED_PROVIDER_KEYS
@@ -112,9 +112,6 @@ _RECENT_ROWS = 6
 _SETUP_ROWS = 8
 _MATCH_ROWS = 30
 HIGHLIGHT_GLYPH = "▶"
-#: Legacy aliases are hidden unless configured or current (ADR-066); the
-#: built-in custom and custom_2 slots always stay listable (ADR-146).
-_LEGACY_ALIAS_KEYS = PROVIDER_CUSTOM_GROUP_KEYS - {"custom", "custom_2"}
 #: Column widths of one pair row (mockup (a)). The model column grows to the
 #: longest id shown, so ids render whole (spec: never truncated); a row too
 #: long for the list ends in an ellipsis (the list is ``nowrap``), so the
@@ -829,7 +826,7 @@ class ConsoleModelPopover(
             dict.fromkeys(
                 key
                 for key in (*self._provider_order, *sorted(used))
-                if key and (key not in _LEGACY_ALIAS_KEYS or key in used)
+                if key and (key not in PROVIDER_LEGACY_ALIAS_KEYS or key in used)
             )
         )
 
@@ -1039,7 +1036,7 @@ class ConsoleModelPopover(
     ) -> SwitcherRow:
         if self._is_current(provider, model):
             note = CURRENT_MARK
-        if provider_key(provider) in _LEGACY_ALIAS_KEYS:
+        if provider_key(provider) in PROVIDER_LEGACY_ALIAS_KEYS:
             note = f"legacy alias · {note}" if note else "legacy alias"
         return SwitcherRow(kind, provider=provider, model=model, note=note, score=score)
 
