@@ -34,6 +34,10 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import MODEL_PROFILE_INPUT_PLACEHOLDERS
+from tldw_chatbook.UI.Settings_Modules.settings_field_rows import (
+    inherited_values,
+    row_copy,
+)
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CORE_FIELDS,
     SAMPLING_FIELDS,
@@ -463,11 +467,17 @@ async def test_a_hand_edited_choice_with_no_option_reads_saved_like_the_fallback
     "High" is no option, so the Select stays blank (it showed "high", which a
     new chat never gets) and the row says "model default" and names the
     value, as "extreme" does (it read "provider"). Choosing an option is an
-    edit; Revert brings back the blank row with nothing staged."""
+    edit; Revert brings back the blank row with nothing staged. Round 5 (4):
+    a ``reasoning_summary = 1`` a new chat ignores is not called a saved
+    choice; the row says what it inherits."""
     app = _app("openai", "gpt-4.1")
     app.app_config["api_settings"]["openai"] = {
         "model_defaults": {
-            "gpt-4.1": {"reasoning_effort": "High", "verbosity": "extreme"}
+            "gpt-4.1": {
+                "reasoning_effort": "High",
+                "verbosity": "extreme",
+                "reasoning_summary": 1,
+            }
         }
     }
     host = _SettingsCssHarness(app, "settings")
@@ -478,6 +488,7 @@ async def test_a_hand_edited_choice_with_no_option_reads_saved_like_the_fallback
             app.app_config, "openai", "gpt-4.1"
         )
         assert (resolved.reasoning_effort, resolved.verbosity) == ("High", "extreme")
+        assert resolved.reasoning_summary is None
         effort = screen.query_one(f"#{_cid('reasoning_effort')}", Select)
         assert effort.value is Select.NULL
         assert screen.query_one(f"#{_cid('verbosity')}", Select).value is Select.NULL
@@ -603,3 +614,155 @@ async def test_a_shown_negative_integer_can_be_backspaced_away(request):
         await pilot.pause()
         assert seed.value == ""
         assert _row(screen, "seed") == ("edited *", "blank = provider default")
+
+
+def _private_qwen_profile(qwen: dict) -> tuple[Path, dict, object]:
+    """Save llama_cpp/qwen model defaults to the private profile's config.
+
+    Returns the config path, the file as written, and an app reading it.
+    """
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    on_disk = toml.loads(config_path.read_text())
+    on_disk.setdefault("chat_defaults", {}).update(
+        {"provider": "llama_cpp", "model": "qwen"}
+    )
+    llama = on_disk.setdefault("api_settings", {}).setdefault("llama_cpp", {})
+    llama["api_url"] = "http://127.0.0.1:9099"
+    llama["model_defaults"] = {"qwen": qwen}
+    config_path.write_text(toml.dumps(on_disk))
+    before = toml.loads(config_path.read_text())
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = dict(before["chat_defaults"])
+    app.app_config["api_settings"] = {
+        "llama_cpp": dict(before["api_settings"]["llama_cpp"])
+    }
+    return config_path, before, app
+
+
+async def _save_providers_models(host, pilot, screen) -> None:
+    """Press s with no field focused and wait for the save to land."""
+    screen.set_focus(None)
+    await pilot.pause()
+    await pilot.press("s")
+    await _wait_until(
+        pilot,
+        lambda: (
+            not screen._category_has_unsaved_changes(
+                SettingsCategoryId.PROVIDERS_MODELS
+            )
+        ),
+        "the save",
+    )
+    await host.workers.wait_for_complete()
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(("streaming", "shown"), [("0", "false"), ("1", "true")])
+async def test_saving_another_field_keeps_every_untouched_hand_edit_exactly(
+    request, streaming, shown
+):
+    """Task 7 review round 5 (1, 3, 4), with the real writer on a private
+    profile. Model defaults reads each value as a new chat does: "0"/"1"
+    streaming shows Off/On as a model default (it read Inherit and an
+    unrelated save dropped it), and a ``top_k = 2.5`` or ``min_p = "abc"``
+    a new chat ignores shows blank with what it inherits (it read "model
+    default"). A refused ``seed = -1`` no longer blocks the save: editing
+    Temperature saves 0.8 and leaves every untouched row exactly as saved."""
+    qwen = {
+        "temperature": 0.5,
+        "seed": -1,
+        "top_k": 2.5,
+        "min_p": "abc",
+        "streaming": streaming,
+    }
+    config_path, before, app = _private_qwen_profile(qwen)
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        resolved = build_default_console_session_settings(
+            app.app_config, "llama_cpp", "qwen"
+        )
+        inherited = inherited_values(app.app_config, "llama_cpp", "qwen")
+        # A new chat skips the profile's top_k and min_p for the next layer.
+        assert (resolved.seed, resolved.top_k, resolved.min_p) == (
+            -1,
+            inherited["top_k"][0],
+            inherited["min_p"][0],
+        )
+        assert resolved.streaming is (streaming == "1")
+        assert screen.query_one(f"#{_cid('streaming')}", Select).value == shown
+        assert _row(screen, "streaming") == (
+            "model default",
+            MODEL_CONFIG_FIELDS["streaming"].help,
+        )
+        assert screen.query_one(f"#{_cid('seed')}", Input).value == "-1"
+        assert _row(screen, "seed")[0] == "model default"
+        for name in ("top_k", "min_p"):
+            assert screen.query_one(f"#{_cid(name)}", Input).value == "", name
+            assert _row(screen, name) == row_copy(name, "", False, inherited[name])
+            assert _row(screen, name)[0] != "model default", name
+        assert not _dirty(screen)
+
+        temperature = screen.query_one(f"#{_cid('temperature')}", Input)
+        temperature.focus()
+        await pilot.press("end", *["backspace"] * 8, *"0.8", "escape")
+        await _save_providers_models(host, pilot, screen)
+
+    after = toml.loads(config_path.read_text())
+    expected = toml.loads(toml.dumps(before))
+    expected["api_settings"]["llama_cpp"]["model_defaults"]["qwen"] = {
+        **qwen,
+        "temperature": 0.8,
+    }
+    assert after == expected
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_inherit_after_an_option_clears_a_choice_the_select_cannot_show(
+    request,
+):
+    """Task 7 review round 5 (2), with the real writer on a private profile:
+    a blank Select over a saved "High" is no edit at rest, but a blank chosen
+    after an option is Inherit. It reads "edited *" with what it inherits,
+    and Save deletes the override."""
+    config_path, before, app = _private_qwen_profile(
+        {"temperature": 0.5, "reasoning_effort": "High"}
+    )
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        effort = screen.query_one(f"#{_cid('reasoning_effort')}", Select)
+        assert effort.value is Select.NULL
+        assert _row(screen, "reasoning_effort")[1] == "saved 'High' is not a choice"
+        assert not _dirty(screen)
+
+        effort.value = "high"
+        await _wait_until(pilot, lambda: bool(_dirty(screen)), "the staged choice")
+        effort.value = Select.NULL
+        await _wait_until(
+            pilot,
+            lambda: (
+                _row(screen, "reasoning_effort")[0] == "edited *"
+                and effort.value is Select.NULL
+            ),
+            "the staged Inherit",
+        )
+        await pilot.pause()
+        assert _dirty(screen) == {"model_profile_reasoning_effort"}
+        assert _row(screen, "reasoning_effort") == (
+            "edited *",
+            "blank = provider default",
+        )
+        await _save_providers_models(host, pilot, screen)
+
+    after = toml.loads(config_path.read_text())
+    expected = toml.loads(toml.dumps(before))
+    expected["api_settings"]["llama_cpp"]["model_defaults"]["qwen"] = {
+        "temperature": 0.5
+    }
+    assert after == expected

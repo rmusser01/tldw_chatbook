@@ -146,6 +146,7 @@ from ...Chat.console_session_settings import (
     build_target_default_console_session_settings,
     chat_defaults_held_fields,
     chat_defaults_value,
+    model_default_value,
     normalize_console_model_value,
     readiness_words,
     settings_provider_catalog,
@@ -10324,9 +10325,16 @@ class SettingsScreen(BaseAppScreen):
         category = SettingsCategoryId.CONSOLE_BEHAVIOR
         loaded = self._console_behavior_loaded_values().get(key)
         choices = CLOSED_ENUM_SELECT_OPTIONS.get(key)
-        if choices is not None and value == "" and loaded not in choices:
+        staged = self._settings_drafts.get(category)
+        if (
+            choices is not None
+            and value == ""
+            and loaded not in choices
+            and key not in (staged.dirty_keys if staged is not None else ())
+        ):
             # A blank Select over a saved choice it has no option for (a
-            # hand-edited "High") is how that value shows, so is no edit.
+            # hand-edited "High") is how that value shows (mount, Revert), so
+            # is no edit; a blank chosen after an option is "default".
             value = loaded
         elif (
             isinstance(value, str)
@@ -12679,7 +12687,6 @@ class SettingsScreen(BaseAppScreen):
         self, provider: str, model: str
     ) -> dict[str, object]:
         """Read dependent fields from the provider/model that owns the form."""
-        profile = self._provider_model_profile(provider, model)
         return {
             "provider": provider,
             "model": model,
@@ -12690,23 +12697,30 @@ class SettingsScreen(BaseAppScreen):
             "auth_source": self._provider_saved_auth_source(provider),
             "model_context_window": self._provider_model_context_window(provider, model)
             or "",
-            "model_profile_temperature": profile.get("temperature", ""),
-            "model_profile_top_p": profile.get("top_p", ""),
-            "model_profile_min_p": profile.get("min_p", ""),
-            "model_profile_top_k": profile.get("top_k", ""),
-            "model_profile_max_tokens": profile.get("max_tokens", ""),
-            "model_profile_seed": profile.get("seed", ""),
-            "model_profile_presence_penalty": profile.get("presence_penalty", ""),
-            "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
-            "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
-            "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
-            "model_profile_verbosity": profile.get("verbosity", ""),
-            "model_profile_thinking_effort": profile.get("thinking_effort", ""),
-            "model_profile_thinking_budget_tokens": profile.get(
-                "thinking_budget_tokens", ""
-            ),
-            "model_profile_streaming": profile.get("streaming", ""),
+            **self._model_profile_values(provider, model),
         }
+
+    def _model_profile_values(self, provider: str, model: str) -> dict[str, object]:
+        """Read the pair's model defaults as a new chat reads them (TASK-33007.7).
+
+        The default chain's own coercion (``model_default_value``), as Console
+        Behavior reads its twin rows, so a row never shows a value a new chat
+        ignores or misses one it takes (``streaming = "0"`` is Off).
+
+        Args:
+            provider: The provider the card holds.
+            model: The default model the card holds.
+
+        Returns:
+            ``{draft key: value}``, ``""`` where the profile holds no usable
+            value.
+        """
+        profile = self._provider_model_profile(provider, model)
+        values: dict[str, object] = {}
+        for key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items():
+            value = model_default_value(profile, name)
+            values[key] = "" if value is None else value
+        return values
 
     def _provider_setting_values(self) -> dict[str, object]:
         resolved = self._resolve_provider_model_for_settings()
@@ -12740,7 +12754,6 @@ class SettingsScreen(BaseAppScreen):
             if self._navigation_model_is_explicit
             else str(values.get("model") or "").strip()
         )
-        profile = self._provider_model_profile(provider, model)
         display_values = dict(values)
         display_values.update(
             {
@@ -12753,22 +12766,7 @@ class SettingsScreen(BaseAppScreen):
                     provider, model
                 )
                 or "",
-                "model_profile_temperature": profile.get("temperature", ""),
-                "model_profile_top_p": profile.get("top_p", ""),
-                "model_profile_min_p": profile.get("min_p", ""),
-                "model_profile_top_k": profile.get("top_k", ""),
-                "model_profile_max_tokens": profile.get("max_tokens", ""),
-                "model_profile_seed": profile.get("seed", ""),
-                "model_profile_presence_penalty": profile.get("presence_penalty", ""),
-                "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
-                "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
-                "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
-                "model_profile_verbosity": profile.get("verbosity", ""),
-                "model_profile_thinking_effort": profile.get("thinking_effort", ""),
-                "model_profile_thinking_budget_tokens": profile.get(
-                    "thinking_budget_tokens", ""
-                ),
-                "model_profile_streaming": profile.get("streaming", ""),
+                **self._model_profile_values(provider, model),
             }
         )
         return display_values
@@ -13300,14 +13298,15 @@ class SettingsScreen(BaseAppScreen):
             draft_key: The field's draft key, e.g. ``"model_profile_verbosity"``.
 
         Returns:
-            The saved value, or ``None`` when the field is no closed choice,
-            nothing is saved, or an option shows it.
+            The saved value as a new chat reads it, or ``None`` when the
+            field is no closed choice, nothing usable is saved (a ``1`` a new
+            chat ignores), or an option shows it.
         """
         name = PROVIDER_MODEL_PROFILE_FIELD_KEYS.get(draft_key)
         if name not in CLOSED_ENUM_SELECT_OPTIONS:
             return None
-        saved = self._provider_model_profile(provider, model).get(name)
-        if not str(saved or "").strip():
+        saved = model_default_value(self._provider_model_profile(provider, model), name)
+        if saved is None:
             return None
         options = self._model_profile_enum_options(provider, model, draft_key, saved)
         allowed = tuple(value for _label, value in options)
@@ -13357,6 +13356,41 @@ class SettingsScreen(BaseAppScreen):
             return "settings-input-row"
         return "settings-input-row settings-gated-profile-hidden"
 
+    def _model_profile_input_for_save(
+        self,
+        profile: Mapping[str, object],
+        name: str,
+        normalizer: Callable[[object], object],
+    ) -> object:
+        """Read one Model defaults Input for Save, keeping a refused saved value.
+
+        Text repeating a saved value its normaliser refuses (a hand-edited
+        ``seed = -1``, shown as a new chat reads it) is no edit, as its
+        staging already says, so Save keeps that value instead of refusing
+        the whole category over a row the user never touched (TASK-33007.7).
+
+        Args:
+            profile: The saved profile of the pair being saved.
+            name: The field-table name, e.g. ``"seed"``.
+            normalizer: The field's ``_normalise_model_profile_*`` method.
+
+        Returns:
+            The normalised value, or the saved value the text repeats.
+
+        Raises:
+            ValueError: The normaliser refuses text that is a real edit.
+        """
+        text = self.query_one(
+            "#settings-model-profile-" + name.replace("_", "-"), Input
+        ).value
+        try:
+            return normalizer(text)
+        except ValueError:
+            saved = model_default_value(profile, name)
+            if saved is None or text != self._profile_input_value(saved):
+                raise
+            return profile[name]
+
     def _provider_form_values_from_widgets(self) -> dict[str, object]:
         loaded_values = self._provider_loaded_setting_values()
         provider_value = self._provider_widget_value()
@@ -13403,31 +13437,32 @@ class SettingsScreen(BaseAppScreen):
         model_context_window = self._normalise_model_context_window(
             self.query_one("#settings-model-context-window", Input).value
         )
-        model_profile_temperature = self._normalise_model_profile_temperature(
-            self.query_one("#settings-model-profile-temperature", Input).value
+        profile = self._provider_model_profile(provider, model)
+        model_profile_temperature = self._model_profile_input_for_save(
+            profile, "temperature", self._normalise_model_profile_temperature
         )
-        model_profile_top_p = self._normalise_model_profile_top_p(
-            self.query_one("#settings-model-profile-top-p", Input).value
+        model_profile_top_p = self._model_profile_input_for_save(
+            profile, "top_p", self._normalise_model_profile_top_p
         )
-        model_profile_min_p = self._normalise_model_profile_min_p(
-            self.query_one("#settings-model-profile-min-p", Input).value
+        model_profile_min_p = self._model_profile_input_for_save(
+            profile, "min_p", self._normalise_model_profile_min_p
         )
-        model_profile_top_k = self._normalise_model_profile_top_k(
-            self.query_one("#settings-model-profile-top-k", Input).value
+        model_profile_top_k = self._model_profile_input_for_save(
+            profile, "top_k", self._normalise_model_profile_top_k
         )
-        model_profile_max_tokens = self._normalise_model_profile_max_tokens(
-            self.query_one("#settings-model-profile-max-tokens", Input).value
+        model_profile_max_tokens = self._model_profile_input_for_save(
+            profile, "max_tokens", self._normalise_model_profile_max_tokens
         )
-        model_profile_seed = self._normalise_model_profile_seed(
-            self.query_one("#settings-model-profile-seed", Input).value
+        model_profile_seed = self._model_profile_input_for_save(
+            profile, "seed", self._normalise_model_profile_seed
         )
-        model_profile_presence_penalty = self._normalise_model_profile_presence_penalty(
-            self.query_one("#settings-model-profile-presence-penalty", Input).value
+        model_profile_presence_penalty = self._model_profile_input_for_save(
+            profile, "presence_penalty", self._normalise_model_profile_presence_penalty
         )
-        model_profile_frequency_penalty = (
-            self._normalise_model_profile_frequency_penalty(
-                self.query_one("#settings-model-profile-frequency-penalty", Input).value
-            )
+        model_profile_frequency_penalty = self._model_profile_input_for_save(
+            profile,
+            "frequency_penalty",
+            self._normalise_model_profile_frequency_penalty,
         )
         model_profile_reasoning_effort = self._normalise_model_profile_reasoning_effort(
             self._select_text_value(
@@ -13453,12 +13488,10 @@ class SettingsScreen(BaseAppScreen):
                 self.query_one("#settings-model-profile-thinking-effort", Select).value
             )
         )
-        model_profile_thinking_budget_tokens = (
-            self._normalise_model_profile_thinking_budget_tokens(
-                self.query_one(
-                    "#settings-model-profile-thinking-budget-tokens", Input
-                ).value
-            )
+        model_profile_thinking_budget_tokens = self._model_profile_input_for_save(
+            profile,
+            "thinking_budget_tokens",
+            self._normalise_model_profile_thinking_budget_tokens,
         )
         model_profile_streaming = self._streaming_select_text(
             self.query_one("#settings-model-profile-streaming", Select).value
@@ -15011,7 +15044,23 @@ class SettingsScreen(BaseAppScreen):
         provider: str,
         model: str,
         values: Mapping[str, object],
+        *,
+        dirty_keys: Collection[str] = frozenset(),
     ) -> dict[str, object]:
+        """Return the provider's ``model_defaults`` with this model's rows saved.
+
+        Args:
+            provider: The provider being saved.
+            model: The model whose profile the rows edit.
+            values: The rows' values, keyed by draft key (``""`` = blank).
+            dirty_keys: Draft keys the user changed. A row the user did not
+                touch keeps its saved value exactly (``streaming = "0"``, a
+                choice with no option, a ``top_k = 2.5`` a new chat ignores);
+                a blank the user chose deletes it.
+
+        Returns:
+            The whole ``model_defaults`` table to write.
+        """
         model_name = str(model or "").strip()
         model_defaults = copy.deepcopy(dict(self._provider_model_defaults(provider)))
         current_profile = model_defaults.get(model_name, {})
@@ -15026,12 +15075,14 @@ class SettingsScreen(BaseAppScreen):
                 # value saved for it earlier stays exactly as it was.
                 continue
             value = values.get(draft_key, "")
-            if value == "" and (
-                self._unshown_model_profile_choice(provider, model_name, draft_key)
-                is not None
+            if (
+                draft_key not in dirty_keys
+                and profile_key in next_profile
+                and value in ("", model_default_value(next_profile, profile_key))
             ):
-                # A blank Select over a saved choice it has no option for (a
-                # hand-edited "High") shows that value; Save keeps it.
+                # A row the user did not touch shows the saved value as a new
+                # chat reads it, or blank when it cannot show it (a hand-edited
+                # "High", a top_k = 2.5 a new chat ignores); Save keeps it.
                 continue
             if value == "":
                 next_profile.pop(profile_key, None)
@@ -15146,25 +15197,7 @@ class SettingsScreen(BaseAppScreen):
         api_key_input.value = value
 
     def _sync_provider_model_profile_widgets(self, provider: str, model: str) -> None:
-        profile = self._provider_model_profile(provider, model)
-        input_values = {
-            "model_profile_temperature": profile.get("temperature", ""),
-            "model_profile_top_p": profile.get("top_p", ""),
-            "model_profile_min_p": profile.get("min_p", ""),
-            "model_profile_top_k": profile.get("top_k", ""),
-            "model_profile_max_tokens": profile.get("max_tokens", ""),
-            "model_profile_seed": profile.get("seed", ""),
-            "model_profile_presence_penalty": profile.get("presence_penalty", ""),
-            "model_profile_frequency_penalty": profile.get("frequency_penalty", ""),
-            "model_profile_reasoning_effort": profile.get("reasoning_effort", ""),
-            "model_profile_reasoning_summary": profile.get("reasoning_summary", ""),
-            "model_profile_verbosity": profile.get("verbosity", ""),
-            "model_profile_thinking_effort": profile.get("thinking_effort", ""),
-            "model_profile_thinking_budget_tokens": profile.get(
-                "thinking_budget_tokens", ""
-            ),
-            "model_profile_streaming": profile.get("streaming", ""),
-        }
+        input_values = self._model_profile_values(provider, model)
         self._syncing_provider_model_profile = True
         try:
             for draft_key, value in input_values.items():
@@ -30146,10 +30179,12 @@ class SettingsScreen(BaseAppScreen):
             model = str(current.get("model") or "")
             if (
                 value == ""
+                and key not in (draft.dirty_keys if draft is not None else ())
                 and self._unshown_model_profile_choice(provider, model, key) is not None
             ):
                 # A blank Select over a saved choice it has no option for (a
-                # hand-edited "High") is how that value shows, so is no edit.
+                # hand-edited "High") is how that value shows (mount, Revert),
+                # so is no edit; a blank chosen after an option is Inherit.
                 value = saved
         self._stage_provider_value(key, value)
         self._update_provider_dynamic_widgets()
@@ -31381,6 +31416,7 @@ class SettingsScreen(BaseAppScreen):
                     provider,
                     model,
                     values,
+                    dirty_keys=dirty_keys,
                 )
             next_model_capabilities = None
             delete_model_capabilities_entry = False

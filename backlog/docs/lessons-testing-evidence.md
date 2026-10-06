@@ -4864,6 +4864,15 @@ only that the word was non-empty, and the live-capture procedure itself wrote
    did this for a hand-edited `seed = -1` and `temperature = 3.0` until the
    round-4 fix treated text repeating the saved value as no edit. Assert
    "nothing staged" at rest in every hand-edited-value test.
+6. Save is the staging rule's twin. Round 4's "repeat of a refused saved
+   value is no edit" lived only in the staging handler; Model defaults' Save
+   re-read and re-normalised every widget, so the untouched `seed = -1` now
+   blocked every save in the category with a toast naming a row inside the
+   closed Sampling disclosure, and a blank row deleted a `streaming = "0"` it
+   could not show (round 5). Console Behavior's Save normalises dirty keys
+   only. Wherever a row can show a value its validator refuses, give Save the
+   same "untouched row keeps its saved value" rule, and pin it with the real
+   writer: a hand-edit plus an unrelated edit saves both as intended.
 
 ## A guard test must be PROVEN to discriminate — twice in one day it wasn't (2026-08-08, tasks 1359/2832)
 

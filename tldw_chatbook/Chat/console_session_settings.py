@@ -1242,6 +1242,24 @@ def chat_defaults_value(app_config: Mapping[str, object], name: str) -> object:
     return _value_from_source(chat_defaults, name)
 
 
+def model_default_value(profile: Mapping[str, object], name: str) -> object:
+    """Read one generation field from a model's defaults profile as a new chat does.
+
+    The ``chat_defaults_value`` twin for Settings ▸ Model defaults: the
+    builder's own coercion, so a hand-edited ``streaming = "0"`` reads Off
+    and a ``top_k = 2.5`` a new chat ignores reads as unset (TASK-33007.7).
+
+    Args:
+        profile: One ``[api_settings.<provider>.model_defaults.<model>]``
+            table.
+        name: A generation field, e.g. ``"temperature"``.
+
+    Returns:
+        The usable value, or ``None`` when the profile holds none.
+    """
+    return _value_from_source(profile, name)
+
+
 def chat_defaults_held_fields(
     app_config: Mapping[str, object], names: Sequence[str]
 ) -> frozenset[str]:
