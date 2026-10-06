@@ -13,6 +13,7 @@ _GROUPS = frozenset(
         "console-resume-navigation-dispatch",
         "console-character-context-refresh",
         "console-annotation-previews",
+        "console-persisted-browser-cache",
     }
 )
 _CANCEL, _WAIT = Worker.cancel, Worker.wait

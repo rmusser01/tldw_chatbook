@@ -842,7 +842,7 @@
     },
     {
       "call_count": 364,
-      "diagnostic_digest": "37183c276a23d38bebcd",
+      "diagnostic_digest": "8f638320c78af0315ced",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2878,8 +2878,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 53,
-      "diagnostic_digest": "fca950465b4b16f89077",
+      "call_count": 54,
+      "diagnostic_digest": "21257581d54461902541",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/workspace.py",
       "reason": "remaining Chatbook production diagnostic owner"
