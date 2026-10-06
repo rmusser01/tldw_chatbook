@@ -4711,3 +4711,18 @@ stale ready response; holding it across Canvas disable reproduced HTTP 500.
 the actual finite capacity and hold in-flight operations across that retirement.
 Free unreachable session/shell/capability state, and revalidate the captured owner
 and runtime after awaits before publishing a replacement resource.
+## See exactly what a llama.cpp request carried: `llama-server --log-prompts-dir`
+
+**TASK-34100.5.3, 2026-10-05.** To prove which tools plain Console chat sends, the
+app log was no help (it records no request bodies), and `llama-server --verbose`
+logged 3,800 lines per request without the prompt. `--log-prompts-dir <dir>` writes
+each request's rendered prompt, system row and tool template included, to one file
+per request. It showed the first send after setup as a 235-byte tool-less prompt,
+and a later send as 3,288 bytes carrying exactly `calculator`,
+`get_current_datetime` and `ask_user` in the model's native `<tools>` block.
+
+**What to do.** Start your own server on a free port with `--log-prompts-dir` inside
+the QA evidence directory (never restart a shared one), clear the directory before
+each send you want to attribute, and stop the server when done. A port in use makes
+`llama-server` exit at once ("exiting due to HTTP server error"), so check
+`lsof -iTCP:<port> -sTCP:LISTEN` first.

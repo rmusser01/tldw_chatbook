@@ -22234,3 +22234,18 @@ boundaries before testing successful post-refusal execution on a supported host.
 The corrected native Windows selection passed 72 cases with 20 explicit POSIX
 skips and no failure or teardown error. Run the actual command controls on Linux;
 Windows refusal evidence cannot qualify them.
+## A `git archive` base extracted into a reused directory can be a different tree (TASK-34100.5.3, 2026-10-05)
+
+**Incident.** For RED proof, `git archive 8c4b36bc50 | tar -x -C <scratchpad>/base`
+went into a directory that already existed: the preceding `rm -rf` had failed with
+"Directory not empty" on read-only pytest garbage, and another agent sharing the
+same session scratchpad had left an older tree there (it also overwrote a helper
+script of mine in the same directory). Runs "on base" then failed nine
+`test_first_request_window_honest_plan.py` tests that pass on the branch, and
+`agent_service.py` in the snapshot lacked code that `git show 8c4b36bc50:` has.
+Every base comparison made from that tree had to be redone.
+
+**What to do.** Extract a base into a fresh, uniquely named directory, and before
+trusting any base run, check the modules your claim depends on:
+`git show <base>:<path> | cmp - <snapshot>/<path>`. Keep scratch helpers in a
+subdirectory with a name no other agent will pick; a shared scratchpad is shared.
