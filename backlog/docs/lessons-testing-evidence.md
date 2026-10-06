@@ -18084,10 +18084,13 @@ rule under test advises differently when the short volume holds the
 destination. Under pytest's default basetemp, `tmp_path` lives inside that very
 folder, so the branch flipped and the test failed (`1 failed, 44 passed` for
 the owner). It passed in the implementer's sandbox, whose TMPDIR was
-redirected, and would pass on Linux CI, so round 1 recorded "all green". Make
-fixture paths synthetic (`/Volumes/Backups/…`, `/private/var/folders/zz/…`)
-whenever the code compares them with each other, and run new tests once with the
-default TMPDIR before calling them green.
+redirected, and would pass on Linux CI, so round 1 recorded "all green". When
+the code compares fixture paths with each other, build them as siblings under
+`tmp_path` (`tmp_path / "staging-volume" / …`, `tmp_path / "backup-volume" / …`)
+so neither holds the other on any machine (round 3's form; round 2's synthetic
+literals such as `/private/var/folders/zz/…` were hermetic too, but read like
+a host path). Run new tests once with the default TMPDIR before calling them
+green.
 
 
 ## TASK-32108.6: close the backing app stores after a Console harness exits
