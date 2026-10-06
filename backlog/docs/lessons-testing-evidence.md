@@ -18767,3 +18767,22 @@ oracle failure remains NON-GREEN. Helper return is not the captured owner's
 retirement boundary; reuse that fixture lifetime rather than racing deletion or
 ignoring cleanup errors. This is test evidence, not a new production/resource or
 physical-platform certificate. Receipts: `/private/tmp/pr2918-oct06-close-profile-local-proof.json`.
+
+
+## TASK-33664.3: recheck view attachment after each awaited tab mutation
+
+PR2918 repair-head UI1 terminated the app with a detached ConsoleSessionTabStrip
+MountError during a pending-decision journey. sync_sessions holds a serialization
+lock, but that lock cannot keep the Textual view attached across child removal or
+mount awaits. A real-removal regression found a lock-resumed NoMatches plus four
+post-detach mount attempts; shared liveness checks stop those attempts while both
+failed hosted journeys and the live tab controls pass locally. The first control
+selection also exposed a separate harness error: ConsoleTranscript's real config
+getter refused raw_source_selection_changed after per-test paths moved the
+collection-admitted participant. The existing bootstrap_profile marker keeps that
+private selection intact; it does not bypass recovery or replace the real getter.
+Retain the initial setup/control failures and the separate hosted headless barrier
+timeout, whose cause is still unqualified. Serialized UI work still needs attachment
+checks after awaits, and real config consumers must retain their admitted profile.
+Receipts: /private/tmp/pr2918-oct06-tabs-local-proof.json; no original budgets or
+completed passing cases were replayed.
