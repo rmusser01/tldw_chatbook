@@ -1,6 +1,8 @@
 # ADR-126: fence recovery and enroll before any runtime/config imports.
 from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
-
+if __name__ == "__main__":  # TASK-34100.16: `--config PATH` selects the fenced profile
+    from tldw_chatbook.Utils.launch_options import adopt_config_flag
+    adopt_config_flag()
 admit_startup()
 if __name__ == "__main__":
     # TASK-34100.4: `python -m tldw_chatbook.app` unlocks through the same
@@ -2280,8 +2282,8 @@ class TldwCli(
         # downstream reads the same module state.
         set_ascii_glyph_mode(get_cli_setting("appearance", "ascii_glyphs", False))
 
-        # Check if splash screen is enabled
-        splash_enabled = get_cli_setting("splash_screen", "enabled", True)
+        no_splash = getattr(self, "_cli_no_splash", False)  # --no-splash (TASK-34100.16)
+        splash_enabled = not no_splash and get_cli_setting("splash_screen", "enabled", True)
         logging.info(f"Splash screen enabled: {splash_enabled}")
         if splash_enabled:
             # Get splash screen configuration
