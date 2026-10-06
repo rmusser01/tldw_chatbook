@@ -300,6 +300,7 @@ class OriginalStorageUnitObserver:
     def close(self):
         # Retirement precedes both inactive state and any acceptance judgment.
         retirement = []
+        global_events = 0
         if self.tool is not None:
             for code in (*self.codes, *self.context_codes):
                 try:
@@ -316,10 +317,20 @@ class OriginalStorageUnitObserver:
                 except BaseException as error:
                     retirement.append("callback:" + type(error).__name__)
             try:
-                assert self.monitor.get_events(self.tool) == 0
-                self.monitor.free_tool_id(self.tool)
+                global_events = self.monitor.get_events(self.tool)
+                assert global_events == 0
             except BaseException as error:
-                retirement.append("tool:" + type(error).__name__)
+                retirement.append("global_events:" + type(error).__name__)
+            finally:
+                try:
+                    self.monitor.set_events(self.tool, 0)
+                except BaseException as error:
+                    retirement.append("global_disable:" + type(error).__name__)
+                finally:
+                    try:
+                        self.monitor.free_tool_id(self.tool)
+                    except BaseException as error:
+                        retirement.append("tool:" + type(error).__name__)
         self.active = False
         self.invalid.extend(retirement)
         try:
@@ -378,7 +389,7 @@ class OriginalStorageUnitObserver:
             self.invalid.append("source:" + type(error).__name__)
         receipt = dict(
             original_source_current=bool(current),
-            global_events=0,
+            global_events=global_events,
             hooks_retired_before_inactive=not retirement,
             install_complete=self.installed,
             started=self.started,

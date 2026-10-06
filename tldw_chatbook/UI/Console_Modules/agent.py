@@ -1744,7 +1744,13 @@ class ConsoleAgentController:
             return ()
         conversation_id = self._current_console_rail_conversation_id() or ""
         if not conversation_id:
-            self._console_historical_read = None
+            state = self._console_historical_read
+            if state is not None and (
+                state["key"][0] is not bridge
+                or state["key"]
+                != self._historical_presentation_key(bridge, conversation_id)
+            ):
+                self._console_historical_read = None
             return ()
         fleet_snapshot = getattr(bridge, "fleet_snapshot", None)
         handles = fleet_snapshot(conversation_id) if fleet_snapshot is not None else []
@@ -1893,7 +1899,8 @@ class ConsoleAgentController:
             if (
                 self._console_historical_read is not state
                 or self._console_agent_bridge is not bridge
-                or self._current_console_rail_conversation_id() != conversation_id
+                or (self._current_console_rail_conversation_id() or "")
+                != conversation_id
                 or state["key"]
                 != self._historical_presentation_key(bridge, conversation_id)
             ):

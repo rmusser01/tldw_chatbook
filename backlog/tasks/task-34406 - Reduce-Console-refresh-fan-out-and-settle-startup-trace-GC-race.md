@@ -2,10 +2,12 @@
 id: TASK-34406
 title: Reduce Console refresh fan-out and settle startup trace GC race
 status: In Progress
-created_date: 2026-10-04 19:53
 assignee:
-- '@codex'
-updated_date: 2026-10-04 22:36
+  - '@codex'
+created_date: '2026-10-04 19:53'
+updated_date: '2026-10-06 00:19'
+labels: []
+dependencies: []
 ---
 
 ## Description
@@ -29,6 +31,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [ ] #11 Original surviving-child journeys retain one exact runtime/controller fixture bridge; captured fixture-owned request-worker database handles physically retire before sandbox deletion. Foreign live ownership refuses visibly and preserves the sandbox, while original actions, approvals, waits and source guards remain intact.
 - [x] #12 Stock file-backed Workspace scope reads retire new worker handles and exact leases on the same worker before returning or raising; cancellation retains them through real callback completion. Borrowed handles and transactions, memory and custom owners preserve their existing lifetimes, and subsequent reads reopen normally.
 - [ ] #13 Application shutdown reaches cooperative thread cleanup when the Windows subprocess registry is absent; existing POSIX process snapshot, timeout and per-process error behavior remain unchanged.
+- [ ] #14 Initial-screen completion is initialized to false before any mounted readiness consumer reads it and becomes true only after the original initial screen is pushed.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,9 +54,13 @@ Native6 proves the three local Resend fixtures press while a changed-settings re
 Local resend fixture refinement before implementation: the first Native barrier over-waits unrelated whole-sync work; current projection refresh retires and issues its checked proof before scheduling that publication. Require only the exact current projection refresh/pending state to settle and the actual original checked control-bar return True. Positively hold unrelated same-screen whole-sync work while current readiness succeeds; preserve the same original two-second shared allowance and every response/action/assertion. ADR required: no; routine fixture synchronization within the existing ADR-126 contract.
 
 Local selected-readiness poll refinement: actual Textual Pilot.pause first waits on every screen descendant regardless of requested sleep, reintroducing unrelated completion and allowing the two-second fixture deadline to overrun. A pure test compiling the pinned real Pilot.pause body reproduces that wait. Poll current checked readiness with bounded asyncio.sleep instead; preserve the selector, two-second deadline, original three provider/action journeys and every response/0.6-second assertion. Verify that meaningful RED/GREEN control and original native journeys. ADR required: no; routine fixture synchronization and driver timing correction.
+
+Current-source CI reproduced AttributeError in the original pending-interrupt journey before startup completed: _initial_screen_pushed was assigned only at the end of the asynchronous initial-screen push. Initialize that existing lifecycle flag alongside _ui_ready in the constructor, preserving the original true transition and boot paths. Verify the original pending-interrupt journey with unchanged readiness waits and focused constructor/startup controls. ADR required: no; routine initialization of an existing lifecycle field changes no UI or runtime boundary.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Startup collection between admitted preparation and boundary reservation reproduced trace_revision_unavailable. Live canonical revision metadata and FK ancestry now survive, while separate graph-only payload roots allow detached owner bindings and bytes to purge even when a second owner retains the same frozen policy. ADR-097 amended; 24 GC tests pass and TASK-33621.47 is Done. Presentation context reads now share an exact owner/revision memo across refresh, credential and spend callers; cold and expired values schedule finite owned worker reads, and explicit controller action authority still reads live. Real AgentRunsDB counts use bounded per-row-set owned reads with identity fences and cancellation retry. Exact completed receipt acknowledgements dedupe under the existing attention operation lock and clear on detach. Shared-policy privacy and removed-session error regressions added. Partial-mount resize reproduced five failures; required child queries now defer without consuming a width band, all five regressions pass, and all five real mounted teardown/navigation tests pass. Existing geometry and token values retained. Native evidence identified UI blocking on worker-held config rebuild/file locks; four deterministic tests reproduced 2.09-2.19s stalls and now pass with less than 100ms projection return, responsive heartbeat, one fresh replay, released partial lock/acquisition and unchanged config state. Presentation-only try-entry preserves continuous checked native body and default explicit-action waiting; ADR-126 amended. Expanded config lifetime/maintenance and frozen refresh verification are running. Final combined native performance measurement remains required before AC1/3 and task completion; no timer suppression or ceiling changes.
 The third native probe remained RED and exposed synchronous provider readiness configuration loads in credential, cost and rail presentation. The shared presentation mapping now reads current configuration in one finite worker under the existing continuously checked config lifetime, with exact config path/generation, app/database, session/workspace and settings revision publication fences. Cold owners defer; expired same owners retain their last rendered mapping while pending. Live default getters, actions and sends retain current authority. Ten readiness and credential expiry/background completion tests pass (56.16s), including five post-await owner swaps, cancellation retirement, actual ChatScreen decorators and a live getter control. After this change, the real config lifetime/lock/action subset passes all 17 selected tests (92.15s). The prior full config lifetime and maintenance bundle passed 34 tests. The obsolete full-log test now awaits the current owned probe and retains its original primary/oldest/newest target assertions; that exact node passes (20.97s). The unchanged badge query-count node passes in isolation. Ruff scoped helper/new tests and diff whitespace checks pass; the next isolated combined native probe must still meet the original budgets before AC1/3 and completion.
@@ -65,16 +72,7 @@ Source-qualified Library cleanup attributed the remaining Workspace worker lease
 Native Windows source-extracted shutdown controls reproduced two absent-registry failures and four unchanged POSIX behavior passes. The one-expression absent-collection normalization now passes all six controls (5.94s driver), with current before/after sources. Actual Windows registry None and cooperative stop are covered; no shutdown budget or target changes. The integrated shutdown and whole pause gates remain pending.
 The receiver-retarget native regression reproduced an ownership/query mismatch: borrowed A retained its transaction while query B opened an unowned live native handle and lease. One captured database local now supplies both the ownership interval and query. All seven native lifetime and retarget controls pass (24.97s driver), with current unchanged source hashes, exact physical retirement and zero network/real-profile guard effects. AC12 is complete; broad pause and fixture cohort gates remain open.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-## Final Summary
-
-<!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
-<!-- SECTION:FINAL_SUMMARY:END -->
-
-## Definition of Done
-<!-- DOD:BEGIN -->
-<!-- DOD:END -->
-
+<!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up
 
@@ -98,7 +96,6 @@ Source audit: `prepared-fleet-fixture-ownership-draft/non-chat-runtime-source-au
 Retained genuine native regression before repair: original-nonchat-runtime-retirement-native-red-1 fails on the actual original non-chat Runtime still active after fixture exit (14.61s), with sources unchanged and test-owned cleanup only afterward.
 
 Non-chat Runtime lifetime implementation evidence: retained original branch RED14.61s; all9 exact-stock native controls GREEN34.56s, source unchanged, original default disposal grace and repeated waiter cancellation custody retained. No new DB adoption/close; original integrated Fleet/complete-prefix acceptance pending.
-
 
 ## Shared storage coordinator performance follow-up
 
@@ -288,13 +285,11 @@ ADR required: no new ADR; existing ADR-126 display versus live action and ADR-22
 
 ADR required: existing ADR-126 amendment before production Character batching; existing fresh metadata observation policy applies to a Windows-only binding leaf. No new service, owner, authority or persistent cache is introduced. Read the retained proposals and run their actual original-source controls first; setup-only errors do not qualify as product RED. Original whole-Send/startup/helper budgets remain mandatory after the leaves, and a leaf saving cannot establish overall acceptance.
 
-
 ## Original notification delivery prerequisite
 
 - [ ] The original live-screen callback journey waits for actual asynchronous notification delivery before inspecting its existing message and privacy assertions. Delivery timeout and all original keep-alive, screen, focus and quit checks remain intact.
 
 ADR required: no; routine test-driver synchronization. The source-qualified unchanged original native callback fails because inspection precedes original Textual delivery (inspection age0.342s, delivery age0.499s; timeout12s, no expiry, all original callback pairs complete/current, monitoring retired). Before changing the test, retain that RED receipt. Add one bounded existing _poll delivery prerequisite, preserve the existing0.3s screen-settlement wait and original final assertions; verify both content and modal callback cases with actual source-current native execution.
-
 
 ## Startup cohort diagnostic inventory follow-up
 
@@ -302,14 +297,12 @@ ADR required: no; routine test-driver synchronization. The source-qualified unch
 
 ADR required: no; existing diagnostic membership inventory. Both exact8c CI launchers refuse before native launch because their fixed expected PREFIX lacks the four added storage modules. Preserve that preflight RED; add only those four exact entries in their actual workflow order. Keep the original parser, snapshot checks, node order, source fences and every deadline unchanged. Five pure parser/actual snapshot-guard controls verify acceptance and omission/order/unknown refusal before implementation. Original actual cohort execution remains required on next pushed source.
 
-
 ## Hook-key Workspace callback ownership follow-up
 
 - [ ] Actual background hook-key consent and policy reads physically retire newly opened Workspace handles on their producing worker; the original chat-store scope, fresh authority reads, custom/memory behavior and borrowed handle ownership remain intact.
 - [ ] Registry/database retarget, body failure and repeated cancellation refuse stale publication and cannot release ownership before physical callback retirement; original retry teardown retains exact-owner native evidence.
 
 ADR required: no new ADR; routine repair applies ADR-126's existing finite supported callback ownership contract. Original retry diagnostic3 positively retains seven exact constructor owners, two real Workspace worker handles/leases and their original source-qualified hook-key consent/get_workspace call chains. The retry body passes but exact factory close refuses with those handles and a distinct availability callback active. First qualify direct native callback lifetime RED controls after real callback retirement. Extend only the captured hook-key Workspace producer scope; where needed, original service readers capture their exact database and retain supported owned-connection cleanup so retarget cannot redirect a callback outside its captured owner. Preserve original fresh queries, actions, policy errors, custom ABI, borrowed transactions and all original budgets. Verify physical retirement and owner drift before rechecking the original retry. Treat the separate cancelled availability callback lifetime as its own hypothesis until positively reproduced.
-
 
 Windows binding implementation refinement before production: ADR-126 now records the exact definition-time Windows tree-reader record and custom scalar fallback. Original immediate-parent missing-leaf policy, trusted owner delegate and drive-root refusal remain; the preceding wrong-policy candidate is withdrawn. Install and verify baseline parent/source/custom Native controls first, then apply only _binding plus the defining metadata record. Verify actual selected body drift and protected-HANDLE uncertain-close custody distinctly from observer-only source refusal; no broader batch or permission reuse.
 
@@ -331,14 +324,12 @@ Original asynchronous test prerequisites (before changes)
 
 ADR required: no new ADR for fixture synchronization; existing ADR-126 applies to finite composite lifetime. Original Character run has16 setup-only raw-source-selection errors, one post-resume DOM failure (oldrevision alone was accepted while new projection was loading),91passing bodies and a separate unassigned factory teardown refusal. Add four precise bootstrap markers and complete-state/DOM prerequisites within originalbounds. Exact47a9 Ubuntu trace receipt reaches its terminal oracle while the third original settlement worker is still owned; original prepared/claimed/store_run complete31-34ms later and teardown drains tozero. Add only a bounded pending-work retirement prerequisite inside the original Send allowance, then freshly re-read original durable state/link assertions. Qualify held-real-settlement, expiry/cancel controls before originalwholeprobe. Cold-composite candidate Native controls cover originaladmit/status/capture/save-binding queries and positive borrowedtransactions; no globalhelper-depth, authoritycache or proxyregistry change.
 
-
 Cold receipt initialization qualification (before production)
 
 - [ ] Original cold Console composition keeps its actual loop responsive while its real receipt-schema SQL/native handle is held. Original storage/bridge/provider/readiness, live first Send and normal disposal remain intact.
 - [ ] Any accepted asynchronous preparation retains its exact callback through repeated cancellation and disposal; source/runtime/profile/navigation drift refuses publication without borrowing or closing unrelated handles.
 
 First qualify the actual original receipt initialization path with the real connection backend before making a production startup change. Three preliminary native runs fail observer prerequisites and are excluded: a cleared Runtime field, an assumed caller, and an assumed sqlite3.Connection. The third records the source-qualified original Inspector/bridge/receipt/schema ancestry; The observer records only that the exact base sqlite3.Connection type does not match; original connector source uses an AdmittedConnection native subclass carrying its StorageLease. The exact-type mismatch alone does not prove a process facade. The corrected control must retain the actual admitted native connection/lease, keep global monitoring zero and positively retire that original resource before asserting shared-loop responsiveness. No precreated store, guard bypass or original timing-limit increase is permitted. Production remains pending genuine causal RED and amendments to existing ADR-085/ADR-126 before implementation. Prefer existing async initial-screen custody to prepare only receipt storage, preserving synchronous/custom/headless Runtime ABI and UI-bound bridge construction.
-
 
 ## Cold Workspace composite repair refinement (before production)
 
@@ -360,7 +351,6 @@ Self-review: capability is outside the Workspace scope; locks and SQL/query orde
 
 Qualification so far: pure actual Python3.12.10 source compilation, real stdlib contextmanager/actual original core-transaction decorator hierarchy, metadata code/defaults/keyword-default/closure drift, finite cleanup order, borrowed preservation, source refusal, no-retry entry error and body/cleanup error precedence passed. These pure controls import no project modules and create no App, SQL or native fixture. Native candidate acceptance remains pending.
 
-
 # Additive controls for frozen Workspace composite candidate4958
 
 ADR required: yes, before any repair.
@@ -381,8 +371,6 @@ Four lookup routes cover exact original Consent and Inspector classes with eithe
 Pure actual3.12.10 controls reuse the exact selection AST and prove both getattribute/property instruction routes, plus local PY_RETURN mutation of an actual threading.local field after an original returning body. Both outer/embedded Native test sources compile, Ruff is clean, global mask0 and monitoring tool retired. These pure controls do not import the project or create App/SQL/native fixtures. Seven Native candidate cases remain pending root execution.
 
 After genuine RED, the smallest planned retirement repair should use the existing original core-closing API for only a positively identified newly created captured handle after its counted interval retires. Preserve A borrower and foreign/replacement B; never restore cache fields or adopt a mutable replacement cache. Lookup repair must decline custom class lookup/registry descriptors before added source selection and preserve original custom body callback ABI. No generic helper or permission policy changes are authorized by these drafts.
-
-
 
 ## Qualified cold receipt preparation plan (before production)
 
@@ -407,7 +395,6 @@ Evidence-only candidate is not installed or Native-qualified. Root owns task/pla
 
 Implementation order: retain original Native6 causal RED and source receipts; independently review the frozen v2 two-source patch against exact installed bases; install only after these ADR085/126 amendments; verify20 real native finite-callback/source/owner/custom/borrowed/cancellation/disposal controls using the corrected original admitted-native qualifier; re-run unchanged cold composition/key/disposal control and original whole/platform evidence. Live UAT on ded197 passes all3 real captures/replies/links; repeat final-source setup/first Send if later production changes touch that route. No original deadline, guard, provider/capture policy or startup-ready publication is relaxed.
 
-
 ## Stock agent-turn admission work-count investigation (before implementation)
 
 - [ ] The exact stock source-qualified run-turn callback retains fresh admission for every captured owner/path and its already captured log root without redundant execution-scope entries inside that same finite callback. Existing worker/model-loop guards, custom/legacy/scoped-none paths and all permission/retirement policies remain.
@@ -419,7 +406,6 @@ ADR required: no new ADR for a same-callback grouping if it preserves the existi
 
 Implementation Notes: cold Consent admit/status, Inspector capture and registry save-binding now share one original counted connection interval. Exact newly opened handle retirement replaces only the new outer lazy-helper scope; foreign cache replacements and original borrowers remain live. Six candidate failures were reproduced before the captured cleanup correction. All21 actual native controls pass104.563s with current sources; the three new test files pass format/lint, and differential static checks over249 changed/new Python files introduce zero diagnostics (735 existing on dev,734 current). Original service modules retain79PASS7SKIP18 InspectorFAIL on Windows; original no-follow descriptor routines are AST-identical, and actual stdlib lacks their required flags. Broad native/startup/helper gates and final PR-source platform qualification remain pending; status stays In Progress.
 
-
 ## Stock run-turn finite admission refinement (before production)
 
 ADR required: no new ADR; existing ADR126 finite same-callback source custody applies.
@@ -430,20 +416,16 @@ For only an already captured qualified stock scoped log source, append its agent
 
 Acceptance: the same six native controls must pass with one scope start per actual stock owner/path; the custom selector must retain its original arg-free call and duplicate set route, all retarget/pause controls must refuse provider/log effects and retire resources. Then run the appropriate original scoped log/agent activation compatibility nodes and unchanged whole/platform limits. No tests, bounds, source qualifiers or coordinator checks are relaxed.
 
-
 ### Original cold startup completion prerequisite (before test edit)
 
 ADR required: no new ADR; test-only synchronization implements the registered asynchronous initial-screen contract in ADR085/126.
 
 The first v3 original cold receipt qualifies the startup-issued native worker, exact original handle/lease retirement and actual loop progress, but its body takes app.screen before the async initial push completes. Observe only the original `_initial_screen_pushed` latch before taking the screen, within the existing enclosing asyncio.wait_for240 and unchanged child240 deadlines. App sets that latch after its original push_screen and current-tab update. Keep the subsequent exact ChatScreen, composer/key and all source/native/lease/cleanup assertions unchanged, so a wrong completed destination still fails. The only added while/sleep prerequisite is separately recorded; removing it yields the exact prior script AST. Native6 remains the original causal RED and v3 original cold1 remains a prerequisite failure until a fresh run. No product change or performance-limit increase.
 
-
 ### Accepted native stock/startup checkpoint
 
 Implementation Notes: stock admission grouping passes6/6 native controls51.000s and all62 appropriate original activation/scoped-log/body-binding/service-wiring tests380.625s, with source unchanged. The original cold Console control passes53.750s after the separately reviewed completion-latch prerequisite, retaining its actual original SQL hold, source/currentness, typing, disposal, physical handle/lease retirement and all original assertions/deadlines. Its worker is issued by the actual original initial task and loop; UI progress occurs while the original admitted native SQL is held. The24 startup native custom/binding/owner/source/cancellation/disposal leaves already pass. No whole-startup/Send/heartbeat/helper/native-open acceptance is inferred from these controls. Census exceptional generator accounting remains an observer prerequisite under repair; status stays In Progress.
 
-
 Implementation Notes (accepted observer checkpoint): original-code census preserves stock callback identity; eight original credential ticks pass with628 fully retired spans and unchanged limits. The Windows full census retains its original POSIX helper anti-vacuity failure; no whole-budget acceptance or zero-native-I/O claim follows. QA records the exact ded197 macOS/Linux source-qualified whole helper failures and actual callback partitions. Status remains In Progress; final dev integration and whole/live/platform verification are pending.
-
 
 Original whole-probe prerequisite: await the actual `_initial_screen_pushed` completion latch inside its existing run_test before capturing the screen, as already qualified in the cold startup control. Observation/heartbeat remain active and all original900s timeout/phase counts/Send/UI/helper/native-open assertions remain unchanged; wrong completed screen types still fail. Removing only the wait restores the entire prior module AST. ADR required: no; ADR path: N/A; reason: test prerequisite synchronization preserves application boundaries and original performance oracles. Independently reviewed before application; final native whole verification follows.

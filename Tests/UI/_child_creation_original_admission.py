@@ -91,6 +91,8 @@ class OriginalChildCreationAdmission:
         self.cancel_after_offsets, self.instruction_codes_active = {}, set()
         self.waiting_bindings, self.waiting_aliases = [], {}
         self.waiting_owner_bound = False
+        self.stage_sequence, self.stage_overflow, self.stage_io_errors = 0, 0, 0
+        self.stage_output = os.environ.get("TLDW_TEST_FLEET_STAGE_RECEIPT")
         definitions = (
             (TESTS, None, "_prepare_surviving_child", "fixture_prepare"),
             (TESTS, None, "_arm_pending_round", "fixture_arm"),
@@ -174,6 +176,16 @@ class OriginalChildCreationAdmission:
                 "_run_direct_provider_reply",
                 "cancel_mutator_direct_stream",
             ),
+        )
+        definitions += tuple(
+            (TESTS, None, name, "stage_" + name)
+            for name in (
+                "_verify_background_pending_close_releases_round_without_an_active_turn",
+                "_verify_chat_create_enrichment_cannot_arm_after_its_session_closes",
+                "_verify_all_close_consequences_keep_named_title_and_actions_painted_at_80x24",
+                "_verify_progress_close_failure_reconciles_fleet_before_confirmed_retry",
+                "_settle",
+            )
         )
         for definition in definitions:
             self._bind_definition(definition)
@@ -839,6 +851,59 @@ class OriginalChildCreationAdmission:
                     row["returned_actor"] = self._actor(value.actor)
         self.rows.append(row)
 
+    def _checkpoint(self, label, phase, frame, value=None):
+        if not self.stage_output:
+            return
+        if self.stage_sequence >= 256:
+            self.stage_overflow += 1
+            if self.stage_overflow > 1:
+                return
+        else:
+            self.stage_sequence += 1
+        kind = frame.f_locals.get("kind")
+        if type(kind) is not str or kind not in {  # noqa: E721 - exact built-in diagnostic scalar only.
+            "approval",
+            "question",
+            "chat_create",
+            "worktree_merge",
+            "skill_install",
+            "skill_script",
+        }:
+            kind = None
+        matches = [
+            namespace
+            for _, _, function, code, namespace, _, _ in self.bindings
+            if code is frame.f_code
+        ]
+        row = {
+            "diagnostic_only": True,
+            "terminal_source_native_coverage": False,
+            "sequence": self.stage_sequence,
+            "monotonic_ns": time.monotonic_ns(),
+            "pid": os.getpid(),
+            "stage": label,
+            "phase": phase,
+            "kind": kind,
+            "line": frame.f_lineno,
+            "code_object": id(frame.f_code),
+            "globals_match_bound": bool(matches)
+            and all(frame.f_globals is namespace for namespace in matches),
+            "global_events": self.monitor.get_events(self.tool),
+            "actual_bool_return": value if type(value) is bool else None,  # noqa: E721 - exact built-in diagnostic scalar only.
+            "source_hashes": {
+                name: digest for name, (_, _, digest) in self.modules.items()
+            },
+            "overflow": self.stage_overflow,
+            "io_errors": self.stage_io_errors,
+        }
+        target = Path(self.stage_output)
+        temporary = target.with_name(target.name + "." + str(os.getpid()) + ".tmp")
+        try:
+            temporary.write_text(json.dumps(row), encoding="utf-8")
+            temporary.replace(target)
+        except OSError:
+            self.stage_io_errors += 1
+
     def _start(self, code, offset):
         if not self.active:
             return
@@ -846,6 +911,9 @@ class OriginalChildCreationAdmission:
         assert frame.f_code is code
         with self.lock:
             label = self.codes[code]
+            self._checkpoint(label, "start", frame)
+            if label.startswith("stage_"):
+                return
             if label == "fixture_prepare" or (
                 label == "fixture_arm" and frame.f_locals["kind"] == "chat_create"
             ):
@@ -868,6 +936,9 @@ class OriginalChildCreationAdmission:
         with self.lock:
             self._flush_cancel_pop(frame)
             label = self.codes[code]
+            self._checkpoint(label, "return", frame, value)
+            if label.startswith("stage_"):
+                return
             if label in {"evaluated_cancel", "evaluated_live_primary"}:
                 self._evaluated_primary_return(label, frame, value)
                 return
@@ -936,6 +1007,9 @@ class OriginalChildCreationAdmission:
             "local_hooks_removed_tool_freed": self.restored,
             "bounded_owners": len(self.owners),
             "overflow": self.overflow,
+            "partial_stage_writes": self.stage_sequence,
+            "partial_stage_overflow": self.stage_overflow,
+            "partial_stage_io_errors": self.stage_io_errors,
             "source_hashes": {
                 name: digest for name, (_, _, digest) in self.modules.items()
             },

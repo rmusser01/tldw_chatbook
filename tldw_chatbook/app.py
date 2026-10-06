@@ -1460,6 +1460,7 @@ class TldwCli(
         # times for different reasons; both are idempotent on their own handle.
         self._initial_screen_preimport_thread: threading.Thread | None = None
 
+        self._initial_screen_pushed = False
         self._ui_ready = False  # Track if UI is fully composed
         self._shutting_down = False  # Track if app is shutting down
         self._quit_in_progress = False

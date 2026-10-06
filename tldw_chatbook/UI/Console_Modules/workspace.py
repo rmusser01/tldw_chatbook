@@ -38,6 +38,8 @@ from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_ca
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
+from . import console_browser_read as _browser_read_source
+
 from ...Character_Chat.character_conversation_navigation import (
     LocalCharacterConversationTarget,
 )
@@ -3799,7 +3801,23 @@ class ConsoleWorkspaceController:
         )
         last_error = ""
         for service, include_mode in services:
-            list_conversations = getattr(service, "list_conversations", None)
+            # The optional worker checks class/descriptor custody before touching
+            # receiver fields. Declared custom routes retain the original lookup.
+            stock_read = None
+            if (
+                not include_mode and scopes is None
+                and type(query) is str and type(offset) is int  # noqa: E721 -- stock inputs
+                and query_scopes == (
+                ("global", None), ("workspace", DEFAULT_WORKSPACE_ID)
+                )
+            ):
+                stock_read = _capture_stock_browser_read(
+                    self, service, local_service, scope_service
+                )
+            list_conversations = (
+                stock_read.reader if stock_read is not None
+                else getattr(service, "list_conversations", None)
+            )
             if not callable(list_conversations):
                 continue
             rows: list[ConsoleConversationBrowserInputRow] = []
@@ -3810,7 +3828,25 @@ class ConsoleWorkspaceController:
                 current_conversation_id or self._current_console_conversation_id()
             )
             starred_ids = self._starred_console_conversation_ids()
-            for scope_type, workspace_id in query_scopes:
+            stock_results = None
+            if stock_read is not None:
+                kwargs_pair = tuple(
+                    {
+                        "query": query,
+                        "scope_type": scope_type,
+                        "workspace_id": workspace_id,
+                        "limit": CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
+                        "offset": max(0, int(offset)),
+                        "character_scope": "generic",
+                    }
+                    for scope_type, workspace_id in query_scopes
+                )
+                try:
+                    stock_results = await stock_read.run(kwargs_pair)
+                except Exception:
+                    logger.exception("Unable to read captured Console browser source")
+                    return [], None, "Conversation search is unavailable."
+            for scope_index, (scope_type, workspace_id) in enumerate(query_scopes):
                 list_kwargs: dict[str, Any] = {
                     "query": query,
                     "scope_type": scope_type,
@@ -3824,7 +3860,12 @@ class ConsoleWorkspaceController:
                 if include_mode:
                     list_kwargs["mode"] = "local"
                 try:
-                    if include_mode and not inspect.iscoroutinefunction(
+                    if stock_results is not None:
+                        stock_read.require_loop_current()
+                        result, read_error = stock_results[scope_index]
+                        if read_error is not None:
+                            raise read_error
+                    elif include_mode and not inspect.iscoroutinefunction(
                         list_conversations
                     ):
                         result = await asyncio.to_thread(
@@ -3861,6 +3902,8 @@ class ConsoleWorkspaceController:
                     if inspect.isawaitable(result):
                         result = await result
                 except Exception as exc:
+                    if stock_read is not None and stock_read.source_changed:
+                        return [], None, "Conversation search is unavailable."
                     if (
                         isinstance(exc, ValueError)
                         and "service is unavailable" in str(exc).lower()
@@ -3939,6 +3982,11 @@ class ConsoleWorkspaceController:
                         self._apply_console_browser_star_state(row, starred_ids)
                     )
             if saw_result:
+                if stock_read is not None:
+                    try:
+                        stock_read.require_loop_current()
+                    except Exception:
+                        return [], None, "Conversation search is unavailable."
                 return rows, total_count if saw_total else None, last_error
         return [], None, last_error
 
@@ -8137,3 +8185,49 @@ class ConsoleWorkspaceController:
                     "Unable to resolve Console workspace name for approval toast"
                 )
         return str(workspace_id)
+
+
+# Definition-time source identity for the optional finite browser selection.
+_CONSOLE_BROWSER_CONTROLLER_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (
+            ConsoleWorkspaceController,
+            name,
+            inspect.getattr_static(ConsoleWorkspaceController, name),
+        )
+        for name in ("__getattribute__", "__dict__", "_persisted_console_browser_rows")
+    ),
+    (("ConsoleWorkspaceController", ConsoleWorkspaceController),),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for function in (ConsoleWorkspaceController._persisted_console_browser_rows,)
+    ),
+)
+_CONSOLE_BROWSER_FACTORY = _browser_read_source.capture_stock_browser_read
+
+
+def _capture_stock_browser_read(controller, service, local_service, scope_service):
+    return _CONSOLE_BROWSER_FACTORY(
+        controller,
+        service,
+        local_service,
+        scope_service,
+        controller_source=_CONSOLE_BROWSER_CONTROLLER_SOURCE,
+        factory_is_current=lambda: (
+            _CONSOLE_BROWSER_FACTORY is _browser_read_source.capture_stock_browser_read
+        ),
+    )
