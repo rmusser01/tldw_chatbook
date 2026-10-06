@@ -16,12 +16,14 @@ budget (measured locally; see the task's Implementation Notes).
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 import pytest
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.Notes.notes_sync_tail_edit_support import (
     VAULT_TEXT,
     Vault,
@@ -36,7 +38,6 @@ from Tests.UI.library_quit_guard_support import (
     _until,
 )
 from Tests.UI.test_library_shell import _seed_conversations, _wait_for_selector
-from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     DELETE_CONFIRM_COPY_SYNCED,
 )
@@ -91,7 +92,26 @@ async def _back_to_notes_list(screen, pilot) -> None:
     )
 
 
-async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(tmp_path):
+async def _open_synced_folder(screen, pilot) -> None:
+    await _until(
+        pilot,
+        lambda: any(
+            getattr(row, "folder_id", "") == "folder-1"
+            for row in screen.query(".library-notes-folder-row").results(Button)
+        ),
+        "the synced folder to load",
+    )
+    next(
+        button
+        for button in screen.query(".library-notes-folder-row").results(Button)
+        if getattr(button, "folder_id", "") == "folder-1"
+    ).press()
+
+
+@pytest.mark.parametrize("delayed_root_folders", [False, True])
+async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(
+    tmp_path, monkeypatch, delayed_root_folders
+):
     vault = Vault(tmp_path)
     owner = build_owner(vault)
     await owner.start()
@@ -105,15 +125,63 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(tmp_pat
         with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
             async with app.run_test(size=SIZE) as pilot:
                 screen = await _library(app, pilot)
-                screen.query_one("#library-row-browse-notes", Button).press()
-                await _wait_for_selector(screen, pilot, ".library-notes-folder-row")
-                next(
-                    button
-                    for button in screen.query(".library-notes-folder-row").results(
-                        Button
+                release_folders = asyncio.Event()
+                readiness_reached = asyncio.Event()
+                wait_for_selector = _wait_for_selector
+                if delayed_root_folders:
+                    # A real Unfiled row may paint before the independent
+                    # folder slice. Gate that response, not the UI or data.
+                    assert vault.database.add_note("Unfiled control", "not synced")
+                    page_folders = vault.scope_service.page_note_folder_children
+
+                    async def gated_folders(**kwargs):
+                        if kwargs["parent_id"] is None:
+                            await release_folders.wait()
+                        return await page_folders(**kwargs)
+
+                    monkeypatch.setattr(
+                        vault.scope_service, "page_note_folder_children", gated_folders
                     )
-                    if "VSync" in str(button.label)
-                ).press()
+                    until = _until
+
+                    async def observed_until(*args, **kwargs):
+                        readiness_reached.set()
+                        return await until(*args, **kwargs)
+
+                    async def observed_selector(*args, **kwargs):
+                        row = await wait_for_selector(*args, **kwargs)
+                        if args[2] == ".library-notes-folder-row":
+                            readiness_reached.set()
+                        return row
+
+                    monkeypatch.setattr(__name__ + "._until", observed_until)
+                    monkeypatch.setattr(
+                        __name__ + "._wait_for_selector", observed_selector
+                    )
+                screen.query_one("#library-row-browse-notes", Button).press()
+                if delayed_root_folders:
+                    opening = asyncio.create_task(_open_synced_folder(screen, pilot))
+                    try:
+                        await wait_for_selector(
+                            screen, pilot, ".library-notes-folder-row"
+                        )
+                        await until(
+                            pilot,
+                            lambda: readiness_reached.is_set() or opening.done(),
+                            "the folder readiness handoff",
+                        )
+                        assert not any(
+                            getattr(row, "folder_id", "") == "folder-1"
+                            for row in screen.query(".library-notes-folder-row")
+                        )
+                        assert not opening.done(), "Unfiled is not VSync readiness"
+                        release_folders.set()
+                        await opening
+                    finally:
+                        release_folders.set()
+                        await asyncio.gather(opening, return_exceptions=True)
+                else:
+                    await _open_synced_folder(screen, pilot)
                 await _until(
                     pilot,
                     lambda: any(

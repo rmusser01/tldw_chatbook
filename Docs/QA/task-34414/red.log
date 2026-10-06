@@ -1,0 +1,19 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[True] _____
+Tests/UI/test_library_notes_sync_delete_restore.py:166: in test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date
+    assert not opening.done(), "Unfiled is not VSync readiness"
+E   AssertionError: Unfiled is not VSync readiness
+E   assert not True
+E    +  where True = <built-in method done of _asyncio.Task object at 0x11552b700>()
+E    +    where <built-in method done of _asyncio.Task object at 0x11552b700> = <Task finished name='Task-908' coro=<_open_synced_folder() done, defined at /Users/macbook-dev/.codex/worktrees/switch...atbook/Tests/UI/test_library_notes_sync_delete_restore.py:95> exception=RuntimeError('coroutine raised StopIteration')>.done
+============================= slowest 25 durations =============================
+3.91s call     Tests/UI/test_library_notes_sync_delete_restore.py::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[True]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_notes_sync_delete_restore.py::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[True]
+1 failed in 5.75s
