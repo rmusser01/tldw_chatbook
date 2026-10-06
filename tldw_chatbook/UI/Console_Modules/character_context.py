@@ -556,6 +556,7 @@ class ConsoleCharacterContextController:
         )
         self._query_handoff = query_handoff
         self._generation = 0
+        self._successful_refresh_generation: int | None = None
         self._presentation_scope_lock = asyncio.Lock()
         self._presentation_scope_key: tuple | None = None
         self._presentation_scope_at = 0.0
@@ -847,8 +848,40 @@ class ConsoleCharacterContextController:
                         return False
                 # refresh owns its generation increment. Preserve every other
                 # ambient owner and its fresh generation/commit checks.
+                expected_generation = self._generation + 1
+                refresh_record = None
+                original_refresh = False
+                try:
+                    if type(_CHARACTER_REFRESH_READERS) is tuple:
+                        refresh_records = tuple(
+                            record
+                            for record in _CHARACTER_REFRESH_READERS
+                            if type(record) is tuple
+                            and len(record) == 14
+                            and type(record[1]) is str  # noqa: E721 - exact optional metadata shape.
+                            and record[1] == "refresh"
+                        )
+                        if len(refresh_records) == 1:
+                            refresh_record = refresh_records[0]
+                            original_refresh = _character_reader_current(
+                                refresh_record, self
+                            )
+                except (AttributeError, TypeError, ValueError):
+                    pass  # Unknown optional metadata never establishes a memo.
                 await self.refresh(_presentation_is_current=owner_is_current)
-                # A generation change or failure cannot establish freshness.
+                # Only this exact invocation's accepted stock publication can
+                # establish a memo; an earlier successful state is insufficient.
+                if (
+                    original_refresh
+                    and _character_reader_current(refresh_record, self)
+                    and self._successful_refresh_generation == expected_generation
+                    and self._generation == expected_generation
+                    and owner_is_current()
+                    and not self.state.error
+                    and self.state.scope_fingerprint is not None
+                ):
+                    self._presentation_scope_key = self._presentation_owner_key(screen)
+                    self._presentation_scope_at = time.monotonic()
                 return True
 
             owned = asyncio.create_task(observe())
@@ -1074,7 +1107,7 @@ class ConsoleCharacterContextController:
 
     async def _refresh_recent_batch(
         self, readers: _CharacterRefreshReaders, generation: int
-    ) -> None:
+    ) -> bool | None:
         def read_current() -> _CharacterRecentRead:
             # Queueing and original native admission happen before this entry.
             # Check again before invoking either captured mutable function body.
@@ -1135,7 +1168,7 @@ class ConsoleCharacterContextController:
             self._publish_recent_groups(
                 result.snapshot.fingerprint, result.groups, result.details
             )
-            return
+            return True
         try:
             if readers.ambient_current():
                 self._publish(
@@ -1179,6 +1212,7 @@ class ConsoleCharacterContextController:
         def presentation_is_current() -> bool:
             return _presentation_is_current is None or _presentation_is_current()
 
+        self._successful_refresh_generation = None
         if not presentation_is_current():
             return
         generation = self._begin(ConsoleCharacterOperationPhase.REFRESHING)
@@ -1186,7 +1220,14 @@ class ConsoleCharacterContextController:
             self, _presentation_is_current, generation
         )
         if readers is not None:
-            await self._refresh_recent_batch(readers, generation)
+            published = await self._refresh_recent_batch(readers, generation)
+            if published is True:
+                try:
+                    readers.require_current()
+                    if generation == self._generation:
+                        self._successful_refresh_generation = generation
+                except _ConsoleCharacterReaderChanged:
+                    pass
             return
         for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
             if not presentation_is_current():

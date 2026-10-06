@@ -2205,3 +2205,10 @@ partial-failure status remain visible.
 Actual native creation/old-profile/refusal/origin/reopen checks determine
 acceptance. Original startup/Send/heartbeat/helper/open limits are unchanged
 and remain independent gates.
+
+
+### TASK-34406 clarification: successful Character display publication (2026-10-06)
+
+An unchanged Character display observation may reuse its existing short presentation lifetime immediately after the same invocation has successfully published the original stock recent-groups refresh. A scalar generation receipt is produced only after the original finite batch publishes, its defining source bindings remain current, and the original generation still owns the result. The presentation caller additionally requires the expected generation, the captured original refresh binding, the current screen/app/store/session/source owner and a successful fingerprint before setting the existing memo timestamp.
+
+A prior successful state alone does not establish this receipt. Entry refusal, source drift, superseding generation, failure and cancellation cannot establish a memo. Public `refresh` still returns `None`; custom, unsupported, memory and direct routes retain their original fresh behavior. This does not lengthen the existing display TTL or grant permission to a live action.
