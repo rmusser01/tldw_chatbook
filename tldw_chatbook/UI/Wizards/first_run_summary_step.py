@@ -282,9 +282,9 @@ class SummaryStep(SetupStep):
             .get("track")
             == wizard_state.TRACK_QUICK
         ):
-            self.query_one("#setup-summary-defaults-note", Static).update(
-                wizard_state.quick_track_defaults_note(config)
-            )
+            # After an await: query(), so a removed subtree is a no-op.
+            for note in self.query("#setup-summary-defaults-note").results(Static):
+                note.update(wizard_state.quick_track_defaults_note(config))
         rows = build_summary_rows(
             config,
             dict(os.environ),
