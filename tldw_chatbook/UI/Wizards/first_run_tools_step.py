@@ -41,7 +41,7 @@ class ToolsStep(SetupStep):
             tool_gate_effect_suffix,
         )
         from tldw_chatbook.Agents.plain_chat_tool_surface import (
-            FULL_AGENT_TOOLS_DESCRIPTION,
+            FULL_AGENT_TOOLS_BLURB,
             FULL_AGENT_TOOLS_GATE_KEY,
             FULL_AGENT_TOOLS_TITLE,
             summarize_tool_surface,
@@ -86,7 +86,7 @@ class ToolsStep(SetupStep):
                         classes="setup-tool-name setup-tool-name-agent",
                     )
                     yield Static(
-                        FULL_AGENT_TOOLS_DESCRIPTION,
+                        FULL_AGENT_TOOLS_BLURB,
                         id=f"setup-tool-desc-{FULL_AGENT_TOOLS_SWITCH}",
                         classes="setup-tool-desc",
                         markup=False,

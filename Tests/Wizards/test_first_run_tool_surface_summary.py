@@ -126,6 +126,10 @@ async def test_the_tools_step_states_the_light_set_and_offers_full_agent_tools()
             "Always available in chat: date and time, calculator and ask you "
             "a question."
         )
+        # One line, like every other row (the full description was clipped).
+        desc = str(step.query_one("#setup-tool-desc-full_agent_tools", Static).render())
+        assert desc.startswith("Adds sub-agents, skills, web")
+        assert len(desc) <= 110
         switch = step.query_one("#setup-tool-full_agent_tools", Switch)
         assert switch.value is False
         switch.value = True

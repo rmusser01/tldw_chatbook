@@ -62,6 +62,12 @@ LIGHT_SURFACE_LOCAL_OPT_INS: tuple[str, ...] = ("web_deep_search",)
 FULL_AGENT_TOOLS_GATE_KEY = "full_agent_tools_enabled"
 FULL_AGENT_TOOLS_DEFAULT_ENABLED = False
 FULL_AGENT_TOOLS_TITLE = "Full agent tools"
+#: One line for setup's Tools step, whose rows fit one line of description
+#: (live 120x40: the full description was clipped after three lines).
+FULL_AGENT_TOOLS_BLURB = (
+    "Adds sub-agents, skills, web, Watchlists, workspace files, characters, "
+    "Canvas and chatbook's own MCP tools."
+)
 FULL_AGENT_TOOLS_DESCRIPTION = (
     "Lets the Console assistant use sub-agents, skills, web search and fetch, "
     "Watchlists, workspace files, character cards, Canvas, chat forks and "
