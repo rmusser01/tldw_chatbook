@@ -174,3 +174,56 @@ def test_endpoint_identity_is_the_resolver_identity() -> None:
         )
     assert console_endpoint_identity("not a url") is None
     assert console_endpoint_identity(None) is None
+
+
+def test_a_path_bearing_row_identity_is_not_a_match(tmp_path) -> None:
+    """Only the identity the resolver records can match (review F4).
+
+    The match used to accept the continuation's raw base URL as an alternative
+    identity. ``resolve_console_destination`` has recorded origin-only
+    identities since before the match existed, so no real row can hold
+    ``https://api.moonshot.ai/v1``; that branch only kept hand-built fixtures
+    green, which is how gap-02 hid. A row carrying such an identity is not one
+    this app writes, and settlement must refuse it.
+    """
+    db, store, session_id, _ = _started_store(
+        tmp_path,
+        lambda conversation_id: replace(
+            _moonshot_acceptance(conversation_id),
+            resolved_destination=replace(
+                _real_destination("moonshot", "kimi-k3", "https://api.moonshot.ai/v1"),
+                endpoint_identity="https://api.moonshot.ai/v1",
+            ),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="terminal settlement failed"):
+        store.persist_provider_continuation_event(
+            FinalContinuation(_event().context, _kimi_final(), None, "answer")
+        )
+
+    assert db.get_message_by_id("assistant-1")["provider_continuation_json"] is None
+    assert _checkpoint_count(db) == 1
+    db.close()
+
+
+@pytest.mark.parametrize(
+    ("acceptance_for", "provider", "model", "base_url"),
+    [
+        (_moonshot_acceptance, "moonshot", "kimi-k3", "https://api.moonshot.ai/v1"),
+        (
+            _deepseek_acceptance,
+            "deepseek",
+            "deepseek-v4-flash",
+            "https://api.deepseek.com/v1",
+        ),
+    ],
+    ids=["moonshot", "deepseek"],
+)
+def test_shared_dispatch_fixtures_hold_the_resolver_identity(
+    acceptance_for, provider, model, base_url
+) -> None:
+    """Pin the shared hand-built rows to what the real resolver records."""
+    built = acceptance_for("conversation-1").resolved_destination
+
+    assert built == _real_destination(provider, model, base_url)
