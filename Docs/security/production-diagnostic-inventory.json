@@ -3893,8 +3893,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "7fe187901a81ddcc2a25",
+      "call_count": 2,
+      "diagnostic_digest": "8c4cda9ad542ddcb529f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Wizards/first_run_finish_later.py",
       "reason": "remaining Chatbook production diagnostic owner"
