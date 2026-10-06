@@ -125,6 +125,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     MessageAttachment,
     RawCliPresentation,
     console_dispatch_recovery_from_checkpoint,
+    copy_console_message,
 )
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_context_repository import (
@@ -242,6 +243,7 @@ from tldw_chatbook.Chat.library_activity import (
     LibraryActivityContribution,
     LibraryActivityEvent,
     LibraryActivityView,
+    count_library_activity_by_turn,
     encode_library_activity_event,
     project_library_activity,
 )
@@ -4908,13 +4910,8 @@ class ConsoleChatStore:
                     selected_turn_id = message.persisted_message_id or message.id
                     break
         view = project_library_activity(rows, active_turn_ids, selected_turn_id)
-
-        count_by_turn = {
-            turn_id: len(
-                project_library_activity(rows, active_turn_ids, turn_id).actions
-            )
-            for turn_id in active_turn_ids
-        }
+        # One pass over the rows, not a projection per turn (TASK-33628.5.2).
+        count_by_turn = count_library_activity_by_turn(rows, active_turn_ids)
         counts: list[tuple[str, int]] = []
         current_turn_id: str | None = None
         for native_id in active_path:
@@ -13986,33 +13983,32 @@ class ConsoleChatStore:
         return self._message_session_index[message_id]
 
     def interrupted_provider_continuation_message(
-        self,
-        session_id: str | None = None,
+        self, session_id: str | None = None
     ) -> ConsoleChatMessage | None:
         """Return the active-path owner needing explicit recovery, if any."""
-        target_session_id = session_id or self.active_session_id
-        if target_session_id is None or target_session_id not in self._sessions:
-            return None
-        for message in reversed(self.messages_for_session(target_session_id)):
-            checkpoint = message.provider_continuation
-            if checkpoint is not None and checkpoint.state == "active":
-                return message
-        return None
+        return self._continuation_owner(session_id, warnings=False)
 
     def provider_continuation_recovery_message(
-        self,
-        session_id: str | None = None,
+        self, session_id: str | None = None
     ) -> ConsoleChatMessage | None:
         """Return an active owner or safe warning for transcript recovery UI."""
+        return self._continuation_owner(session_id, warnings=True)
+
+    def _continuation_owner(
+        self, session_id: str | None, *, warnings: bool
+    ) -> ConsoleChatMessage | None:
+        # Snapshot only the match (TASK-33628.5.2: ~0.1 s a sync at 3k rows).
         target_session_id = session_id or self.active_session_id
         if target_session_id is None or target_session_id not in self._sessions:
             return None
-        for message in reversed(self.messages_for_session(target_session_id)):
-            if message.provider_continuation_warning:
-                return message
-            checkpoint = message.provider_continuation
-            if checkpoint is not None and checkpoint.state == "active":
-                return message
+        for message in reversed(self._messages_by_session[target_session_id]):
+            quarantined = message.generation_projection_quarantined
+            checkpoint = None if quarantined else message.provider_continuation
+            if (warnings and message.provider_continuation_warning) or (
+                checkpoint is not None and checkpoint.state == "active"
+            ):
+                self._materialize_stream_buffer_deferred(message)
+                return self._snapshot(message)
         return None
 
     def set_provider_continuation_warning(
@@ -22594,7 +22590,7 @@ class ConsoleChatStore:
 
     @staticmethod
     def _snapshot(message: ConsoleChatMessage) -> ConsoleChatMessage:
-        snapshot = replace(message)
+        snapshot = copy_console_message(message)
         if snapshot.generation_projection_quarantined:
             snapshot.content = GENERATION_PROJECTION_QUARANTINE_PLACEHOLDER
             snapshot.image_data = None
