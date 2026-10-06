@@ -16183,7 +16183,6 @@ SmartContentTree Tree > .selected-node {
 .setup-rag,
 .setup-speech,
 .setup-tools,
-.setup-notes,
 .setup-appearance,
 .setup-protect,
 .setup-summary {

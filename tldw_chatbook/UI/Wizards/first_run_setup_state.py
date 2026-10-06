@@ -1119,6 +1119,8 @@ STEP_VOICE = "voice"
 STEP_RAG = "rag"
 STEP_SPEECH = "speech"
 STEP_TOOLS = "tools"
+#: Retired by TASK-34100.13 (fulltrack-05): the Notes step configured nothing.
+#: Kept only so drafts saved at it still resume (see ``_RETIRED_DRAFT_STEPS``).
 STEP_NOTES = "notes"
 STEP_APPEARANCE = "appearance"
 STEP_PROTECT = "protect-keys"
@@ -1132,7 +1134,6 @@ STEP_TITLES: Mapping[str, str] = {
     STEP_RAG: "RAG",
     STEP_SPEECH: "Speech",
     STEP_TOOLS: "Tools",
-    STEP_NOTES: "Notes",
     STEP_APPEARANCE: "Style",
     STEP_PROTECT: "Protect",
     STEP_SUMMARY: "Summary",
@@ -1188,7 +1189,6 @@ _FULL_TRACK = (
     STEP_RAG,
     STEP_SPEECH,
     STEP_TOOLS,
-    STEP_NOTES,
     STEP_APPEARANCE,
     STEP_PROTECT,
     STEP_SUMMARY,
@@ -1220,11 +1220,49 @@ _SETUP_DRAFT_FIELD_TYPES: Mapping[str, Mapping[str, type]] = {
     STEP_RAG: {"auto_retrieve": bool},
     STEP_SPEECH: {},
     STEP_TOOLS: {},
-    STEP_NOTES: {},
-    STEP_APPEARANCE: {"theme": str, "splash_card": str},
+    STEP_APPEARANCE: {
+        "theme": str,
+        "startup": str,
+        "reduce_motion": bool,
+        "ascii_glyphs": bool,
+    },
     STEP_PROTECT: {"encryption_enabled": bool},
     STEP_SUMMARY: {},
 }
+
+
+#: TASK-34100.13: steps that left the tracks, mapped to the step a draft
+#: saved at them resumes on. Their values are dropped, not rejected, so an
+#: upgrade mid-setup keeps every other choice.
+_RETIRED_DRAFT_STEPS: Mapping[str, str] = {STEP_NOTES: STEP_APPEARANCE}
+
+#: TASK-34100.13: draft fields whose control left a step (the RAG step's
+#: embedding-model picker, the Appearance step's splash-card gallery).
+_RETIRED_DRAFT_FIELDS: Mapping[str, frozenset[str]] = {
+    STEP_RAG: frozenset({"embedding_model"}),
+    STEP_APPEARANCE: frozenset({"splash_card"}),
+}
+
+
+def _without_retired_draft_parts(
+    active_step_id: object, values: object
+) -> tuple[object, object]:
+    """Map a retired active step forward and drop retired steps and fields."""
+    if isinstance(active_step_id, str):
+        active_step_id = _RETIRED_DRAFT_STEPS.get(active_step_id, active_step_id)
+    if not isinstance(values, Mapping):
+        return active_step_id, values
+    cleaned: dict[object, object] = {}
+    for step_id, step_values in values.items():
+        if step_id in _RETIRED_DRAFT_STEPS:
+            continue
+        retired = _RETIRED_DRAFT_FIELDS.get(step_id) if isinstance(step_id, str) else None
+        if retired and isinstance(step_values, Mapping):
+            step_values = {
+                name: value for name, value in step_values.items() if name not in retired
+            }
+        cleaned[step_id] = step_values
+    return active_step_id, cleaned
 
 
 @dataclass(frozen=True, slots=True)
@@ -1295,6 +1333,7 @@ def _validated_setup_draft(
         return None
     if track not in (TRACK_QUICK, TRACK_FULL):
         return None
+    active_step_id, values = _without_retired_draft_parts(active_step_id, values)
     if not isinstance(active_step_id, str):
         return None
     allowed_steps = active_step_ids(str(track), key_entered=True)
@@ -1469,7 +1508,10 @@ WIZARD_OWNED_SECTIONS = frozenset(
         # actually read, and nothing writes the legacy embedding table.
         "chat_defaults",
         "tools",
-        "notes",
+        # TASK-34100.13: "appearance" for the Appearance step's comfort
+        # settings (reduce_motion, ascii_glyphs); no "notes" -- nothing in
+        # setup writes it since the Notes step left the Full track.
+        "appearance",
         "general",
         # TASK-21146 (UAT H-1): the Summary step records the online
         # model-list consent answer through the exact [model_catalog]
@@ -2079,6 +2121,36 @@ def read_provider_secret_presence(
     )
 
 
+def full_config_sections(
+    app_config: Mapping[str, object], *names: str
+) -> dict[str, dict[str, object]]:
+    """Sections a step must read from the full TOML, with mirrored saves on top.
+
+    TASK-34100.13: ``app.app_config`` is ``load_settings()``'s projection. It
+    carries no ``[tools]`` or ``[splash_screen]`` table of its own (so a
+    re-run after a restart showed every tool switch off and "Surprise me" as
+    the card); the full TOML rides along as ``COMPREHENSIVE_CONFIG_RAW``.
+    Values the wizard saved this run are mirrored into ``app_config`` and win.
+
+    Args:
+        app_config: The app's in-memory config.
+        *names: Section names to read.
+
+    Returns:
+        ``{name: merged_section}`` for every requested name.
+    """
+    raw = app_config.get("COMPREHENSIVE_CONFIG_RAW") if isinstance(app_config, Mapping) else None
+    raw = raw if isinstance(raw, Mapping) else {}
+    view: dict[str, dict[str, object]] = {}
+    for name in names:
+        merged: dict[str, object] = {}
+        for source in (raw.get(name), app_config.get(name)):
+            if isinstance(source, Mapping):
+                merged.update(source)
+        view[name] = merged
+    return view
+
+
 def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
     chat_defaults = _section(app_config, "chat_defaults")
     general = _section(app_config, "general")
@@ -2338,10 +2410,12 @@ def build_summary_rows(
             ROW_CONFIGURED if posture.switched_on else ROW_DEFAULT,
             tools_summary_detail(posture),
         ),
+        # TASK-34100.13 (fulltrack-05): text only -- Library has no deep
+        # link to Add from files; "Write your first note" lands in Notes.
         SummaryRow(
             "Notes folder sync",
             ROW_DEFAULT,
-            "set up later in Library",
+            "not set up · Library ▸ Notes ▸ Add from files…",
         ),
         SummaryRow(
             "Theme",
