@@ -27,12 +27,12 @@ from types import SimpleNamespace
 
 import pytest
 
-# Imported at collection time, under the bootstrap profile: importing the app
-# inside a test body runs config admission under the per-test redirect and
-# fails closed (Tests/conftest.py, raw_source_selection_changed).
-from tldw_chatbook.app import TldwCli, _build_arg_parser
-
-from Tests.app_module_patches import set_app_global
+# No module-level ``tldw_chatbook.app`` import: whether that import passes the
+# config-participant fence at collection depends on which suites were collected
+# first (Tests/conftest.py, raw_source_selection_changed). The parser tests use
+# the pure helper both entry points share; the real entry points are covered
+# end to end in subprocesses below; the compose tests import the app inside a
+# ``bootstrap_profile`` test body.
 
 _REPO = Path(__file__).resolve().parents[2]
 
@@ -41,17 +41,21 @@ _REPO = Path(__file__).resolve().parents[2]
 
 
 def test_shared_parser_accepts_config_and_no_splash(tmp_path):
+    from tldw_chatbook.Utils.launch_options import build_launch_parser
+
     target = tmp_path / "copied.toml"
-    args = _build_arg_parser().parse_args(["--config", str(target), "--no-splash"])
+    args = build_launch_parser().parse_args(["--config", str(target), "--no-splash"])
     assert args.config == str(target)
     assert args.no_splash is True
-    plain = _build_arg_parser().parse_args([])
+    plain = build_launch_parser().parse_args([])
     assert plain.config is None
     assert plain.no_splash is False
 
 
 def test_help_ends_with_an_epilog_naming_the_env_var_and_the_guide_section():
-    text = _build_arg_parser().format_help()
+    from tldw_chatbook.Utils.launch_options import build_launch_parser
+
+    text = build_launch_parser().format_help()
     assert "--config PATH" in text
     assert "--no-splash" in text
     options_end = text.index("--no-splash")
@@ -206,6 +210,9 @@ def test_launch_options_reach_the_app_instance():
 
 
 def _compose_first(monkeypatch, **attrs):
+    from Tests.app_module_patches import set_app_global
+    from tldw_chatbook.app import TldwCli
+
     set_app_global(
         monkeypatch,
         "get_cli_setting",
@@ -223,8 +230,8 @@ def _compose_first(monkeypatch, **attrs):
     return first, sentinel, stub
 
 
-# Composing the splash reads config (card/progress settings) through the real
-# getters, so these keep the collection-time profile (Tests/conftest.py).
+# These import the app and compose the splash, which reads config through the
+# real getters, so they keep the collection-time profile (Tests/conftest.py).
 @pytest.mark.bootstrap_profile
 def test_no_splash_composes_the_main_ui_even_when_config_enables_the_splash(
     monkeypatch,
@@ -276,8 +283,20 @@ setup_started = false
 """
 
 
+_ENTRY_POINTS = {
+    # The packaged `tldw-cli` console script.
+    "tldw-cli": [
+        "-c",
+        "import sys; from tldw_chatbook.cli import main_cli_runner; "
+        "sys.exit(main_cli_runner())",
+    ],
+    "python -m tldw_chatbook.app": ["-m", "tldw_chatbook.app"],
+}
+
+
 @pytest.mark.timeout(240)
-def test_real_tldw_cli_runs_that_launch_against_the_config_flag(tmp_path):
+@pytest.mark.parametrize("entry", sorted(_ENTRY_POINTS))
+def test_real_entry_points_run_that_launch_against_the_config_flag(tmp_path, entry):
     root = tmp_path.resolve()
     env = _isolated_env(root)
     target = root / "elsewhere" / "copied-config.toml"
@@ -287,9 +306,7 @@ def test_real_tldw_cli_runs_that_launch_against_the_config_flag(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
-            "-c",
-            "import sys; from tldw_chatbook.cli import main_cli_runner; "
-            "sys.exit(main_cli_runner())",
+            *_ENTRY_POINTS[entry],
             "--config",
             str(target),
             "--no-splash",
@@ -304,8 +321,10 @@ def test_real_tldw_cli_runs_that_launch_against_the_config_flag(tmp_path):
     )
     assert result.returncode == 0, result.stderr[-4000:]
     assert "unrecognized arguments" not in result.stderr
+    # --help ends with the second-machine epilog on both entry points.
+    tail = [line for line in result.stdout.splitlines() if line.strip()][-3:]
+    assert any("Setting up another machine" in line for line in tail), result.stdout
     assert "TLDW_CONFIG_PATH" in result.stdout
-    assert "Setting up another machine" in result.stdout
     # Every launch ensures its effective config exists, so neither the
     # inherited TLDW_CONFIG_PATH nor the default profile being absent means
     # the launch ran against the flagged file.
