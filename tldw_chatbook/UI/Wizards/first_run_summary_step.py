@@ -366,6 +366,7 @@ class SummaryStep(SetupStep):
             speech_installed=speech_installed,
             speech_runtime_installed=speech_runtime_installed,
             rag_model=rag_model,
+            themes=getattr(self.app, "available_themes", None),
         )
         row_states = {row.label: row.state for row in rows}
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (

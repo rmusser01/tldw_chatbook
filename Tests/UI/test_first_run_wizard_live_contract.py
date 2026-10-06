@@ -1031,7 +1031,8 @@ def _attempted_full_appearance_resume_config():
                 "model": {"model_id": "gpt-resume-test"},
                 "appearance": {
                     "theme": "textual-light",
-                    "splash_card": "",
+                    "startup": "short",
+                    "reduce_motion": True,
                 },
                 "protect-keys": {"encryption_enabled": True},
             },
@@ -1155,15 +1156,11 @@ async def test_partial_appearance_restore_preserves_absent_splash_sibling(
             )
             container = app.screen.query_one(SetupWizardContainer)
             appearance = container.steps[container._step_index_for_id(STEP_APPEARANCE)]
-            splash_buttons = [
-                button
-                for button in appearance.query("#setup-splash-choice RadioButton")
-                if not str(button.label).startswith("Surprise me")
-            ]
-            assert splash_buttons
-            retained_splash = splash_buttons[0]
-            retained_splash.value = True
-            appearance.selected_splash_card = str(retained_splash.label)
+            # TASK-34100.13: the sibling control is the startup animation now
+            # (the splash-card gallery left setup).
+            retained = appearance.query_one("#setup-startup-off", RadioButton)
+            retained.value = True
+            await pilot.pause()
             partial_values = dict(draft.values)
             partial_values[STEP_APPEARANCE] = {"theme": "textual-dark"}
             partial = replace(draft, values=partial_values)
@@ -1171,8 +1168,8 @@ async def test_partial_appearance_restore_preserves_absent_splash_sibling(
             assert container._restore_resume_controls(partial) is True
 
             assert appearance.selected_theme == "textual-dark"
-            assert appearance.selected_splash_card == str(retained_splash.label)
-            assert retained_splash.value is True
+            assert appearance.get_step_data()["startup"] == "off"
+            assert retained.value is True
 
 
 @pytest.mark.asyncio
@@ -1248,22 +1245,17 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
             appearance_step = container.steps[
                 container._step_index_for_id(STEP_APPEARANCE)
             ]
-            assert appearance_step.get_step_data() == {
-                "theme": "textual-light",
-                "splash_card": "",
-            }
+            step_data = appearance_step.get_step_data()
+            assert step_data["theme"] == "textual-light"
+            assert step_data["startup"] == "short"
+            assert step_data["reduce_motion"] is True
             selected_themes = [
                 getattr(button, "_theme_name", "")
                 for button in appearance_step.query("#setup-theme-choice RadioButton")
                 if button.value
             ]
             assert selected_themes == ["textual-light"]
-            selected_splash = [
-                str(button.label)
-                for button in appearance_step.query("#setup-splash-choice RadioButton")
-                if button.value
-            ]
-            assert selected_splash == ["Surprise me (random)"]
+            assert appearance_step.query_one("#setup-startup-short", RadioButton).value
 
             # TASK-34100.4 review v5r1 (F1): the checkpoint's
             # encryption_enabled = true is not restored as an "Encryption

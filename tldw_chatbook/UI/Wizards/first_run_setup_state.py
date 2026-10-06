@@ -1878,48 +1878,6 @@ def tools_commit_delta(
     }
 
 
-def build_appearance_commit(
-    *,
-    default_theme: str | None,
-    splash_card: str | None = None,
-    reset_splash_to_random: bool = False,
-) -> dict[str, dict[str, Any]]:
-    """Mutation for the appearance step.
-
-    Bug-2 fix: both ``default_theme`` and the splash-card write are now
-    each individually optional, so the caller (``AppearanceStep.commit()``)
-    can build a delta-aware commit -- e.g. a rerun that only changes the
-    splash card omits ``general.default_theme`` entirely instead of
-    rewriting it back to a (possibly stale) fallback value.
-
-    Args:
-        default_theme: Theme name to persist under
-            ``general.default_theme``, or falsy (``None``/``""``) to omit
-            that key entirely -- e.g. the chosen theme matches what is
-            already persisted, so nothing needs to change.
-        splash_card: A specific card name to persist under
-            ``splash_screen.card_selection``, or falsy to leave that key
-            out (e.g. nothing was chosen, or "Surprise me" was picked --
-            see ``reset_splash_to_random``).
-        reset_splash_to_random: When True and ``splash_card`` is falsy,
-            write ``splash_screen.card_selection = "random"``. This is the
-            explicit "Surprise me" choice over a previously persisted
-            specific card, which otherwise has no truthy value of its own
-            to signal that a write is even needed.
-
-    Returns:
-        The section/value mapping to persist; empty where nothing changed.
-    """
-    commit: dict[str, dict[str, Any]] = {}
-    if default_theme:
-        commit["general"] = {"default_theme": default_theme}
-    if splash_card:
-        commit["splash_screen"] = {"card_selection": splash_card}
-    elif reset_splash_to_random:
-        commit["splash_screen"] = {"card_selection": "random"}
-    return commit
-
-
 def build_wizard_state_commit(
     *, started: bool | None = None, completed: bool | None = None
 ) -> dict[str, dict[str, Any]]:
@@ -2216,6 +2174,7 @@ def build_summary_rows(
     speech_installed: bool = False,
     speech_runtime_installed: bool = False,
     rag_model: Any = None,
+    themes: Mapping[str, Any] | None = None,
 ) -> tuple[SummaryRow, ...]:
     """Build the summary matrix strictly from persisted config.
 
@@ -2247,6 +2206,8 @@ def build_summary_rows(
             from its active profile (``first_run_rag_state``), resolved off
             the loop by the caller like ``speech_installed``; ``None`` when
             unknown, and the Search row then names only the flag.
+        themes: TASK-34100.13 -- the app's registered themes, for the Theme
+            row's tone tag ("Nord · dark"); Textual's built-ins otherwise.
 
     Returns:
         Ordered tuple of SummaryRow for the Summary step to render.
@@ -2303,6 +2264,11 @@ def build_summary_rows(
 
     theme_is_custom = bool(
         prefill.default_theme and prefill.default_theme != _TEMPLATE_DEFAULT_THEME
+    )
+    from tldw_chatbook.UI.Wizards import first_run_appearance_state as look
+
+    startup_changed, startup_detail = look.startup_summary(
+        _section(app_config, "splash_screen"), _section(app_config, "appearance")
     )
 
     # TASK-34100.4 AC #5: a line about changing this later names the
@@ -2425,10 +2391,24 @@ def build_summary_rows(
             ROW_DEFAULT,
             "not set up · Library ▸ Notes ▸ Add from files…",
         ),
+        # TASK-34100.13 (fulltrack-13): the display name with a tone tag,
+        # the same label the Appearance step's theme rows carry.
         SummaryRow(
             "Theme",
             ROW_CONFIGURED if theme_is_custom else ROW_DEFAULT,
-            prefill.default_theme or "default",
+            look.theme_display_label(
+                prefill.default_theme,
+                dark=look.theme_tone(prefill.default_theme, themes),
+            )
+            if prefill.default_theme
+            else "default",
+        ),
+        # TASK-34100.13 (coverage-15): what the Appearance step's startup and
+        # comfort controls saved.
+        SummaryRow(
+            "Startup and motion",
+            ROW_CONFIGURED if startup_changed else ROW_DEFAULT,
+            startup_detail,
         ),
         encryption_row,
     )

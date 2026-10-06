@@ -11329,6 +11329,8 @@ async def test_finalize_and_dismiss_screen_never_double_dismiss():
 
 @pytest.mark.asyncio
 async def test_appearance_step_commits_theme_and_card():
+    """TASK-34100.13: the splash-card gallery left setup (fulltrack-09); a
+    theme pick still commits, and nothing is written for the splash card."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -11340,17 +11342,16 @@ async def test_appearance_step_commits_theme_and_card():
     step = AppearanceStep(
         wizard=wizard,
         config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
+        environ={},
     )
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.selected_theme = "textual-light"
-        step.selected_splash_card = "matrix"
         ok, _ = await step.commit()
         assert ok
         committed = wizard.commit_config.call_args.args[0]
-        assert committed["general"] == {"default_theme": "textual-light"}
-        assert committed["splash_screen"] == {"card_selection": "matrix"}
+        assert committed == {"general": {"default_theme": "textual-light"}}
 
 
 @pytest.mark.asyncio
@@ -11409,12 +11410,9 @@ async def test_appearance_step_no_config_theme_preselects_nothing():
 
 @pytest.mark.asyncio
 async def test_appearance_step_rerun_change_only_splash_card_leaves_theme_untouched():
-    """Bug-2a/b: AppearanceStep.commit() used to fall back to a hardcoded
-    "textual-dark" default whenever selected_theme was empty, clobbering a
-    persisted theme on a rerun that only touches the splash card. compose()
-    must initialize selected_theme from the persisted default (a), and the
-    delta-aware commit must omit general.default_theme when the chosen
-    theme matches what's already persisted (b)."""
+    """Bug-2a/b: a rerun that changes only another Appearance control must
+    not rewrite the persisted theme. TASK-34100.13: that control is now the
+    startup animation (the splash-card gallery left setup)."""
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -11426,69 +11424,19 @@ async def test_appearance_step_rerun_change_only_splash_card_leaves_theme_untouc
     step = AppearanceStep(
         wizard=wizard,
         config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
+        environ={},
     )
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        # compose() must have initialized selected_theme from the persisted
-        # default -- pin that directly, since it's the crux of fix (a).
         assert step.selected_theme == "nord"
-
-        # Only the splash card changes this run; the theme RadioSet is left
-        # untouched at its pre-selected ("nord") position.
-        step.selected_splash_card = "matrix"
+        step.query_one("#setup-startup-off", RadioButton).value = True
+        await pilot.pause()
         ok, error = await step.commit()
         assert ok, error
         committed = wizard.commit_config.call_args.args[0]
         assert "general" not in committed
-        assert committed["splash_screen"] == {"card_selection": "matrix"}
-
-
-@pytest.mark.asyncio
-async def test_appearance_step_surprise_me_over_persisted_card_writes_random():
-    """Bug-2c: "Surprise me (random)" maps to splash_card=None, which the
-    old commit() unconditionally treated as "nothing to write" -- so a
-    previously persisted specific card could never be reset back to random.
-    Explicitly re-picking "Surprise me" over a persisted specific card must
-    write card_selection="random"."""
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    wizard = SimpleNamespace(
-        app_instance=MagicMock(
-            app_config={"splash_screen": {"card_selection": "matrix"}}
-        ),
-        commit_config=AsyncMock(return_value=True),
-        rerun=True,
-    )
-    step = AppearanceStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="appearance", title="Appearance", step_number=7),
-    )
-    app = _StepHost(step)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        radio_set = step.query_one("#setup-splash-choice", RadioSet)
-        buttons = list(radio_set.query(RadioButton))
-        surprise_button = next(
-            b for b in buttons if str(b.label).startswith("Surprise me")
-        )
-        other_button = next(
-            b for b in buttons if not str(b.label).startswith("Surprise me")
-        )
-        # "Surprise me" is already the default mount-time pre-selection, and
-        # RadioSet does not fire Changed for its own initial state -- press
-        # a different card first, then explicitly re-press "Surprise me",
-        # to mirror a real user re-picking it.
-        other_button.value = True
-        await pilot.pause()
-        surprise_button.value = True
-        await pilot.pause()
-
-        ok, error = await step.commit()
-        assert ok, error
-        committed = wizard.commit_config.call_args.args[0]
-        assert committed["splash_screen"] == {"card_selection": "random"}
+        assert committed["splash_screen"] == {"enabled": False}
 
 
 @pytest.mark.asyncio
@@ -14427,59 +14375,37 @@ async def test_summary_consent_allow_kicks_the_catalog_refresh(allowed):
 
 @pytest.mark.asyncio
 async def test_show_all_rebuilds_keep_the_selected_theme_and_card_pressed():
-    from textual.widgets import Button, RadioButton, RadioSet
+    """The chosen theme stays pressed when Show all rebuilds the list.
+    TASK-34100.13: the splash-card half left with the gallery."""
+    from textual.widgets import Button, RadioSet
 
     wizard = _make_wizard()
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.2)
         appearance = wizard.query_one(AppearanceStep)
+        assert not appearance.query("#setup-splash-choice")
 
-        # Pick a theme and a card from the curated (short) lists.
         theme_rows = [
             b
             for b in appearance.query("#setup-theme-choice RadioButton")
             if getattr(b, "_theme_name", "")
         ]
         assert theme_rows
-        chosen_theme = theme_rows[-1]
-        chosen_theme.value = True
+        theme_rows[-1].value = True
         await pilot.pause(0.1)
-
-        card_rows = [
-            b
-            for b in appearance.query("#setup-splash-choice RadioButton")
-            if getattr(b, "_card_name", "")
-        ]
-        assert card_rows
-        chosen_card_name = getattr(card_rows[-1], "_card_name")
-        card_rows[-1].value = True
-        await pilot.pause(0.1)
-
         chosen_theme_name = appearance.selected_theme
-        assert chosen_theme_name and appearance.selected_splash_card == chosen_card_name
+        assert chosen_theme_name
 
-        # Expand both full lists.
         appearance.query_one("#setup-theme-show-all", Button).press()
         await pilot.pause(0.3)
-        appearance.query_one("#setup-splash-show-all", Button).press()
-        await pilot.pause(0.3)
 
-        # The selection survives in state AND is pressed in the rebuilt lists.
         assert appearance.selected_theme == chosen_theme_name
-        assert appearance.selected_splash_card == chosen_card_name
-
         theme_pressed = appearance.query_one(
             "#setup-theme-choice", RadioSet
         ).pressed_button
         assert theme_pressed is not None, "no theme row pressed after show-all"
         assert getattr(theme_pressed, "_theme_name", "") == chosen_theme_name
-
-        card_pressed = appearance.query_one(
-            "#setup-splash-choice", RadioSet
-        ).pressed_button
-        assert card_pressed is not None, "no card row pressed after show-all"
-        assert getattr(card_pressed, "_card_name", "") == chosen_card_name
 
 
 # ---------------------------------------------------------------------------
