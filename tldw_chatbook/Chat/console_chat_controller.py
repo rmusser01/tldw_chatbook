@@ -8974,7 +8974,7 @@ class ConsoleChatController:
             preview_tools = getattr(self._agent_bridge, "preview_tool_schemas", None)
             if callable(preview_tools):
                 try:
-                    tools = list(preview_tools())
+                    tools = list(preview_tools(resolution))
                 except Exception:
                     requires_pre_dispatch_authority = True
         from tldw_chatbook.Chat.console_speculative_voice_session import (
