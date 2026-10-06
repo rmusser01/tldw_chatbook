@@ -3478,6 +3478,18 @@ class ConsoleTranscript(VerticalScroll):
         """
         super().release_anchor()
 
+    def _check_anchor(self) -> None:
+        """Keep a far jump detached until its target is placed.
+
+        A re-centered window replaces every row under a reader who was at the
+        bottom, so the old offset clamps to the new bottom and Textual
+        re-attaches the anchor. Pinned there with a hidden tail, the next sync
+        tick's ghost-follow heal threw the jump away and re-windowed onto the
+        tail (TASK-33628.5.1). The latch lifts once the placement lands.
+        """
+        if not self._suppress_boundary_hydration:
+            super()._check_anchor()
+
     @on(events.MouseScrollUp)
     def _hydrate_scrollback_on_boundary_wheel(
         self, _event: events.MouseScrollUp
@@ -4525,19 +4537,17 @@ class ConsoleTranscript(VerticalScroll):
             self.pending_selection_id is not None
             and self.pending_selection_id in message_ids
         ):
+            from .console_transcript_reveal import hand_off_selection
+
             self.selected_message_id = self.pending_selection_id
-            pending_index = index_by_id[self.pending_selection_id]
-            if pending_index < window_start:
-                # Branch sibling handoff: the replacement id may sit exactly
-                # where the old window boundary id disappeared.  Keep the new
-                # selected row in the window rather than mounting a disjoint
-                # orphan or clearing a valid selection.
-                window_start = self._turn_aligned_start(self._messages, pending_index)
-            elif pending_index >= self._hidden_tail_start_index():
-                # TASK-15777: same contract on the other boundary — a
-                # handed-off selection inside the hidden tail extends the
-                # mounted slice down through it.
-                self._reveal_hidden_tail_through(pending_index + 1)
+            # Bounded like any reveal (TASK-33628.5.1): Undo reselects a
+            # restored root this way, which once mounted every later row.
+            window_start = hand_off_selection(
+                self,
+                self.pending_selection_id,
+                index_by_id[self.pending_selection_id],
+                window_start,
+            )
             self.pending_selection_id = None
         if (
             self._hidden_tail_start is not None
@@ -5214,13 +5224,16 @@ class ConsoleTranscript(VerticalScroll):
         )
 
     def reveal_message(self, message_id: str) -> bool:
-        """Extend the mounted window back through ``message_id`` when hidden.
+        """Bring ``message_id`` into the mounted window when it is hidden.
 
         The single implementation behind every "jump to a message the window
         does not currently show" path: selection, the task-501 swipe handoff,
-        and reading-state restore. Extending the SAME contiguous boundary is
-        what keeps mounted rows one unbroken suffix of the history — no
-        islands, so no gap markers are needed anywhere.
+        and reading-state restore. A near reveal (a j/k step over the
+        boundary, a nearby restore) extends the SAME contiguous slice, so
+        mounted rows stay one unbroken run of the history. A far one -- more
+        than one load-shaped window of new rows -- re-centers a bounded
+        window on the target instead (TASK-15777, TASK-33628.5.1; see
+        ``console_transcript_reveal``).
 
         Args:
             message_id: Identifier of the message that must have a row.
@@ -5230,97 +5243,16 @@ class ConsoleTranscript(VerticalScroll):
             False when the message was already mounted or is not in this
             transcript. Deliberately does NOT refresh: callers already own a
             refresh, and the restore path needs to sequence its own.
-
-        TASK-15777: a FAR reveal — one where the newly revealed stretch
-        between the target and the current window would exceed the low
-        watermark in estimated lines — re-centers the window on the target
-        instead of extending the boundary, mounting an initial-window-sized
-        slice from the target's turn (the same shape a session load produces)
-        with everything past it in the hidden tail. Near reveals (a j/k step
-        over the boundary, a nearby restore) keep the plain boundary
-        extension, so small-session behavior is unchanged. Only meaningful
-        under ``_two_sided_active``.
         """
-        for requested_index, message in enumerate(self._messages):
-            if message.id != message_id:
-                continue
-            index, unit_end, owner_id, _owned_ids = self._unit_span_at(
-                self._messages, requested_index
-            )
-            first_visible = self._first_visible_message_index()
-            tail_start = self._hidden_tail_start_index()
-            if first_visible <= index and unit_end <= tail_start:
-                return False
-            if index < first_visible:
-                revealed_start = self._turn_aligned_start(self._messages, index)
-                revealed_end = first_visible
-            else:
-                revealed_start = tail_start
-                revealed_end = unit_end
-            if (
-                self._two_sided_active()
-                and self._estimated_window_lines(revealed_start, revealed_end)
-                > self._prune_watermarks()[0]
-            ):
-                self._recenter_window_on(index, owner_id)
-                return True
-            if index < first_visible:
-                self._set_hidden_prefix(revealed_start)
-            else:
-                self._reveal_hidden_tail_through(revealed_end)
-            return True
-        return False
+        from .console_transcript_reveal import reveal_message
 
-    def _estimated_window_lines(self, start: int, end: int) -> int:
-        """Return the estimated rendered lines of ``_messages[start:end]``."""
-        return sum(
-            self._estimated_message_lines(message)
-            for message in self._messages[start:end]
-        )
+        return reveal_message(self, message_id)
 
     def _recenter_window_on(self, index: int, message_id: str) -> None:
-        """Mount a bounded, load-shaped window with the target's turn on top.
+        """Mount a bounded, load-shaped window with the target's turn on top."""
+        from .console_transcript_reveal import recenter_window_on
 
-        The far jump detaches the reader from the tail (it IS a user
-        navigation away from it — a later send's follow intent still
-        outranks it, per TASK-336's ordering), and the target row is
-        scrolled to the top of the viewport once mounted, because the old
-        scroll offset is meaningless in the new window.
-        """
-        requested_index = next(
-            (
-                candidate_index
-                for candidate_index, message in enumerate(self._messages)
-                if message.id == message_id
-            ),
-            index,
-        )
-        unit_start, unit_end, owner_id, _owned_ids = self._unit_span_at(
-            self._messages, requested_index
-        )
-        start = self._turn_aligned_start(self._messages, unit_start)
-        budget = self._initial_window_line_budget()
-        used = 0
-        end = unit_start
-        while end < len(self._messages) and used < budget:
-            used += self._estimated_message_lines(self._messages[end])
-            end += 1
-        if end < unit_end:
-            end = unit_end
-        elif end > 0 and end < len(self._messages):
-            _included_start, included_end, _included_owner, _included_ids = (
-                self._unit_span_at(self._messages, end - 1)
-            )
-            end = included_end
-        self._set_hidden_prefix(start)
-        self._reveal_hidden_tail_through(end)
-        self.release_anchor()
-        self._reveal_scroll_target = owner_id
-        # Review E: the reconcile that realizes this window transits an
-        # emptied arrangement, and the placement parks the target near y=0 —
-        # both read as top-boundary hits and hydrated one spurious chunk
-        # ABOVE the jump target. Suppressed until the placement lands.
-        self._suppress_boundary_hydration = True
+        recenter_window_on(self, index, message_id)
 
     def select_message(self, message_id: str) -> None:
         """Select one message and show its contextual action row."""
