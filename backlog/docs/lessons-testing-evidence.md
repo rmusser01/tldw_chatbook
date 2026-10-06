@@ -321,6 +321,18 @@ collects) made it run and pass locally. Pick the cheapest fix that matches
 where the config read happens: collection-time import for import-time reads,
 `@private_profile_test` for tests that build or reload app config.
 
+**TASK-34100.16 follow-up, 2026-10-05: a collection-time import is itself
+order-dependent.** `Tests/Utils/test_launch_options.py` imported
+`tldw_chatbook.app` at module scope, as above, and passed alone and in the full
+`Tests --collect-only` sweep (116,114 collected). Collected after the backup
+suites (`Tests/UI/test_backup_restore_screen.py` and friends) in one targeted
+run, the same import failed collection with `raw_source_selection_changed`,
+and pytest stopped the whole run at `1 error during collection`. Do not add a
+module-scope app import to a file that does not need the app at import. Test
+pure helpers directly, cover the real entry points in subprocesses, and import
+the app inside a `@pytest.mark.bootstrap_profile` test body when a test needs
+it. Then check the file collected together with its neighbours, not only alone.
+
 ## A local red wall of `RecoveryRequired` hides the guard you meant to run
 
 **TASK-33003.1 review round 1, 2026-09-28.** The task's AC#4 guard
