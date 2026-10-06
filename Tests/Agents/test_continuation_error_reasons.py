@@ -82,10 +82,26 @@ def _run(turns, *, persist, context=None, invoke=None):
     )
 
 
+# Every value a Trace ``field_states`` entry may hold (Trace export/import).
+_TRACE_FIELD_STATES = frozenset(
+    {"observed", "redacted", "truncated", "omitted", "not_available", "capture_failed"}
+)
+
+
+def _reasons(field_states) -> dict[str, str]:
+    """Decode a step's reason codes, checking every state stays exportable."""
+    from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+        continuation_reasons,
+    )
+
+    assert set(field_states.values()) <= _TRACE_FIELD_STATES, field_states
+    return continuation_reasons(field_states)
+
+
 def _error_states(outcome) -> dict[str, str]:
     errors = [step for step in outcome.steps if step.kind == STEP_ERROR]
     assert errors, "the run must record an error step"
-    return dict(errors[-1].field_states)
+    return _reasons(errors[-1].field_states)
 
 
 def _tool_then_final(final_checkpoint):
@@ -422,8 +438,8 @@ def test_unstored_reasoning_checkpoint_keeps_the_delivered_reply(
         step for step in traced if step.summary == "Reasoning not preserved for replay"
     ]
     assert len(notes) == 1
-    assert notes[0].field_states == {
-        "payload": "omitted",
+    assert notes[0].field_states["payload"] == "omitted"
+    assert _reasons(notes[0].field_states) == {
         "continuation_error": "final_persist_failed",
         "continuation_store_failure": store_code,
     }
@@ -479,3 +495,108 @@ def test_post_tool_final_persist_failure_still_fails_closed() -> None:
         "continuation_error": "final_persist_failed",
         "continuation_store_failure": "terminal_settlement_failed",
     }
+
+
+# --- Review round 1 (F1): the reason codes survive the persisted run trace. ---
+
+
+def _revision_conflict_on_batch(event) -> None:
+    if isinstance(event, ToolBatchReady):
+        raise RuntimeError("Continuation revision conflict.")
+
+
+def _pending_tool_turn() -> ModelTurn:
+    call = ToolCall("calculator", {"expression": "2+2"}, "a", '{"expression":"2+2"}')
+    pending = ContinuationRound(
+        "",
+        ("tool reasoning",),
+        (ContinuationCall("a", "calculator", '{"expression":"2+2"}', "pending"),),
+    )
+    return _native_turn(
+        (call,), _kimi_checkpoint(revision=1, state="active", rounds=(pending,))
+    )
+
+
+def _terminal_settlement_conflict(event) -> None:
+    raise RuntimeError("Provider continuation terminal settlement failed.")
+
+
+@pytest.mark.parametrize(
+    "profile", ["safe_summary", "redacted_diagnostic", "full_trace"]
+)
+def test_reason_codes_survive_trace_export_and_import(tmp_path, profile) -> None:
+    """A run that recorded a reason code can still be exported and re-imported.
+
+    The codes used to be stored as ``field_states`` VALUES, which the Trace
+    export and import reject (only observed/redacted/truncated/omitted/
+    not_available/capture_failed are field states). So the one conversation a
+    user would share to report the failure could not be exported at all.
+    This drives the real runtime exits, the real AgentRunsDB rows and the
+    real derive -> preflight -> build -> import path.
+    """
+    from tldw_chatbook.Agents.agent_service import _safe_agent_step_record
+    from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+        continuation_reasons,
+    )
+    from tldw_chatbook.Chat.trajectory import derive_trajectory
+    from tldw_chatbook.Chat.trajectory_export import (
+        build_trace_export,
+        preflight_trace_export,
+    )
+    from tldw_chatbook.Chat.trajectory_import import load_imported_trace
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    failed = _run(
+        [_pending_tool_turn()],
+        persist=_revision_conflict_on_batch,
+        invoke=lambda call: pytest.fail("no tool may run after a failed barrier"),
+    )
+    kept, traced = _run_with_trace(
+        [_first_final_turn()], persist=_terminal_settlement_conflict
+    )
+    assert failed.status == RUN_ERROR
+    assert kept.status == RUN_DONE
+
+    db = AgentRunsDB(tmp_path / "agent_runs.db")
+    try:
+        for steps in (failed.steps, [*kept.steps, *traced]):
+            run_id = db.create_run(conversation_id="conv-34100", agent_kind="primary")
+            db.insert_steps_at_indices(
+                run_id,
+                [(step.index, _safe_agent_step_record(run_id, step)) for step in steps],
+            )
+        runs = [dict(run) for run in db.list_runs("conv-34100", agent_kind="primary")]
+    finally:
+        db.close()
+    persisted = [
+        {**step, "run_id": run["id"], "conversation_id": "conv-34100"}
+        for run in runs
+        for step in run["steps"]
+    ]
+    snapshot = derive_trajectory([], {}, [], [], [], agent_runs=runs, agent_steps=persisted)
+
+    preflight = preflight_trace_export(snapshot, profile=profile)
+    bundle = build_trace_export(
+        snapshot, preflight=preflight, confirm_full=profile == "full_trace"
+    )
+    imported = load_imported_trace(bundle)
+
+    reasons = sorted(
+        tuple(sorted(continuation_reasons(record.field_states).items()))
+        for turn in imported.snapshot.turns
+        for record in turn.records
+        if continuation_reasons(record.field_states)
+    )
+    assert reasons == sorted(
+        [
+            (
+                ("continuation_error", "batch_persist_failed"),
+                ("continuation_store_failure", "revision_conflict"),
+            ),
+            (
+                ("continuation_error", "final_persist_failed"),
+                ("continuation_store_failure", "terminal_settlement_failed"),
+            ),
+        ]
+    )
+

@@ -100,6 +100,59 @@ UNWRITTEN_STORE_FAILURES = frozenset(
 )
 
 
+#: The two ``field_states`` key prefixes a continuation failure is traced
+#: under. Trace ``field_states`` VALUES are the per-field state vocabulary
+#: (observed, redacted, truncated, omitted, not_available, capture_failed)
+#: that Trace export and import enforce, so a code stored as a value made the
+#: run's conversation unexportable. The code rides in the key instead, with
+#: the legal state ``observed``: ``{"continuation_error:batch_persist_failed":
+#: "observed"}``.
+CONTINUATION_ERROR_FIELD = "continuation_error"
+CONTINUATION_STORE_FAILURE_FIELD = "continuation_store_failure"
+_REASON_STATE = "observed"
+
+
+def continuation_reason_states(
+    reason: str, store_failure: str | None = None
+) -> dict[str, str]:
+    """Return the trace ``field_states`` entries that name a failure.
+
+    Args:
+        reason: The runtime's code for the continuation exit that was taken.
+        store_failure: The store's precondition code, when a persist failed.
+
+    Returns:
+        One entry per code, keyed ``<field>:<code>`` with a legal Trace state.
+    """
+    states = {f"{CONTINUATION_ERROR_FIELD}:{reason}": _REASON_STATE}
+    if store_failure is not None:
+        states[f"{CONTINUATION_STORE_FAILURE_FIELD}:{store_failure}"] = _REASON_STATE
+    return states
+
+
+def continuation_reasons(field_states: Mapping[str, object]) -> dict[str, str]:
+    """Read back the codes ``continuation_reason_states`` recorded.
+
+    Args:
+        field_states: A trace step's or record's ``field_states``.
+
+    Returns:
+        ``{"continuation_error": code}`` plus ``continuation_store_failure``
+        when present; empty when the step names no continuation failure.
+    """
+    reasons: dict[str, str] = {}
+    for key, state in field_states.items():
+        field, separator, code = str(key).partition(":")
+        if (
+            separator
+            and code
+            and state == _REASON_STATE
+            and field in {CONTINUATION_ERROR_FIELD, CONTINUATION_STORE_FAILURE_FIELD}
+        ):
+            reasons[field] = code
+    return reasons
+
+
 def store_failure_code(exc: BaseException) -> str:
     """Name the store precondition behind ``exc`` without exposing its text.
 

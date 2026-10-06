@@ -1511,16 +1511,18 @@ def run_agent_loop(
     def continuation_error(reason: str) -> RunOutcome:
         # TASK-34100.3 AC#3: every exit shares the user-facing summary, so the
         # code-owned ``reason`` (and the store's own precondition code, when a
-        # persist call failed) is what names the failed precondition.
+        # persist call failed) is what names the failed precondition. The codes
+        # ride in field_states KEYS: a code as a VALUE broke Trace export.
         nonlocal store_failure
-        field_states = {"continuation_error": reason}
-        if store_failure is not None:
-            field_states["continuation_store_failure"] = store_failure
-            store_failure = None
+        from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+            continuation_reason_states,
+        )
+
+        failed_store, store_failure = store_failure, None
         logger.warning(
             "Provider continuation stopped the run: reason={} store_failure={}",
             reason,
-            field_states.get("continuation_store_failure", "none"),
+            failed_store or "none",
         )
         add(
             STEP_ERROR,
@@ -1528,7 +1530,7 @@ def run_agent_loop(
                 "Provider continuation could not be persisted; retry or recover "
                 "the interrupted run."
             ),
-            field_states=field_states,
+            field_states=continuation_reason_states(reason, failed_store),
         )
         return _outcome(RUN_ERROR)
 
@@ -1587,6 +1589,7 @@ def run_agent_loop(
         nonlocal store_failure
         from tldw_chatbook.Chat.provider_continuation_diagnostics import (
             UNWRITTEN_STORE_FAILURES,
+            continuation_reason_states,
         )
 
         if current is not None or store_failure not in UNWRITTEN_STORE_FAILURES:
@@ -1600,8 +1603,7 @@ def run_agent_loop(
             status="failed",
             field_states={
                 "payload": "omitted",
-                "continuation_error": "final_persist_failed",
-                "continuation_store_failure": store_failure,
+                **continuation_reason_states("final_persist_failed", store_failure),
             },
             sensitivity="diagnostic",
         )
