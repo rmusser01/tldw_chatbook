@@ -138,3 +138,44 @@ def test_a_stranded_entry_key_is_never_resolved_as_its_credential():
 
     assert entry is not None
     assert resolve_entry_credential(entry, environ={}) == (None, None)
+
+
+def _with_stranded_family_key(config: dict) -> dict:
+    return {
+        **config,
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://127.0.0.1:8181", "api_key": _ciphertext()}
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "entry_key", ["entry-plain-key", None], ids=["entry-key", "keyless-entry"]
+)
+def test_a_stranded_family_key_never_blocks_a_custom_endpoint(entry_key):
+    # Review round 1 (F3): the family's saved key belongs to the
+    # `[api_settings.llama_cpp]` slot and is never the entry's credential,
+    # yet a stranded one read the entry "Not ready · no key" and pointed at
+    # Providers & Models, where the entry's key is "Managed in Custom
+    # endpoints".
+    entry = _entry_config("llama_cpp", api_key=entry_key or "")
+    if entry_key is None:
+        del entry["custom_endpoints"]["home"]["api_key"]
+    config = _with_stranded_family_key(entry)
+
+    readiness = get_provider_readiness("custom-ep:home", config, environ={})
+
+    assert readiness.ready is True
+    assert readiness.api_key is None  # the family's credential never rides
+
+
+def test_a_stranded_entry_key_still_blocks_beside_a_stranded_family_key():
+    config = _with_stranded_family_key(
+        _entry_config("llama_cpp", api_key=_ciphertext())
+    )
+
+    readiness = get_provider_readiness("custom-ep:home", config, environ={})
+
+    assert readiness.ready is False
+    assert readiness.reason == STILL_ENCRYPTED_REASON
+    assert "Custom endpoints" in readiness.recovery
