@@ -18,9 +18,10 @@ raise the number, which re-opens the hole this test exists to close.
 
 **Scope.** These are hand-picked god modules, not a directory family, so
 (unlike the Library controller ratchet) there is no glob that auto-adds new
-files. `settings_screen.py` is deliberately absent: its split and its
-missing ratchet row are already tracked by task-1378 / task-31202 — linked,
-not duplicated here (core-review TASK-32809.2 AC#2).
+files. `settings_screen.py` joined on 2026-10-05 (TASK-33007.8, closing
+task-31202), once the model-config redesign's Phase 7 had moved the
+Providers & Models card into `UI/Settings_Modules/`; the rest of its split
+is task-1378.
 
 First recorded 2026-09-19 by core-review TASK-32809.2, each row at its exact
 measured size as of `origin/dev`.
@@ -122,6 +123,16 @@ _BUDGETS: dict[str, int] = {
     # server label on one header row adds 15 lines; the row rises 369 -> 384,
     # never squeezed code.
     "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 384,
+    # TASK-33007.8 (closes task-31202): pinned at its measured size after
+    # model-config Phase 7 moved the Providers & Models card out (34,179 at
+    # the branch base 9b28ce1479 -> 33,607). task-1378 owns the rest of the
+    # split; its new code goes in UI/Settings_Modules/, never in this row.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33607,
+    # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
+    # at birth so the split cannot regrow a god module there. New code for
+    # either goes in a sibling module under UI/Settings_Modules/.
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 1951,
+    "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 728,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
