@@ -511,6 +511,132 @@ async def test_second_enter_during_admission_never_starts_a_second_provider_call
 
 
 @pytest.mark.asyncio
+async def test_a_tab_switch_before_the_paint_never_acknowledges_the_shown_tab(
+    monkeypatch,
+):
+    """The paint is for the Enter's own tab, never whichever tab shows now.
+
+    A tab press activates its session after an awaited read, so the switch
+    can land after Enter captured its tab and before the deferred paint
+    runs. That send is refused ("Console chat changed before send"); the
+    tab now on screen must not read "Sending…" for it meanwhile (PR #3022
+    review). Red before the fix: the paint pushed "Sending…" to the shared
+    composer while the other tab was active.
+    """
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
+
+    host, gateway, _timeline = build()
+    notices: list[str] = []
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console = host.screen_stack[-1]
+            await _wait_for_selector(console, pilot, "#console-native-composer")
+            _select_llamacpp_console(console)
+            store = console._ensure_console_chat_store()
+            sent_from = store.active_session_id
+            await pilot.click("#console-new-chat-tab")
+            await pilot.pause()
+            shown = store.active_session_id
+            assert shown not in (None, sent_from)
+            await console._session._activate_native_console_session(sent_from)
+            await pilot.pause(0.3)
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+            composer.focus()
+            composer.load_draft(DRAFT)
+            await pilot.pause()
+            host.app_instance.notify = lambda message, **_k: notices.append(
+                str(message)
+            )
+            acknowledged_on: list[str | None] = []
+            real_show = ConsoleComposerBar.show_send_acknowledged
+
+            def show(self, label: str, reason: str) -> None:
+                acknowledged_on.append(store.active_session_id)
+                real_show(self, label, reason)
+
+            monkeypatch.setattr(ConsoleComposerBar, "show_send_acknowledged", show)
+            real_call_later = console.call_later
+
+            def call_later(callback, *args, **kwargs):
+                if callback is not module._paint_then:
+                    return real_call_later(callback, *args, **kwargs)
+
+                async def switch_then_paint() -> None:
+                    # The tab press's activation lands first.
+                    await console._session._activate_native_console_session(shown)
+                    await callback(*args, **kwargs)
+
+                return real_call_later(switch_then_paint)
+
+            monkeypatch.setattr(console, "call_later", call_later)
+            press(host, "enter", "\r")
+            await until(lambda: any("changed before send" in n for n in notices))
+            await until(lambda: not console._console_send_ack.active_for(sent_from))
+            await pilot.pause(0.3)
+            assert store.active_session_id == shown
+            assert acknowledged_on == [], acknowledged_on
+            settled = paint_state(host)
+            assert not settled.sending and not settled.user_row, settled
+            assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_user_row_that_is_not_the_echo_keeps_the_sending_row():
+    """Only the Enter's own echo replaces its row (PR #3022 review).
+
+    An Edit & resend lands a USER sibling in the same transcript. While the
+    Enter still awaits admission that row cannot be its echo -- the echo is
+    written only by the turn the runtime admits -- so "Sending…" stays
+    until the Enter's own turn writes its echo. Red before the fix: any new
+    USER id released the row, and the draft vanished from the transcript.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole as Role
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            earlier = store.append_message(
+                session_id, role=Role.USER, content="an earlier question"
+            )
+            store.append_message(
+                session_id, role=Role.ASSISTANT, content="an earlier answer"
+            )
+            await console._sync_native_console_chat_ui()
+            gate = HeldAdmission(console)
+            try:
+                press(host, "enter", "\r")
+                await until(gate.entered.is_set)
+                held = paint_state(host)
+                assert held.user_row and held.sending, held
+                sibling = store.create_sibling(
+                    earlier.id, role=Role.USER, content="an edited question"
+                )
+                assert [
+                    message.id
+                    for message in store.messages_for_session(session_id)
+                    if message.role is Role.USER
+                ] == [sibling.id]
+                # The whole sync projects the sibling (red: it released here).
+                await console._sync_native_console_chat_ui()
+                assert console._console_send_ack.active_for(session_id)
+                # The held send keeps the app busy, so Pilot never sees idle.
+                await asyncio.sleep(0.2)
+                held = paint_state(host)
+                assert held.user_row and held.sending, held
+            finally:
+                gate.release.set()
+                gateway.validation_release.set()
+            await until(lambda: not console._console_send_ack.active_for(session_id))
+            await until(lambda: not paint_state(host).sending)
+            await pilot.pause()
+            settled = paint_state(host)
+            assert settled.user_row and not settled.sending, settled
+
+
+@pytest.mark.asyncio
 async def test_unchanged_control_bar_sync_does_no_style_work():
     """A whole-screen tick must not re-style the control bar it did not change.
 
@@ -545,13 +671,26 @@ async def test_unchanged_control_bar_sync_does_no_style_work():
 # -- the acknowledgement's own rules (no app) ---------------------------------
 
 
-def _ack():
+def _ack(transcript: dict[str, list[str]] | None = None):
+    """An acknowledgement over ``transcript`` (session id -> message ids)."""
     from tldw_chatbook.UI.Console_Modules.send_acknowledgement import (
         ConsoleSendAcknowledgement,
     )
 
     released: list[int] = []
-    return ConsoleSendAcknowledgement(lambda: released.append(1)), released
+    ids = {} if transcript is None else transcript
+    ack = ConsoleSendAcknowledgement(
+        lambda: released.append(1), lambda session_id: list(ids.get(session_id, ()))
+    )
+    return ack, released
+
+
+def _admit(ack, token, session_id: str = "s1"):
+    """Hand ``token``'s turn to the runtime the way the admission does."""
+    with ack.dispatching(token):
+        callback = ack.custody_callback(session_id)
+        ack.mark_admitted(session_id)
+    return callback
 
 
 def _message(role, message_id: str):
@@ -563,12 +702,12 @@ def _message(role, message_id: str):
 def test_acknowledgement_row_stands_in_until_the_store_echo_lands():
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole as Role
 
-    ack, released = _ack()
+    ack, released = _ack({"s1": ["old-user"]})
     old = _message(Role.USER, "old-user")
-    token = ack.begin("s1", DRAFT, ["old-user"])
+    token = ack.begin("s1", DRAFT)
     assert token is not None
-    assert ack.begin("s1", "second", ["old-user"]) is None  # one per session
-    other = ack.begin("s2", "another tab", [])  # never blocked by s1's turn
+    assert ack.begin("s1", "second") is None  # one per session
+    other = ack.begin("s2", "another tab")  # never blocked by s1's turn
     assert other is not None and ack.active_for("s2")
     ack.release(other)
     released.clear()
@@ -580,15 +719,41 @@ def test_acknowledgement_row_stands_in_until_the_store_echo_lands():
     assert ack.active_for("s1") and not ack.active_for("other-session")
     assert ack.run_copy("s1") == "Sending…"
 
+    _admit(ack, token)
     echo = _message(Role.USER, "echo")
     assert ack.project("s1", [old, echo]) == [old, echo]
     assert not ack.active_for("s1")
     assert released == []  # the projection that saw the echo renders it
 
 
+def test_only_the_sends_own_echo_releases_its_row():
+    """A USER row another action adds is never taken for the echo.
+
+    PR #3022 review: an Edit & resend sibling landing while the Enter awaits
+    admission released the row, as any new USER id did. The echo is written
+    only by the turn the runtime admits, so it is the first USER row the
+    session gains after that hand-off.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole as Role
+
+    transcript = {"s1": ["old-user"]}
+    ack, released = _ack(transcript)
+    sibling = _message(Role.USER, "edit-resend-sibling")
+    token = ack.begin("s1", DRAFT)
+    assert ack.project("s1", [sibling])[-1].status == "pending"
+    assert ack.active_for("s1")
+    transcript["s1"] = ["edit-resend-sibling"]
+    _admit(ack, token)
+    # Admitted, its echo not written yet: the sibling is still not it.
+    assert ack.project("s1", [sibling])[-1].status == "pending"
+    echo = _message(Role.USER, "echo")
+    assert ack.project("s1", [sibling, echo]) == [sibling, echo]
+    assert not ack.active_for("s1") and released == []
+
+
 def test_acknowledgement_released_when_custody_ends_without_an_echo():
     ack, released = _ack()
-    token = ack.begin("s1", DRAFT, [])
+    token = ack.begin("s1", DRAFT)
     with ack.dispatching(token):
         callback = ack.custody_callback("s1")
         assert ack.custody_callback("other-session") is None
@@ -611,9 +776,9 @@ def test_admission_binds_only_to_the_enter_whose_send_is_running():
     would outlive a refused send.
     """
     ack, released = _ack()
-    earlier = ack.begin("s1", DRAFT, [])
+    earlier = ack.begin("s1", DRAFT)
     ack.dispatch_finished(earlier)  # the review opened: no turn admitted yet
-    newer = ack.begin("s1", "a newer draft", [])
+    newer = ack.begin("s1", "a newer draft")
     with ack.dispatching(earlier):  # the review worker admits its own turn
         assert ack.custody_callback("s1") is None
         ack.mark_admitted("s1")
@@ -624,10 +789,10 @@ def test_admission_binds_only_to_the_enter_whose_send_is_running():
 
 def test_acknowledgement_released_when_dispatch_admits_no_turn():
     ack, released = _ack()
-    token = ack.begin("s1", DRAFT, [])
+    token = ack.begin("s1", DRAFT)
     ack.dispatch_finished(token)
     assert not ack.active_for("s1") and released == [1]
-    newer = ack.begin("s1", DRAFT, [])
+    newer = ack.begin("s1", DRAFT)
     ack.release(token)
     assert ack.active_for("s1")
     ack.release(newer)
@@ -639,7 +804,7 @@ def test_acknowledgement_marks_its_tab_running_but_keeps_approval():
 
     ack, _released = _ack()
     assert ack.overlay_run_markers({"s1": Marker.NONE}) == {"s1": Marker.NONE}
-    ack.begin("s1", DRAFT, [])
+    ack.begin("s1", DRAFT)
     assert ack.overlay_run_markers({"s1": Marker.NONE}) == {"s1": Marker.RUNNING}
     assert ack.overlay_run_markers({"s1": Marker.NEEDS_APPROVAL}) == {
         "s1": Marker.NEEDS_APPROVAL
