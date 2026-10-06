@@ -16313,6 +16313,23 @@ SmartContentTree Tree > .selected-node {
 .setup-no-server { height: auto; }
 
 
+.setup-choice-list.setup-choice-fit {
+    min-height: $ds-size-0;
+    height: auto;
+    max-height: $ds-size-9;
+}
+
+
+.setup-rag-extras-row {
+    height: auto;
+    margin-top: $ds-space-1;
+}
+.setup-rag-extras-row Static {
+    width: auto;
+    margin-right: $ds-space-2;
+}
+
+
 .setup-summary-actions {
     dock: bottom;
     height: auto;

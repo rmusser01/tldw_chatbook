@@ -1246,6 +1246,26 @@ SmartContentTree Tree > .selected-node {
 .setup-provider-count { width: auto; margin-left: $ds-space-2; }
 .setup-no-server { height: auto; }
 
+/* TASK-34100.13: a short, curated choice list grows to its content instead of
+ * the catalog cap -- no blank rows under two or three choices, and no entry
+ * hidden behind the scroll (fulltrack-13: the theme shortlist's sixth row).
+ * Seven entries plus the border is the ceiling. */
+.setup-choice-list.setup-choice-fit {
+    min-height: $ds-size-0;
+    height: auto;
+    max-height: $ds-size-9;
+}
+
+/* TASK-34100.13 (fulltrack-11): the extras package name, then its copy action. */
+.setup-rag-extras-row {
+    height: auto;
+    margin-top: $ds-space-1;
+}
+.setup-rag-extras-row Static {
+    width: auto;
+    margin-right: $ds-space-2;
+}
+
 /* TASK-1495 AC #3: the Summary's exit actions are docked to the step
  * viewport's bottom edge (the row is a direct child of the .setup-step
  * scroll container -- see SummaryStep.compose). Docked widgets reserve
