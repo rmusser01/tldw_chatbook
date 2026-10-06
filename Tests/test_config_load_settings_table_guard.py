@@ -91,10 +91,13 @@ PRE_EXISTING_DROPS: dict[str, str] = {
     "HiggsSettings": "TTS/TTS_Backends.py:288",
     "OmniVoiceSettings": "TTS/TTS_Backends.py:352",
     "app_tts": "Event_Handlers/TTS_Events/tts_events.py:1553",
-    # ``canvas`` left this register in fix round 1: its only accesses are
-    # ``app_config.setdefault("canvas", {})`` and a store
-    # (UI/Screens/settings_screen.py:31700-31703), not reads by this
-    # guard's definition. TASK-34000.53 still lists it.
+    # ``canvas`` left this register in fix round 1, but it IS read from
+    # the loaded settings: settings_screen.py:6393 feeds app_config to
+    # build_canvas_config_policy -> _normalize_canvas_execution, which
+    # reads it at config.py:210. That is a two-level helper read, outside
+    # this derivation's one-level boundary, so the guard cannot see it.
+    # Its direct accesses (settings_screen.py:31700-31703) are a
+    # setdefault and a store. TASK-34000.53 still lists it.
     "chat": "UI/Screens/settings_screen.py:7450",
     "custom_endpoints": "Chat/custom_endpoint_registry.py:250",
     "custom_openai_2_api": "LLM_Calls/LLM_API_Calls_Local.py:2348 (misspelt legacy fallback)",
