@@ -241,8 +241,17 @@ suffix naming when the gate takes effect (next chat, or restart to apply
 for `web_deep_search`); presses toggle it the same optimistic-then-revert
 way the local master switch above does; the tool's plain-language name
 and one-line description are the same copy the first-run setup wizard
-shows. The group is split into two subheadings:
+shows. The group opens with plain chat's tool surface, then two
+subheadings:
 
+- **Full agent tools** — first in the pane, under a line naming what plain
+  Console chat has without it: date and time, calculator and
+  ask-you-a-question, plus any tool switched on below. Off by default
+  (`[tools] full_agent_tools_enabled`); turning it on gives chat sub-agents,
+  skills, web search and fetch, Watchlists, workspace files, character
+  cards, Canvas, chat forks and chatbook's own MCP tools on the next send.
+  An individual **Agent built-ins** gate (or `web_deep_search`) needs no
+  Full agent tools: plain chat offers that one tool as soon as it is on.
 - **Agent built-ins** — the app's own file, note and library tools: read /
   list / write a file, glob / grep the workspace, create / update a note,
   and **expand a retrieval hit into its document** (`expand_document`,
@@ -256,7 +265,10 @@ shows. The group is split into two subheadings:
   web research that may cost real money on paid providers) has an
   additional individual gate underneath it, as does `ask_user`. This
   control and `ask_user` are on by default; every `Agent built-ins` gate
-  and `web_deep_search` default to off.
+  and `web_deep_search` default to off. Plain chat gets this group's
+  workspace, web and Watchlists tools (and the character tools) only with
+  **Full agent tools** on; `ask_user` and an opted-in `web_deep_search`
+  need this control either way.
 
 This control governs the **Console/agent path only**. It does *not*
 control whether an enabled tool (e.g. `web_deep_search`) is exposed to

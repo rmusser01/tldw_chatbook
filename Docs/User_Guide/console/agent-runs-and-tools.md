@@ -26,10 +26,44 @@ run*. This page covers what you see while a run is in flight, how tool-call
 approvals work, how background runs in other tabs surface, and how skills and
 MCP tools plug in. For the Console screen itself see [Console](../console.md).
 
+## What plain chat offers — the light tool surface
+
+Out of the box, Console's assistant gets a **light, safe tool set**: date
+and time (`get_current_datetime`), `calculator`, and ask-you-a-question
+(`ask_user`, which follows its own `[tools] ask_user_enabled` switch). A
+plain message such as "Reply with just: hi" is answered directly; there are
+no sub-agents, skills, web search, Watchlists, workspace-file, character,
+Canvas, chat-fork or run-log tools, and none of chatbook's own MCP tools,
+until you turn them on. The system prompt is your session prompt, or "You
+are a helpful assistant." when it is off — not the agent operating prompt.
+
+To turn more on:
+
+- **Full agent tools** — **MCP ▸ Servers ▸ built-in row ▸ Tool gates**, or
+  setup's Tools step (`[tools] full_agent_tools_enabled`). It brings back
+  everything this page describes: sub-agents and the fleet, skills, the
+  local workspace, web and Watchlists tools, character tools, Canvas, chat
+  forks, the run-log tools and chatbook's own MCP tools.
+- **One tool at a time** — an individual gate in the same pane (Read file,
+  Create note, Expand document, `web_deep_search`, …) is offered in plain
+  chat on the next send, without the rest of the agent surface. So are
+  tools from an MCP server you added, and Library tools once a conversation
+  allows assistant Library access.
+- **One turn** — a message that names a skill (`$skill`) gets the full agent
+  surface for that turn.
+
+Each send reads these switches fresh, so a change applies on the next send.
+A small local model whose context window cannot hold even the light set (a
+server the app has not sized yet is planned as 4,096 tokens) gets a plain
+request with no tools. The context breakdown's **Tool schemas** row counts
+the tools the next send carries.
+
 ## Getting there
 
 Open Console (**Ctrl+2**) and send a message — runs happen wherever you
-chat, no separate mode to enable. The surfaces this page covers: the
+chat. Tool rows, approvals and sub-agents appear once a reply uses a tool,
+which for anything beyond the light set means turning it on first (see
+above). The surfaces this page covers: the
 transcript's inline tool rows, the **Agent** section in the left "Console
 context" rail, the Inspector's status rows, the status chips above the
 composer, and the approval and confirm cards that appear above the
