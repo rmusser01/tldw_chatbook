@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-05 04:05'
+updated_date: '2026-10-06 14:44'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -529,6 +529,17 @@ Reason: preserve landed PR3011 within its accepted Buddy preference, saved-conve
 3. Authenticate full tree/index/disk, prior nonoverlap bytes/modes/deletions and incoming exact bytes. Compare complete affected function ASTs/imports and all original guards/eightMAX/CSS/workflow cap/census. No root application/test repair is planned. Run only new-source Home Resume, shutdown rebuild, timer registration, affected ordered Roleplay Resume, Buddy config projection and cold saved-owner controls once in the existing private outer-profile launcher with exact cwd/PYTHONPATH/default temp depth. No providers/audio/native/physical or broad UI sweep. Preserve positive and NON-GREEN results independently; never sum selections.
 4. Check changed-source fatal/new static and affected diagnostic/worker/task/whitespace reproduction proportionately. Obtain focused immutable independent composition/functional review and explicit historical-budget carry assessment using authenticated fb14 raw/XML, original guards/MAX/work/import/CSS/private-profile identities. The original FIVE112.657s remains a prior measurement; do not replay it or any completed checks, original budget, retry or baseline. Retain all earlier warning/FD/style/size/optional/wider limits and incoming TASK31585 In Progress/AC9 unchecked, TASK32108 family Done and TASK34353 In Progress/AC3 unchecked.
 5. Close CLI33664 AC3/Done only after independent Ready and necessary qualification settles, preserving AC4. Append only the four owned canonical records; prove every approved source and historical prefix unchanged by closure. Publish ONCE with EXACT observed adb15e7 lease and factual body, authenticate actual local/remote/GH/GraphQL/body, then enable normal protected head-matched auto-merge once. Require fresh-head Qodo/ALL FOUR/ALL THREE UI; verify actual MERGED parents/tree/concurrency before stopping the heartbeat. Never update armed PR or rebase queued/running checks.
+
+## Current storage-census failure repair and preserving integration — October 6, 2026
+
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; existing ADR126 and ADR199/211.
+Reason: correct test-phase ownership of existing native pause probes; preserve application/admission and previously approved orchestration contracts. No new runtime boundary or ceiling.
+
+1. Human explicitly directs active investigation and fixes; no recurring automation is created or resumed and no retry-only action is planned. Current bb79 source is unchanged, auto-merge disabled, all other hosted gates passed, latency storage ratchet failed. Actual local call-through diagnostic found native pause opens in the idle window; retain failed hosted evidence, diagnostic-only ValueError at log-path validation, exact child properties and attribution limits.
+2. Under child TASK-33664.1, add a failing focused census regression; capture the wall-clock native pause probe with the existing GC drain pattern, and bill the real probe at the existing 1 Hz / 0.25 s credential cadence. Keep original eight credential ticks, keystrokes, counters, canaries, platform pins and all ceilings/slack. Test in-flight drainage, real return/cost preservation and an extra-I/O negative control. Run only affected targeted cases in private profiles; never replay the original five-budget launcher.
+3. After old CI has settled, integrate required dev76d5d157aa6a628584ead573976c9adee72f5412 once by preserving rebase. Retain all prior and incoming source/history/deletions. Resolve actual conflicts only with whole-source comparison and both additions retained. Validate affected compositions and targeted changed behavior; no wider/physical/provider/resource certificate.
+4. Complete scoped static checks and independent immutable diff/evidence review before closing AC3 via CLI; keep AC4 checked and all historical NON-GREEN/FD/optional/wider limitations. Publish one substantive repair/integration with exact observed remote-head lease. Require current-head Qodo/resolved conversations/all four gates including all three UI shards, live strict/admin protection and qualified actual concurrency before protected merge. Verify actual merged parents/tree before completion.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
