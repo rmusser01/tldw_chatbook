@@ -18,13 +18,13 @@ CONSOLE_SETUP_CARD_TITLE = "Get started"
 #: TASK-2154.8 (FR-10): one plain-language sentence under the card title so a
 #: first-time user knows what a "provider" even is before the steps ask them
 #: to connect one. Kept provider-agnostic (no settings jargon). TASK-33008.4:
-#: its second line says where cloud setup goes, and names only Enter, the one
-#: key the blocked footer shows (ADR-031 rule 5).
+#: its second line says where cloud setup goes, and Enter is the only key it
+#: names, matching the blocked footer's first hint (ADR-031 rule 5).
 CONSOLE_SETUP_CARD_SUBTITLE = (
     "A provider is the AI service that answers your messages — "
     "for example OpenAI, Anthropic, or a server running on this computer.\n"
     "Cloud setup opens Settings and comes back here. "
-    "Press Enter to continue setup."
+    "Press Enter to use the highlighted action."
 )
 CONSOLE_READY_EMPTY_COPY = "Ready — type a message to begin."
 CONSOLE_QUIET_EMPTY_COPY = "No messages yet."

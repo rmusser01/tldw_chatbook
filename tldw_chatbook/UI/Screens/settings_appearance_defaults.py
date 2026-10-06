@@ -33,7 +33,7 @@ DEFAULT_FONT_SIZE = 16
 DEFAULT_DENSITY = "normal"
 DEFAULT_ANIMATIONS_ENABLED = True
 DEFAULT_SMOOTH_SCROLLING = True
-# TASK-2154.10 (AC-04): static-frame rendering for splash + setup backdrop.
+# TASK-2154.10 (AC-04): static-frame rendering for the splash screen.
 DEFAULT_REDUCE_MOTION = False
 # TASK-2154.19 (AC-01): ASCII-safe status markers for narrow-font terminals.
 DEFAULT_ASCII_GLYPHS = False

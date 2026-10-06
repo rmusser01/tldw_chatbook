@@ -18547,8 +18547,8 @@ class SettingsScreen(BaseAppScreen):
                 ("Focused setting", "Reduce motion"),
                 (
                     "Purpose",
-                    "Renders the splash screen and Console setup backdrop as "
-                    "static frames instead of full-screen animations.",
+                    "Renders the splash screen as a static frame instead of a "
+                    "full-screen animation.",
                 ),
                 ("Saved as", "appearance.reduce_motion"),
                 ("Validation", "enabled or disabled"),
@@ -23149,8 +23149,8 @@ class SettingsScreen(BaseAppScreen):
                         self._appearance_bool_label("reduce_motion"),
                         id="settings-appearance-reduce-motion",
                         tooltip=(
-                            "Render the splash screen and Console setup backdrop "
-                            "and character expressions as static frames instead of animations."
+                            "Render the splash screen and character expressions "
+                            "as static frames instead of animations."
                         ),
                     )
                 with Horizontal(classes="settings-input-row"):

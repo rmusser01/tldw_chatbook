@@ -3,10 +3,11 @@
 While provider setup is incomplete (``ConsoleSetupCardState.mode == "card"``),
 this widget overlays the Console workbench (rail + transcript + composer) with a
 dim backdrop and a centered "Get started" card. The card shows the three live
-setup steps and a single primary action that routes to provider recovery. It is
-Console-scoped: it lives inside the ChatScreen (never an app-level modal), so the
-top navigation tab bar stays reachable. The modal dismisses automatically the
-moment readiness + model are satisfied (the guidance sync drives it).
+setup steps and up to three actions: provider recovery, a note in Library, and
+the detected local server. It is Console-scoped: it lives inside the ChatScreen
+(never an app-level modal), so the top navigation tab bar stays reachable. The
+modal dismisses automatically the moment readiness + model are satisfied (the
+guidance sync drives it).
 
 The dim is the modal's own flat fill (``$background 60%``) and nothing is
 drawn on it but the card (TASK-33008.4 retired the snow field that used to

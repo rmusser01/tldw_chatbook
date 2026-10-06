@@ -266,9 +266,9 @@ marked with ● (current) and ○ (pending) glyphs, plus the note "Composer
 unlocks after setup". Behind the card, the workbench is covered by a plain
 dim fill with nothing drawn on it. Under its plain-language line about
 providers, the card says "Cloud setup opens Settings and comes back here.
-Press Enter to continue setup." — Enter is the one key the footer shows
-while the card is up. Its button follows the current step. **Set up
-provider** opens **Settings ▸ Providers & Models**; **Choose provider** and
+Press Enter to use the highlighted action." — Enter is the only key the card
+names, matching the first hint in the footer. Its button follows the current
+step. **Set up provider** opens **Settings ▸ Providers & Models**; **Choose provider** and
 **Choose model** open **Switch model**, where a model is always picked as a
 provider·model pair (Choose model opens with Find on this chat's provider, so
 it lists only that provider's models; clear Find to see every provider); an
@@ -362,14 +362,13 @@ applies to this chat only, and the detected server is used the same way.
 Discovery runs once each time Console opens on
 the card; a well-known port where nothing answers stays silent.
 
-Every action on the card is drawn as a button with a rounded edge, one under
-the other; Tab and Shift+Tab move between the ones shown, wrapping at either
-end, and the focused one grows heavy side rails, so which one Enter will press
-is visible without reading the text. Focus stays where Tab put it while the
-card refreshes; only a newly found server's action takes it, once. Esc does
-not close the card. *(Was "Both
-actions" — superseded by task-32558 below: the count contradicted this page's
-own task-32555 stamp, which names three.)*
+Every action on the card *(was "Both actions" — superseded by task-32558
+below: the count contradicted this page's own task-32555 stamp, which names
+three)* is drawn as a button with a rounded edge, one under the other; Tab and
+Shift+Tab move between the ones shown, wrapping at either end, and the focused
+one grows heavy side rails, so which one Enter will press is visible without
+reading the text. Focus stays where Tab put it while the card refreshes; only a
+newly found server's action takes it, once. Esc does not close the card.
 
 If you land here with a handoff already staged — e.g. from Library's
 **Use in Console** on a Search/RAG result or on an open note while a

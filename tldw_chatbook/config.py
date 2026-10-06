@@ -4225,7 +4225,7 @@ character_expression_mode = "dynamic"  # Dynamic animates character expressions;
 density = "normal"  # compact, normal, or comfortable default control density
 animations_enabled = true  # Enable optional UI animations where supported
 smooth_scrolling = true  # Enable smooth scrolling where supported
-reduce_motion = false  # Render animations as static frames (splash screen, Console setup backdrop)
+reduce_motion = false  # Render animations as static frames (splash screen)
 ascii_glyphs = false  # Substitute ASCII status markers for unicode glyphs (narrow-font terminals)
 console_transcript_style = "role_accents"  # neutral, role_accents, or immersive_rp
 
