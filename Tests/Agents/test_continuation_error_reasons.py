@@ -573,7 +573,9 @@ def test_reason_codes_survive_trace_export_and_import(tmp_path, profile) -> None
         for run in runs
         for step in run["steps"]
     ]
-    snapshot = derive_trajectory([], {}, [], [], [], agent_runs=runs, agent_steps=persisted)
+    snapshot = derive_trajectory(
+        [], {}, [], [], [], agent_runs=runs, agent_steps=persisted
+    )
 
     preflight = preflight_trace_export(snapshot, profile=profile)
     bundle = build_trace_export(
