@@ -419,6 +419,30 @@ do not replace native admission or relax ACL checks to make collection pass.
 Separate later POSIX-only assertions or native publication failures from the
 evidence for the changed feature, and report those verification limits.
 
+## Run a proposed workaround for a refusal through the real refuser first (TASK-34100.3 review round 2, 2026-10-06)
+
+**Incident.** With trace capture on, the third send of a saved Kimi chat is
+refused by the ADR-097 trace planner (`unsupported_surface_change`): turn 3
+replays two stored reasoning checkpoints where turn 2 replayed one. Replay is
+optional for Kimi, so the review proposed dropping the checkpoints whenever
+the planner would refuse. That sounded safe, and it was the obvious next
+implementation step. A probe through the real pilot stack filtered the turn-3
+replay four ways (`setup-wizard-ux-qa/evidence/g3-r2-probe/`). The planner
+refused today's shape, refused "drop all" (removing an active continuation
+is itself a surface change), refused "newest only", and admitted only "oldest
+only". That last shape would replay turn 1's reasoning on every later turn
+and never anything newer. The probe took one 45-second run. Building the
+workaround first would have cost a full fix round and ended at the same
+refusal.
+
+**What to do.** When the fix for a refusal is "send a different shape so it is
+not refused", wrap the real producer of that shape (here
+`provider_continuation_owner_groups` in the three modules that import it) in
+a scratch test and run every candidate through the real refuser before you
+write any production code. Record which shapes it admitted as evidence. If the
+only admitted shape is semantically wrong, the fix belongs in the refuser and
+its governance (here an ADR-097 admission change), not in the request.
+
 ## Build fixture values with the producer the app uses, not by hand (TASK-34100.3, 2026-10-05)
 
 **Incident.** Every Moonshot reply in a saved Console chat was generated, billed
