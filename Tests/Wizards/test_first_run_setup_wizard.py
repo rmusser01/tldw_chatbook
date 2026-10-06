@@ -10691,6 +10691,10 @@ async def test_summary_quick_track_shows_defaults_note():
         await pilot.pause()
         note = str(step.query_one("#setup-summary-defaults-note", Static).render())
         assert "recommended defaults" in note.lower()
+        # TASK-34100.5.3 (TASK-34100.5 owner question 2): plain chat keeps
+        # the light set, so the note never says "tools off".
+        assert "tools off" not in note
+        assert "light tools only (date and time, calculator and ask you a question)" in note
 
 
 @pytest.mark.asyncio
@@ -12097,7 +12101,9 @@ async def test_tools_step_copy_comes_from_the_shared_gate_table():
         await pilot.pause()
         entries = list(gateable_builtin_tools())
         names = [str(label.render()) for label in step.query(".setup-tool-name")]
-        assert names == [
+        # TASK-34100.5.3: the Full agent tools switch leads the step; every
+        # other row is a gateable built-in, in table order.
+        assert names == ["Full agent tools"] + [
             entry.title + tool_gate_effect_suffix(scopes[("tools", entry.gate_key)])
             for entry in entries
         ]

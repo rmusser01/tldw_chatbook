@@ -28,13 +28,24 @@ from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import SetupStep
 
 
+#: TASK-34100.5.3: the Full agent tools switch's id suffix (``setup-tool-…``).
+FULL_AGENT_TOOLS_SWITCH = "full_agent_tools"
+
+
 class ToolsStep(SetupStep):
-    """Enable built-in tools (all default OFF; risk-tagged ones still ask per call)."""
+    """Turn on tools beyond plain chat's light set (all default OFF)."""
 
     def compose_step(self) -> ComposeResult:
         from tldw_chatbook.Agents.builtin_tool_gate import (
             gate_effect_scopes,
             tool_gate_effect_suffix,
+        )
+        from tldw_chatbook.Agents.plain_chat_tool_surface import (
+            FULL_AGENT_TOOLS_DESCRIPTION,
+            FULL_AGENT_TOOLS_GATE_KEY,
+            FULL_AGENT_TOOLS_TITLE,
+            summarize_tool_surface,
+            tools_step_posture,
         )
         from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
 
@@ -48,20 +59,38 @@ class ToolsStep(SetupStep):
             for (section, key), scope in gate_effect_scopes().items()
             if section == "tools"
         }
+        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
         # Re-run prefill: resurface whatever gates are already on instead of
         # always showing OFF. First-run behavior is unchanged, since a fresh
         # app_config has no "tools" section and tool_gates comes back empty.
-        prefill = wizard_state.read_wizard_prefill(
-            getattr(self.wizard.app_instance, "app_config", {}) or {}
-        )
+        prefill = wizard_state.read_wizard_prefill(app_config)
         gate_values = dict(prefill.tool_gates)
         with Vertical(classes="setup-tools"):
             yield Static("Built-in tools", classes="setup-title")
+            # TASK-34100.5.3: plain chat is never "all off" -- it keeps the
+            # light set -- so the posture is derived, not asserted.
             yield Static(
-                "Everything is off by default. Tools that read or change your "
-                "files still show an approval card every time they run.",
+                tools_step_posture(summarize_tool_surface(app_config)),
+                id="setup-tools-posture",
                 classes="setup-subtitle",
+                markup=False,
             )
+            with Horizontal(classes="setup-tool-row"):
+                yield Switch(
+                    value=bool(gate_values.get(FULL_AGENT_TOOLS_GATE_KEY, False)),
+                    id=f"setup-tool-{FULL_AGENT_TOOLS_SWITCH}",
+                )
+                with Vertical(classes="setup-tool-text"):
+                    yield Label(
+                        FULL_AGENT_TOOLS_TITLE,
+                        classes="setup-tool-name setup-tool-name-agent",
+                    )
+                    yield Static(
+                        FULL_AGENT_TOOLS_DESCRIPTION,
+                        id=f"setup-tool-desc-{FULL_AGENT_TOOLS_SWITCH}",
+                        classes="setup-tool-desc",
+                        markup=False,
+                    )
             for entry in self._entries:
                 # TASK-1501/task-32284: plain-language name and one-line
                 # description, read off the gate table itself -- the MCP
@@ -88,6 +117,12 @@ class ToolsStep(SetupStep):
 
     def gate_key_for(self, switch: Switch) -> str:
         tool_name = (switch.id or "").removeprefix("setup-tool-")
+        if tool_name == FULL_AGENT_TOOLS_SWITCH:
+            from tldw_chatbook.Agents.plain_chat_tool_surface import (
+                FULL_AGENT_TOOLS_GATE_KEY,
+            )
+
+            return FULL_AGENT_TOOLS_GATE_KEY
         for entry in self._entries:
             if entry.tool_name == tool_name:
                 return entry.gate_key
