@@ -54,6 +54,16 @@ FAST_LANE_TARGETS = (
     # carrying its time. About 6 s together; nothing else gated them.
     "Tests/Library/test_library_file_export.py",
     "Tests/Architecture/test_notes_sync_snapshot_construction.py",
+    # TASK-34100.5: the first-reply and handoff unit guards -- the direct
+    # runtime's unavailable tools never reach the agent catalog, plain arrival
+    # words, the missing-revision trace diagnostic, the provider's own reason
+    # on a failed first reply, and the cold local first-token window. Pure
+    # unit tests, a few seconds together.
+    "Tests/Agents/test_mcp_unavailable_builtin_tools.py",
+    "Tests/Chat/test_console_arrival_vocabulary.py",
+    "Tests/Chat/test_console_trace_missing_revision_diagnostic.py",
+    "Tests/Chat/test_first_reply_failure_copy.py",
+    "Tests/Chat/test_first_token_window.py",
 )
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
 #: production runtime). They are ``bootstrap_profile``, so they run in the
