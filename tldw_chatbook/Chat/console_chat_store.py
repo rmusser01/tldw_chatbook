@@ -21156,7 +21156,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     )
                 return
 
-        message_version: int | None
+        message_version: int | None = None
         if message.persisted_message_id is None:
             if not isinstance(event, (ToolBatchReady, FinalContinuation)) or (
                 event.expected_checkpoint_revision is not None
@@ -21172,18 +21172,22 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
             if not callable(creator):
                 raise RuntimeError("Durable continuation storage is unavailable.")
             parent_message_id = self._previous_persisted_message_id(message)
-            creator(
-                message_id=message.id,
-                conversation_id=conversation_id,
-                parent_message_id=parent_message_id,
-                content=content,
-                provider_continuation_json=private_json,
-            )
-            message.persisted_message_id = message.id
-            message.parent_message_id = parent_message_id
-            self._pending_persistence_message_ids.discard(message.id)
-            message_version = 1
-        else:
+            # G3V2-02: the stream's deferred flush inserts under this lock; if
+            # it won, update its row instead of forking a sibling.
+            with self._pending_row_insert_lock:
+                if message.persisted_message_id is None:
+                    creator(
+                        message_id=message.id,
+                        conversation_id=conversation_id,
+                        parent_message_id=parent_message_id,
+                        content=content,
+                        provider_continuation_json=private_json,
+                    )
+                    message.persisted_message_id = message.id
+                    message.parent_message_id = parent_message_id
+                    self._pending_persistence_message_ids.discard(message.id)
+                    message_version = 1
+        if message_version is None:
             version_reader = getattr(persistence, "get_message_version", None)
             durable_version = (
                 version_reader(message.persisted_message_id)
