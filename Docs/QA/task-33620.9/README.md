@@ -860,3 +860,40 @@ python -m pytest Tests/UI/test_console_session_tab_close.py \
   Tests/DB/test_chachanotes_connection_quiescence.py \
   -p pytest_asyncio.plugin -p pytest_timeout -q --basetemp=/fresh/owned/root/pytest
 ```
+
+### Latest-dev integration of the Close repair — 2026-10-06
+
+Rebased all 47 patches from `3877daa109f8dfee80162ef74eba1ab30782e369` onto
+dev `f99ad86ebd9189fd477992c8c6c3976bc2297ef1`; tested combined head
+`754a926df6e6147a1f79264d47dfbb5fdaf574e3`. Range-diff retains 43 identical
+patches; four differ only in additive UI-census floor/context. Keep upstream's
+three UI modules plus all PR additions: 151 unique paths, floor 150. Both
+upstream CI invocations and every PR selector are preserved. No production
+conflict; the Chat DB and three directly affected test files are byte-identical
+before/after replay. Upstream receipt visibility, first-reply/window and recovery
+changes remain intact. No generated-artifact shortcut or protection bypass.
+
+Fresh combined-source evidence: complete strict Close/request/quiescence **21
+passed in 123.56s**, no warnings, strict exit 0, zero database files in all
+three private children and outer teardowns; request-authority/ownership/CI
+**201 passed in 73.42s**, no warnings. All eleven artifact guards and whitespace
+pass. Incremental static remains unchanged against the rebased repair parent;
+controller formatting debt is now 35/35 due to preserved upstream code, not
+the previous-base 23/23. All 208 original Close assertions remain identical.
+These are integration tests, not current-head native/scale qualification.
+The documentation-only receipt commit following this tested head changes no
+production, tests, packages, scripts or workflow inputs. Broader HOLDs and the
+separately reproduced existing cursor-lifetime failure remain unwaived.
+
+Local receipts (temporary, not portable qualification archives):
+
+- `/tmp/pr3024-rebase-f99-close-NWEllU/pytest.log`:
+  `3051605c7f4b700cbc44f6227eb39eb76dbf5622d01c16ed2c76880cc9eaedb3`.
+- `/tmp/pr3024-rebase-f99-authority-XfAKf7/pytest.log`:
+  `e77aba2b55c1be0c1f8375f7b723a600f734f2e4ec57be8f967ffac61c50f1e7`.
+- `/tmp/pr3024-rebase-f99-preflight.log`:
+  `6776090263b415414701e2389873ac4018e9b00e8b4f05be348daf172f58321a`.
+- `/tmp/pr3024-rebase-f99-static.log`:
+  `7847ec4f7932c691131e51fb8302f6e2a602c7b8eaa28fe87fb5c03aef93c49a`.
+- `/tmp/pr3024-rebase-f99-range-diff.log`:
+  `468b7e5ae610fec2c618a0f6b0edf240c8345fc6089b1c4310b45fb0391d9981`.
