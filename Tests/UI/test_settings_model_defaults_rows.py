@@ -118,7 +118,11 @@ async def test_model_defaults_follow_default_model_open_and_name_the_pair(reques
         defaults = screen.query_one("#settings-generation-defaults", Collapsible)
         assert defaults.collapsed is False
         assert str(defaults.title) == "Model defaults · Anthropic · claude-a"
-        children = list(card.children)
+        # Final review finding 4, rewritten on purpose: the Chat-settings
+        # return actions sit between the two (parent AC#2) and show only while
+        # a return is pending, so the next shown child is Model defaults.
+        assert not screen.query_one("#settings-provider-return-without-save").display
+        children = [child for child in card.children if child.display]
         applies = screen.query_one("#settings-model-applies-row")
         assert children[children.index(applies) + 1] is defaults
         title = defaults.query_one(CollapsibleTitle)
