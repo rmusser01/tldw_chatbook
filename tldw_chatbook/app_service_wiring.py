@@ -1253,9 +1253,37 @@ class ServiceWiringMixin:
             return self._local_skill_trust_service
         async with self._local_skill_trust_service_build_lock:
             if self._local_skill_trust_service is None:
-                self._local_skill_trust_service = await asyncio.to_thread(
+                # The lock belongs to the physical callback, not its waiter.
+                preparation_call = asyncio.to_thread(
                     self._build_local_skill_trust_service
                 )
+                try:
+                    preparation = asyncio.Task(
+                        preparation_call, loop=asyncio.get_running_loop()
+                    )
+                except BaseException:
+                    preparation_call.close()
+                    raise
+                try:
+                    service = await asyncio.shield(preparation)
+                except asyncio.CancelledError:
+                    while not preparation.done():
+                        try:
+                            await asyncio.shield(preparation)
+                        except asyncio.CancelledError:
+                            continue
+                        except BaseException:
+                            break
+                    # Consume a callback failure without replacing the original
+                    # cancellation or leaving an unobserved Task exception.
+                    try:
+                        preparation.result()
+                    except BaseException:
+                        pass
+                    raise
+                # Preserve a ready/injected winner installed during the build.
+                if self._local_skill_trust_service is None:
+                    self._local_skill_trust_service = service
             return self._local_skill_trust_service
 
     @local_skill_trust_service.setter
