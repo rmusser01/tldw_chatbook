@@ -128,7 +128,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-31245 adds the private-profile hydration and handle-ownership regressions.
 # TASK-31966 adds the mounted recovery-bar idempotence/geometry regressions.
 # TASK-31966 adds the shared Send-reason size idempotence/resize regressions.
-MINIMUM_FILES = 150
+# TASK-34100.16 raised it to 151 (dev's floor plus its one file):
+# Tests/UI/test_backup_restore_setup_entry.py -- setup's Restore entry opens
+# on Inspect, names the format, and explains a settings file, a folder and a
+# disabled Create.
+MINIMUM_FILES = 151
 
 
 def read_census(path: Path) -> list[str]:
