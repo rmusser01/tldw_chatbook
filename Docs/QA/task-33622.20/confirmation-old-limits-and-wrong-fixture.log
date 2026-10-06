@@ -1,0 +1,20 @@
+F..                                                                      [100%]
+=================================== FAILURES ===================================
+_____ test_queued_reconciliation_does_not_allocate_coroutine_before_start ______
+Tests/Chat/test_switcher_reuse_decisions.py:183: in test_queued_reconciliation_does_not_allocate_coroutine_before_start
+    ConsoleSessionSwitcherModal.reconcile_active_results(
+tldw_chatbook/Widgets/Console/console_session_switcher_modal.py:661: in reconcile_active_results
+    self._activation_phase is ConsoleActivationPhase.FAILURE_VISIBLE
+    ^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'types.SimpleNamespace' object has no attribute '_activation_phase'
+============================= slowest 25 durations =============================
+6.49s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay]
+6.35s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[open-failure]
+1.99s setup    Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[open-failure]
+1.87s setup    Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay]
+1.63s setup    Tests/Chat/test_switcher_reuse_decisions.py::test_queued_reconciliation_does_not_allocate_coroutine_before_start
+
+(4 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_switcher_reuse_decisions.py::test_queued_reconciliation_does_not_allocate_coroutine_before_start
+1 failed, 2 passed in 22.96s

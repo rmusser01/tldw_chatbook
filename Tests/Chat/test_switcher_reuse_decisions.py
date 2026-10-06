@@ -11,6 +11,7 @@ import pytest
 from textual.containers import Vertical
 from textual.widgets import Button, Input
 
+from tldw_chatbook.Chat.console_conversation_activation import ConsoleActivationPhase
 from tldw_chatbook.Chat.console_switcher_state import SwitcherMode
 from tldw_chatbook.UI.Console_Modules import conversation_token_preparation, workspace
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
@@ -172,6 +173,8 @@ async def test_queued_reconciliation_does_not_allocate_coroutine_before_start():
         _authority_token="token",
         _active_projection_generation=1,
         _activation_in_flight=False,
+        _activation_phase=ConsoleActivationPhase.IDLE,
+        _activation_interrupted_by_quit=False,
         _mode=SwitcherMode.HISTORY,
         query_one=lambda *_args: SimpleNamespace(value="Exact"),
         run_worker=lambda work, **_kwargs: queued.append(work),

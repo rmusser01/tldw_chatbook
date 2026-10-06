@@ -6214,14 +6214,14 @@ class ConsoleWorkspaceController:
 
     async def _rollback_character_conversation_activation(
         self, owned_runtime: object
-    ) -> None:
+    ) -> bool:
         """Remove only the exact hydrated runtime owned by this activation."""
 
         session_id = getattr(owned_runtime, "id", None)
         if not isinstance(session_id, str) or not session_id:
-            return
+            return False
         store = self._ensure_console_chat_store()
-        store.rollback_restored_session(
+        return store.rollback_restored_session(
             session_id,
             expected_session=owned_runtime,
             prior_active_session_id=None,
@@ -6229,8 +6229,8 @@ class ConsoleWorkspaceController:
 
     async def _restore_character_conversation_prior_session(
         self, prior_active_session_id: str | None
-    ) -> None:
-        await self._restore_console_session_after_failed_open(
+    ) -> bool:
+        return await self._restore_console_session_after_failed_open(
             self._ensure_console_chat_store(), prior_active_session_id
         )
 
@@ -6336,12 +6336,13 @@ class ConsoleWorkspaceController:
         self,
         store: Any,
         prior_active_session_id: str | None,
-    ) -> None:
-        """Best-effort repaint of the exact session active before an open."""
+    ) -> bool:
+        """Best-effort repaint; report errors without breaking legacy callers."""
         if not any(
             session.id == prior_active_session_id for session in store.sessions()
         ):
-            return
+            return False
+        restored = True
         try:
             store.switch_session(prior_active_session_id)
             self._set_active_workspace_for_console_session(prior_active_session_id)
@@ -6351,6 +6352,7 @@ class ConsoleWorkspaceController:
                 await sync_result
             self._sync_temporary_chip_fn()
         except Exception:
+            restored = False
             logger.opt(exception=True).warning(
                 "Failed to repaint the prior Console session after saved-chat open"
             )
@@ -6358,9 +6360,11 @@ class ConsoleWorkspaceController:
             try:
                 self._focus_composer_if_needed_fn(force=True)
             except Exception:
+                restored = False
                 logger.opt(exception=True).warning(
                     "Failed to focus the prior Console composer after saved-chat open"
                 )
+        return restored
 
     async def _resume_console_workspace_conversation(
         self,

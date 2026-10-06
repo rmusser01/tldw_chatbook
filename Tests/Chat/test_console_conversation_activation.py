@@ -121,6 +121,89 @@ class _Harness:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "open",
+        "presentation",
+        "rollback",
+        "restore",
+        "rollback-report",
+        "restore-report",
+    ],
+)
+async def test_presentation_refusal_is_identified_only_after_clean_rollback(fault):
+    """A caller may explain a refusal, but must not disguise a real cleanup failure."""
+    harness = _Harness()
+    harness.commit_gate.set()
+    harness.finish_gate.set()
+    harness.fail = fault == "open"
+
+    async def broken(_value):
+        raise RuntimeError("installed boundary failed")
+
+    async def refused(_value):
+        return False
+
+    def complete(_result):
+        if fault == "presentation":
+            raise RuntimeError("presentation failed")
+        return False
+
+    if fault == "rollback":
+        harness.rollback_opened_target = broken
+    elif fault == "restore":
+        harness.restore = broken
+    elif fault == "rollback-report":
+        harness.rollback_opened_target = refused
+    elif fault == "restore-report":
+        harness.restore = refused
+    result = await harness.coordinator().activate(
+        TARGET, complete_presentation=complete
+    )
+    assert result.kind is ConsoleActivationResultKind.FAILED
+    assert result.commit_started
+    assert getattr(result, "presentation_refused", False) is (fault is None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", [None, "repaint", "focus"])
+async def test_production_prior_restore_reports_swallowed_errors_to_coordinator(fault):
+    """Best-effort production recovery must not claim a clean refusal after errors."""
+    store = ConsoleChatStore()
+    prior = store.create_session(title="Prior")
+    controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
+    controller._screen = SimpleNamespace()
+    controller._chat_store_accessor = lambda: store
+    controller._set_active_workspace_for_console_session = lambda _id: None
+    controller._sync_chat_core_state_fn = lambda: None
+    controller._sync_temporary_chip_fn = lambda: None
+
+    def repaint():
+        if fault == "repaint":
+            raise RuntimeError("installed repaint failed")
+
+    def focus(**_kwargs):
+        if fault == "focus":
+            raise RuntimeError("installed focus failed")
+
+    controller._sync_native_console_chat_ui_fn = repaint
+    controller._focus_composer_if_needed_fn = focus
+    coordinator = ConsoleConversationActivationCoordinator(
+        capture_state=lambda: prior.id,
+        revalidate=lambda _target: None,
+        open_target=lambda _target: ConsoleActivationCommit(True),
+        rollback_opened_target=lambda _token: None,
+        restore_state=controller._restore_character_conversation_prior_session,
+        exact_target_visible=lambda _target: False,
+    )
+    result = await coordinator.activate(TARGET, complete_presentation=lambda _r: False)
+    assert result.kind is ConsoleActivationResultKind.FAILED
+    assert result.presentation_refused is (fault is None)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("owned", [False, True])
 @pytest.mark.parametrize("cancel", [False, True])
 async def test_commit_waiter_can_start_before_its_exact_owner(owned, cancel):
