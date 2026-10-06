@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-06 17:42'
+updated_date: '2026-10-06 17:46'
 labels: []
 dependencies: []
 ---
@@ -314,6 +314,8 @@ Integrated MCP checkpoint: all44 targeted snapshot/source contract tests pass259
 Current committed af514 platform evidence is qualified: exact unchanged7725-source inventories,actual loaded-source/namespace/original callback records,real process ancestry and normal original App/interpreter cleanup across six cold/warm Python3.12.10 runs. Usable from spawn Linux19.679/11.493,macOS18.641/10.531,Windows38.782/22.295seconds; mounted heartbeat maxima9.656/4.297,8.809/4.008,19.676/8.159seconds. All original startup/heartbeat budgets remainRED; exact keyboard timing observer is not attached. These are committed af514 measurements,excluding pending history/Collections/Compact/finite-shutdown code. Current original three finite shutdown callback defects and fourth hook group omission have genuine held-native host-return REDs; context and hooks physical controls nowPASS,readiness/history integrated controls still stop in unchanged10-second unarmed joint setup,with exact failure-time Worker facts retained. No all-fixed claim or AC completion.
 
 AC35 verified: five targeted current-source history modules passed all81 tests (191.741s pytest/199.984s driver) in post-dev-history-current-default-original-composer-all-native-1, with unchanged source and normal owned-process cleanup. Actual original resolver Main-thread RED became off-Main GREEN; queued/running/repeated-cancel, source/path retarget, closed-gate refusal, custom factory and all original composer recall/send behaviors pass. Original uncertain-close pair separately passed after moving logger.remove before project imports, resolving identical4060-byte unread startup stderr cutoff. Original body/assertion/deadline byte-AST audits pass; rejected implicit-Windows-decode draft never installed. Independent four-file contract review found no blocker. Existing ADR126 amended for worker selection; broader startup/Collections/global performance work remains open. Differential lint has zero new findings; one inherited prompts E721 remains, with baseline formatter differences outside selected changes.
+
+Credential attribution diagnostic installed and reviewed: only the existing idle os.open audit callback gains bounded actor/calling-code facts; full actual-byte AST reversal restores all original counters, actions, phase settles, limits, source and retirement behavior. Six scalar callback controls and current-file Ruff/format pass; these are diagnostic logic checks, not native opening or Linux cost evidence. Actual caller attribution remains pending CI; original140/167 opens over8 ticks include1 config/2 storage admissions and do not prove repeated synchronous poll I/O.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up

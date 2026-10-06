@@ -190,6 +190,56 @@ def _count_os_open(event: str, args: tuple[Any, ...]) -> None:
         bump = _OS_OPEN_AUDIT["bump"]
         if bump is not None:
             bump("os_opens")
+        diagnostic = _OS_OPEN_AUDIT.get("credential_diagnostic")
+        if (
+            diagnostic is not None
+            and diagnostic["counting"].get("on")
+            and diagnostic["counting"].get("phase") == "idle"
+        ):
+            frame = code = namespace = None
+            try:
+                with diagnostic["lock"]:
+                    if len(diagnostic["rows"]) >= 256:
+                        diagnostic["overflow"] += 1
+                        return
+                chain = []
+                frame = sys._getframe(1)
+                for _ in range(32):
+                    if frame is None or len(chain) >= 12:
+                        break
+                    code, namespace = frame.f_code, frame.f_globals
+                    if code.co_filename.startswith(_APP_PACKAGE):
+                        chain.append(
+                            {
+                                "file": code.co_filename[len(_APP_PACKAGE) :],
+                                "qualname": code.co_qualname,
+                                "line": frame.f_lineno,
+                                "retained_original_code_globals_match": any(
+                                    pin[1] is code and pin[2] is namespace
+                                    for pin in diagnostic["observer"].pins
+                                ),
+                            }
+                        )
+                    frame = frame.f_back
+                row = {
+                    "phase": "idle",
+                    "thread_id": threading.get_ident(),
+                    "thread_name": threading.current_thread().name[:80],
+                    "on_main_thread": threading.current_thread()
+                    is threading.main_thread(),
+                    "chain": chain,
+                }
+                with diagnostic["lock"]:
+                    if len(diagnostic["rows"]) < 256:
+                        diagnostic["rows"].append(row)
+                    else:
+                        diagnostic["overflow"] += 1
+            except Exception as error:  # noqa: BLE001 -- diagnostic cannot replace original counting/error behavior
+                with diagnostic["lock"]:
+                    if len(diagnostic["invalid"]) < 8:
+                        diagnostic["invalid"].append(type(error).__name__)
+            finally:
+                frame = code = namespace = None
 
 
 def _count_storage_units(
@@ -198,7 +248,9 @@ def _count_storage_units(
     """Count original callback code locally, preserving stock source selection."""
     from tldw_chatbook.Backup_Recovery import config_participants, storage_admission
     from tldw_chatbook.DB.private_sqlite_process import HelperLease
-    from Tests.Performance.console_storage_unit_observer import OriginalStorageUnitObserver
+    from Tests.Performance.console_storage_unit_observer import (
+        OriginalStorageUnitObserver,
+    )
 
     for key in IO_UNITS:
         counts[key] = 0
@@ -218,6 +270,16 @@ def _count_storage_units(
             sys.addaudithook(_count_os_open)
             _OS_OPEN_AUDIT["installed"] = True
         monkeypatch.setitem(_OS_OPEN_AUDIT, "bump", bump)
+        diagnostic = {
+            "counting": counting,
+            "observer": observer,
+            "lock": lock,
+            "rows": [],
+            "overflow": 0,
+            "invalid": [],
+        }
+        counting["credential_diagnostic"] = diagnostic
+        monkeypatch.setitem(_OS_OPEN_AUDIT, "credential_diagnostic", diagnostic)
     except BaseException:
         observer.close()
         raise
@@ -387,7 +449,9 @@ async def _census(
                 counts["snapshot_rows"] += 1
             return real_snapshot(message)
 
-        monkeypatch.setattr(ConsoleChatStore, "_snapshot", staticmethod(counted_snapshot))
+        monkeypatch.setattr(
+            ConsoleChatStore, "_snapshot", staticmethod(counted_snapshot)
+        )
 
         def _count_projected_rows(module: Any, name: str, key: str) -> None:
             real = getattr(module, name)
@@ -408,7 +472,9 @@ async def _census(
         _count_projected_rows(
             spend_module, "build_console_context_messages", "context_rows"
         )
-        _count_projected_rows(screen_module, "build_cost_snapshot", "cost_snapshot_rows")
+        _count_projected_rows(
+            screen_module, "build_cost_snapshot", "cost_snapshot_rows"
+        )
         _count_projected_rows(
             screen_module, "_estimate_tokens_locally", "cost_projection_estimate_rows"
         )
@@ -486,7 +552,9 @@ async def _census(
                     counts["cleanup_candidate_queries_completed"] += 1
                 return result
 
-            monkeypatch.setattr(app.media_db, "get_deletion_candidates", counted_candidates)
+            monkeypatch.setattr(
+                app.media_db, "get_deletion_candidates", counted_candidates
+            )
         async with app.run_test(size=(170, 48)) as pilot:
             await _settle(pilot)
 
@@ -553,7 +621,12 @@ async def _census(
 
             if storage_units:
                 await _census_idle_and_visit(
-                    pilot, counts, counting, trace_maintenance, monkeypatch, media_cleanup
+                    pilot,
+                    counts,
+                    counting,
+                    trace_maintenance,
+                    monkeypatch,
+                    media_cleanup,
                 )
 
         return counts
@@ -561,12 +634,30 @@ async def _census(
         if storage_observer is not None:
             original_error = sys.exc_info()[1]
             receipt = storage_observer.close()
+            diagnostic = counting.get("credential_diagnostic")
+            if diagnostic is not None:
+                receipt["credential_os_open_diagnostic"] = {
+                    "diagnostic_only": True,
+                    "rows": diagnostic["rows"],
+                    "overflow": diagnostic["overflow"],
+                    "invalid": diagnostic["invalid"],
+                    "max_rows": 256,
+                    "max_chain_rows": 12,
+                    "max_stack_walk": 32,
+                    "frames_locals_arguments_results_retained": False,
+                    "source_qualification_only_where_original_pin_matches": True,
+                }
             _STORAGE_UNIT_OBSERVER_RECEIPTS.append(receipt)
             if not receipt["complete"]:
                 if original_error is not None:
-                    original_error.add_note("Original storage-unit observer evidence is incomplete.")
+                    original_error.add_note(
+                        "Original storage-unit observer evidence is incomplete."
+                    )
                 else:
-                    raise AssertionError("Original storage-unit observer evidence is incomplete: " + json.dumps(receipt))
+                    raise AssertionError(
+                        "Original storage-unit observer evidence is incomplete: "
+                        + json.dumps(receipt)
+                    )
 
 
 def _settle_known_connection_evidence(app: Any, screen: Any) -> None:
@@ -687,6 +778,7 @@ async def _census_idle_and_visit(
             counts[unit] = 0
         started.clear()
         counting["on"] = name is not None
+        counting["phase"] = name
         try:
             await body()
             await _settle(pilot, passes=20)
@@ -775,7 +867,9 @@ async def _census_idle_and_visit(
         # cleanup, since no wrapper is left to report it.
         orphaned: list[tuple[str, asyncio.Future[Any]]] = []
 
-        async def owned(database_: Any, operation: Any, *args: Any, **kwargs: Any) -> Any:
+        async def owned(
+            database_: Any, operation: Any, *args: Any, **kwargs: Any
+        ) -> Any:
             name = getattr(operation, "__name__", "")
             if name == "current_graph_epoch" and not window["calls"]:
                 for unit in IO_UNITS:
@@ -783,7 +877,9 @@ async def _census_idle_and_visit(
                 counting["on"] = True
             if counting["on"] and not billed.is_set():
                 window["calls"].append(name)
-            call = asyncio.ensure_future(real_owned(database_, operation, *args, **kwargs))
+            call = asyncio.ensure_future(
+                real_owned(database_, operation, *args, **kwargs)
+            )
             in_flight.add(call)
             call.add_done_callback(in_flight.discard)
             try:
@@ -1340,15 +1436,15 @@ async def test_console_storage_units_stay_within_their_ratchets(
     request.node.user_properties.append(
         ("media_cleanup_units", json.dumps(cleanup_units))
     )
-    assert cleanup_units["storage_admissions"] >= 1, (
-        "the startup cleanup phase did not reach its real database operation"
-    )
-    assert counts["cleanup:candidate_queries_completed"] == 1, (
-        "startup cleanup did not complete exactly one real candidate query"
-    )
-    assert cleanup_units["helper_spawns"] >= 1, (
-        "the real startup cleanup query's cold SQLite helper was not counted"
-    )
+    assert (
+        cleanup_units["storage_admissions"] >= 1
+    ), "the startup cleanup phase did not reach its real database operation"
+    assert (
+        counts["cleanup:candidate_queries_completed"] == 1
+    ), "startup cleanup did not complete exactly one real candidate query"
+    assert (
+        cleanup_units["helper_spawns"] >= 1
+    ), "the real startup cleanup query's cold SQLite helper was not counted"
     for unit in IO_UNITS:
         assert counts[f"canary:{unit}"] >= 1, (
             f"census is blind: the canary (a guarded get_user_data_dir() plus "
