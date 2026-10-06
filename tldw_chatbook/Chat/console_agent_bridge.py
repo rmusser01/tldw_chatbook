@@ -11430,3 +11430,17 @@ def _release_chat_creation_token(payload: dict) -> None:
     release = getattr(payload.get("_creation_token"), "close", None)
     if callable(release):
         release()
+
+
+# Original loop-side callbacks, retained before optional badge consumers import.
+_SUBAGENT_BADGE_LIVE_CALLBACKS = (
+    ConsoleAgentBridge.__getattribute__,
+    ConsoleAgentBridge.__dict__["__dict__"],
+    tuple(
+        (name, function, function.__code__, function.__globals__)
+        for name, function in (
+            ("live_snapshot", ConsoleAgentBridge.live_snapshot),
+            ("run_log_target_token", ConsoleAgentBridge.run_log_target_token),
+        )
+    ),
+)

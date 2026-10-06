@@ -43,11 +43,15 @@ What was NOT covered, and is pinned here:
 from __future__ import annotations
 
 import asyncio
+import sys
 from types import SimpleNamespace
 
 import pytest
+import pytest_asyncio
 
-from Tests.UI.test_console_fleet_panel import _real_fleet_recovery_database
+from Tests.UI.test_console_fleet_panel import (
+    _real_fleet_recovery_database as _real_fleet_recovery_database,
+)
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -66,6 +70,32 @@ from tldw_chatbook.Widgets.Console.console_inspector_section import (
 _AGENT_SECTION_SIZE = (180, 48)
 
 pytestmark = pytest.mark.bootstrap_profile
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _retire_original_agent_fixture_owners(_real_fleet_recovery_database, request):  # noqa: F811 - explicit imported fixture dependency.
+    """Retire exact local producers before the unchanged Fleet DB teardown."""
+    from Tests.UI._agent_fixture_owners import (
+        AgentFixtureOwners,
+        FixtureCallFailure,
+        finish_owner_retirement,
+    )
+
+    owners = AgentFixtureOwners(sys.modules[__name__], pytest_config=request.config)
+    failure = FixtureCallFailure(request.node)
+    request.config.pluginmanager.register(failure)
+    try:
+        owners.install_births()
+        try:
+            yield owners
+        finally:
+            if not await finish_owner_retirement(owners, failure.error):
+                request.node.add_report_section(
+                    "teardown", "Agent fixture cleanup",
+                    "Agent fixture cleanup could not prove owned retirement",
+                )
+    finally:
+        request.config.pluginmanager.unregister(failure)
 
 
 def _bridge_over(db_path) -> ConsoleAgentBridge:

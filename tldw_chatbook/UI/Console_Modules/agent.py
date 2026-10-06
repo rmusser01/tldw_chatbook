@@ -2579,8 +2579,39 @@ class ConsoleAgentController:
     @staticmethod
     def _subagent_count_live_token(bridge: Any, row_ids: frozenset[str]) -> tuple:
         """Read process-local run/child identities without database work."""
+        import inspect
+        from types import MethodType
+
+        from ...Chat.console_agent_bridge import (
+            ConsoleAgentBridge,
+            _SUBAGENT_BADGE_LIVE_CALLBACKS,
+        )
+
+        lookup, dictionary, callbacks = _SUBAGENT_BADGE_LIVE_CALLBACKS
+        stock = (
+            type(bridge) is ConsoleAgentBridge
+            and inspect.getattr_static(ConsoleAgentBridge, "__getattribute__") is lookup
+            and inspect.getattr_static(ConsoleAgentBridge, "__dict__") is dictionary
+            and inspect.getattr_static(ConsoleAgentBridge, "__getattr__", None) is None
+            and all(
+                inspect.getattr_static(bridge, name, None) is function
+                and function.__code__ is code
+                and function.__globals__ is namespace
+                for name, function, code, namespace in callbacks
+            )
+        )
         snapshot = getattr(bridge, "live_snapshot", None)
         target = getattr(bridge, "run_log_target_token", None)
+        stock = stock and all(
+            type(method) is MethodType
+            and method.__self__ is bridge
+            and method.__func__ is record[1]
+            for method, record in zip((snapshot, target), callbacks)
+        )
+        # Primary turn/run publication cannot change the sub-agent-only count.
+        # Custom callbacks keep their preceding primary-token contract.
+        if stock:
+            target = None
         return tuple(
             (
                 cid,
