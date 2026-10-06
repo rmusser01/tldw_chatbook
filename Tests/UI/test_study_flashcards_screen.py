@@ -110,29 +110,15 @@ class FakeStudyScopeService:
         self.decks.append(created)
         return created
 
+    # TASK-34000.6 (S-05): these two mirror the REAL ``StudyScopeService``
+    # signatures, which take no ``scope_type``/``workspace_id`` (a card is
+    # scoped by its deck). The old fakes accepted them and hid a TypeError
+    # that exited the app; ``Tests/Architecture/test_study_handler_service_
+    # keywords.py`` now pins the contract against the real class.
     async def list_flashcards(
-        self,
-        *,
-        mode=None,
-        scope_type=None,
-        workspace_id=None,
-        deck_id=None,
-        q=None,
-        limit=100,
-        offset=0,
+        self, *, mode=None, deck_id=None, q=None, limit=100, offset=0
     ):
-        self.calls.append(
-            (
-                "list_flashcards",
-                mode,
-                scope_type,
-                workspace_id,
-                deck_id,
-                q,
-                limit,
-                offset,
-            )
-        )
+        self.calls.append(("list_flashcards", mode, deck_id, q, limit, offset))
         return [
             card
             for card in self.cards
@@ -143,8 +129,6 @@ class FakeStudyScopeService:
         self,
         *,
         mode=None,
-        scope_type=None,
-        workspace_id=None,
         deck_id=None,
         front,
         back,
@@ -153,18 +137,7 @@ class FakeStudyScopeService:
         extra=None,
     ):
         self.calls.append(
-            (
-                "create_flashcard",
-                mode,
-                scope_type,
-                workspace_id,
-                deck_id,
-                front,
-                back,
-                tags,
-                notes,
-                extra,
-            )
+            ("create_flashcard", mode, deck_id, front, back, tags, notes, extra)
         )
         created = {
             "record_id": f"{mode}:study_flashcard:new-card",
@@ -373,28 +346,9 @@ class WorkspaceFilteredStudyScopeService(FakeStudyScopeService):
         return created
 
     async def list_flashcards(
-        self,
-        *,
-        mode=None,
-        scope_type=None,
-        workspace_id=None,
-        deck_id=None,
-        q=None,
-        limit=100,
-        offset=0,
+        self, *, mode=None, deck_id=None, q=None, limit=100, offset=0
     ):
-        self.calls.append(
-            (
-                "list_flashcards",
-                mode,
-                scope_type,
-                workspace_id,
-                deck_id,
-                q,
-                limit,
-                offset,
-            )
-        )
+        self.calls.append(("list_flashcards", mode, deck_id, q, limit, offset))
         cards = self.workspace_cards if deck_id == "deck-workspace-1" else self.cards
         return [
             card
@@ -570,8 +524,6 @@ async def test_flashcards_view_creates_deck_and_card_through_scope_service():
         assert (
             "create_flashcard",
             "local",
-            "global",
-            None,
             "new-deck",
             "What is H2O?",
             "Water",

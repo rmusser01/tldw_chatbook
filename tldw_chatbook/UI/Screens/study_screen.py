@@ -44,6 +44,7 @@ from .study_scope_models import (
     STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLES_LIMIT,
+    summarize_carried_titles,
     STUDY_ORIGIN_HOME,
     STUDY_ORIGIN_LIBRARY,
     STUDY_ORIGINS,
@@ -85,6 +86,20 @@ class StudyScreen(BaseAppScreen):
     # class-level state; the footer hint (``_study_footer_shortcuts``) and
     # the breadcrumb subtitle carry the origin-specific copy.
     BINDINGS = [("escape", "study_back", "Back")]
+
+    # TASK-34000.6 (S-05): the section bar is a plain Horizontal, so it
+    # inherits Textual's `height: 1fr`. While the dashboard's own 1fr columns
+    # swallowed the shell that never showed, but once the dashboard measures
+    # auto, the bar would take the freed 18 rows and float the dashboard
+    # mid-screen (measured at 160x45). Screen-owned, because no app-tier rule
+    # targets this shell and the bar is composed here; lifted into the
+    # generated screen sheets by build_css.py (TASK-21115: no new class-level
+    # DEFAULT_CSS sources).
+    BUNDLED_SCREEN_CSS = """
+    StudyScreen #study-section-bar {
+        height: auto;
+    }
+    """
 
     # Screen-specific state
     current_section: reactive[str] = reactive("dashboard")
@@ -499,11 +514,11 @@ class StudyScreen(BaseAppScreen):
             )
             if clean_title:
                 sample_titles.append(escape_markup(clean_title))
-        if sample_titles:
-            sample_text = ", ".join(sample_titles[:3])
-            if len(sample_titles) > 3:
-                sample_text = f"{sample_text}, +{len(sample_titles) - 3} more"
-            return f"{title}: {sample_text}"
+        summary = summarize_carried_titles(sample_titles)
+        if summary.named:
+            # TASK-34000.6: the same names and count the Library hand-off
+            # canvas showed ("Carries forward: a, b, c and N more.").
+            return f"{title}: {summary.text}"
         summary = self._clean_material_text(
             self.scope_state.material_summary,
             max_length=STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
