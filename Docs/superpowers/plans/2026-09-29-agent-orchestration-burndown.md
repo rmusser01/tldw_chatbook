@@ -1466,8 +1466,17 @@ Reason: tune the accepted generic round-robin split without changing required co
 5. After Ready/all activity settled, publish one necessary source update with exact observed2cd lease and fresh read-only feedback/protection/refs. Require fresh PRFast, ALL FOUR UI components, latency and Derived artifacts to succeed; close through CLI only after actual hosted qualification. No completed-budget/test replay, retry/dispatch/dummy head, bypass or heartbeat operation.
 6. Require current Qodo or explicit pending human exception, current strict/admin/conversation protection and qualified concurrency before normal protected head-matched merge. Verify actual GitHub MERGED parents/tree/concurrency before completion.
 
-- [ ] Change `.github/workflows/derived-artifacts.yml` matrix to `shard: [1, 2, 3, 4]`.
-- [ ] Change only the existing coverage inputs in `Tests/CI/test_derived_artifacts_workflow.py` to include total4.
-- [ ] Verify the new `[4]` real-command coverage case, lane shape and failed-lane aggregation on changed source; preserve raw/XML/exit.
+- [x] Change `.github/workflows/derived-artifacts.yml` matrix to `shard: [1, 2, 3, 4]`.
+- [x] Change only the existing coverage inputs in `Tests/CI/test_derived_artifacts_workflow.py` to include total4.
+- [x] Verify the new `[4]` real-command coverage case, lane shape and failed-lane aggregation on changed source; preserve raw/XML/exit.
 - [ ] Obtain focused immutable Ready review, then one exact observed-head publication.
 - [ ] Authenticate ALL FOUR hosted UI components and existing conceptual gates before CLI closure; current review/protection/concurrency still gate merge.
+
+
+## October 6 final UI capacity failure and bounded repair
+
+The final documentation head 2cd20a8b0ada21d1330b234e4a767869b2dca026 failed because GitHub canceled UI shard3 at its explicit maximum20m job cap after96% progress, with no recorded pytest failure or completed summary. The remaining census files were Console rename consistency and control-bar recovery height; their stalled-test cause and per-test duration variance are unqualified. Derived artifacts failed only the required UI prerequisite; every artifact step succeeded. PRFast/UI1/UI2/latency succeeded separately. Source50's581PASS974.13 UI3 receipt remains separate, not a pass for final2cd.
+
+After the entire final cycle settled, prospective plan8e4f393d6c24bb06b8d70c3689ed17efac59f13e reopened parentAC3/InProgress while retainingAC4checked and created TASK33664.4 before source edits. The only workflow change adds shard4; the only test change adds total4 to existing real-command coverage inputs. All152 census files remain gated once in four38-file serial subsequences. Checker, dependencies,20-minute cap,180-second test timeout, fail-fast:false, required context/aggregation and all product/test bodies remain unchanged. Incoming TASK34353 staysInProgress/AC3unchecked and existing .1/.2/.3 stayDone.
+
+Changed-source targeted CI controls ran ONCE:4PASS0.712s XML, exit0/failures0/errors0/skips0. The new4-way case actually runs all four checker subprocesses and verifies complete disjoint coverage and order; existing lane-shape, failed-lane aggregation and invalid-index controls pass. RawSHA1e828dd28b25ed969c101460b55dbfc914e259d5cba16599d097acdac6929e63/XMLSHA65cc083c15efc90c994694dfe9d96ee4deba7aa1e78297f8c7bdcc47f389d1ea, plus27 late rm_rf warnings retained; no PyAudio/pydub lines. Scoped Ruff0prior/0current/zeroNEW/fatal0; existing formatter debt remains on both sources without unrelated formatting. New5035task-ID/path/readability and whitespace checks pass. Receipts: /private/tmp/pr2918-oct06-four-shard-{failure-receipt,local-proof,static-proof}.json. No completed product test, original budget, baseline or old qualification script was replayed. ParentAC3 and hosted childAC2 remain pending; focused immutable review and ALL FOUR fresh UI components plus current review/protection/concurrency still gate publication/closure/merge. No heartbeat, retry, dispatch, dummy head, arm or merge.
