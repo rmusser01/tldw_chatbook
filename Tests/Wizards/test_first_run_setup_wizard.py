@@ -11937,38 +11937,20 @@ async def test_tools_step_rows_are_described_and_do_not_overlap():
 
 
 def test_read_class_tool_copy_mentions_per_call_approval():
-    """task-32289 AC#2: Full setup's tools step described reads as safe with
-    no mention that they still ask every time -- append that fact to every
-    read-class tool's description instead of just the mutating ones' ⚠.
-
-    task-32284 moved the wizard's private `_TOOL_COPY` table onto
-    `_GATEABLE_BUILTINS` (see `test_tools_step_copy_comes_from_the_shared_
-    gate_table` below), so this reads the catalog blurbs instead.
-
-    task-32284 (Qodo #2594 #6): "Asks you each time before running" was a
-    promise the approval card breaks on purpose -- "Approve for session"
-    and "Always allow" are right there on it. The sentence now names that
-    longer scope instead of denying it exists.
-    """
+    """task-32289 AC#2, then TASK-34100.13: every row says it asks before each
+    use and names the card's own session option; file tools say where they
+    reach (Workspace folders and the chat scratch area)."""
     from tldw_chatbook.Agents.tool_catalog import gateable_builtin_tools
 
-    sentence = "Asks before running unless you approve a longer scope."
+    sentence = "Asks before each use unless you pick This session."
     blurbs = {t.tool_name: t.blurb for t in gateable_builtin_tools()}
 
-    for tool_name in (
-        "read_file",
-        "list_directory",
-        "glob_files",
-        "grep_files",
-        "expand_document",
-    ):
-        desc = blurbs[tool_name]
+    for tool_name, desc in blurbs.items():
         assert desc.endswith(f" {sentence}"), (tool_name, desc)
-
     for tool_name in ("write_file", "create_note", "update_note"):
-        desc = blurbs[tool_name]
-        assert sentence not in desc, (tool_name, desc)
-        assert "asks you each time" not in desc.lower(), (tool_name, desc)
+        assert "⚠" in blurbs[tool_name], tool_name
+    for tool_name in ("read_file", "list_directory", "write_file", "glob_files", "grep_files"):
+        assert "Workspace folders" in blurbs[tool_name], tool_name
 
 
 @pytest.mark.asyncio

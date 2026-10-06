@@ -103,7 +103,12 @@ class SummaryStep(SetupStep):
         """
         with Vertical(classes="setup-summary"):
             yield Static("Setup summary", classes="setup-title")
-            yield Static("", id="setup-summary-defaults-note", classes="setup-subtitle")
+            yield Static(
+                "",
+                id="setup-summary-defaults-note",
+                classes="setup-subtitle",
+                markup=False,
+            )
             # markup=False: row labels/details come from persisted config data
             # (embedding model ids, notes directories, ...) which may contain
             # literal "[...]" -- Static.update() otherwise parses that as Rich
@@ -158,22 +163,36 @@ class SummaryStep(SetupStep):
                 yield Button("Explore Home", id="setup-exit-home")
                 yield Button("Review settings", id="setup-exit-settings")
 
-    def on_show(self) -> None:
-        super().on_show()
+    def _on_quick_track(self) -> bool:
         track = (
             (self.wizard.wizard_data or {})
             .get(wizard_state.STEP_WELCOME, {})
             .get("track")
         )
-        if track == wizard_state.TRACK_QUICK:
-            # TASK-34100.5.3: the tools part names the real tool surface;
-            # _render_rows re-derives it from the persisted config.
-            self.query_one("#setup-summary-defaults-note", Static).update(
-                wizard_state.quick_track_defaults_note(
-                    getattr(getattr(self.wizard, "app_instance", None), "app_config", {})
-                    or {}
-                )
-            )
+        return track == wizard_state.TRACK_QUICK
+
+    def _show_quick_defaults_note(self, config: Any) -> None:
+        """TASK-34100.13: the Quick note is derived from the re-read config.
+
+        It said "tools off, RAG off" as a literal while three tool groups
+        were on; it now comes from ``all_tool_gates()`` and the auto-retrieve
+        flag, the same sources as the Tools and Search rows.
+        """
+        from tldw_chatbook.Agents.builtin_tool_gate import all_tool_gates
+        from tldw_chatbook.UI.Wizards import first_run_tools_posture as posture_mod
+        from tldw_chatbook.UI.Wizards.first_run_rag_state import read_auto_retrieve
+
+        note = posture_mod.quick_defaults_note(
+            posture_mod.tools_posture(all_tool_gates(config=config)),
+            auto_retrieve=read_auto_retrieve(config),
+        )
+        # TASK-34100.5.3 (kept in the rebase): called after an await, so
+        # query() -- a removed subtree is a no-op, not a NoMatches.
+        for widget in self.query("#setup-summary-defaults-note").results(Static):
+            widget.update(note)
+
+    def on_show(self) -> None:
+        super().on_show()
         if self._render_worker is not None and self._render_worker.is_running:
             return
         self._render_worker = run_wizard_worker(
@@ -245,14 +264,6 @@ class SummaryStep(SetupStep):
         speech_installed = await asyncio.get_running_loop().run_in_executor(
             None, speech_installed_check
         )
-        rag_model_check = self._rag_model
-        if rag_model_check is None:
-            from tldw_chatbook.UI.Wizards.first_run_rag_state import (
-                resolve_active_embedding_model as rag_model_check,
-            )
-        rag_model = await asyncio.get_running_loop().run_in_executor(
-            None, rag_model_check
-        )
         speech_runtime_installed = await asyncio.get_running_loop().run_in_executor(
             None, speech_runtime_check
         )
@@ -265,7 +276,8 @@ class SummaryStep(SetupStep):
         # `ProtectKeysStep._apply_password_worker` for why the latter is inert.
         if not self.is_attached:
             return
-        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
+        if self._on_quick_track():
+            self._show_quick_defaults_note(config)
 
         # TASK-21146 (UAT H-1): offer the model-list consent only while no
         # answer is recorded — a rerun after any answer never re-asks.
@@ -288,19 +300,69 @@ class SummaryStep(SetupStep):
         except NoMatches:
             self._model_catalog_consent_offered = False
 
-        if (
-            (self.wizard.wizard_data or {})
-            .get(wizard_state.STEP_WELCOME, {})
-            .get("track")
-            == wizard_state.TRACK_QUICK
-        ):
-            # After an await: query(), so a removed subtree is a no-op.
-            for note in self.query("#setup-summary-defaults-note").results(Static):
-                note.update(wizard_state.quick_track_defaults_note(config))
+        rows_inputs = {
+            "rag_deps_installed": deps(),
+            "speech_installed": speech_installed,
+            "speech_runtime_installed": speech_runtime_installed,
+        }
+        self._paint_rows(config, rag_model=None, **rows_inputs)
+        from tldw_chatbook.config import get_cli_config_path
+
+        # F-D fix: resolving the path and updating the widget were one bare
+        # try/except Exception: pass -- ANY failure in either half (a
+        # get_cli_config_path() error, or the query_one below) left the
+        # footer exactly as compose() first rendered it (""), so the label
+        # itself never even appeared, and any real failure vanished with no
+        # trace. Resolve the path in its own guarded step with a visible
+        # fallback string, so the footer's "Config file:" line always shows
+        # SOMETHING and a genuine resolution failure is at least logged
+        # instead of silently producing an empty-looking row.
+        try:
+            config_path_text = str(get_cli_config_path())
+        except Exception:
+            logger.warning(
+                "Summary footer could not resolve the config path", exc_info=True
+            )
+            config_path_text = "(unknown — see Settings ▸ Diagnostics)"
+        try:
+            self.query_one("#setup-summary-footer", Static).update(
+                "Config file: "
+                f"{wizard_state.middle_truncate_path(config_path_text, max(40, (self.size.width or 120) - 18))}\n"
+                "Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard."
+            )
+        except Exception:
+            logger.debug("Summary footer widget unavailable to update", exc_info=True)
+        # TASK-34100.13: the Search row names the embedding model RAG
+        # resolves. Resolving the active profile can take seconds on a cold
+        # start, so the rows paint first and the row is completed after.
+        rag_model_check = self._rag_model
+        if rag_model_check is None:
+            from tldw_chatbook.UI.Wizards.first_run_rag_state import (
+                resolve_active_embedding_model as rag_model_check,
+            )
+        rag_model = await asyncio.get_running_loop().run_in_executor(
+            None, rag_model_check
+        )
+        if not self.is_attached or rag_model is None:
+            return
+        self._paint_rows(config, rag_model=rag_model, **rows_inputs)
+
+    def _paint_rows(
+        self,
+        config: Any,
+        *,
+        rag_deps_installed: bool,
+        speech_installed: bool,
+        speech_runtime_installed: bool,
+        rag_model: Any,
+    ) -> None:
+        """Build the read-back rows from ``config`` and paint them."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
+
         rows = build_summary_rows(
             config,
             dict(os.environ),
-            rag_deps_installed=deps(),
+            rag_deps_installed=rag_deps_installed,
             speech_installed=speech_installed,
             speech_runtime_installed=speech_runtime_installed,
             rag_model=rag_model,
@@ -363,32 +425,6 @@ class SummaryStep(SetupStep):
             for title in failed_titles
         )
         self.query_one("#setup-summary-rows", Static).update("\n".join(lines))
-        from tldw_chatbook.config import get_cli_config_path
-
-        # F-D fix: resolving the path and updating the widget were one bare
-        # try/except Exception: pass -- ANY failure in either half (a
-        # get_cli_config_path() error, or the query_one below) left the
-        # footer exactly as compose() first rendered it (""), so the label
-        # itself never even appeared, and any real failure vanished with no
-        # trace. Resolve the path in its own guarded step with a visible
-        # fallback string, so the footer's "Config file:" line always shows
-        # SOMETHING and a genuine resolution failure is at least logged
-        # instead of silently producing an empty-looking row.
-        try:
-            config_path_text = str(get_cli_config_path())
-        except Exception:
-            logger.warning(
-                "Summary footer could not resolve the config path", exc_info=True
-            )
-            config_path_text = "(unknown — see Settings ▸ Diagnostics)"
-        try:
-            self.query_one("#setup-summary-footer", Static).update(
-                "Config file: "
-                f"{wizard_state.middle_truncate_path(config_path_text, max(40, (self.size.width or 120) - 18))}\n"
-                "Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard."
-            )
-        except Exception:
-            logger.debug("Summary footer widget unavailable to update", exc_info=True)
 
     @on(Button.Pressed, "#setup-exit-chat")
     def _exit_chat(self) -> None:

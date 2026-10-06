@@ -327,6 +327,27 @@ _MUTATING_BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 
+def _gated_off_builtin_twins() -> frozenset[str]:
+    """Built-in tools hidden because their native twin is gated off.
+
+    If the config cannot be read, each gate takes its shipped default (the
+    value an absent key means everywhere else): ``create_note`` stays hidden,
+    and the character writes follow their default-on gate.
+    """
+    from tldw_chatbook.Agents import builtin_tool_gate
+
+    try:
+        return builtin_tool_gate.gated_off_mcp_builtin_twins()
+    except Exception as exc:  # noqa: BLE001 -- never abort composition
+        logger.warning(
+            "MCPToolProvider: tool gates unreadable ({}); using their defaults",
+            type(exc).__name__,
+        )
+        return builtin_tool_gate.gated_off_mcp_builtin_twins(
+            builtin_tool_gate.all_tool_gates(config={})
+        )
+
+
 def approval_effects_for_tool(tool: Any) -> tuple[str, ...]:
     """Return the card-facing effects implied by a tool's risk tags.
 
@@ -801,6 +822,17 @@ class MCPToolProvider:
                     tool
                     for tool in builtin_tools_from_inventory(inventory)
                     if tool.name not in DIRECT_RUNTIME_UNAVAILABLE_TOOLS
+                ]
+                # TASK-34100.13: a built-in twin of a native tool whose gate
+                # is off ("Create note" left off in setup) is not offered.
+                gated_off = _gated_off_builtin_twins()
+                builtin_tools = [
+                    tool
+                    for tool in builtin_tools
+                    if not (
+                        tool.server_key == "builtin:tldw_chatbook"
+                        and tool.name in gated_off
+                    )
                 ]
                 if self._builtin_raw_name_exclusions:
                     # task-1337 (plan Task 8): drop the Console-shadowed raw

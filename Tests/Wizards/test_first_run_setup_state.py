@@ -2248,17 +2248,14 @@ class TestSummaryThreeState:
         # live, a fresh profile's assistant listed sub-agents, web search,
         # Watchlists and the built-in source's notes tools, and the first
         # chat asked approval for one.
-        # TASK-34100.5.3: plain chat now offers exactly the light set until
-        # the user turns more on, so the row names it instead of hedging.
-        # Review round 1 (F4): and says plainly that a small or unread window
-        # gets no tools.
-        assert rows["Tools"].detail == (
-            "on: date and time, calculator and ask you a question, plus tools "
-            "from MCP servers you add and Library tools in chats you allow. "
-            "Sub-agents, skills, web, Watchlists, workspace tools and characters "
-            f"stay off until you turn on Full agent tools under {TOOL_GATES_PANE_PATH}. "
-            "A model with a small or not-yet-known context window gets no tools."
-        )
+        # Review round 1 (F10): a first send planned against a window nobody
+        # verified (a fresh local server) carries no tools at all, so the row
+        # says what MAY be offered, not what always is.
+        # TASK-34100.13: the row is derived from all_tool_gates() (the
+        # default-on local group is named, not hidden behind "gates off").
+        assert rows["Tools"].detail.startswith("file, note and document switches off")
+        assert "web search and Watchlists" in rows["Tools"].detail
+        assert rows["Tools"].detail.endswith(f"under {TOOL_GATES_PANE_PATH}")
         assert "all off" not in rows["Tools"].detail
         assert "may still" not in rows["Tools"].detail
         # TASK-36387, rewritten on purpose: MCP is a Settings category now.
