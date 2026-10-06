@@ -289,7 +289,8 @@ way, re-enter or clear the key in Settings ▸ Providers & Models.
 
 A second computer does not need setup again. There are three routes:
 carry your config.toml, export the same environment keys, or restore a
-backup. The first two carry settings only; a backup also carries your data.
+backup. The first two carry settings only; a backup can also carry your
+data, but check what its Review lists first (see "Restore a backup" below).
 
 ### Carry your config.toml
 
@@ -307,9 +308,12 @@ TLDW_CONFIG_PATH=/path/to/config.toml tldw-cli
 `--config` and the `TLDW_CONFIG_PATH` environment variable do the same
 thing: `--config` for one launch, the variable for every launch that sees
 it. When both are set, `--config` wins. If the file does not exist yet,
-chatbook creates a new config there and offers setup as on a first launch.
-A folder is refused ("give the config.toml file inside it"). With either,
-Settings names the file an override config.
+chatbook creates a new config there and offers setup as on a first launch;
+its folder must already exist. `--config` refuses a folder ("give the
+config.toml file inside it"), a file in a folder that does not exist ("…
+does not exist; create that folder or check the path") and a path it cannot
+read, each before anything starts. With either, Settings names the file an
+override config.
 
 The `[first_run]` table decides whether setup is offered:
 
@@ -356,35 +360,46 @@ wizard.").
 | Flag | What it does |
 |---|---|
 | `--config PATH` | Uses this config.toml for this launch (the same as `TLDW_CONFIG_PATH`; the flag wins when both are set). |
-| `--no-splash` | Skips the splash screen for this launch only. `[splash_screen] enabled` in config is not changed. |
+| `--no-splash` | Skips the splash screen for this launch only. `[splash_screen] enabled` in config is not changed. A `--serve` browser session is started without it, so it still shows the splash when config enables it. |
 
 Neither flag writes to config.toml, and no launch flag marks setup as
 completed. `tldw-cli --help` lists both and ends with a note that names
-`TLDW_CONFIG_PATH` and this section. A recovery profile opened from Backup &
-Restore selects its own config, so `--config` cannot be combined with it.
+`TLDW_CONFIG_PATH` and this section, with a link to this page. A recovery
+profile opened from Backup & Restore selects its own config, so `--config`
+cannot be combined with it.
 
 ### Restore a backup
 
 To bring your data as well as your settings, create a backup on the old
 machine (Settings ▸ Overview ▸ **Backup & Restore** ▸ **Create backup**). It
 writes a `.tldw-backup.zip` file, or `.tldw-backup.zip.age` when encrypted.
+Backup coverage is still growing: the Review lists each store, and one
+marked `unsupported` (on some profiles that includes the config and the main
+databases) is not in the archive. Until the Review shows what you need as
+included, carry config.toml as described above to move your settings.
+
 In the Create backup form, the line just above the buttons says why
 **Create backup** is disabled: "Create backup unlocks after a successful
 Review." until **Review** succeeds (and again after any change to the form),
 or the review's own reason, such as a Partial backup that needs "Acknowledge
-Partial archive…" ticked, or not enough free space at the destination.
+Partial archive…" ticked, or not enough free space (at the destination, or
+in the temporary folder where the backup is staged). Pressing **Create
+backup** uses up that review, so the line then reads "Backup started;
+progress is shown at the top. Press Review to create another."
 
 On the new machine, setup's Welcome step (and the "Continue setup?" dialog)
 has **Restore a backup**. It opens "Restore from a backup" straight on the
 Inspect / restore pane, with the cursor in the archive field and the format
-named under it. Choose the archive and press **Inspect**; the restore
-controls appear once the archive is verified. **Esc** returns to setup with
-your choices intact.
+named under it; **Inspect / restore** is the first of the actions above it.
+Choose the archive and press **Inspect** (or Enter in the field); the
+restore controls appear once the archive is verified. **Esc** returns to
+setup with your choices intact.
 
 - A config.toml there gets "That's a settings file, not a backup archive."
-  with a pointer to this section and the `--config` command for that file.
+  with the `tldw-cli --config <this file>` command and this section's name.
   Carry it as described above instead.
 - A folder gets "Choose the archive file, not a folder."
+- Changing the archive path clears either message.
 
 ## Running it again
 
