@@ -419,6 +419,30 @@ do not replace native admission or relax ACL checks to make collection pass.
 Separate later POSIX-only assertions or native publication failures from the
 evidence for the changed feature, and report those verification limits.
 
+## Build fixture values with the producer the app uses, not by hand (TASK-34100.3, 2026-10-05)
+
+**Incident.** Every Moonshot reply in a saved Console chat was generated, billed
+and then thrown away behind "Provider continuation could not be persisted" and a
+false delivery-unknown card. The store had a test for exactly that path, and a
+controller test drove a reasoning-only Kimi turn end to end; both passed. Both
+built the dispatch row's destination by hand as
+`endpoint_identity="https://api.moonshot.ai/v1"`, and 38 fixtures elsewhere do
+the same. The real `resolve_console_destination` records only the origin
+(`https://api.moonshot.ai`), while the continuation carries the full base URL,
+and the repository compared the two for equality. That check could only pass
+with the hand-built value. The defect surfaced once a test took the
+destination from the real resolver and a pilot ran the real gateway with the
+real Moonshot response builder (only the HTTP call replaced). Both failed on
+the pre-fix code.
+
+**What to do.** When a value crosses a persistence boundary and is compared
+later, build the fixture with the production function that produces it
+(`resolve_console_destination`, the adapter's response builder), not a literal
+that "looks right". If a test must hand-build such a value, add one test that
+pins the hand-built shape to the producer's output. A comparison that only a
+fixture can satisfy is the bug. Related: TASK-33662's restore helper reused
+persisted ids as native ids and hid a relaunch bug the same way.
+
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 
 **TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
