@@ -22,7 +22,11 @@ from ...Chat.custom_endpoint_registry import (
     split_custom_endpoint_id,
     validate_entry,
 )
-from ...Chat.provider_catalog import PROVIDER_CUSTOM_GROUP_KEYS, provider_display_name
+from ...Chat.provider_catalog import (
+    PROVIDER_CUSTOM_GROUP_KEYS,
+    PROVIDER_LEGACY_ALIAS_KEYS,
+    provider_display_name,
+)
 from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...config import (
     DEFAULT_CONFIG_FROM_TOML,
@@ -238,8 +242,9 @@ def build_provider_picker_groups(
             continue
         group_id = _provider_group_id(entry)
         provider_key = normalize_provider_config_key(provider_id)
-        if provider_key in configured_keys and (
-            group_id != "custom" or provider_key in _CONVERTIBLE_SLOT_IDS
+        if (
+            provider_key in configured_keys
+            and provider_key not in PROVIDER_LEGACY_ALIAS_KEYS
         ):
             group_id = _CONFIGURED_GROUP[0]
         grouped[group_id].append(option)
