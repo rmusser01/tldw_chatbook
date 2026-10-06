@@ -289,8 +289,9 @@ way, re-enter or clear the key in Settings ▸ Providers & Models.
 
 A second computer does not need setup again. There are three routes:
 carry your config.toml, export the same environment keys, or restore a
-backup. The first two carry settings only. A backup can also carry your
-data, but Create backup does not yet work on every profile; see "Restore a
+backup. The first two carry settings only; to bring your chats, notes and
+documents with them, also copy the data folder (below). A backup can carry
+both, but Create backup does not yet work on every profile; see "Restore a
 backup" below before relying on it.
 
 ### Carry your config.toml
@@ -339,11 +340,15 @@ both `tldw-cli` and `python -m tldw_chatbook.app`, including with
 
 What config.toml does not carry: your chats, notes, characters and documents
 live in database files under `~/.local/share/tldw_cli/`, not in the config.
-Use a backup for those (below). Paths written in the file are used as
-written: `~/...` paths follow the new machine's home folder, while an
-absolute path (a notes sync folder, a custom database location) must exist
-there. `--config` and `TLDW_CONFIG_PATH` choose the config file only; they
-do not move the data folder.
+To bring them, quit chatbook on both machines and copy that whole folder,
+every file in it, to the same place on the new machine. If chatbook has
+already run there, move its folder aside first rather than copying into it;
+the copy replaces anything chatbook saved there. A backup (below) carries
+them too, once Create backup works on your profile. Paths written in the
+file are used as written: `~/...` paths follow the new machine's home
+folder, while an absolute path (a notes sync folder, a custom database
+location) must exist there. `--config` and `TLDW_CONFIG_PATH` choose the
+config file only; they do not move the data folder.
 
 ### Environment keys
 
@@ -378,14 +383,13 @@ writes a `.tldw-backup.zip` file, or `.tldw-backup.zip.age` when encrypted.
 Backup coverage is still growing: the Review lists each store, and one
 marked `unsupported` (on some profiles that includes the config and the main
 databases) is not in the archive. Until the Review shows what you need as
-included, carry config.toml as described above to move your settings.
+included, carry config.toml and the data folder as described above.
 
 **Known problem:** on some profiles Create backup currently stops with
 "Failed: capturing …" (ending in `backup_operation_failed` or
 `admission_timeout`) and writes no file, even after a successful Review. If
-that happens, carry config.toml as described above to move your settings;
-your chats, notes and documents stay on the old machine until Create backup
-succeeds there.
+that happens, carry config.toml and the data folder as described above
+instead.
 
 In the Create backup form, the line just above the buttons says why
 **Create backup** is disabled: "Create backup unlocks after a successful
