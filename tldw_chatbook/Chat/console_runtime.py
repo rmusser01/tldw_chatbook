@@ -4686,6 +4686,7 @@ class ConsoleRuntime:
             return None
         from tldw_chatbook.Agents.plain_chat_tool_surface import (
             light_surface_configured,
+            tool_kill_switch_engaged,
         )
         from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
@@ -4738,6 +4739,7 @@ class ConsoleRuntime:
             # turned on Full agent tools; read per send, so a switch flipped
             # in setup or the MCP hub applies on the next send.
             light_tool_surface=light_surface_configured,
+            tool_kill_switch=functools.partial(tool_kill_switch_engaged, self._app),
         )
         # PR3a-2 Task 4: the survivor-completion attention consumer (durable
         # unseen mark + app-wide toast + deep link), registered NEXT TO

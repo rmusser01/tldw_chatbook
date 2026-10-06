@@ -546,3 +546,42 @@ def test_the_meter_and_the_summary_follow_the_one_named_set(
     assert dropped not in sent
     assert metered == sent
     assert summary_titles == _summary_titles_for(sent)
+
+
+# -- the MCP hub's tool kill switch -------------------------------------------
+
+
+def test_with_the_tool_kill_switch_on_the_meter_counts_no_local_tools(tmp_path):
+    """Review round 1 (F7, last part): with the MCP hub's kill switch engaged
+    the controller composes no local tools provider
+    (``_compose_local_tool_provider`` returns ``None`` when
+    ``get_kill_switch()`` is true), so ``ask_user`` is not sent. The meter
+    read the light set from config alone and counted it anyway; the Tools
+    chip did the same. The switch is read per preview, so turning it back
+    off counts ``ask_user`` again."""
+    from Tests.Chat.test_console_light_tool_surface import (
+        ChatScreen,
+        _attach_real_dbs,
+        _build_test_app,
+    )
+    from tldw_chatbook.Agents.plain_chat_tool_surface import (
+        offered_builtin_tool_count,
+    )
+
+    app = _build_test_app()
+    _attach_real_dbs(app, tmp_path)
+    engaged = [False]
+    app.unified_mcp_service = SimpleNamespace(get_kill_switch=lambda: engaged[0])
+    bridge = ChatScreen(app)._ensure_console_agent_bridge()
+    roomy = _openai(ContextWindowResolution(1_047_576, "model catalog", True))
+    assert _row_names(_preflight_tools(bridge, roomy)) == LIGHT
+    assert offered_builtin_tool_count(bridge) == len(LIGHT)
+
+    engaged[0] = True
+
+    assert _row_names(_preflight_tools(bridge, roomy)) == LIGHT - {"ask_user"}
+    assert offered_builtin_tool_count(bridge) == len(LIGHT) - 1
+
+    engaged[0] = False
+
+    assert _row_names(_preflight_tools(bridge, roomy)) == LIGHT
