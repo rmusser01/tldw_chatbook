@@ -2424,8 +2424,8 @@ class ProviderStep(SetupStep):
         if not model_discovery.discovery_is_reusable(self, discovery_key):
             self._begin_selected_provider_discovery(provider_draft)
         self._last_committed_provider_value = self.provider_value_for_chat_defaults
+        self._entered_key = typed_key  # for THIS provider (TASK-34100.4 R1-F3)
         if typed_key:
-            self._entered_key = True
             self.wizard.note_key_entered()
         return True, ""
 

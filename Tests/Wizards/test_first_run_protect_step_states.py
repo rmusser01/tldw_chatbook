@@ -186,6 +186,18 @@ def _current_step_id(container) -> str:
     return container.steps[container.current_step].config.id
 
 
+def _pinned_error(wizard) -> str:
+    """The wizard's pinned error strip, or "" when it is hidden."""
+    strip = wizard.query_one("#setup-step-error-pinned", Static)
+    return "" if strip.has_class("hidden") else str(strip.render()).strip()
+
+
+def _progress_box(wizard, step_id: str) -> str:
+    return str(
+        wizard.query_one(f"#setup-progress-{step_id} .step-number", Static).render()
+    )
+
+
 def _confirm_label(app, wizard) -> str:
     """The open dialog's confirm-button label, or "" when none is open."""
     if app.screen is wizard:
@@ -270,6 +282,12 @@ async def test_typed_but_unsaved_key_is_called_out_with_back_to_model(monkeypatc
 
         assert "Anthropic key you typed" in _step_text(step)
         assert _shown_buttons(step) == {"Back to Model": "setup-protect-back-to-model"}
+        # Review round 1 (R1-F4): the footer says "Enter / Ctrl+N next", so
+        # Enter must not go backwards; Back to Model is one Tab away.
+        next_button = wizard.query_one("#wizard-next", Button)
+        await _until(pilot, lambda: app.focused is next_button, what="focus on Next")
+        await pilot.pause(0.3)  # no late re-focus onto Back to Model
+        assert app.focused is next_button
 
         step.query_one("#setup-protect-back-to-model", Button).press()
         await _until(
@@ -315,6 +333,36 @@ async def test_stored_plaintext_keys_name_each_provider_and_the_file(monkeypatch
 
         step.query_one("#setup-protect-keep-plain", Button).press()
         await _at_summary(pilot, app, container)
+        # Review round 1 (R1-F7): kept as plain text (which Summary flags) is
+        # not the ✓ that reads "your keys are protected".
+        assert _progress_box(wizard, STEP_PROTECT) == "–"
+
+
+@pytest.mark.asyncio
+async def test_a_long_config_path_is_shown_whole(monkeypatch):
+    # Review round 1 (F5): middle-truncating the path dropped the very
+    # directories that say where the file is ('…/ho…config.toml').
+    long_path = Path(
+        "/Volumes/External Drive/profiles/research-workstation/"
+        "custom-xdg-config-home/tldw_cli/profiles/work/config.toml"
+    )
+    _install(monkeypatch, {"api_settings": {"openai": {"api_key": "sk-plain-x"}}})
+    monkeypatch.setattr(config_module, "get_cli_config_path", lambda: long_path)
+    wizard = _wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause(0.3)
+        _container, step = await _open_protect(pilot, wizard)
+        path = step.query_one("#setup-protect-path", Static)
+        await _until(pilot, lambda: path.display, what="the path line")
+        shown = str(path.render())
+
+        assert "…" not in shown
+        assert "".join(shown.removeprefix("Config file:").split()) == "".join(
+            str(long_path).split()
+        )
+        for line in shown.splitlines()[1:-1]:
+            assert line.endswith("/")  # broken only at separators
 
 
 # --- AC #2 + #1: success relabels and hands Enter to Next ------------------------
@@ -367,11 +415,13 @@ async def test_after_encrypting_the_button_changes_the_password_never_re_enables
     disk = _install(
         monkeypatch, {"api_settings": {"openai": {"api_key": "sk-plain-openai-x"}}}
     )
-    wizard = _wizard()
+    # TE-9: the running app's in-memory view holds the same key, so the
+    # pre-fix step reaches the behaviour under test, not a precondition.
+    wizard = _wizard({"api_settings": {"openai": {"api_key": "sk-plain-openai-x"}}})
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.3)
-        _container, step = await _open_protect(pilot, wizard)
+        container, step = await _open_protect(pilot, wizard)
         primary = step.query_one("#setup-protect-set-password", Button)
         await _until(pilot, lambda: primary.display, what="the encrypt button")
         step._on_password_result("first-master-pw")
@@ -381,7 +431,13 @@ async def test_after_encrypting_the_button_changes_the_password_never_re_enables
             what="the success line",
         )
 
-        primary.press()
+        # The user moves to "Change password…" and presses Enter, so the
+        # dialog returns focus to that button when it closes (TE-5: a
+        # programmatic press left focus on Next, and the guard below could
+        # not fail).
+        primary.focus()
+        await _until(pilot, lambda: app.focused is primary, what="focus on Change")
+        await pilot.press("enter")
         await _until(
             pilot, lambda: isinstance(app.screen, PasswordDialog), what="the dialog"
         )
@@ -395,6 +451,16 @@ async def test_after_encrypting_the_button_changes_the_password_never_re_enables
 
         assert disk.enable_calls == ["first-master-pw"]
         assert disk.change_calls == [("first-master-pw", "second-master-pw")]
+        # TE-5: after a change too, Next takes focus so Enter continues
+        # instead of reopening the change dialog.
+        await _until(
+            pilot,
+            lambda: app.focused is wizard.query_one("#wizard-next", Button),
+            what="focus on Next",
+        )
+        await pilot.press("enter")
+        await _at_summary(pilot, app, container)
+        assert not isinstance(app.screen, PasswordDialog)
 
 
 @pytest.mark.asyncio
@@ -405,7 +471,7 @@ async def test_a_refused_enable_never_claims_plain_text_beside_a_tick(monkeypatc
     disk = _install(
         monkeypatch, {"api_settings": {"openai": {"api_key": "sk-plain-openai-x"}}}
     )
-    wizard = _wizard()
+    wizard = _wizard({"api_settings": {"openai": {"api_key": "sk-plain-openai-x"}}})
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.3)
@@ -427,6 +493,126 @@ async def test_a_refused_enable_never_claims_plain_text_beside_a_tick(monkeypatc
         assert "unchanged (plain text)" not in shown
         assert "Encryption enabled" not in shown
         assert "already on" in shown
+
+
+@pytest.mark.asyncio
+async def test_a_failed_enable_then_a_successful_one_leaves_no_stale_failure(
+    monkeypatch,
+):
+    # Review round 1 (R1-F2/F1): the pinned strip kept "Encrypting failed…"
+    # beside the later "✓ Encryption enabled." -- the contradiction AC #1
+    # exists to remove.
+    disk = _install(
+        monkeypatch,
+        {"api_settings": {"openai": {"api_key": "sk-plain-openai-x"}}},
+        enable_result=False,
+    )
+    wizard = _wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        _container, step = await _open_protect(pilot, wizard)
+        primary = step.query_one("#setup-protect-set-password", Button)
+        await _until(pilot, lambda: primary.display, what="the encrypt button")
+
+        step._on_password_result("first-master-pw")
+        await _until(pilot, lambda: _pinned_error(wizard) != "", what="the failure")
+        await _until(pilot, lambda: not step._busy, what="the attempt to settle")
+
+        def _enable_now_works(password: str) -> bool:
+            disk.enable_calls.append(password)
+            disk.document = {**disk.document, "encryption": {"enabled": True}}
+            return True
+
+        monkeypatch.setattr(
+            config_module, "enable_config_encryption", _enable_now_works
+        )
+        step._on_password_result("first-master-pw")
+        await _until(
+            pilot,
+            lambda: "Encryption enabled" in _step_text(step),
+            what="the success line",
+        )
+
+        assert _pinned_error(wizard) == ""
+        assert disk.enable_calls == ["first-master-pw", "first-master-pw"]
+
+
+@pytest.mark.asyncio
+async def test_a_wrong_current_password_then_the_right_one_leaves_no_stale_failure(
+    monkeypatch,
+):
+    disk = _install(
+        monkeypatch,
+        {
+            "encryption": {"enabled": True},
+            "api_settings": {"openai": {"api_key": "sk-decrypted-openai-x"}},
+        },
+    )
+    monkeypatch.setattr(
+        config_module,
+        "verify_config_encryption_password",
+        lambda password: password == "right-master-pw",
+    )
+    wizard = _wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        _container, step = await _open_protect(pilot, wizard)
+        primary = step.query_one("#setup-protect-set-password", Button)
+        await _until(
+            pilot, lambda: str(primary.label) == "Change password…", what="state"
+        )
+
+        step._on_change_result(PasswordChange("wrong-master-pw", "next-master-pw"))
+        await _until(
+            pilot, lambda: "didn't match" in _pinned_error(wizard), what="the refusal"
+        )
+        await _until(pilot, lambda: not step._busy, what="the attempt to settle")
+        step._on_change_result(PasswordChange("right-master-pw", "next-master-pw"))
+        await _until(
+            pilot,
+            lambda: "Master password changed" in _step_text(step),
+            what="the change line",
+        )
+
+        assert _pinned_error(wizard) == ""
+        assert disk.change_calls == [("right-master-pw", "next-master-pw")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("on_disk", "title"),
+    [(None, "Couldn't read config.toml"), (True, "Your keys are protected")],
+    ids=["unknown", "encrypted"],
+)
+async def test_an_unreadable_config_never_falls_back_to_plain_text(
+    monkeypatch, on_disk, title
+):
+    # Review round 1 (R1-F5/TE-2): the fallback was the in-memory view, which
+    # has no [encryption] table and holds decrypted keys -- so an encrypted,
+    # unlocked config read "saved as plain text" with an Encrypt offer.
+    _install(monkeypatch, {"encryption": {"enabled": True}})
+
+    def _unreadable(force_reload=False):
+        raise OSError("config.toml is unreadable")
+
+    monkeypatch.setattr(
+        config_module, "load_cli_config_and_ensure_existence", _unreadable
+    )
+    monkeypatch.setattr(
+        config_module, "config_encryption_enabled_on_disk", lambda: on_disk
+    )
+    wizard = _wizard({"api_settings": {"openai": {"api_key": "sk-decrypted-openai-x"}}})
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        _container, step = await _open_protect(pilot, wizard)
+        await _until(pilot, lambda: title in _step_text(step), what="the state")
+        text = _step_text(step)
+
+        assert "plain text" not in text
+        assert "Encrypt with a password…" not in _shown_buttons(step)
 
 
 # --- AC #2: an already-encrypted config -----------------------------------------
@@ -509,3 +695,116 @@ async def test_exit_setup_offers_exit_without_saving_when_the_save_fails(
         )
 
         assert app.wizard_result is None
+
+
+@pytest.mark.asyncio
+async def test_keep_going_after_a_failed_exit_save_stays_on_the_step(monkeypatch):
+    # TE-10: the other branch of the exit-without-saving offer.
+    _install(monkeypatch, {})
+    monkeypatch.setattr(
+        config_module, "save_settings_to_cli_config", lambda *a, **k: False
+    )
+    wizard = _wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container, _step = await _open_protect(pilot, wizard)
+
+        await pilot.press("escape")
+        await _until(
+            pilot,
+            lambda: _confirm_label(app, wizard) == "Exit setup",
+            what="the Exit setup dialog",
+        )
+        await pilot.pause(0.6)  # past the dialog's double-Escape grace
+        app.screen.query_one("#confirm-button", Button).press()
+        await _until(
+            pilot,
+            lambda: "Exit without saving progress" in _confirm_label(app, wizard),
+            what="the exit-without-saving offer",
+        )
+        app.screen.query_one("#cancel-button", Button).press()
+        await _until(pilot, lambda: app.screen is wizard, what="the wizard again")
+        await pilot.pause(0.2)
+
+        assert app.wizard_result == "UNSET"
+        assert _current_step_id(container) == STEP_PROTECT
+
+
+@pytest.mark.asyncio
+async def test_skip_setup_offers_exit_without_saving_when_completion_cannot_save(
+    monkeypatch,
+):
+    # Review round 1 (R1-F6): on Welcome, Esc is "Skip setup", which saves
+    # completion. When that save kept failing the only way out was Ctrl+Q.
+    _install(monkeypatch, {})
+    monkeypatch.setattr(
+        config_module, "save_settings_to_cli_config", lambda *a, **k: False
+    )
+    wizard = _wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = wizard.query_one(SetupWizardContainer)
+        assert _current_step_id(container) == "welcome"
+
+        await pilot.press("escape")
+        await _until(
+            pilot,
+            lambda: _confirm_label(app, wizard) == "Skip setup",
+            what="the Skip setup dialog",
+        )
+        await pilot.pause(0.6)  # past the dialog's double-Escape grace
+        app.screen.query_one("#confirm-button", Button).press()
+        await _until(
+            pilot,
+            lambda: "Exit without saving progress" in _confirm_label(app, wizard),
+            what="the exit-without-saving offer",
+        )
+        app.screen.query_one("#confirm-button", Button).press()
+        await _until(
+            pilot, lambda: app.wizard_result != "UNSET", what="the wizard to close"
+        )
+
+        assert app.wizard_result is None
+
+
+# --- the Provider step's record of a typed key ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_typed_key_record_follows_the_provider_committed_last():
+    # Review round 1 (R1-F3): `entered_key` stayed True once set, while
+    # `provider_key` followed the newest choice. Type an OpenAI key, Next,
+    # Back, switch to keyless llama.cpp: Protect then said "The llama.cpp key
+    # you typed isn't saved" and sent the user to Model.
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from textual.widgets import Input
+
+    from Tests.Wizards.test_first_run_setup_wizard import _provider_step, _StepHost
+    from tldw_chatbook.UI.Wizards.first_run_protect_state import typed_provider_key
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        note_key_entered=MagicMock(),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _provider_step(wizard=wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.select_provider("openai")
+        step.query_one("#setup-provider-api-key", Input).value = "sk-typed-openai"
+        ok, error = await step.commit()
+        assert ok, error
+        assert typed_provider_key({STEP_PROVIDER: step.get_step_data()}) == "openai"
+
+        step.select_provider("llama_cpp")
+        await pilot.pause()
+        ok, error = await step.commit()
+        assert ok, error
+
+        assert typed_provider_key({STEP_PROVIDER: step.get_step_data()}) == ""

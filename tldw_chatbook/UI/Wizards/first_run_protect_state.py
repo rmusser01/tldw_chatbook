@@ -13,12 +13,17 @@ Here the state comes from the config FILE (the same merged read-back Summary
 uses) plus the environment and the provider a key was typed for:
 
 * ``encrypted`` -- ``[encryption] enabled``; offer "Change password…".
-* ``plaintext`` -- a provider key is saved as plain text; name each provider
-  and the file, and offer two explicit buttons.
+* ``plaintext`` -- a secret is saved as plain text; name each provider (or
+  the config key, for a secret no provider owns) and the file, and offer two
+  explicit buttons. "A secret" means exactly what enabling encryption would
+  encrypt (review round 1, R1-F1): a legacy ``[API] <provider>_api_key`` and a
+  custom endpoint's ``api_key`` count, not just ``api_settings``.
 * ``unsaved`` -- a key was typed this run but is not on disk; offer
   "Back to Model".
 * ``env_only`` -- keys come only from environment variables; name them.
 * ``nothing`` -- no key anywhere.
+* ``unreadable`` -- config.toml could not be read and its ``[encryption]``
+  state is unknown: no offer, and no guess (review round 1, R1-F5).
 
 Pure: no I/O, no Textual. The step reads the file off the UI thread and
 renders what :func:`protect_copy` returns.
@@ -34,10 +39,16 @@ PROTECT_PLAINTEXT = "plaintext"
 PROTECT_UNSAVED = "unsaved"
 PROTECT_ENV_ONLY = "env_only"
 PROTECT_NOTHING = "nothing"
+PROTECT_UNREADABLE = "unreadable"
 
 #: States where config.toml held no key to protect: the tracker shows '–'
 #: for Protect instead of the ✓ that reads as "your keys are protected".
 NOTHING_TO_PROTECT = frozenset({PROTECT_UNSAVED, PROTECT_ENV_ONLY, PROTECT_NOTHING})
+#: Protect wears ✓ only when the keys are encrypted (review round 1, R1-F7).
+#: Every other recorded state shows '–': nothing was there to protect, the
+#: keys were kept as plain text (Summary flags that; the tracker does not cry
+#: wolf over a skippable step, TASK-25818), or the file could not be read.
+PROTECT_UNTICKED = NOTHING_TO_PROTECT | {PROTECT_PLAINTEXT, PROTECT_UNREADABLE}
 
 #: The step's two primary-button labels; the button keeps one id.
 ENCRYPT_LABEL = "Encrypt with a password…"
@@ -63,17 +74,21 @@ class ProtectState:
 
     Attributes:
         kind: One of the ``PROTECT_*`` constants.
-        providers: Display names of the providers whose key is saved in
-            config.toml (``plaintext``), in config order.
+        providers: Display names of the providers (and custom endpoints)
+            whose key is saved in config.toml (``plaintext``), in config
+            order.
         env_vars: Environment variables that supply a key (``env_only``).
         unsaved_provider: Display name of the provider whose typed key is not
-            on disk (``unsaved``).
+            on disk (``unsaved``, or ``plaintext`` beside other stored keys).
+        other_secrets: Dotted config keys of saved plaintext secrets that no
+            provider owns (``plaintext``), in config order.
     """
 
     kind: str
     providers: tuple[str, ...] = ()
     env_vars: tuple[str, ...] = ()
     unsaved_provider: str = ""
+    other_secrets: tuple[str, ...] = ()
 
     @property
     def nothing_to_protect(self) -> bool:
@@ -123,9 +138,101 @@ def _flag(value: object) -> bool:
 
 
 def _display_name(provider_key: str) -> str:
+    """The provider's name for Protect's copy.
+
+    The catalog's picker asides ("Mistral AI (legacy alias)") are dropped:
+    "Your Mistral AI (legacy alias) key is saved…" names the slot, not the
+    provider.
+    """
+    import re
+
     from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
-    return provider_display_name(provider_key) or provider_key
+    name = provider_display_name(provider_key) or provider_key
+    return re.sub(r"\s*\(legacy [^)]*\)\s*$", "", name) or provider_key
+
+
+def plaintext_secret_paths(config: Mapping[str, object]) -> tuple[tuple[str, ...], ...]:
+    """Config paths of the real secrets that encrypting would encrypt.
+
+    Mirrors ``config.encrypt_api_keys_in_config``: every table (arrays are
+    not walked, as there), every key ``is_sensitive_config_key`` names, a
+    non-blank string that is not already ``enc:`` and not a ``<placeholder>``.
+    On top of that, a template value is never the user's secret: one equal to
+    the shipped default at the same path (the merged read-back always carries
+    ``YOUR_OPENAI_API_KEY…`` and the tldw_api placeholder token), a known
+    provider-key placeholder, or the tldw_api placeholder token.
+
+    Args:
+        config: The merged config read back from config.toml.
+
+    Returns:
+        Each secret's path as a tuple of keys, in config order.
+    """
+    from tldw_chatbook.config import (
+        DEFAULT_CONFIG_FROM_TOML,
+        TLDW_API_PLACEHOLDER_AUTH_TOKEN,
+        resolve_provider_api_key,
+    )
+    from tldw_chatbook.Utils.sensitive_config_keys import is_sensitive_config_key
+
+    found: list[tuple[str, ...]] = []
+
+    def _walk(table: Mapping, defaults: object, prefix: tuple[str, ...]) -> None:
+        for key, value in table.items():
+            if not prefix and key == "encryption":
+                continue
+            default = defaults.get(key) if isinstance(defaults, Mapping) else None
+            if isinstance(value, Mapping):
+                _walk(value, default, prefix + (str(key),))
+                continue
+            if not (isinstance(value, str) and is_sensitive_config_key(key)):
+                continue
+            # None for blanks, provider placeholders and `enc:` ciphertext.
+            text = resolve_provider_api_key(value)
+            if (
+                text is None
+                or (text.startswith("<") and text.endswith(">"))
+                or text == TLDW_API_PLACEHOLDER_AUTH_TOKEN
+                or (isinstance(default, str) and text == default.strip())
+            ):
+                continue
+            found.append(prefix + (str(key),))
+
+    _walk(config, DEFAULT_CONFIG_FROM_TOML, ())
+    return tuple(found)
+
+
+def _secret_owner(
+    path: tuple[str, ...], config: Mapping[str, object]
+) -> tuple[str, str]:
+    """``(provider key, display name)`` owning a secret, or ``("", "")``.
+
+    ``api_settings.<p>.*`` and a legacy ``API.<p>_api_key`` for a known
+    provider belong to ``p``; ``custom_endpoints.<slug>.api_key`` to that
+    endpoint, by its display name. Anything else has no provider owner.
+    """
+    from tldw_chatbook.Chat.provider_catalog import (
+        PROVIDER_DISPLAY_NAMES,
+        provider_display_name,
+    )
+    from tldw_chatbook.config import normalize_provider_config_key
+
+    if len(path) >= 3 and path[0] == "api_settings":
+        key = normalize_provider_config_key(path[1])
+        return key, _display_name(path[1])
+    if len(path) == 2 and path[0] == "API" and path[1].lower().endswith("_api_key"):
+        key = normalize_provider_config_key(path[1][: -len("_api_key")])
+        if key in PROVIDER_DISPLAY_NAMES:
+            return key, _display_name(key)
+    if len(path) == 3 and path[0] == "custom_endpoints" and path[2] == "api_key":
+        endpoint_id = f"custom-ep:{path[1]}"
+        try:
+            name = provider_display_name(endpoint_id, config)
+        except Exception:
+            name = ""
+        return endpoint_id, (name if name and name != endpoint_id else path[1])
+    return "", ""
 
 
 def read_protect_state(
@@ -146,37 +253,53 @@ def read_protect_state(
     Returns:
         The state, with the provider names or env vars its copy names.
     """
-    from tldw_chatbook.config import is_valid_provider_api_key
+    from tldw_chatbook.config import (
+        is_valid_provider_api_key,
+        normalize_provider_config_key,
+    )
 
     encryption = config.get("encryption")
     if isinstance(encryption, Mapping) and _flag(encryption.get("enabled")):
         return ProtectState(PROTECT_ENCRYPTED)
-    api_settings = config.get("api_settings")
-    if not isinstance(api_settings, Mapping):
-        api_settings = {}
+    stored_keys: set[str] = set()
     stored: list[str] = []
+    others: list[str] = []
+    for path in plaintext_secret_paths(config):
+        owner_key, owner_name = _secret_owner(path, config)
+        if owner_key:
+            stored_keys.add(owner_key)
+            stored.append(owner_name)
+        else:
+            others.append(".".join(path))
+    typed = (
+        normalize_provider_config_key(typed_provider_key) if typed_provider_key else ""
+    )
+    unsaved = (
+        _display_name(typed_provider_key) if typed and typed not in stored_keys else ""
+    )
+    if stored or others:
+        return ProtectState(
+            PROTECT_PLAINTEXT,
+            providers=tuple(dict.fromkeys(stored)),
+            unsaved_provider=unsaved,
+            other_secrets=tuple(dict.fromkeys(others)),
+        )
+    if unsaved:
+        return ProtectState(PROTECT_UNSAVED, unsaved_provider=unsaved)
+    api_settings = config.get("api_settings")
     env_vars: list[str] = []
-    for provider_key, settings in api_settings.items():
-        if not isinstance(settings, Mapping):
-            continue
-        # is_valid_provider_api_key rejects blanks, template placeholders and
-        # `enc:` ciphertext, so only a real plaintext key counts.
-        if is_valid_provider_api_key(settings.get("api_key")):
-            stored.append(_display_name(str(provider_key)))
-            continue
-        env_var = settings.get("api_key_env_var")
+    for settings in (
+        api_settings if isinstance(api_settings, Mapping) else {}
+    ).values():
+        env_var = (
+            settings.get("api_key_env_var") if isinstance(settings, Mapping) else None
+        )
         if (
             isinstance(env_var, str)
             and env_var.strip()
             and is_valid_provider_api_key(environ.get(env_var.strip()))
         ):
             env_vars.append(env_var.strip())
-    if stored:
-        return ProtectState(PROTECT_PLAINTEXT, providers=tuple(dict.fromkeys(stored)))
-    if typed_provider_key:
-        return ProtectState(
-            PROTECT_UNSAVED, unsaved_provider=_display_name(typed_provider_key)
-        )
     if env_vars:
         return ProtectState(PROTECT_ENV_ONLY, env_vars=tuple(dict.fromkeys(env_vars)))
     return ProtectState(PROTECT_NOTHING)
@@ -188,7 +311,56 @@ def _join(names: tuple[str, ...]) -> str:
     return ", ".join(names[:-1]) + " and " + names[-1]
 
 
-def protect_copy(state: ProtectState, *, config_path: str) -> ProtectCopy:
+#: How many other secrets' config keys the plaintext copy names.
+_NAMED_OTHER_SECRETS = 3
+
+
+def _plaintext_subject(state: ProtectState) -> tuple[str, bool]:
+    """The plaintext body's subject, and whether it is plural.
+
+    "Your OpenAI key", "Your OpenAI and Anthropic keys", "Your OpenAI key and
+    1 other secret (SearchEngines.serper_search_api_key)", or, with no
+    provider, "2 secrets (…)".
+    """
+    others = state.other_secrets
+    named = ", ".join(others[:_NAMED_OTHER_SECRETS])
+    if len(others) > _NAMED_OTHER_SECRETS:
+        named += f" and {len(others) - _NAMED_OTHER_SECRETS} more"
+    other_phrase = f"{len(others)} {{}}secret{'s' if len(others) > 1 else ''} ({named})"
+    if not state.providers:
+        return other_phrase.format(""), len(others) > 1
+    keys = f"{_join(state.providers)} key{'s' if len(state.providers) > 1 else ''}"
+    if not others:
+        return f"Your {keys}", len(state.providers) > 1
+    return f"Your {keys} and {other_phrase.format('other ')}", True
+
+
+def config_path_line(config_path: str, width: int = 0) -> str:
+    """Return "Config file: <path>", keeping every character of the path.
+
+    A path too long for ``width`` cells goes on its own lines, broken only
+    after a separator, so no directory is dropped and no name is split.
+
+    Args:
+        config_path: The config file path ("" for none).
+        width: Cells available per line; 0 or less never folds.
+
+    Returns:
+        The dim path line, or "" when there is no path.
+    """
+    from tldw_chatbook.Utils.Utils import fold_path_lines
+
+    if not config_path:
+        return ""
+    line = f"Config file: {config_path}"
+    if width <= 0 or len(line) <= width:
+        return line
+    return "Config file:\n" + fold_path_lines(config_path, width)
+
+
+def protect_copy(
+    state: ProtectState, *, config_path: str, width: int = 0
+) -> ProtectCopy:
     """The lines and buttons the step shows for ``state``.
 
     No line names a "Skip" control: the footer has Back, Next and Exit
@@ -197,12 +369,13 @@ def protect_copy(state: ProtectState, *, config_path: str) -> ProtectCopy:
     Args:
         state: The derived Protect state.
         config_path: The config file path, for the dim path line.
+        width: Cells per line for that path line (see `config_path_line`).
 
     Returns:
         The step's copy and which buttons it shows.
     """
     card = encryption_card_path()
-    path_line = f"Config file: {config_path}" if config_path else ""
+    path_line = config_path_line(config_path, width)
     if state.kind == PROTECT_ENCRYPTED:
         return ProtectCopy(
             title="Your keys are protected",
@@ -214,21 +387,44 @@ def protect_copy(state: ProtectState, *, config_path: str) -> ProtectCopy:
             primary_label=CHANGE_LABEL,
         )
     if state.kind == PROTECT_PLAINTEXT:
-        many = len(state.providers) > 1
-        names = _join(state.providers)
+        subject, many = _plaintext_subject(state)
+        it = "them" if many else "it"
+        body = (
+            f"{subject} {'are' if many else 'is'} saved as plain text in "
+            f"config.toml, where any program running as you can read {it}. "
+            f"Encrypt {it} with a master password, and chatbook will ask for "
+            "that password each time it starts."
+        )
+        if state.unsaved_provider:
+            body += (
+                f" The {state.unsaved_provider} key you typed isn't saved: it "
+                "is saved together with the model you choose on Model."
+            )
+        if state.providers:
+            title = "Protect your API keys" if many else "Protect your API key"
+        else:
+            title = (
+                "Protect your saved secrets" if many else "Protect your saved secret"
+            )
         return ProtectCopy(
-            title="Protect your API keys" if many else "Protect your API key",
-            body=(
-                f"Your {names} {'keys are' if many else 'key is'} saved as plain "
-                "text in config.toml, where any program running as you can read "
-                f"{'them' if many else 'it'}. Encrypt {'them' if many else 'it'} "
-                "with a master password, and chatbook will ask for that password "
-                "each time it starts."
-            ),
+            title=title,
+            body=body,
             path_line=path_line,
             later_line=f"You can change this later in {card}.",
             primary_label=ENCRYPT_LABEL,
             show_keep_plain=True,
+            show_back_to_model=bool(state.unsaved_provider),
+        )
+    if state.kind == PROTECT_UNREADABLE:
+        return ProtectCopy(
+            title="Couldn't read config.toml",
+            body=(
+                "! chatbook couldn't read config.toml, so it can't tell whether "
+                "your saved keys are encrypted. Nothing was changed."
+            ),
+            path_line=path_line,
+            later_line=f"Check encryption any time in {card}.",
+            primary_label="",
         )
     later = f"If you save a key later, you can encrypt it in {card}."
     if state.kind == PROTECT_UNSAVED:

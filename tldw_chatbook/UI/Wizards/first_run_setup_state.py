@@ -1447,25 +1447,30 @@ def setup_attention_ids(
 def setup_not_needed_ids(
     wizard_data: Mapping[str, object] | None,
 ) -> frozenset[str]:
-    """Visited steps that had nothing to do, so they wear '–' not ✓.
+    """Visited steps that left nothing done, so they wear '–' not ✓.
 
     TASK-34100.4 (protect-summary-06): Protect with no key in config.toml
     (nothing saved, keys only in environment variables, or a typed key that
-    was never saved) used to tick ✓ as if the keys were protected.
+    was never saved) used to tick ✓ as if the keys were protected. Review
+    round 1 (R1-F7): so did keys kept as plain text, and a session resumed
+    past Protect, whose checkpoint keeps only ``encryption_enabled``.
 
     Args:
         wizard_data: Collected per-step values, keyed by step id.
 
     Returns:
-        ``{STEP_PROTECT}`` when its recorded state had nothing to protect,
+        ``{STEP_PROTECT}`` unless its record says the keys are encrypted,
         else an empty set.
     """
-    from tldw_chatbook.UI.Wizards.first_run_protect_state import NOTHING_TO_PROTECT
+    from tldw_chatbook.UI.Wizards.first_run_protect_state import PROTECT_UNTICKED
 
     values = wizard_data if isinstance(wizard_data, Mapping) else {}
     protect = values.get(STEP_PROTECT)
-    if isinstance(protect, Mapping) and protect.get("protect_state") in (
-        NOTHING_TO_PROTECT
+    if not isinstance(protect, Mapping):
+        return frozenset()
+    kind = protect.get("protect_state")
+    if kind in PROTECT_UNTICKED or (
+        kind is None and protect.get("encryption_enabled") is False
     ):
         return frozenset({STEP_PROTECT})
     return frozenset()
@@ -2069,6 +2074,7 @@ def build_summary_rows(
     # Settings Encryption card, never a bare category.
     from tldw_chatbook.UI.Wizards.first_run_protect_state import (
         encryption_card_path,
+        plaintext_secret_paths,
     )
 
     if encryption_on:
@@ -2077,7 +2083,9 @@ def build_summary_rows(
             ROW_CONFIGURED,
             f"on — change the password or turn it off in {encryption_card_path()}",
         )
-    elif stored_plaintext_key_present(app_config):
+    elif plaintext_secret_paths(app_config):
+        # Review round 1 (R1-F1): the same secrets Protect offers to encrypt
+        # (a legacy `[API]` key or a custom endpoint's key included).
         encryption_row = SummaryRow(
             "Key encryption",
             ROW_ATTENTION,

@@ -60,7 +60,7 @@ from tldw_chatbook.UI.Wizards.first_run_busy_status import (
     SetupBusyStatus,
     busy_label_for,
 )
-from tldw_chatbook.UI.Wizards.first_run_finish_later import finish_later
+from tldw_chatbook.UI.Wizards.first_run_finish_later import finish_later, skip_setup
 from tldw_chatbook.UI.Wizards.first_run_model_step import ModelStep
 from tldw_chatbook.UI.Wizards.first_run_notes_step import NotesSyncStep
 from tldw_chatbook.UI.Wizards.first_run_protect_step import ProtectKeysStep
@@ -2234,12 +2234,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         )
 
     async def _skip_entirely(self) -> None:
-        async with self._draft_mutation_lock:
-            saved = await self._complete_setup_locked()
-        if not saved:
-            self._show_completion_save_error()
-            return
-        self._dismiss_screen({"completed": True, "exit_route": None})
+        # A failed save offers "Exit without saving progress" (TASK-34100.4).
+        await skip_setup(self)
 
     async def _complete_setup_locked(self) -> bool:
         """Persist completion and draft deletion while the mutation lock is held."""

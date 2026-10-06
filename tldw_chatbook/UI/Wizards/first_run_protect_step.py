@@ -72,6 +72,13 @@ def _load_persisted_config() -> tuple[Mapping[str, Any], str]:
     return config, path_text
 
 
+def _encryption_on_disk() -> Optional[bool]:
+    """``[encryption] enabled`` from the file alone; None when unreadable."""
+    from tldw_chatbook.config import config_encryption_enabled_on_disk
+
+    return config_encryption_enabled_on_disk()
+
+
 def _run_enable(password: str):
     """Encrypt the saved keys through the Settings card's own action."""
     from tldw_chatbook.UI.Screens.settings_encryption import run_enable
@@ -181,26 +188,34 @@ class ProtectKeysStep(SetupStep):
                 None, load
             )
         except Exception as error:
-            # The in-memory view has no [encryption] table, so it can only
-            # tell plaintext from nothing; say that rather than guess.
+            # Review round 1 (R1-F5): never fall back to the in-memory view.
+            # It has no [encryption] table and holds decrypted keys, so an
+            # encrypted, unlocked config read as plain text with an Encrypt
+            # offer. Ask the file only whether encryption is on.
             logger.warning(
                 "Protect could not read config.toml (error_type={}).",
                 type(error).__name__,
             )
-            config = getattr(
-                getattr(self.wizard, "app_instance", None), "app_config", {}
+            on_disk = await asyncio.get_running_loop().run_in_executor(
+                None, _encryption_on_disk
             )
-            path_text = ""
+            state = protect_state.ProtectState(
+                protect_state.PROTECT_ENCRYPTED
+                if on_disk
+                else protect_state.PROTECT_UNREADABLE
+            )
+            config, path_text = None, ""
         if not self.is_attached or generation != self._state_generation:
             return
-        environ = self._environ if self._environ is not None else os.environ
-        state = protect_state.read_protect_state(
-            config if isinstance(config, Mapping) else {},
-            environ,
-            typed_provider_key=protect_state.typed_provider_key(
-                getattr(self.wizard, "wizard_data", None)
-            ),
-        )
+        if config is not None:
+            environ = self._environ if self._environ is not None else os.environ
+            state = protect_state.read_protect_state(
+                config if isinstance(config, Mapping) else {},
+                environ,
+                typed_provider_key=protect_state.typed_provider_key(
+                    getattr(self.wizard, "wizard_data", None)
+                ),
+            )
         self._config_path = path_text
         self.render_state(state)
         self._settle_focus()
@@ -213,16 +228,14 @@ class ProtectKeysStep(SetupStep):
         """
         self._state = state
         self.encryption_enabled = state.kind == protect_state.PROTECT_ENCRYPTED
-        # One line, middle-truncated like Summary's footer (UAT S-4): a long
-        # path otherwise hard-wraps mid-name.
-        path_text = (
-            wizard_state.middle_truncate_path(
-                self._config_path, max(40, (self.size.width or 120) - 20)
-            )
-            if self._config_path
-            else ""
+        # The whole path, broken only at separators (review round 1, F5):
+        # middle-truncating it dropped the directories that say where the
+        # file is, and a plain wrap splits a name mid-word (UAT S-4).
+        copy = protect_state.protect_copy(
+            state,
+            config_path=self._config_path,
+            width=max(40, (self.size.width or 120) - 20),
         )
-        copy = protect_state.protect_copy(state, config_path=path_text)
         try:
             self.query_one("#setup-protect-title", Static).update(copy.title)
             self.query_one("#setup-protect-body", Static).update(copy.body)
@@ -254,21 +267,21 @@ class ProtectKeysStep(SetupStep):
         """The state's own control, else Next so Enter continues.
 
         Returns:
-            The encrypt button for a plaintext key, "Back to Model" for an
-            unsaved key, otherwise the wizard's Next button (encrypted,
-            env-only and nothing-to-protect states have no step action that
-            Enter should repeat). None while the file is still being read.
+            The encrypt button for a plaintext key, otherwise the wizard's
+            Next button: the footer says "Enter / Ctrl+N next", so Enter must
+            not go backwards to Model for an unsaved key (review round 1,
+            R1-F4; "Back to Model" is one Tab away), and the encrypted,
+            env-only, nothing-to-protect and unreadable states have no step
+            action Enter should repeat. None while the file is being read.
         """
         state = self._state
         if state is None:
             return None
-        try:
-            if state.kind == protect_state.PROTECT_PLAINTEXT:
+        if state.kind == protect_state.PROTECT_PLAINTEXT:
+            try:
                 return self.query_one(f"#{PRIMARY_BUTTON_ID}", Button)
-            if state.kind == protect_state.PROTECT_UNSAVED:
-                return self.query_one(f"#{BACK_TO_MODEL_BUTTON_ID}", Button)
-        except NoMatches:
-            return None
+            except NoMatches:
+                return None
         return self._next_button()
 
     def _settle_focus(self) -> None:
@@ -388,6 +401,10 @@ class ProtectKeysStep(SetupStep):
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
+        if busy:
+            # A new attempt supersedes the last one's failure line (review
+            # round 1, R1-F2): never "✓" beside a stale "failed".
+            self.clear_step_error()
         # A newer render supersedes any file read still in flight.
         self._state_generation += 1
         try:
@@ -421,6 +438,7 @@ class ProtectKeysStep(SetupStep):
             self.render_state(
                 protect_state.ProtectState(protect_state.PROTECT_ENCRYPTED)
             )
+            self.clear_step_error()
             self._set_status(protect_state.ENABLED_STATUS)
             self._focus_next()
             return
@@ -450,6 +468,7 @@ class ProtectKeysStep(SetupStep):
         if not self.is_attached:
             return
         if outcome is not None and outcome.succeeded:
+            self.clear_step_error()
             self._set_status(protect_state.CHANGED_STATUS)
             self._focus_next()
             return

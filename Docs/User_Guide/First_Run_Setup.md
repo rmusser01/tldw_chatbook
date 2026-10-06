@@ -247,27 +247,44 @@ says what it holds:
 
 - **A key saved as plain text** — it names each provider whose key is saved
   ("Your OpenAI key is saved as plain text in config.toml…") and the file's
-  path, then offers two buttons: **Encrypt with a password…** and **Keep as
-  plain text** (which simply continues). After encrypting, the step says
-  "✓ Encryption enabled.", the button becomes **Change password…**, and the
-  keyboard moves to **Next →**, so Enter continues to the summary.
+  full path (a long path wraps at its `/` separators rather than being
+  shortened), then offers two buttons: **Encrypt with a password…** and
+  **Keep as plain text** (which simply continues). It counts every secret
+  that encrypting would encrypt: a key under a provider's settings, an older
+  `[API] openai_api_key`-style entry, a custom endpoint's key (named by the
+  endpoint), and any other saved secret, which it names by its config key.
+  After encrypting, the step says "✓ Encryption enabled.", the button becomes
+  **Change password…**, and the keyboard moves to **Next →**, so Enter
+  continues to the summary. A failed attempt's error goes away when you try
+  again, so a success is never shown beside an earlier failure.
 - **Keys already encrypted** (for example when you run setup again) — "Your
   saved API keys are encrypted", with **Change password…**, which asks for the
-  current and the new password. Setup never sets a second password over
-  encrypted keys.
+  current and the new password. After a change the keyboard moves to
+  **Next →** as well. Setup never sets a second password over encrypted keys.
 - **A key you typed but that isn't saved yet** (you skipped the Model step;
   the key is saved together with the model) — it says so and offers **Back
-  to Model**.
+  to Model**. The keyboard stays on **Next →**, so Enter still moves forward;
+  **Back to Model** is one Tab away. Only the key typed for the provider you
+  last chose counts: switching to a provider that needs no key drops it.
 - **Keys only from environment variables** — it names them (for example
   `OPENAI_API_KEY`) and says config.toml holds no key to encrypt.
 - **No key at all** — "Nothing to protect".
+- **config.toml can't be read** — it says so and offers nothing, rather than
+  guessing whether your keys are encrypted (if the file says encryption is
+  on, it shows the encrypted state instead).
+
+The progress tracker marks this step ✓ only when your keys are encrypted;
+otherwise (nothing to protect, keys kept as plain text, or a file it couldn't
+read) it shows –.
 
 Every state says where to change this later: Settings ▸ Privacy & Security ▸
 **Encryption**.
 
 If **Exit setup** cannot save where you are in setup, it offers **Exit
 without saving progress**: settings you already saved stay saved, and setup
-just won't resume from that step.
+just won't resume from that step. **Skip setup** on the first step does the
+same when it cannot record that setup is finished; exiting then means setup
+opens again the next time chatbook starts.
 
 Choosing **OmniVoice** shows a local panel instead of the endpoint fields: it
 tells you if the `omnivoice_tts` engine is missing, installs the 1.1 GB model
@@ -388,7 +405,11 @@ provider that needs no key still says why: "Saved API key is still
 encrypted". Either way, re-enter or clear the key in Settings ▸ Providers &
 Models. A custom endpoint (a local server saved under **Custom endpoints**)
 whose key is still encrypted reads "Not ready · no key" the same way;
-re-enter or clear its key there. OpenAI and ElevenLabs text-to-speech, remote Whisper transcription,
+re-enter or clear its key there. A custom endpoint's own key decides: a
+still-encrypted key saved under the provider it is built on (for example
+llama.cpp in Providers & Models) does not block it. While a local server's
+key is still encrypted, chatbook also stops asking that server for its
+context size. OpenAI and ElevenLabs text-to-speech, remote Whisper transcription,
 image generation (SwarmUI included) and the tldw server connection never send
 a still-encrypted value either: they use the next place a key can come from
 (an environment variable, the keychain, another saved field) or send none.
