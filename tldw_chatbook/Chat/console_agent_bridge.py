@@ -5497,7 +5497,9 @@ class ConsoleAgentBridge:
         sub-agents, or progress reports nobody has read (review round 1,
         F8): turning Full agent tools off mid-run must not leave the wake
         turn unable to read its children or reach their fleet. A reader that
-        raises keeps the light surface (fail closed).
+        raises keeps the light surface (fail closed). Without a
+        ``conversation_id`` (the meter, the Tools chip) the session's own is
+        looked up, so they see the same fleet the send does.
         """
         if self._light_tool_surface is None or turn_skill_bindings:
             return False
@@ -5505,7 +5507,11 @@ class ConsoleAgentBridge:
             light = bool(self._light_tool_surface())
         except Exception:  # noqa: BLE001 -- never widen on a failed read
             return True
-        return light and not self._agent_work_in_flight(session_id, conversation_id)
+        if not light:
+            return False
+        if conversation_id is None:
+            conversation_id = self._preview_conversation_id(session_id)
+        return not self._agent_work_in_flight(session_id, conversation_id)
 
     def light_surface_local_tools_available(self) -> bool:
         """Whether a send now composes local tools (the kill switch is off).
@@ -5627,6 +5633,23 @@ class ConsoleAgentBridge:
                 self._registry, self._allowed_tools, console_run_budget()
             )
         return inputs.tool_rows(resolution, native_tools=native)
+
+    def _preview_conversation_id(self, session_id: str | None) -> str | None:
+        """The conversation a send for ``session_id`` keys its fleet by.
+
+        The controller's own rule (``_agent_conversation_id``): the persisted
+        conversation id, else the session id. Review round 1 (F8): without
+        it the meter missed live sub-agents that keep the agent surface.
+        """
+        if session_id is None:
+            return None
+        try:
+            for session in self._store.sessions():
+                if session.id == session_id:
+                    return session.persisted_conversation_id or session_id
+        except Exception:  # noqa: BLE001 -- the meter never breaks a send
+            return None
+        return session_id
 
     def native_tool_schemas(self) -> list[dict[str, Any]]:
         """Return the native tool schemas available to this bridge.

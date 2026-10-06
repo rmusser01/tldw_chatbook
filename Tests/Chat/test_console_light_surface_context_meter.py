@@ -585,3 +585,26 @@ def test_with_the_tool_kill_switch_on_the_meter_counts_no_local_tools(tmp_path):
     engaged[0] = False
 
     assert _row_names(_preflight_tools(bridge, roomy)) == LIGHT
+
+
+def test_the_meter_counts_the_agent_surface_while_the_conversations_children_run(
+    tmp_path,
+):
+    """Review round 1 (F8, meter half): live sub-agents keep the agent
+    surface on the next send after Full agent tools is switched off. The
+    send looks their fleet up by conversation, but the meter's preview asked
+    without one, so it counted the light set while the send carried the
+    agent surface. The preview now resolves the session's conversation the
+    way the controller does (persisted id, else the session id)."""
+    from Tests.Chat.test_console_light_tool_surface import _LiveFleet
+
+    bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
+    roomy = _openai(ContextWindowResolution(1_047_576, "model catalog", True))
+    conversation_id = session.persisted_conversation_id or session.id
+    assert _row_names(_preflight_tools(bridge, roomy, session_id=session.id)) == LIGHT
+
+    bridge._fleet_coordinators[conversation_id] = _LiveFleet()
+
+    rows = _row_names(_preflight_tools(bridge, roomy, session_id=session.id))
+    assert "spawn_subagent" in rows, sorted(rows)
+    assert _row_names(_preflight_tools(bridge, roomy, session_id="other")) == LIGHT
