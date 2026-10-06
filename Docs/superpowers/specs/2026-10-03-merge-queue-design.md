@@ -72,8 +72,11 @@ Facts verified in implementation task 1 (each has a fallback):
 | V2 | Can `GITHUB_TOKEN` cancel a workflow run (runs on a superseded head)? | Verified (run 37154004733, attempt 1; attempt 2's 409 was the already-cancelled target) | Leave superseded runs to finish |
 
 Retrying a failed run re-runs that run's failed jobs (`POST /actions/runs/{id}/rerun-failed-jobs`, documented, covered by
-`actions: write`). It falls back to a fresh dispatch (F1) only when no required-workflow run is behind the failed check, or
-GitHub refuses the re-run. (Revised 2026-10-06. This line used to say the re-run API was undocumented and always
+`actions: write`). GitHub only re-runs a completed run, and the retry is usually decided by the failed run's own queue-tick
+while that run is still in progress. In that case the tick dispatches `merge-queue.yml` with `wait_run=<run id>`, and the
+woken run waits (bounded: 40 x 6 s) for the run to complete, then re-runs it. A run that is live again (another queue run
+re-ran it first) is left to finish. Only a refusal (HTTP 403/409/422) or no required-workflow run behind the failed check
+falls back to a fresh dispatch (F1); any other error re-raises, so the next event retries. (Revised 2026-10-06. This line used to say the re-run API was undocumented and always
 dispatched a fresh run. That premise was wrong, and the fresh run stranded #2874 and #3026: see V3.)
 
 | # | Question | Result |

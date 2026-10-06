@@ -76,7 +76,7 @@ class FakeGh:
 
     def __init__(self, nodes, *, checks=None, runs=None, comments=None, rebase_error=False,
                  reread=None, dispatch_refused=(), rebase_lag=1, disarm_error=False,
-                 line_page_size=None, late_runs=None, dispatch_status=422, rerun_refused=False):
+                 line_page_size=None, late_runs=None, dispatch_status=422, rerun_error=None, run_status=None):
         self.nodes = {n["number"]: n for n in nodes}
         self.checks = checks or {}
         self.runs = runs or {}
@@ -89,7 +89,10 @@ class FakeGh:
         self.line_page_size = line_page_size
         self.late_runs = late_runs or {}
         self.dispatch_status = dispatch_status
-        self.rerun_refused = rerun_refused
+        self.rerun_error = rerun_error
+        # run_status[run_id]: successive statuses a single-run read walks (last one sticks).
+        self.run_status = run_status or {}
+        self.run_reads = {}
         self.runs_reads = {}
         self.reread_counts = {}
         self.rereads_since_rebase = None
@@ -172,9 +175,15 @@ class FakeGh:
             return None
         if method == "POST" and path.endswith("/rerun-failed-jobs"):
             self._record(("rerun", path.split("/runs/")[1].split("/")[0]))
-            if self.rerun_refused:
-                raise mq.GhError("gh: This workflow run cannot be rerun (HTTP 403)")
+            if self.rerun_error:
+                raise mq.GhError(self.rerun_error)
             return None
+        if method == "GET" and re.search(r"/actions/runs/\d+$", path):
+            rid = int(path.rsplit("/", 1)[1])
+            statuses = self.run_status.get(rid, ["completed"])
+            seen = self.run_reads.get(rid, 0)
+            self.run_reads[rid] = seen + 1
+            return {"id": rid, "status": statuses[min(seen, len(statuses) - 1)]}
         if method == "POST" and path.endswith("/cancel"):
             self._record(("cancel", path.split("/runs/")[1].split("/")[0]))
             return None
@@ -323,12 +332,74 @@ def test_retry_falls_back_to_a_fresh_dispatch(runs, refused):
         runs: The head's workflow runs.
         refused: Whether GitHub refuses the re-run.
     """
-    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
-                runs={OLD: runs}, rerun_refused=refused)
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]}, runs={OLD: runs},
+                rerun_error="gh: This workflow run cannot be rerun (HTTP 403)" if refused else None)
     _run(gh)
     assert ("dispatch", "derived-artifacts.yml", {"ref": "feat/1", "inputs[pr]": "1"}) in gh.calls
     assert any(c[0] == "comment" and "retrying with a fresh run" in c[2] for c in gh.calls)
     assert any(c[0] == "rerun" for c in gh.calls) is refused
+
+
+def test_the_failed_runs_own_tick_wakes_a_queue_run_instead_of_dispatching(monkeypatch):
+    """Review of #3027: the retry is usually decided by the failed run's own queue-tick, while that
+    run is still in progress, and GitHub only re-runs a completed run. The tick must wake a queue
+    run that waits for it, never fall back to the fresh dispatch that strands the PR."""
+    monkeypatch.setenv("GITHUB_RUN_ID", "70")
+    own = {**_required_failed_run(70, 700), "status": "in_progress", "conclusion": None}
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]}, runs={OLD: [own]})
+    assert _run(gh)[0][1].kind == "retry"
+    assert ("dispatch", "merge-queue.yml", {"ref": "dev", "inputs[wait_run]": "70"}) in gh.calls
+    assert not any(c[0] == "rerun" for c in gh.calls)
+    assert not any(c[0] == "dispatch" and c[1] == "derived-artifacts.yml" for c in gh.calls)
+    assert not any(c[0] == "comment" for c in gh.calls)
+
+
+def test_a_run_that_is_live_again_is_left_to_finish():
+    """Review of #3027: another queue run re-ran it first. A second re-run would be refused, and
+    falling back to a fresh dispatch would strand the PR, so stand down."""
+    live = {**_required_failed_run(70, 700), "status": "queued", "conclusion": None}
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [live]})
+    pr = mq.read_prs(gh)[0]
+    # Called directly: the run went live between the stand-down read and this one (a racing run).
+    assert mq._rerun_failed(gh, pr, 700, lambda m: None) == "deferred"
+    assert not any(c[0] in ("rerun", "dispatch", "comment") for c in gh.calls)
+
+
+def test_a_github_error_on_the_rerun_raises_instead_of_dispatching():
+    """Review of #3027: a 5xx or network error is GitHub's; the next event retries. Only a refusal
+    falls back to a fresh dispatch."""
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_required_failed_run(70, 700)]}, rerun_error="gh: Server Error (HTTP 502)")
+    with pytest.raises(mq.GhError, match="502"):
+        _run(gh)
+    assert not any(c[0] == "dispatch" for c in gh.calls)
+
+
+def test_a_woken_run_waits_for_the_failed_run_then_reruns_it():
+    """The woken queue run waits (bounded) for the failed run to complete, then re-runs it."""
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_required_failed_run(70, 700)]}, run_status={70: ["in_progress", "in_progress", "completed"]})
+    slept = []
+    mq.run(gh, "on", now=lambda: NOW, sleep=slept.append, log=lambda m: None, wait_run=70)
+    assert gh.run_reads[70] == 3 and len(slept) >= 2
+    assert ("rerun", "70") in gh.calls
+
+
+def test_the_wait_is_bounded():
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_required_failed_run(70, 700)]}, run_status={70: ["in_progress"]})
+    lines = []
+    mq.run(gh, "on", now=lambda: NOW, sleep=lambda s: None, log=lines.append, wait_run=70)
+    assert gh.run_reads[70] == mq.WAIT_RUN_TRIES
+    assert any("still live after" in line for line in lines)
+
+
+def test_dry_mode_never_wakes_a_queue_run(monkeypatch):
+    monkeypatch.setenv("GITHUB_RUN_ID", "70")
+    own = {**_required_failed_run(70, 700), "status": "in_progress", "conclusion": None}
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]}, runs={OLD: [own]})
+    assert _run(gh, "dry")[0][1].kind == "retry"
+    assert gh.calls == []
 
 
 def test_a_failed_rerun_still_counts_as_the_second_failure():
