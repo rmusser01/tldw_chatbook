@@ -5111,8 +5111,12 @@ def build_console_first_request_plan(
     from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
 
     plain_prompt = (session_system_prompt or "").strip() or PLAIN_CHAT_SYSTEM_PROMPT
+    # TASK-34100.5.3: the light surface's prompt is the plain one plus one
+    # line, sent only when its tools are (a tool-less fallback gets the
+    # plain prompt alone). Live, gpt-4.1-nano called a tool for "Reply with
+    # just: hi" without it.
     direct_prompt = (
-        plain_prompt
+        f"{plain_prompt}\n\n{get_internal_prompt('agents.console_light_surface_hint')}"
         if light_surface
         else compose_agent_system_prompt(session_system_prompt, offer_find_load=False)
     )

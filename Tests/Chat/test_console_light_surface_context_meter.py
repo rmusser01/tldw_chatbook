@@ -174,8 +174,10 @@ def test_a_window_too_small_for_the_light_set_counts_what_the_plan_sends(tmp_pat
     }
 
     assert _row_names(rows) == sent
-    # Small local models get the minimal prompt (owner ruling): no tools.
+    # Small local models get the minimal prompt (owner ruling): no tools,
+    # and no tool talk in the system prompt.
     assert sent == set()
+    assert plan.schemas.system_prompt == "You are a helpful assistant."
 
 
 def test_with_full_agent_tools_on_the_meter_counts_the_last_sent_surface(tmp_path):

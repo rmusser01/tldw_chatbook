@@ -211,6 +211,12 @@ def test_a_fresh_profile_plain_send_carries_the_minimal_prompt_fenced(tmp_path):
     assert "spawn_subagent" not in system
     assert "find_tools" not in system
     assert "delegate" not in system.lower()
+    # The one line that keeps a small model from calling a tool for "hi"
+    # (live: gpt-4.1-nano called one 15/15 times without it, 0/15 with it).
+    assert system.startswith(
+        "You are a helpful assistant.\n\nAnswer directly; call a tool only "
+        "when the request needs one."
+    ), system[:200]
 
 
 def test_a_hallucinated_spawn_is_refused_in_the_light_surface(tmp_path):
