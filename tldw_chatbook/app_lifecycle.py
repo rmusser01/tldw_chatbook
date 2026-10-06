@@ -561,25 +561,19 @@ class LifecycleMixin:
         if task is None:
 
             async def settle_view_and_dispose() -> None:
-                view_workers = [
-                    worker
-                    for worker in tuple(getattr(self, "workers", ()))
-                    if worker.group in {
-                        "console-sync",
-                        "console-resume-navigation-startup",
-                        "console-resume-navigation-dispatch",
-                    }
-                ]
-                for worker in view_workers:
-                    if not worker.is_finished and not worker.is_cancelled:
-                        worker.cancel()
-                # Cancelled view workers finish their rollback before the
-                # runtime and screens disappear. Accepted execution remains
-                # owned by the runtime's existing disposal policy.
-                await asyncio.gather(
-                    *(worker.wait() for worker in view_workers),
-                    return_exceptions=True,
+                from .UI.Console_Modules.view_workers import (
+                    capture_console_view_workers,
+                    drain_console_view_workers,
                 )
+
+                # Preserve the original App manager-wide selected group scope;
+                # Runtime.detach_view can precede a retired view's awaited cleanup.
+                captured = capture_console_view_workers(self)
+                runtime = getattr(self, "console_runtime", None)
+                view = getattr(runtime, "view", None)
+                if view is not None:
+                    view._console_chat_tearing_down = True
+                await drain_console_view_workers(captured)
                 await dispose_console_runtime(self)
 
             task = asyncio.create_task(

@@ -23789,11 +23789,13 @@ class ChatScreen(BaseAppScreen):
             ):
                 self._dispatch_active_console_roleplay_refresh()
         if not mount_already_refreshed:
+            from ..Console_Modules.character_context import character_view_resume_work
+
             self.run_worker(
                 self._skill._refresh_console_skill_candidates(), exclusive=False
             )
             self.run_worker(  # The Character widget owns initial load.
-                self._character_context.refresh_if_scope_changed(),
+                character_view_resume_work(self._character_context, self),
                 exclusive=True,
                 group="console-character-context-refresh",
             )

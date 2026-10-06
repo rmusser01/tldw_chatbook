@@ -803,11 +803,14 @@ class ConsoleCharacterContextController:
             getattr(screen, "_console_chat_tearing_down", False),
         )
 
-    async def refresh_presentation_if_scope_changed(self, screen: Any) -> bool:
+    async def refresh_presentation_if_scope_changed(
+        self, screen: Any, *, force_fresh: bool = False
+    ) -> bool:
         """Bound display observations while preserving fresh live actions.
 
         Args:
             screen: Exact screen owning the ambient profile and active Chat.
+            force_fresh: Bypass the display memo for the stock resume's fresh read.
 
         Returns:
             Whether a fresh Character state refresh was attempted.
@@ -818,7 +821,8 @@ class ConsoleCharacterContextController:
             if getattr(screen, "_console_chat_tearing_down", False):
                 return False
             if (
-                key == self._presentation_scope_key
+                not force_fresh
+                and key == self._presentation_scope_key
                 and time.monotonic() - self._presentation_scope_at
                 < _CHARACTER_PRESENTATION_TTL_SECONDS
             ):
@@ -2055,6 +2059,7 @@ _CHARACTER_REFRESH_READERS = tuple(
     )
     for name in (
         "refresh_presentation_if_scope_changed",
+        "refresh_if_scope_changed",
         "_presentation_owner_key",
         "refresh",
         "_begin",
@@ -2086,3 +2091,178 @@ _CHARACTER_PRESENTATION_OWNER_CODE = next(
     for code in ConsoleCharacterContextController.refresh_presentation_if_scope_changed.__code__.co_consts
     if type(code) is CodeType and code.co_name == "owner_is_current"
 )
+
+
+def _stock_character_view_resume(controller, screen):
+    """Select only the defining stock facade and original screen accessors."""
+    from types import CellType, GetSetDescriptorType, MemberDescriptorType, ModuleType
+    from . import wiring
+    from ...DB import ChaChaNotes_DB
+
+    def field(receiver, name):
+        owner = type(receiver)
+        if (
+            inspect.getattr_static(owner, "__getattribute__")
+            is not object.__getattribute__
+        ):
+            return _CHARACTER_VIEW_MISSING
+        if (
+            inspect.getattr_static(owner, name, _CHARACTER_VIEW_MISSING)
+            is not _CHARACTER_VIEW_MISSING
+        ):
+            return _CHARACTER_VIEW_MISSING
+        descriptor = inspect.getattr_static(owner, "__dict__", None)
+        if (
+            type(descriptor) is not GetSetDescriptorType
+            and type(descriptor) is not MemberDescriptorType
+        ):
+            return _CHARACTER_VIEW_MISSING
+        values = descriptor.__get__(receiver, owner)
+        return (
+            values.get(name, _CHARACTER_VIEW_MISSING)
+            if type(values) is dict  # noqa: E721 - refuse custom mapping dispatch.
+            else _CHARACTER_VIEW_MISSING
+        )
+
+    try:
+        if (
+            type(controller) is not _CHARACTER_VIEW_CONTROLLER
+            or inspect.getattr_static(_CHARACTER_VIEW_CONTROLLER, "__getattribute__")
+            is not object.__getattribute__
+            or type(wiring) is not ModuleType
+            or sys.modules.get(__package__ + ".wiring") is not wiring
+            or type(_CHARACTER_REFRESH_READERS) is not tuple
+            or any(
+                type(record) is not tuple
+                or len(record) != 14
+                or not _character_reader_current(record, controller)
+                for record in _CHARACTER_REFRESH_READERS
+            )
+        ):
+            return None
+        metadata = vars(wiring).get("_CHARACTER_VIEW_ACCESSORS")
+        if type(metadata) is not tuple or len(metadata) != 2:
+            return None
+        build_record, callbacks = metadata
+        if (
+            type(build_record) is not tuple
+            or len(build_record) != 14
+            or not _character_reader_current(build_record)
+            or type(callbacks) is not tuple
+            or len(callbacks) != 3
+        ):
+            return None
+        namespace = build_record[5]
+        values = vars(controller)
+        for entry, expected_name in zip(
+            callbacks,
+            (
+                "_database_accessor",
+                "_current_character_accessor",
+                "_open_conversation_accessor",
+            ),
+        ):
+            if type(entry) is not tuple or len(entry) != 2:
+                return None
+            name, codes = entry
+            if (
+                type(name) is not str  # noqa: E721 - immutable defining field names.
+                or name != expected_name
+                or type(codes) is not tuple
+                or not codes
+                or any(type(code) is not CodeType for code in codes)
+            ):
+                return None
+            callback = values.get(name)
+            if (
+                type(callback) is not FunctionType
+                or type(vars(callback)) is not dict  # noqa: E721 - refuse custom metadata.
+                or callback.__globals__ is not namespace
+                or not any(callback.__code__ is code for code in codes)
+                or callback.__defaults__ is not None
+                or callback.__kwdefaults__ is not None
+                or type(callback.__closure__) is not tuple
+                or len(callback.__closure__) != 1
+                or type(callback.__closure__[0]) is not CellType
+                or callback.__closure__[0].cell_contents is not screen
+            ):
+                return None
+        if (
+            type(ChaChaNotes_DB) is not ModuleType
+            or sys.modules.get("tldw_chatbook.DB.ChaChaNotes_DB") is not ChaChaNotes_DB
+        ):
+            return None
+        records = vars(ChaChaNotes_DB).get("_CHARACTER_REFRESH_READERS")
+        if (
+            type(records) is not tuple
+            or not records
+            or any(
+                type(record) is not tuple
+                or len(record) != 14
+                or not _character_reader_current(record)
+                for record in records
+            )
+        ):
+            return None
+        app = field(screen, "app_instance")
+        database = (
+            field(app, "chachanotes_db")
+            if app is not _CHARACTER_VIEW_MISSING
+            else _CHARACTER_VIEW_MISSING
+        )
+        if (
+            type(database) is not records[0][0]
+            or field(database, "is_memory_db") is not False
+        ):
+            return None
+        facade_record = next(
+            record
+            for record in _CHARACTER_REFRESH_READERS
+            if record[1] == "refresh_presentation_if_scope_changed"
+        )
+        if _CHARACTER_VIEW_FACADE is not facade_record[3]:
+            return None
+        return tuple(
+            values[name]
+            for name in (
+                "_database_accessor",
+                "_current_character_accessor",
+                "_open_conversation_accessor",
+            )
+        ) + (app, database, _CHARACTER_VIEW_FACADE)
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return None
+
+
+async def _resume_stock_character_view(controller, screen, selected):
+    """Recheck a queued selection before entering its original finite facade."""
+    if (
+        _stock_character_view_resume is not _CHARACTER_VIEW_SELECTOR
+        or _CHARACTER_VIEW_SELECTOR.__code__ is not _CHARACTER_VIEW_SELECTOR_CODE
+    ):
+        return
+    current = _CHARACTER_VIEW_SELECTOR(controller, screen)
+    if current is None or any(
+        actual is not expected for actual, expected in zip(current, selected)
+    ):
+        return
+    await selected[-1](controller, screen, force_fresh=True)
+
+
+def character_view_resume_work(
+    controller: ConsoleCharacterContextController, screen: Any
+) -> Awaitable[bool | None]:
+    """Keep custom/direct callbacks; route stock resume through physical retirement."""
+    selected = _stock_character_view_resume(controller, screen)
+    if selected is None:
+        return controller.refresh_if_scope_changed()
+    return _resume_stock_character_view(controller, screen, selected)
+
+
+_CHARACTER_VIEW_MISSING = object()
+_CHARACTER_VIEW_CONTROLLER = ConsoleCharacterContextController
+_CHARACTER_VIEW_FACADE = (
+    ConsoleCharacterContextController.refresh_presentation_if_scope_changed
+)
+_CHARACTER_VIEW_SELECTOR = _stock_character_view_resume
+_CHARACTER_VIEW_SELECTOR_CODE = _stock_character_view_resume.__code__

@@ -2330,3 +2330,36 @@ the actual first-persistence control, marker and no-foreign-field/action checks,
 owner/source/fact drift refusals, current decision-kind transitions, and the
 unchanged six original mounted journeys and cold/retirement controls. Whole
 startup/Send and platform performance budgets remain separate and unchanged.
+
+
+### TASK-34406: finite Character view work retires before creator close
+
+The actual shipping resume worker and supported Console host must retain their
+issued finite Character callback until native resources have physically
+retired. App or host exit cannot establish healthy creator cleanup from a
+cancelled or terminal logical Worker alone. Two original native routes reached
+exit with the exact callback, operation and lease still live; their subsequent
+settled-close correctly refused, and all final native/source cleanup controls
+passed after release.
+
+For the source-qualified standard UI resume, use the existing owned Character
+presentation facade with explicit force-fresh entry. This bypasses only its
+display memo; retain the original initial metadata pair, inner refresh, final
+owner publication checks and repeated-cancel physical callback drain. Direct
+actions and custom/subclass/memory/overridden callbacks retain their original
+ABI, TTL and fresh reads.
+
+App shutdown and the supported Console test host share only a bounded finite
+view-worker drain. Capture the exact manager, owning nodes, same-loop Tasks and
+issued workers before cancellation; include Character resume refresh alongside
+existing sync and navigation work. Close host intake through original Textual
+shutdown and drain the captured callbacks before host return or creator close.
+Do not infer physical retirement from Worker state or adopt an unrelated
+Runtime/database/worker. Runtime disposal and creator acceptance keep their
+existing owners and ordering, including borrower and foreign-source refusal.
+
+Original source, actor, actual Future/native handle/operation/lease retirement,
+error priority, repeated cancellation and timing limits remain mandatory.
+Explicit captured work references last until actual retirement; disposal
+refuses late publication. This refines existing ADR-085 view/App ownership and
+ADR-126 finite custody; no permission cache or new storage authority is added.

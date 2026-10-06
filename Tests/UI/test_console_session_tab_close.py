@@ -92,6 +92,33 @@ class ProductionConsoleHarness(ConsoleHarness):
 
     CSS_PATH = TldwCli.CSS_PATH
 
+    async def _shutdown(self) -> None:
+        from tldw_chatbook.UI.Console_Modules.view_workers import (
+            capture_console_view_workers,
+            drain_console_view_workers,
+        )
+
+        self._exit = True
+        drain_error = None
+        try:
+            # The actual host owns current and detached nodes in these groups.
+            captured = capture_console_view_workers(self)
+            view = self.screen
+            view._console_chat_tearing_down = True
+            await drain_console_view_workers(captured)
+        except BaseException as error:
+            drain_error = error
+        try:
+            await super()._shutdown()
+        except BaseException as error:
+            if drain_error is not None:
+                error.add_note(
+                    "Captured Console view drain also failed before host shutdown"
+                )
+            raise
+        if drain_error is not None:
+            raise drain_error
+
 
 def _ready_app():
     """A test app whose user has already sent a first message.

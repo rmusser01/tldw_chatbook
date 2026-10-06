@@ -2695,3 +2695,46 @@ def build_console_controllers(
         sync_settings_summary=lambda: screen._sync_console_settings_summary(),
         sync_cost_chip=lambda: screen._sync_console_cost_chip(),
     )
+
+
+# Original scope accessor lambdas, captured at their defining module before use.
+from types import CodeType as _CharacterViewCodeType  # noqa: E402
+
+_CHARACTER_VIEW_ACCESSORS = (
+    (
+        None,
+        "build_console_controllers",
+        build_console_controllers,
+        build_console_controllers,
+        build_console_controllers.__code__,
+        globals(),
+        build_console_controllers.__defaults__,
+        build_console_controllers.__kwdefaults__,
+        tuple((build_console_controllers.__kwdefaults__ or {}).items()),
+        build_console_controllers.__closure__,
+        tuple(
+            (cell, cell.cell_contents)
+            for cell in build_console_controllers.__closure__ or ()
+        ),
+        __file__,
+        __spec__,
+        getattr(__spec__, "origin", None),
+    ),
+    tuple(
+        (
+            name,
+            tuple(
+                code
+                for code in build_console_controllers.__code__.co_consts
+                if type(code) is _CharacterViewCodeType
+                and code.co_name == "<lambda>"
+                and (marker in code.co_names or marker in code.co_consts)
+            ),
+        )
+        for name, marker in (
+            ("_database_accessor", "chachanotes_db"),
+            ("_current_character_accessor", "_current_console_rail_character_id"),
+            ("_open_conversation_accessor", "_current_console_conversation_id"),
+        )
+    ),
+)
