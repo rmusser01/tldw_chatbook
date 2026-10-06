@@ -27,6 +27,7 @@ from .backup_restore_state import (
     archive_source_problem,
     create_unavailable_reason,
     result_label,
+    typed_path,
 )
 
 _RETAINED_CREDENTIAL_REVIEW = "credential_isolated_retention_required"
@@ -1012,7 +1013,7 @@ class BackupRestoreScreen(Screen):
             return
         if self._rollback_copy_id is None:
             return
-        target = Path(self._input("backup-later-target")).expanduser()
+        target = typed_path(self._input("backup-later-target"))
         password = self._input("backup-copy-password")
         if not target.is_absolute() or not password:
             self.query_one("#backup-message", Static).update(
@@ -1333,6 +1334,11 @@ class BackupRestoreScreen(Screen):
         self._rollback_availability = None
         self.query_one("#backup-later-start", Button).disabled = True
         self.query_one("#backup-later-confirm", Checkbox).value = False
+        if self._mode == "create":
+            # TASK-34100.16: every path that voids the review disables Create
+            # (form edits, both pickers, a credential review), so the reason
+            # is set here once; Review and Create overwrite it afterwards.
+            self.query_one("#backup-message", Static).update(CREATE_NEEDS_REVIEW)
 
     @on(Input.Changed)
     @on(Checkbox.Changed)
@@ -1353,9 +1359,6 @@ class BackupRestoreScreen(Screen):
             ):
                 self._restore_group_requirements = None
             self._invalidate()
-            if self._mode == "create":
-                # TASK-34100.16: a change voids the review; say so above Create.
-                self.query_one("#backup-message", Static).update(CREATE_NEEDS_REVIEW)
             self._sync_replacement_host()
             if event.control.id == "backup-source":
                 self._clear_inspection(dismiss_current=True)
@@ -1387,7 +1390,7 @@ class BackupRestoreScreen(Screen):
 
     def _later_selection(self):
         return self._rollback_copy_id, str(
-            Path(self._input("backup-later-target")).expanduser()
+            typed_path(self._input("backup-later-target"))
         )
 
     def _forget_later_credential_review(self):
@@ -1428,7 +1431,7 @@ class BackupRestoreScreen(Screen):
                     "Choose at least one data group, or select Everything."
                 )
             self._validate_password(options)
-            destination = Path(self._input("backup-destination")).expanduser()
+            destination = typed_path(self._input("backup-destination"))
             if not destination.is_absolute() or (
                 not self.config_paths and not self.include_known_profiles
             ):
@@ -1649,7 +1652,7 @@ class BackupRestoreScreen(Screen):
 
     @on(Button.Pressed, "#backup-inspect")
     def _inspect(self):
-        source = Path(self._input("backup-source")).expanduser()
+        source = typed_path(self._input("backup-source"))
         if not source.is_absolute():
             self.query_one("#backup-message", Static).update(
                 "Choose a full archive path."
@@ -2064,7 +2067,7 @@ class BackupRestoreScreen(Screen):
             for index, group in enumerate(self._inspection_summary["dependency_groups"])
             if self.query_one(f"#backup-inert-group-{index}", Checkbox).value
         )
-        destination = Path(self._input("backup-inert-destination")).expanduser()
+        destination = typed_path(self._input("backup-inert-destination"))
         if not groups or not destination.is_absolute():
             self.query_one("#backup-inert-preview", Static).update(
                 "Select at least one group and a new absolute directory."
@@ -2153,7 +2156,7 @@ class BackupRestoreScreen(Screen):
                 continue
             if mode == "replace" and slot["kind"] == "profile_base":
                 continue
-            path = Path(self._input(f"backup-root-{index}")).expanduser()
+            path = typed_path(self._input(f"backup-root-{index}"))
             if not path.is_absolute():
                 self.query_one("#backup-message", Static).update(
                     "Choose an absolute local directory for every destination."
@@ -2176,7 +2179,7 @@ class BackupRestoreScreen(Screen):
         if mode == "replace":
             for index, profile in enumerate(self._inspection_summary["profile_ids"]):
                 identifier = "backup-target-config" + (f"-{index}" if index else "")
-                path = Path(self._input(identifier)).expanduser()
+                path = typed_path(self._input(identifier))
                 if not path.is_absolute():
                     self.query_one("#backup-message", Static).update(
                         "Choose the existing local profile configuration to replace."
@@ -2195,7 +2198,7 @@ class BackupRestoreScreen(Screen):
         }
         setup_parent = None
         if mode == "replace" and self._restore_setup_required():
-            setup_parent = Path(self._input("backup-setup-parent")).expanduser()
+            setup_parent = typed_path(self._input("backup-setup-parent"))
             if not setup_parent.is_absolute():
                 self.query_one("#backup-message", Static).update(
                     self.service.issue_message("restore_setup_parent_required")
@@ -2642,14 +2645,14 @@ class BackupRestoreScreen(Screen):
         target = self._input("backup-target-config").strip()
         if not target and self.config_paths:
             target = str(self.config_paths[0])
-        target = Path(target).expanduser()
+        target = typed_path(target)
         if not target.is_absolute():
             self.query_one("#backup-message", Static).update(
                 "Choose the existing local configuration before continuing."
             )
             return
         source = self._input("backup-source").strip()
-        archive = Path(source).expanduser() if source else None
+        archive = typed_path(source) if source else None
         self._clear_passwords()
         self.app.request_recovery_restart(archive, target)
 
@@ -2657,7 +2660,7 @@ class BackupRestoreScreen(Screen):
     def _restart_for_rollback(self):
         if not self._requires_recovery_restart():
             return
-        target = Path(self._input("backup-later-target").strip()).expanduser()
+        target = typed_path(self._input("backup-later-target").strip())
         if not target.is_absolute():
             self.query_one("#backup-message", Static).update(
                 "Choose the existing local configuration before continuing."

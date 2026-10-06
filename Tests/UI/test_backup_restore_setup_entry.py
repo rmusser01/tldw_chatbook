@@ -446,16 +446,24 @@ async def test_the_new_messages_fit_their_line_at_the_narrowest_width(tmp_path):
             assert needed <= shown, (shown, needed)
 
             # A short staging volume: macOS's temporary folder alone is wider
-            # than the line, so the reason must not need its path.
+            # than the line, so the reason must not need its path. Review
+            # round 2: both paths are synthetic. The real temporary folder
+            # held pytest's tmp_path, so a destination under tmp_path made
+            # the volume "hold the destination" and the test failed with the
+            # default TMPDIR on macOS.
             details = _review_details()
             details["capacity"] = _capacity(
                 sufficient=False,
-                path="/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T",
+                path="/private/var/folders/zz/" + "w" * 30 + "/T",
             )
             screen._show_preview(
                 screen._revision,
                 details,
-                ((), tmp_path / "b.tldw-backup.zip", {"allow_partial": False}),
+                (
+                    (),
+                    Path("/Volumes/Backups/b.tldw-backup.zip"),
+                    {"allow_partial": False},
+                ),
             )
             await pilot.pause()
             assert "temporary folder" in _text(screen, "#backup-message")
@@ -558,5 +566,132 @@ async def test_the_ordinary_entry_keeps_create_first_and_its_title(tmp_path):
             assert first.id == "backup-open-create"
             await pilot.click("#backup-open-inspect")
             assert _text(screen, "#backup-title") == "Backup & Restore"
+    finally:
+        service.close()
+
+
+# --- review round 2 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_adding_a_profile_or_a_folder_after_review_says_why_create_is_disabled(
+    tmp_path,
+):
+    """Review round 2: both pickers void the review but kept the old line.
+
+    "Add profile configuration…" and "Add external folder…" disable Create
+    through the shared invalidation, and the line above it still read
+    "Review the displayed coverage…" -- Create disabled with no reason shown.
+    """
+    from textual.widgets import Button
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+    from tldw_chatbook.UI.Screens.backup_restore_state import CREATE_NEEDS_REVIEW
+
+    settings = tmp_path / "config.toml"
+    settings.write_text("[general]\n")
+    service = RecoveryService(tmp_path / "control")
+    app = _harness(service, config_paths=(settings,))
+    destination = Path("/Volumes/Backups/home.tldw-backup.zip")
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            await pilot.click("#backup-open-create")
+            screen = app.screen
+            create = screen.query_one("#backup-create", Button)
+            for pick, chosen in (
+                (screen._profile_chosen, tmp_path / "other.toml"),
+                (screen._external_chosen, tmp_path / "notes"),
+            ):
+                screen._show_preview(
+                    screen._revision,
+                    _review_details(),
+                    ((), destination, {"allow_partial": False, "encrypted": False}),
+                )
+                assert not create.disabled
+                pick(chosen)
+                await pilot.pause()
+                assert create.disabled, pick.__name__
+                assert _text(screen, "#backup-message") == CREATE_NEEDS_REVIEW, (
+                    pick.__name__
+                )
+
+            # Only the Create form carries it: a voided restore review keeps
+            # the Inspect pane's own message.
+            await pilot.click("#backup-open-inspect")
+            screen.query_one("#backup-source").value = str(settings)
+            await pilot.pause()  # the edit's own Changed clears the line first
+            screen._inspect()
+            await pilot.pause()
+            shown = _text(screen, "#backup-message")
+            assert shown.startswith("That's a settings file")
+            screen._invalidate()
+            await pilot.pause()
+            assert _text(screen, "#backup-message") == shown
+    finally:
+        service.close()
+
+
+def test_a_typed_path_is_home_expanded_without_raising(monkeypatch, tmp_path):
+    """Review round 2: ``Path.expanduser()`` raises for an unknown ``~user``.
+
+    On Python 3.12 that is RuntimeError("Could not determine home
+    directory."), which no handler in the view catches, so a typo such as
+    ``~mike/Downloads/x.tldw-backup.zip`` plus Enter exited the whole app.
+    """
+    from tldw_chatbook.UI.Screens.backup_restore_state import typed_path
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert typed_path("~/a.tldw-backup.zip") == tmp_path / "a.tldw-backup.zip"
+    unknown = "~nosuchuser_g16r2/x.tldw-backup.zip"
+    assert typed_path(unknown) == Path(unknown)
+    assert not typed_path(unknown).is_absolute()
+    assert typed_path("/abs/b.tldw-backup.zip") == Path("/abs/b.tldw-backup.zip")
+    # The class, not just the two reviewed fields: the view has no other
+    # spelling of home expansion left.
+    source = (
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/UI/Screens/backup_restore_screen.py"
+    ).read_text(encoding="utf-8")
+    assert ".expanduser()" not in source
+
+
+@pytest.mark.asyncio
+async def test_a_typed_path_with_an_unknown_home_never_takes_the_app_down(tmp_path):
+    """Review round 2: setup focuses the archive field and Enter inspects it.
+
+    A ``~user`` typo plus Enter raised RuntimeError out of the handler and
+    exited the app (and the setup wizard under it); Review in the Create form
+    did the same, inside a ``try`` that caught only ValueError.
+    """
+    from textual.widgets import Input
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    settings = tmp_path / "config.toml"
+    settings.write_text("[general]\n")
+    service = RecoveryService(tmp_path / "control")
+    app = _harness(service, config_paths=(settings,), initial_mode="inspect")
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            field = screen.query_one("#backup-source", Input)
+            assert screen.focused is field
+            field.value = "~nosuchuser_g16r2/x.tldw-backup.zip"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.is_running and app.screen is screen
+            assert _text(screen, "#backup-message") == "Choose a full archive path."
+            assert service.current() is None
+
+            await pilot.click("#backup-open-create")
+            screen.query_one("#backup-destination", Input).value = (
+                "~nosuchuser_g16r2/b.tldw-backup.zip"
+            )
+            await pilot.click("#backup-review")
+            await pilot.pause()
+            assert app.is_running and app.screen is screen
+            assert _text(screen, "#backup-message").startswith(
+                "Choose a full output path"
+            )
     finally:
         service.close()

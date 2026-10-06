@@ -41,6 +41,24 @@ CREATE_STARTED = (
 )
 
 
+def typed_path(value: str) -> Path:
+    """A path typed into the view, home-expanded without ever raising.
+
+    ``Path.expanduser()`` raises RuntimeError for an unknown ``~user`` (a typo
+    such as ``~mike/Downloads/x.tldw-backup.zip``) on Python 3.12, and an
+    exception out of a button handler exits the whole app, with setup under
+    it (TASK-34100.16 review). ``os.path.expanduser`` leaves such a path as
+    typed, so the view then refuses it as not a full path.
+
+    Args:
+        value: The field's text.
+
+    Returns:
+        The path, with ``~`` and a known ``~user`` expanded.
+    """
+    return Path(os.path.expanduser(value))
+
+
 def result_label(
     *,
     archive_verified: bool,
