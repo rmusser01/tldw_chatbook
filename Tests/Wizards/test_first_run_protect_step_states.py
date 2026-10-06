@@ -731,16 +731,27 @@ async def test_keep_going_after_a_failed_exit_save_stays_on_the_step(monkeypatch
         assert _current_step_id(container) == STEP_PROTECT
 
 
+def _save_raises(*_args, **_kwargs):
+    # What an immutable config.toml really does (live, `chflags uchg`): the
+    # config writer raises RecoveryRequired instead of returning False.
+    raise RuntimeError("config.toml could not be replaced")
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failing_save",
+    [lambda *a, **k: False, _save_raises],
+    ids=["returns-false", "raises"],
+)
 async def test_skip_setup_offers_exit_without_saving_when_completion_cannot_save(
-    monkeypatch,
+    monkeypatch, failing_save
 ):
     # Review round 1 (R1-F6): on Welcome, Esc is "Skip setup", which saves
     # completion. When that save kept failing the only way out was Ctrl+Q.
+    # Live, the save raised, and the step guard showed "Something went
+    # wrong on this step" with no way out either.
     _install(monkeypatch, {})
-    monkeypatch.setattr(
-        config_module, "save_settings_to_cli_config", lambda *a, **k: False
-    )
+    monkeypatch.setattr(config_module, "save_settings_to_cli_config", failing_save)
     wizard = _wizard()
     app = _HostApp(wizard)
     async with app.run_test(size=(120, 40)) as pilot:

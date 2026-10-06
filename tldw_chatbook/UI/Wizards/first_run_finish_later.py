@@ -64,8 +64,14 @@ async def skip_setup(container: Any) -> None:
     Args:
         container: The wizard's ``SetupWizardContainer``.
     """
-    async with container._draft_mutation_lock:
-        saved = await container._complete_setup_locked()
+    try:
+        async with container._draft_mutation_lock:
+            saved = await container._complete_setup_locked()
+    except Exception:
+        # An immutable config.toml makes the writer raise, not return False
+        # (seen live); either way the user needs the way out below.
+        logger.warning("Setup skip completion save failed (category=runtime)")
+        saved = False
     if saved:
         container._dismiss_screen({"completed": True, "exit_route": None})
         return
