@@ -584,9 +584,11 @@ server-backed workflows each introduce a separate trust boundary.
 
 ### Advanced profiles
 
-`TLDW_CONFIG_PATH` can select a different config file. A config override does
+`TLDW_CONFIG_PATH` can select a different config file; `tldw-cli --config PATH`
+does the same for one launch and wins when both are set. A config override does
 not automatically relocate every data path; set `[paths].data_dir` inside that
-profile when true isolation is required.
+profile when true isolation is required. For moving to another computer, see
+"Setting up another machine" in `Docs/User_Guide/First_Run_Setup.md`.
 
 ## Browser access
 

@@ -321,6 +321,18 @@ collects) made it run and pass locally. Pick the cheapest fix that matches
 where the config read happens: collection-time import for import-time reads,
 `@private_profile_test` for tests that build or reload app config.
 
+**TASK-34100.16 follow-up, 2026-10-05: a collection-time import is itself
+order-dependent.** `Tests/Utils/test_launch_options.py` imported
+`tldw_chatbook.app` at module scope, as above, and passed alone and in the full
+`Tests --collect-only` sweep (116,114 collected). Collected after the backup
+suites (`Tests/UI/test_backup_restore_screen.py` and friends) in one targeted
+run, the same import failed collection with `raw_source_selection_changed`,
+and pytest stopped the whole run at `1 error during collection`. Do not add a
+module-scope app import to a file that does not need the app at import. Test
+pure helpers directly, cover the real entry points in subprocesses, and import
+the app inside a `@pytest.mark.bootstrap_profile` test body when a test needs
+it. Then check the file collected together with its neighbours, not only alone.
+
 ## A local red wall of `RecoveryRequired` hides the guard you meant to run
 
 **TASK-33003.1 review round 1, 2026-09-28.** The task's AC#4 guard
@@ -18062,6 +18074,23 @@ pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
 billed window, about one run in ten; the census now holds that probe still for
 the phase. Pin `os_opens` at the depth the gate actually runs at (the default
 temp dir, or CI's), and trace callers before calling an upward step "jitter".
+
+## A machine-specific path literal can be an ancestor of `tmp_path`
+
+**TASK-34100.16 review round 2, 2026-10-06.** A new 54x22 fit test used this
+Mac's real temporary folder (`/private/var/folders/p_/…/T`) as a "short staging
+volume" and put the backup destination at `tmp_path / "b.tldw-backup.zip"`. The
+rule under test advises differently when the short volume holds the
+destination. Under pytest's default basetemp, `tmp_path` lives inside that very
+folder, so the branch flipped and the test failed (`1 failed, 44 passed` for
+the owner). It passed in the implementer's sandbox, whose TMPDIR was
+redirected, and would pass on Linux CI, so round 1 recorded "all green". When
+the code compares fixture paths with each other, build them as siblings under
+`tmp_path` (`tmp_path / "staging-volume" / …`, `tmp_path / "backup-volume" / …`)
+so neither holds the other on any machine (round 3's form; round 2's synthetic
+literals such as `/private/var/folders/zz/…` were hermetic too, but read like
+a host path). Run new tests once with the default TMPDIR before calling them
+green.
 
 
 ## TASK-32108.6: close the backing app stores after a Console harness exits

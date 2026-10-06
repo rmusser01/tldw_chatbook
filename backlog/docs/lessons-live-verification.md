@@ -3071,6 +3071,13 @@ and the other runs died with SIGTERM in the same minute. Files with other
 owners' names (`base_only.txt`, `rerun_head.log`) had appeared beside it. The
 same rule covers whole trees: use a task-named directory (`scratchpad/t33662/base`).
 
+**Third incident (TASK-34100.16, 2026-10-05).** I made the same mistake: I ran
+`rm -rf <scratchpad>/base && mkdir` for a base export. Twenty minutes later
+that directory held a full repo tree that another agent had extracted, while
+my pytest runs were using it. My first `rm -rf` may also have removed a peer's
+tree. Use the task-named path from the first command, not after the first
+collision.
+
 ## A provider can satisfy the response envelope and still ignore the task (2026-09-11)
 
 **What happened.** Live-verifying a new default "Improve My Prompt" optimizer
@@ -3811,3 +3818,33 @@ through the engine against the real API, not just the replay.
 ## Normal workflow cancellation can leave an always() job queued
 
 **PR3011, 2026-10-04.** The superseded required workflow run37232967293 stayed queued after normal cancellation because its final job uses `if: always()`. The replacement run37237159500 remained pending behind the same concurrency group. After verifying the old run's head differed from the current PR head, GitHub's force-cancel endpoint ended only that obsolete run; the replacement then created its test jobs. Normal cancellation is still the first step. If it leaves an always job queued, verify the exact obsolete run and current head before using the [documented force-cancel endpoint](https://docs.github.com/en/rest/actions/workflow-runs#force-cancel-a-workflow-run). No current gate, policy or peer run was bypassed.
+
+## A fixed recovery issue code hides the exception: record it at `issue_code` (TASK-34100.16, 2026-10-05)
+
+**Incident.** Live-verifying Restore needed a real archive from **Create backup**.
+On fresh isolated profiles every Create ended in "Failed: capturing … Open the
+detailed recovery evidence if the problem continues. (backup_operation_failed)",
+on this branch and on the base build alike. Nothing was logged. By design,
+`Backup_Recovery/recovery_service.py` maps every exception to a fixed code in
+`issue_code()`, so that exception text never reaches a view. A standalone probe
+that called `RecoveryService.start_backup` was no substitute either. Run on a
+copied HOME, it failed with `recovery_scope_uncertain`, because the admission
+registry pins absolute paths. Run in-process, it failed with
+`admission_timeout`, because the probe's own admitted startup lease blocks
+maintenance.
+
+**What worked.** Run the real `tldw-cli` through a small wrapper. The wrapper
+installs a `sys.meta_path` finder that, after
+`tldw_chatbook.Backup_Recovery.recovery_service` executes, wraps `issue_code`
+(and `RecoveryService.issue_code`) to append the traceback to a scratch file.
+It must not import that module before the ADR-126 fence. The wrapped call then
+named the cause: `RecoveryRequired("capture_source_outside_scope")` from
+`storage_admission._discover_capture_inventory`, because the selected config
+path was not inside the admitted roots. Profiles that had already sent a chat
+failed another way, with `admission_timeout` after 60 s.
+
+**Rule.** When a live run ends in a generic recovery code, record the
+exception at `issue_code` in the real app before you guess. Probes outside the
+app hit different fences. Never print the recorded text raw if credentials
+could be in it.
+

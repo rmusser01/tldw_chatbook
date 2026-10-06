@@ -40,6 +40,10 @@ from tldw_chatbook.Utils.app_shutdown import (
     arm_exit_watchdog,
     install_termination_handlers,
 )
+from tldw_chatbook.Utils.launch_options import (
+    apply_launch_options,
+    build_launch_parser,
+)
 from tldw_chatbook.Utils.Emoji_Handling import (
     EMOJI_TITLE_BRAIN,
     FALLBACK_TITLE_BRAIN,
@@ -346,28 +350,12 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    """Build the tldw-cli argument parser (extracted from main_cli_runner() for testability)."""
-    parser = argparse.ArgumentParser(
-        description="tldw chatbook - A Textual TUI for chatting with LLMs",
-        prog="tldw-cli",
-    )
-    parser.add_argument(
-        "--serve", action="store_true", help="Run the application as a web server"
-    )
-    parser.add_argument(
-        "--host", type=str, help="Host address for web server (default: localhost)"
-    )
-    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
-    parser.add_argument("--web-title", type=str, help="Title for the web page")
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable debug mode for web server"
-    )
-    parser.add_argument(
-        "--focus",
-        action="store_true",
-        help="Start chrome-free in the Console (hides nav bar and workbench header)",
-    )
-    return parser
+    """Build the tldw-cli argument parser (extracted from main_cli_runner() for testability).
+
+    TASK-34100.16: the definition lives in ``Utils.launch_options`` so the
+    pre-fence ``--config`` adoption parses argv with exactly this parser.
+    """
+    return build_launch_parser()
 
 
 # --- Main execution block ---
@@ -534,7 +522,7 @@ def _run_module_main() -> None:
 
     # Create instance with early logging flag
     app_instance = TldwCli()
-    app_instance._cli_focus_override = bool(_main_args.focus)
+    apply_launch_options(app_instance, _main_args)  # --focus, --no-splash
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
     try:
@@ -747,7 +735,7 @@ def main_cli_runner() -> object:
 
     # Create instance with early logging flag
     app_instance = TldwCli()
-    app_instance._cli_focus_override = bool(args.focus)
+    apply_launch_options(app_instance, args)  # --focus, --no-splash
     app_instance._recovery_restart_available = True
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
