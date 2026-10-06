@@ -304,6 +304,44 @@ def _handle_progress_callback_error(e: Exception) -> None:
     logger.warning(f"Progress callback error (ignored): {e}")
 
 
+def _openai_key_for_endpoint(api_endpoint: str) -> str:
+    """The OpenAI provider's key, for a remote-whisper endpoint at api.openai.com.
+
+    TASK-34100.13: setup's cloud dictation choice reuses the key the user
+    already gave the OpenAI provider (config or its environment variable)
+    instead of storing a second copy under ``[transcription.remote_whisper]``.
+    Any other endpoint gets nothing: a key is never sent to a host it was not
+    issued for.
+
+    Args:
+        api_endpoint: The configured remote-whisper URL.
+
+    Returns:
+        The key, or "" when the endpoint is not OpenAI's or no key exists.
+    """
+    from urllib.parse import urlsplit
+
+    from ..config import get_cli_setting, resolve_provider_api_key
+
+    try:
+        host = (urlsplit(str(api_endpoint)).hostname or "").lower()
+    except ValueError:
+        return ""
+    if host != "api.openai.com":
+        return ""
+    openai = get_cli_setting("api_settings.openai", {}) or {}
+    openai = openai if isinstance(openai, dict) else {}
+    key = resolve_provider_api_key(openai.get("api_key"))
+    if key:
+        return key
+    env_name = str(openai.get("api_key_env_var") or "OPENAI_API_KEY")
+    return (
+        resolve_provider_api_key(os.environ.get(env_name))
+        or resolve_provider_api_key(os.environ.get("OPENAI_API_KEY"))
+        or ""
+    )
+
+
 class _LegacyTranscriptionBackend:
     """Unified service for audio transcription with multiple backend support."""
 
@@ -3149,6 +3187,10 @@ class _LegacyTranscriptionBackend:
         # Get API key from environment if specified
         if api_key_env_var and not api_key:
             api_key = os.environ.get(api_key_env_var, "")
+        # TASK-34100.13: setup's "Cloud — OpenAI Whisper" points this at
+        # OpenAI without copying the key; reuse the OpenAI provider's key.
+        if not api_key:
+            api_key = _openai_key_for_endpoint(api_endpoint)
 
         timeout = remote_config.get("timeout", 300)
         response_format = remote_config.get("response_format", "json")
