@@ -468,6 +468,25 @@ class ComposerControlButton(Button):
             composer.focus_draft_from(self)
 
 
+def _swap_size_class(widget: Widget, prefix: str, wanted: str) -> None:
+    """Give ``widget`` the ``wanted`` size class in place of any ``prefix`` one.
+
+    Idle when it already has exactly that class. Removing then re-adding an
+    unchanged class restyles the widget twice, and the voice chip and the
+    attachment indicator did that on every post-action Console sync
+    (TASK-33628.5.2). The Send reason strip replaces its classes atomically
+    with ``set_classes`` instead (TASK-31966).
+    """
+    stale = [
+        name for name in widget.classes if name.startswith(prefix) and name != wanted
+    ]
+    if not stale and widget.has_class(wanted):
+        return
+    widget.remove_class(*stale)
+    widget.set_styles(**{"width" if prefix == "w-" else "height": None})
+    widget.add_class(wanted)
+
+
 class ConsoleComposerBar(Horizontal):
     """Expose Console-owned composer actions while reusing active chat sessions."""
 
@@ -6189,9 +6208,7 @@ class ConsoleComposerBar(Horizontal):
         if normalized:
             indicator.update(escape(resolve_glyph_text(f"📎 {normalized}")))
             indicator.styles.display = "block"
-            indicator.remove_class(*(name for name in indicator.classes if name.startswith("w-")))
-            indicator.set_styles(width=None)
-            indicator.add_class("w-auto")
+            _swap_size_class(indicator, "w-", "w-auto")
             indicator.styles.max_width = 28
             clear_button.styles.display = "block"
             self._set_actions_row_width(
@@ -6206,9 +6223,7 @@ class ConsoleComposerBar(Horizontal):
         else:
             indicator.update("")
             indicator.styles.display = "none"
-            indicator.remove_class(*(name for name in indicator.classes if name.startswith("w-")))
-            indicator.set_styles(width=None)
-            indicator.add_class("w-0")
+            _swap_size_class(indicator, "w-", "w-0")
             clear_button.styles.display = "none"
             self._set_actions_row_width(
                 actions, self._actions_row_width(attachment_visible=False)
@@ -6354,9 +6369,7 @@ class ConsoleComposerBar(Horizontal):
             self._voice_chip_last_width = 0
             self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
-            chip.remove_class(*(name for name in chip.classes if name.startswith("w-")))
-            chip.set_styles(width=None)
-            chip.add_class("w-0")
+            _swap_size_class(chip, "w-", "w-0")
             chip.styles.min_width = 0
             chip.update(Content(""))
             return
@@ -6386,9 +6399,7 @@ class ConsoleComposerBar(Horizontal):
             self._voice_chip_last_width = 0
             self._sync_full_width_voice_presentation(False)
             chip.styles.display = "none"
-            chip.remove_class(*(name for name in chip.classes if name.startswith("w-")))
-            chip.set_styles(width=None)
-            chip.add_class("w-0")
+            _swap_size_class(chip, "w-", "w-0")
             chip.styles.min_width = 0
             chip.update(Content(""))
             return

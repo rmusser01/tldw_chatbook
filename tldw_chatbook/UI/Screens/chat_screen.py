@@ -9130,30 +9130,11 @@ class ChatScreen(BaseAppScreen):
         else:
             # The child owns its bounded-body and rail invalidation.
             summary.sync_state(summary_state)
-        # TASK-32811.7: read the structured values (TASK-32338; `streaming` since
-        # TASK-33004.7) rather than regex-parse `sampling_row`, and query only
-        # composed ids: the Provider/Model rows TASK-23196 removed raised
-        # NoMatches on the FIRST lookup and froze the rest. Each row is guarded.
-        for section_id, value in (
-            ("console-model-section-temperature", summary_state.temperature),
-            ("console-model-section-max-tokens", summary_state.max_tokens),
-            ("console-model-section-streaming", summary_state.streaming),
-        ):
-            try:
-                row = self.query_one(f"#{section_id}").query_one(
-                    ".console-model-section-value", Static
-                )
-            except NoMatches:
-                continue
-            row.update(value or "—")
-        # TASK-33005.3: the rail line shows the one word; red only when blocked.
-        word = summary_state.readiness_label
-        blocked = getattr(summary_state.readiness, "operability", "") == "not_ready"
-        for recovery in self.query("#console-model-section-recovery").results(Static):
-            if recovery.content != word:  # Unchanged copy costs no layout pass.
-                recovery.update(word)
-            recovery.styles.display = "block" if word else "none"
-            recovery.set_class(blocked, "conversation-attention-error")
+        # The Model section's sampling values and readiness word; the rail
+        # finds its own rows (TASK-32811.7, TASK-33005.3, TASK-33628.5.2).
+        rail = self.query_one_optional("#console-left-rail", ConsoleLeftRail)
+        if rail is not None:
+            rail.sync_model_section_values(summary_state)
 
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
@@ -15473,8 +15454,13 @@ class ChatScreen(BaseAppScreen):
         comparison per row and touches no widget.
         """
 
+        # Searched from its rail: from the screen, a miss walked every
+        # mounted transcript row on each sync (TASK-33628.5.2).
+        rail = self.query_one_optional("#console-right-rail")
+        if rail is None:
+            return
         try:
-            card = self.query_one(f"#{SOURCE_READINESS_CARD_ID}")
+            card = rail.query_one(f"#{SOURCE_READINESS_CARD_ID}")
         except QueryError:
             return  # not mounted, or the pending-launch card is showing
         acp_status = "not_configured"
