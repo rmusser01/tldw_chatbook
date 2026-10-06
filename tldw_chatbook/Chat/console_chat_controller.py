@@ -8940,19 +8940,11 @@ class ConsoleChatController:
         if transformed_saved_rows != original_saved_rows:
             requires_pre_dispatch_authority = True
 
+        # TASK-34100.5.3 review: the speculative attempt carries no tools, as
+        # it did while the bridge had no preview_tool_schemas -- light tools
+        # without the plan's "Answer directly" line drew tool calls, each a
+        # second, authoritative request (tests: test_console_light_surface_voice).
         tools: list[Mapping[str, Any]] = []
-        if (
-            self._agent_runtime_enabled
-            and self._agent_bridge is not None
-            and not prefill
-            and session.assistant_kind != "character"
-        ):
-            preview_tools = getattr(self._agent_bridge, "preview_tool_schemas", None)
-            if callable(preview_tools):
-                try:
-                    tools = list(preview_tools(resolution))
-                except Exception:
-                    requires_pre_dispatch_authority = True
         from tldw_chatbook.Chat.console_speculative_voice_session import (
             PreparedSpeculativeVoiceAttempt,
             VoicePromotionSeed,
