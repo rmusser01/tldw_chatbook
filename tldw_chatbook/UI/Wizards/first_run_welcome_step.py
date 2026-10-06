@@ -72,7 +72,7 @@ class WelcomeStep(SetupStep):
     def open_backup_restore(self, event: Button.Pressed) -> None:
         """Keep setup choices intact while the app owns the recovery view."""
         event.stop()
-        self.app.action_backup_restore()
+        self.app.action_backup_restore("inspect")  # TASK-34100.16: open on Inspect
 
     def get_step_data(self) -> Dict[str, Any]:
         return {"track": self.chosen_track()}

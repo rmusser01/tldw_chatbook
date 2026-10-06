@@ -136,14 +136,14 @@ class LifecycleMixin:
             service = self._recovery_service = RecoveryService(default_control_root())
         return service
 
-    def action_backup_restore(self) -> None:
-        """Open recovery with all known local profiles selected for backup."""
+    def action_backup_restore(self, mode: str = "home") -> None:
+        """Open recovery (setup's Restore entry passes ``mode="inspect"``) for all profiles."""
         from .UI.Screens.backup_restore_screen import BackupRestoreScreen
 
         self.push_screen(
             BackupRestoreScreen(
                 self.recovery_service, config_paths=(get_cli_config_path(),),
-                include_known_profiles=True,
+                include_known_profiles=True, initial_mode=mode,
             )
         )
 

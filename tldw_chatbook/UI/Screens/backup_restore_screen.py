@@ -19,7 +19,14 @@ from tldw_chatbook.Third_Party.textual_fspicker import (
 )
 from tldw_chatbook.Widgets.backup_group_selector import BackupDataGroupSelector
 
-from .backup_restore_state import result_label
+from .backup_restore_state import (
+    ARCHIVE_FORMAT_HINT,
+    CREATE_NEEDS_REVIEW,
+    ENTRY_TITLES,
+    archive_source_problem,
+    create_unavailable_reason,
+    result_label,
+)
 
 _RETAINED_CREDENTIAL_REVIEW = "credential_isolated_retention_required"
 
@@ -51,8 +58,17 @@ class BackupRestoreScreen(Screen):
         config_paths=(),
         include_known_profiles=False,
         restart_request=None,
+        initial_mode="home",
     ):
+        """Bind the view to the app's recovery service.
+
+        Args:
+            initial_mode: ``"inspect"`` is setup's "Restore a backup" entry: the
+                view opens on Inspect, titled "Restore from a backup"
+                (TASK-34100.16). Any other value opens the ordinary home.
+        """
         super().__init__()
+        self._initial_mode = initial_mode if initial_mode in ENTRY_TITLES else "home"
         self.service = service
         self.config_paths = tuple(Path(path) for path in config_paths)
         self.include_known_profiles = include_known_profiles
@@ -92,7 +108,7 @@ class BackupRestoreScreen(Screen):
         self._media_offset = 0
 
     def compose(self) -> ComposeResult:
-        yield Static("Backup & Restore", id="backup-title")
+        yield Static(ENTRY_TITLES[self._initial_mode], id="backup-title")
         with Container(id="backup-actions"):
             yield Button(
                 "Create backup",
@@ -197,6 +213,7 @@ class BackupRestoreScreen(Screen):
                 yield Vertical(id="backup-credential-review", classes="backup-form")
             with Vertical(id="backup-inspect-form", classes="backup-form"):
                 yield Static("Backup archive", classes="destination-section")
+                yield Static(ARCHIVE_FORMAT_HINT, id="backup-archive-format")
                 yield Input(
                     placeholder="Choose an archive",
                     id="backup-source",
@@ -488,7 +505,9 @@ class BackupRestoreScreen(Screen):
         )
 
     def on_mount(self):
-        self._show_mode("home")
+        self._show_mode(self._initial_mode)
+        if self._restart_request is None and self._initial_mode == "inspect":
+            self.query_one("#backup-source", Input).focus()
         if self._restart_request is not None and self._restart_request.recovery_copies:
             target = self.query_one("#backup-later-target", Input)
             with target.prevent(Input.Changed):
@@ -591,7 +610,11 @@ class BackupRestoreScreen(Screen):
             self.query_one("#" + identifier).display = visible
         self.query_one("#backup-create", Button).disabled = True
         self.query_one("#backup-dependent").display = mode in ("copies", "profiles")
-        self.query_one("#backup-message", Static).update("")
+        # TASK-34100.16: the line above the buttons says why Create backup is
+        # disabled -- here, until a review succeeds.
+        self.query_one("#backup-message", Static).update(
+            CREATE_NEEDS_REVIEW if mode == "create" else ""
+        )
         self._clear_passwords()
 
     @on(Button.Pressed, "#backup-open-create")
@@ -1321,6 +1344,9 @@ class BackupRestoreScreen(Screen):
             ):
                 self._restore_group_requirements = None
             self._invalidate()
+            if self._mode == "create":
+                # TASK-34100.16: a change voids the review; say so above Create.
+                self.query_one("#backup-message", Static).update(CREATE_NEEDS_REVIEW)
             self._sync_replacement_host()
             if event.control.id == "backup-source":
                 self._clear_inspection(dismiss_current=True)
@@ -1500,13 +1526,22 @@ class BackupRestoreScreen(Screen):
         )
         rows.extend(preview.issues)
         self.query_one("#backup-coverage", Static).update("\n".join(rows))
-        self.query_one("#backup-create", Button).disabled = (
-            not (details["complete"] or reviewed[2]["allow_partial"])
-            or not all(row["sufficient"] for row in details["capacity"])
-            or not available
+        blocked = create_unavailable_reason(
+            complete=details["complete"],
+            allow_partial=reviewed[2]["allow_partial"],
+            capacity=details["capacity"],
+            available=available,
+            unavailable_message=(
+                ""
+                if available
+                else self.service.issue_message(reason) + f" ({reason})"
+            ),
         )
+        self.query_one("#backup-create", Button).disabled = blocked is not None
+        # TASK-34100.16: a disabled Create says why on the line above it.
         self.query_one("#backup-message", Static).update(
-            "Review the displayed coverage. Backup pauses writers for capture, then resumes them before packaging."
+            blocked
+            or "Review the displayed coverage. Backup pauses writers for capture, then resumes them before packaging."
         )
 
     @on(Button.Pressed, "#backup-create")
@@ -1598,6 +1633,13 @@ class BackupRestoreScreen(Screen):
             self.query_one("#backup-message", Static).update(
                 "Choose a full archive path."
             )
+            return
+        problem = archive_source_problem(source)
+        if problem is not None:
+            # A config.toml or a folder: say what it is instead of letting
+            # the archive reader fail as backup_operation_failed.
+            self.query_one("#backup-message", Static).update(problem)
+            self._clear_passwords()
             return
         password = self._input("backup-inspect-password")
         try:
