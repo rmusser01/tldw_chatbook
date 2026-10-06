@@ -149,3 +149,16 @@ Tests/UI/test_approval_batch_geometry.py
 # TASK-34000 wave 1a final review (C1): autosave after its burst's max wait ran
 # out. Appended, so no other file changes shard.
 Tests/UI/test_library_note_autosave_recovers.py
+
+# TASK-33620.9: durable rename publication through the mounted rail menu.
+Tests/UI/test_console_rename_consistency.py
+
+# TASK-31245: constructor hydration and finite workspace handle ownership.
+Tests/UI/test_console_fixture_ownership.py
+Tests/UI/test_console_finite_read_ownership.py
+
+# TASK-31966: stable recovery-bar refresh and real recovery-height transitions.
+Tests/UI/test_console_control_bar_recovery_height.py
+
+# TASK-31966: Send-reason size idempotence, resize and override repair.
+Tests/UI/test_console_composer_reason_restyles.py

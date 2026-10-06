@@ -12217,6 +12217,16 @@ readiness from a production selection or database fault; do not treat a missing
 receipt alone as a crash diagnosis. Exact evidence and restored throwaway patch:
 `Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md`.
 
+**Recurrence — PR3024 / TASK-33620.9, 2026-10-05.** CI's inactive renamed-tab
+check passed every durable/title/confirmation assertion, then observed the old
+header immediately after generic activation. A held real broad-sync pass
+reproduced the exact failure: activation coalesces its request, not a publication
+receipt. Release and join that exact owner before checking the inactive header;
+retain the rename confirmation's immediate assertions. All16 affected controls
+then pass strict retirement without warnings. Do not change production activation
+or add a sleep to satisfy an observer's premature assertion. Receipt:
+`Docs/QA/task-33620.9/README.md`.
+
 ## Page timeouts do not set Playwright assertion budgets (TASK-32160, 2026-09-08)
 
 **Incident.** The actual Canvas-child test configured a 45-second page timeout,
@@ -18460,3 +18470,41 @@ Related, from the same session: on macOS `/bin/bash` 3.2 has no `mapfile`, and
 node ids that contain spaces (`[...-Q3 retro.md]`) split under `$(cat list)`.
 Both produced "no tests ran" on the base arm. Drive node lists through a tiny
 Python `subprocess.run([... *nodes])` runner instead.
+
+## A test-added ownership wrapper can mask the real retry leak
+
+TASK-31966, 2026-10-05: four workspace projection tests wrapped calls in
+`run_owned_db_call` and asserted only the registry cache. The real asynchronous
+store retry used a raw offload; its shared authority read left a Chat connection
+on an exited worker. Removing only the test-added wrapper and invoking the
+actual direct service/store entry points produced four valid handle-retention
+REDs while membership, retry, failure and registry assertions still passed.
+The shared finite-read correction passes the 59-test strict owner batch, with
+borrowed transaction, memory and custom ownership controls intact. Exercise the
+real entry point and assert every participating database owner, not a cleanup
+boundary supplied by the test. Evidence: [source-bound receipt](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).
+
+## A finite ownership scope starts before authority capture
+
+TASK-31966, 2026-10-05: the first Console visual-reader correction enclosed the
+Persona inventory query but not its two authority captures. Six real Character
+read regressions passed; review traced linked-Persona capture through
+`LocalCharacterPersonaService.get_character` to the same native database. The
+first capture opened a cold worker cache before the ownership scope, which then
+correctly treated that handle as borrowed and retained it. Two real linked-
+Persona success/failure cases reproduced the leak after physical worker join.
+Keep every materializing read of that captured owner, including authority
+revalidation, inside the existing finite boundary. Character-only coverage does
+not prove the sibling Persona route. Evidence: [retained REDs and review](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).
+
+## Origin hooks must precede database getter imports
+
+TASK-31966, 2026-10-05: the first full-activity shutdown observer patched the
+participant registration hook after importing TldwCli. Existing database getters
+had already captured the original binding. The observer reported five records
+and zero drops, but every retained connection lacked an origin token. Installing
+the same hook before app imports recorded506 unique registrations and traced
+all five exited-worker handles to exact Character-target revalidation. Check
+coverage of retained identities, not just observer drop counts; preserve the
+incomplete attempt and do not use instrumented timings as latency evidence.
+Evidence: [both probes and corrected origins](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).

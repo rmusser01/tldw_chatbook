@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 
 from typing import Any, Literal
@@ -701,6 +702,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self._state: Any = None
         self._state_field_reads: set[str] | None = None
         self._composed_state_reads: frozenset[str] | None = None
+        self._composed_publication_state: Any = None
         self.state = state
         self.show_heading = show_heading
         self.content = content
@@ -799,6 +801,47 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self.refresh(recompose=True)
         if self.is_mounted:
             self._schedule_recomposed_content_fit(restore_scroll_y=restore_scroll_y)
+
+    async def wait_for_publication(self) -> bool:
+        """Await refresh and the existing mounted-DOM proof, not state assignment.
+
+        Returns:
+            True once recomposition has settled; False if this tray detaches.
+        """
+        if not self.is_mounted or not self.is_attached:
+            return False
+        screen = self.screen
+        while self.is_mounted and self.is_attached:
+            refreshed = asyncio.get_running_loop().create_future()
+
+            def complete_refresh(future: asyncio.Future[None] = refreshed) -> None:
+                if not future.done():
+                    future.set_result(None)
+
+            # The screen owns the awaiting rename worker. A rail recompose
+            # may retire this tray's message pump before refresh; enqueue on
+            # the surviving screen, then refuse a detached tray below.
+            if not screen.call_after_refresh(complete_refresh):
+                return False
+            await refreshed
+            composed = self._composed_publication_state
+            reads = self._composed_state_reads
+            rendered_state_matches = (
+                composed is not None
+                and reads is not None
+                and all(
+                    getattr(composed, name) == getattr(self._state, name)
+                    for name in reads
+                )
+            )
+            if (
+                self.is_mounted
+                and self.is_attached
+                and rendered_state_matches
+                and self._can_skip_recompose(self.state)
+            ):
+                return True
+        return False
 
     def _can_skip_recompose(self, state: ConsoleWorkspaceContextState) -> bool:
         """Return True only when the mounted DOM already IS ``state``'s DOM.
@@ -1468,6 +1511,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         collected: list[tuple[str, str]] = []
         collected_fixed: list[str] = []
         state_reads: set[str] = set()
+        publication_state = self._state
         self._composing_row_signature = collected
         self._composing_fixed_signature = collected_fixed
         self._composed_row_signature = None
@@ -1519,6 +1563,7 @@ class ConsoleWorkspaceContextTray(RecomposeCaptureGuard, Vertical):
         self._composed_row_signature = tuple(collected)
         self._composed_fixed_signature = tuple(collected_fixed)
         self._composed_state_reads = frozenset(state_reads)
+        self._composed_publication_state = publication_state
 
     def _compose_workspace_context(self) -> ComposeResult:
         """Render active workspace identity and workspace-scoped actions.

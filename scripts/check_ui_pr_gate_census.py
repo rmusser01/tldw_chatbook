@@ -124,7 +124,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # chips at 120x40 (test_console_toast_clears_header.py), and a turn finishing
 # in the visible tab raises no hidden notice (test_console_visible_turn_
 # attention.py). About 3.5 min serial under load average 30 locally.
-MINIMUM_FILES = 146
+# TASK-33620.9 adds the private-profile mounted rename publication regressions.
+# TASK-31245 adds the private-profile hydration and handle-ownership regressions.
+# TASK-31966 adds the mounted recovery-bar idempotence/geometry regressions.
+# TASK-31966 adds the shared Send-reason size idempotence/resize regressions.
+MINIMUM_FILES = 150
 
 
 def read_census(path: Path) -> list[str]:

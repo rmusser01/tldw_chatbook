@@ -117,6 +117,7 @@ otherwise suggest belong here, for the reasons noted:
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from functools import partial
 import json
@@ -252,6 +253,7 @@ from ...Character_Chat.persona_visual_identity import (
     resolve_persona_visual_identity,
 )
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
+from ...DB.base_db import operation_owned_connection
 from ...config import (
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -694,25 +696,32 @@ def _resolve_visual_identity_for_db(
 ) -> VisualIdentityResolution | None:
     """Resolve one immutable preview request without retaining its screen."""
 
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
     _session_id, actor_kind, actor_id = scope
     try:
-        if actor_kind == "persona":
-            if local_persona_service is None:
-                return None
-            return resolve_persona_visual_identity(
+        with (
+            operation_owned_connection(db)
+            if type(db) is CharactersRAGDB and not db.is_memory_db
+            else nullcontext()
+        ):
+            if actor_kind == "persona":
+                if local_persona_service is None:
+                    return None
+                return resolve_persona_visual_identity(
+                    db,
+                    local_persona_service,
+                    persona_id=actor_id,
+                    requested_state=requested_state,
+                    manual_expression_key=manual_expression_key,
+                )
+            return resolve_visual_identity(
                 db,
-                local_persona_service,
-                persona_id=actor_id,
+                actor_kind=actor_kind,
+                actor_id=actor_id,
                 requested_state=requested_state,
                 manual_expression_key=manual_expression_key,
             )
-        return resolve_visual_identity(
-            db,
-            actor_kind=actor_kind,
-            actor_id=actor_id,
-            requested_state=requested_state,
-            manual_expression_key=manual_expression_key,
-        )
     except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
         logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
             "Console reaction resolution failed for actor_kind={} actor_id={} "
@@ -731,24 +740,35 @@ def _visual_identity_options_for_db(
 ) -> tuple[ReactionOption, ...]:
     """Read metadata-only preview options without retaining its screen."""
 
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
     _session_id, actor_kind, actor_id = scope
     try:
-        persona_authority = None
-        if actor_kind == "persona":
-            if local_persona_service is None:
-                return ()
-            persona_authority = capture_local_persona_visual_identity(
-                local_persona_service, actor_id
-            )
-            if persona_authority is None:
-                return ()
-        graph = VisualIdentityRepository(db).get_active_actor_pack(actor_kind, actor_id)
-        if (
-            actor_kind == "persona"
-            and capture_local_persona_visual_identity(local_persona_service, actor_id)
-            != persona_authority
+        with (
+            operation_owned_connection(db)
+            if type(db) is CharactersRAGDB and not db.is_memory_db
+            else nullcontext()
         ):
-            return ()
+            persona_authority = None
+            if actor_kind == "persona":
+                if local_persona_service is None:
+                    return ()
+                persona_authority = capture_local_persona_visual_identity(
+                    local_persona_service, actor_id
+                )
+                if persona_authority is None:
+                    return ()
+            graph = VisualIdentityRepository(db).get_active_actor_pack(
+                actor_kind, actor_id
+            )
+            if (
+                actor_kind == "persona"
+                and capture_local_persona_visual_identity(
+                    local_persona_service, actor_id
+                )
+                != persona_authority
+            ):
+                return ()
     except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
         logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
             "Console reaction inventory failed for actor_kind={} actor_id={} "
@@ -898,6 +918,7 @@ class ConsoleSessionController:
         painted_session_accessor: Callable[[], str | None] = lambda: None,
         refresh_manual_read_rows: Callable[[], None] = lambda: None,
         on_draft_session_changed: Callable[[], None] | None = None,
+        rename_saved_conversation: Callable[[str, str], None] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -961,6 +982,7 @@ class ConsoleSessionController:
                 `self.app_instance`. Snapshotted as a plain attribute: it
                 does not change identity over the controller's life, and
                 the pre-extraction methods never called it, only read it.
+            rename_saved_conversation: Late-bound durable saved-title rename owner.
             chat_store_accessor: `ChatScreen._ensure_console_chat_store`
                 (lazily creates the store) -- used where the original body
                 called it as a method.
@@ -1102,6 +1124,7 @@ class ConsoleSessionController:
         self._switcher_authority_accessor = switcher_authority_accessor
         self._console_runtime_accessor = console_runtime_accessor
         self._set_active_workspace_for_session_fn = set_active_workspace_for_session
+        self._rename_saved_conversation_fn = rename_saved_conversation
         self._resume_workspace_conversation_fn = resume_workspace_conversation
         self._workspace_initial_session_title_fn = workspace_initial_session_title
         self._merge_workspace_rows_fn = merge_workspace_rows
@@ -2079,6 +2102,8 @@ class ConsoleSessionController:
     ) -> VisualIdentityResolution | None:
         """Resolve a message's exact immutable character expression."""
 
+        from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
         _session_id, actor_kind, actor_id = scope
         db = self._visual_identity_db_accessor()
         if (
@@ -2088,15 +2113,20 @@ class ConsoleSessionController:
         ):
             return None
         try:
-            return resolve_historical_visual_identity(
-                db,
-                actor_id=identity.actor_id,
-                pack_id=identity.pack_id,
-                pack_version_id=identity.pack_version_id,
-                expression_key=identity.expression_key,
-                expression_id=identity.expression_id,
-                asset_id=identity.asset_id,
-            )
+            with (
+                operation_owned_connection(db)
+                if type(db) is CharactersRAGDB and not db.is_memory_db
+                else nullcontext()
+            ):
+                return resolve_historical_visual_identity(
+                    db,
+                    actor_id=identity.actor_id,
+                    pack_id=identity.pack_id,
+                    pack_version_id=identity.pack_version_id,
+                    expression_key=identity.expression_key,
+                    expression_id=identity.expression_id,
+                    asset_id=identity.asset_id,
+                )
         except (SQLiteError, TypeError, ValueError, OverflowError):
             logger.debug(
                 "Console historical reaction resolution failed actor_id={}",
@@ -2461,8 +2491,30 @@ class ConsoleSessionController:
             )
             return
 
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        conversation_id = session.persisted_conversation_id
+
         def _apply_rename(result: str | None) -> None:
             if result is None:
+                return
+            if (
+                getattr(self.app_instance, "chachanotes_db", None) is not db
+                or self._console_chat_store is not store
+                or not any(candidate is session for candidate in store.sessions())
+                or session.persisted_conversation_id != conversation_id
+            ):
+                self.app_instance.notify(
+                    "The profile or chat changed. Open Rename again.",
+                    severity="warning",
+                )
+                return
+            if conversation_id is not None:
+                if self._rename_saved_conversation_fn is None:
+                    self.app_instance.notify(
+                        "Conversation rename is unavailable.", severity="error"
+                    )
+                    return
+                self._rename_saved_conversation_fn(conversation_id, result)
                 return
             try:
                 _renamed, persisted = store.rename_session(session_id, result)

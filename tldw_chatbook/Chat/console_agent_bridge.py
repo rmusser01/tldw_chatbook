@@ -10077,9 +10077,10 @@ class ConsoleAgentBridge:
             rather than a lookup error); its ``parent_run_id`` when it is
             a recorded sub-agent run.
         """
-        record = self._db.get_run_metadata(run_id)
-        parent_run_id = record.get("parent_run_id") if record else None
-        return parent_run_id or run_id
+        with operation_owned_connection(self._db):
+            record = self._db.get_run_metadata(run_id)
+            parent_run_id = record.get("parent_run_id") if record else None
+            return parent_run_id or run_id
 
     def run_log_available(
         self, run_id: str, *, cancelled: Callable[[], bool] | None = None

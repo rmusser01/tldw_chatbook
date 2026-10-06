@@ -3065,7 +3065,7 @@ DELETE FROM keywords
                         f"db_sha256={self._db_diagnostic_ref} "
                         f"thread={threading.get_ident()}"
                     )
-                except (sqlite3.Error, PrivatePathError) as exc:
+                except BaseException as exc:
                     if conn is not None:
                         # Initialization owns this unpublished handle; closing it
                         # also retires its native backup lease. Failed closes keep
@@ -3088,9 +3088,11 @@ DELETE FROM keywords
                         f"exception_type={type(exc).__name__}"
                     )
                     self._local.conn = None
-                    raise CharactersRAGDBError(
-                        f"Failed to connect to database '{self.db_path_str}': {exc}"
-                    ) from exc
+                    if isinstance(exc, (sqlite3.Error, PrivatePathError)):
+                        raise CharactersRAGDBError(
+                            f"Failed to connect to database '{self.db_path_str}': {exc}"
+                        ) from exc
+                    raise
             self._local.conn_last_used = time.monotonic()
             return self._local.conn
         finally:

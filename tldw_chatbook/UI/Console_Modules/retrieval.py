@@ -539,9 +539,10 @@ class ConsoleRetrievalController:
             from ...Character_Chat.world_info_resolver import (
                 summarize_active_world_books,
             )
+            from ...DB.base_db import run_owned_db_call
 
-            summary = await asyncio.to_thread(
-                summarize_active_world_books, db, conversation_id, None
+            summary = await run_owned_db_call(
+                db, summarize_active_world_books, db, conversation_id, None
             )
         except Exception:
             logger.opt(exception=True).warning(

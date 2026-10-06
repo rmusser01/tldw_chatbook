@@ -407,8 +407,10 @@ class ConsoleReviewSelectionController:
     ) -> None:
         """Read annotations off-thread and re-key them on the event loop."""
         try:
-            rows = await asyncio.to_thread(
-                database.get_transcript_annotations, conversation_id
+            from ...DB.base_db import run_owned_db_call
+
+            rows = await run_owned_db_call(
+                database, database.get_transcript_annotations, conversation_id
             )
         except Exception:
             logger.warning(

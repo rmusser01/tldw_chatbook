@@ -38,6 +38,7 @@ from dataclasses import replace
 import pytest
 from textual.widgets import Button, Input
 
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -46,6 +47,8 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceContextTray,
     ConsoleWorkspaceStatusPair,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 APP_SIZE = (160, 48)
 

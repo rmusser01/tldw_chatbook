@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_console_left_rail import make_console_pilot
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 class _FakeDB:
@@ -243,7 +246,10 @@ async def test_the_menu_reads_canonical_state_not_the_row_display_copy() -> None
             state=console._console_conversation_state("conv-1"),
         )
         assert target.is_archived
-        assert build_conversation_menu(target)[2].action_id == ACTION_UNARCHIVE
+        assert any(
+            item.action_id == ACTION_UNARCHIVE
+            for item in build_conversation_menu(target)
+        )
 
 
 @pytest.mark.asyncio
