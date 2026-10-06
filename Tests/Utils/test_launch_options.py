@@ -218,6 +218,92 @@ def test_config_flag_under_an_unreadable_folder_is_a_usage_error(tmp_path, capsy
     assert environ == {}
 
 
+_POSIX_PERMISSIONS = pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="needs POSIX permissions that apply to this user",
+)
+
+
+@_POSIX_PERMISSIONS
+def test_config_flag_refuses_a_config_file_it_cannot_read(tmp_path, capsys):
+    """Review round 2: ``os.stat`` succeeds on a mode-000 file, so it passed.
+
+    The launch then ended on the Backup & Restore recovery screen ("Recovery
+    required: configuration_unavailable") with no explanation -- the outcome
+    round 1 removed for a missing folder.
+    """
+    from tldw_chatbook.Utils.launch_options import adopt_config_flag
+
+    target = tmp_path / "config.toml"
+    target.write_text("[general]\n")
+    target.chmod(0)
+    environ: dict[str, str] = {}
+    try:
+        with pytest.raises(SystemExit) as stop:
+            adopt_config_flag(["--config", str(target)], environ)
+    finally:
+        target.chmod(0o600)
+    assert stop.value.code == 2
+    err = capsys.readouterr().err
+    assert f"cannot read {target}" in err, err
+    assert environ == {}
+
+
+@_POSIX_PERMISSIONS
+def test_config_flag_refuses_a_new_file_in_a_folder_it_cannot_write(tmp_path, capsys):
+    """Review round 2: nothing can create the config there.
+
+    The launch exited through "Chatbook cannot start: its private storage
+    location…" (advice about group- or world-writable folders, which does not
+    fit) followed by a PrivatePathError traceback on ``python -m``.
+    """
+    from tldw_chatbook.Utils.launch_options import adopt_config_flag
+
+    folder = tmp_path / "read-only"
+    folder.mkdir()
+    folder.chmod(0o500)
+    environ: dict[str, str] = {}
+    try:
+        with pytest.raises(SystemExit) as stop:
+            adopt_config_flag(["--config", str(folder / "config.toml")], environ)
+    finally:
+        folder.chmod(0o700)
+    assert stop.value.code == 2
+    err = capsys.readouterr().err
+    assert f"cannot create {folder / 'config.toml'}" in err, err
+    assert "Traceback" not in err
+    assert environ == {}
+    assert not (folder / "config.toml").exists()
+
+
+@_POSIX_PERMISSIONS
+def test_config_flag_accepts_a_read_only_config_the_startup_fence_admits(tmp_path):
+    """The paired control: an existing file needs to be readable, not writable.
+
+    A read-only config.toml, and a readable one in a read-only folder, both
+    pass the startup fence today (probed with ``python -m … --config X
+    --help``), so ``--config`` must not refuse them.
+    """
+    from tldw_chatbook.Utils.launch_options import adopt_config_flag
+
+    read_only = tmp_path / "read-only.toml"
+    read_only.write_text("[general]\n")
+    read_only.chmod(0o400)
+    folder = tmp_path / "read-only-folder"
+    folder.mkdir()
+    inside = folder / "config.toml"
+    inside.write_text("[general]\n")
+    folder.chmod(0o500)
+    try:
+        for target in (read_only, inside):
+            environ: dict[str, str] = {}
+            assert adopt_config_flag(["--config", str(target)], environ) == str(target)
+            assert environ == {"TLDW_CONFIG_PATH": str(target)}
+    finally:
+        folder.chmod(0o700)
+        read_only.chmod(0o600)
+
+
 def test_launch_options_import_neither_config_nor_textual():
     """It runs before the ADR-126 fence, so it must stay import-light."""
     probe = (

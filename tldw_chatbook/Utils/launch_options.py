@@ -68,10 +68,12 @@ def _config_file(value: str) -> str:
 
     Raises:
         argparse.ArgumentTypeError: For an empty value, a folder, a file in a
-            folder that does not exist (nothing could create it there), or a
-            path that cannot be checked. Every refusal is a usage error (exit
-            2): argparse reports nothing else from a ``type=`` function as
-            one, so an OSError would escape as a traceback.
+            folder that does not exist or cannot be written (nothing could
+            create it there), a file that cannot be read, or a path that
+            cannot be checked. Every refusal is a usage error (exit 2):
+            argparse reports nothing else from a ``type=`` function as one,
+            so an OSError would escape as a traceback. An existing file need
+            not be writable: the startup fence admits a read-only config.
     """
     if not value.strip():
         raise argparse.ArgumentTypeError("needs the path of a config.toml file")
@@ -84,6 +86,10 @@ def _config_file(value: str) -> str:
             raise argparse.ArgumentTypeError(
                 f"{path.parent} does not exist; create that folder or check the path"
             ) from None
+        if not os.access(path.parent, os.W_OK | os.X_OK):
+            raise argparse.ArgumentTypeError(
+                f"cannot create {path}: {path.parent} is not writable"
+            ) from None
         return str(path)
     except OSError as error:
         raise argparse.ArgumentTypeError(
@@ -93,6 +99,10 @@ def _config_file(value: str) -> str:
         raise argparse.ArgumentTypeError(
             f"{path} is a folder; give the config.toml file inside it"
         )
+    # os.stat succeeds on a file this user cannot open (mode 000), and the
+    # launch then ends on a recovery screen with no explanation.
+    if not os.access(path, os.R_OK):
+        raise argparse.ArgumentTypeError(f"cannot read {path}: permission denied")
     return str(path)
 
 
