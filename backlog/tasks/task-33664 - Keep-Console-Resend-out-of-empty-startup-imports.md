@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-06 16:58'
+updated_date: '2026-10-06 17:29'
 labels:
   - agents
   - console
@@ -27,7 +27,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -541,6 +541,16 @@ Reason: correct test-phase ownership of existing native pause probes; preserve a
 2. Under child TASK-33664.1, add a failing focused census regression; capture the wall-clock native pause probe with the existing GC drain pattern, and bill the real probe at the existing 1 Hz / 0.25 s credential cadence. Keep original eight credential ticks, keystrokes, counters, canaries, platform pins and all ceilings/slack. Test in-flight drainage, real return/cost preservation and an extra-I/O negative control. Run only affected targeted cases in private profiles; never replay the original five-budget launcher.
 3. After old CI has settled, integrate required dev76d5d157aa6a628584ead573976c9adee72f5412 once by preserving rebase. Retain all prior and incoming source/history/deletions. Resolve actual conflicts only with whole-source comparison and both additions retained. Validate affected compositions and targeted changed behavior; no wider/physical/provider/resource certificate.
 4. Complete scoped static checks and independent immutable diff/evidence review before closing AC3 via CLI; keep AC4 checked and all historical NON-GREEN/FD/optional/wider limitations. Publish one substantive repair/integration with exact observed remote-head lease. Require current-head Qodo/resolved conversations/all four gates including all three UI shards, live strict/admin protection and qualified actual concurrency before protected merge. Verify actual merged parents/tree before completion.
+
+October 6 final-head UI teardown correction:
+ADR required: no
+ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; existing Console fixture ownership incident in backlog/docs/lessons-testing-evidence.md.
+Reason: correct only the test helper's premature resource deletion; production shutdown, privacy, storage and deadlines remain unchanged.
+1. Preserve final-head UI3 job112394882798 raw failure and all prior positive/non-green evidence. Auto-merge is disabled; do not retry the job or repeat budgets.
+2. Exercise a real delayed SQLite write after the prepared-close helper returns but before the captured constructor fixture retires. Record RED before helper changes.
+3. Reuse pytest's private tmp_path lifetime and the existing owned_console_apps runtime/database drain; remove the helper's competing temporary-directory and connection cleanup.
+4. Verify the delayed-write regression and actual failed mounted pending/race/fleet group once on corrected source. Compare only affected static findings, preserve unchanged application/performance/CSS sources and historical records, and obtain immutable independent review.
+5. Publish one necessary source update after the current CI cycle settles; require fresh protected checks, all three UI shards, live protection/current concurrency and the established current-review condition before normal head-matched merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
