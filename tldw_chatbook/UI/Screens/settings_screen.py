@@ -15045,7 +15045,7 @@ class SettingsScreen(BaseAppScreen):
         model: str,
         values: Mapping[str, object],
         *,
-        dirty_keys: Collection[str] = frozenset(),
+        dirty_keys: Collection[str],
     ) -> dict[str, object]:
         """Return the provider's ``model_defaults`` with this model's rows saved.
 
@@ -15053,7 +15053,9 @@ class SettingsScreen(BaseAppScreen):
             provider: The provider being saved.
             model: The model whose profile the rows edit.
             values: The rows' values, keyed by draft key (``""`` = blank).
-            dirty_keys: Draft keys the user changed. A row the user did not
+            dirty_keys: Draft keys the user changed. Required: an empty set
+                would keep every blank row, so a cleared row or Inherit
+                would never delete its override. A row the user did not
                 touch keeps its saved value exactly (``streaming = "0"``, a
                 choice with no option, a ``top_k = 2.5`` a new chat ignores);
                 a blank the user chose deletes it.

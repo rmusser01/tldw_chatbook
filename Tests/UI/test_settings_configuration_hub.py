@@ -4717,6 +4717,8 @@ def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched():
 
     The Settings writer used to pop every unsupported field from the saved
     profile; it now leaves the fields the request drops exactly as saved.
+    Every row is passed as dirty, so a blank hidden row would be deleted
+    and only the support guard keeps it.
     """
     from tldw_chatbook.UI.Screens.settings_screen import (
         PROVIDER_MODEL_PROFILE_FIELD_KEYS,
@@ -4739,7 +4741,10 @@ def test_settings_model_default_save_leaves_values_for_hidden_rows_untouched():
     values["model_profile_temperature"] = 0.3
 
     updated = screen._updated_model_defaults_for_values(
-        "anthropic", "claude-sonnet-4-5", values
+        "anthropic",
+        "claude-sonnet-4-5",
+        values,
+        dirty_keys=set(PROVIDER_MODEL_PROFILE_FIELD_KEYS),
     )
 
     assert updated == {
