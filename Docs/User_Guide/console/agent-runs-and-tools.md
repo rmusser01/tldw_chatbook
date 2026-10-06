@@ -53,10 +53,24 @@ To turn more on:
   surface for that turn.
 
 Each send reads these switches fresh, so a change applies on the next send.
+The exception is a conversation whose sub-agents are still running, or have
+sent reports nobody has read yet: it keeps the full agent surface until that
+work is picked up, so switching Full agent tools off mid-run never leaves the
+reply that collects the results unable to read or reach its sub-agents.
 A small local model whose context window cannot hold even the light set (a
 server the app has not sized yet is planned as 4,096 tokens) gets a plain
-request with no tools. The context breakdown's **Tool schemas** row counts
-the tools the next send carries.
+request with no tools.
+
+The tools a send carries count toward the context meter: the status strip's
+**Context N%**, the model tab's **Request estimate**, and **Next request** and
+**Request overhead** under **Chat settings** (**Ctrl+O**) ▸ **Context and
+memory**, which names the tool share — for example "Request overhead 499
+tokens (tool schemas 489)". The figure comes from the last request the app
+prepared for the conversation, with its tools planned for that request's
+model and window — a model with a small window counts the smaller set it
+gets, or none. With Full agent tools on, the meter learns the local, MCP and
+skill tools a conversation composes from its first full send; the send
+itself is sized correctly either way.
 
 ## Getting there
 

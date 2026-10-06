@@ -150,10 +150,11 @@ Plain Console chat starts with a **light tool set**: date and time,
 calculator, and ask-you-a-question (the last one follows its own
 `[tools] ask_user_enabled` switch). It offers no sub-agents, skills, web
 search, Watchlists, workspace-file, character or other autonomous or costly
-tools until you turn them on. The Tools step says so up front — "Always
-available in chat: date and time, calculator and ask you a question.
-Everything below is off until you switch it on; tools that read or change
-your files ask before they run." — and is the place in setup to turn more on:
+tools until you turn them on. The Tools step says so up front — "Chat starts
+with date and time, calculator and ask you a question; a model with a small
+or not-yet-known context window gets no tools. Everything below is off until
+you switch it on; tools that read or change your files ask before they run."
+— and is the place in setup to turn more on:
 
 - **Full agent tools** (`[tools] full_agent_tools_enabled`, off by default)
   gives chat the whole agent surface: sub-agents, skills, web search and
@@ -170,13 +171,19 @@ your files ask before they run." — and is the place in setup to turn more on:
 
 The Summary's **Tools** row then names exactly what chat is offered. With
 nothing switched on it reads "on: date and time, calculator and ask you a
-question. Sub-agents, skills, web, Watchlists, workspace files and
-characters stay off until you turn on Full agent tools under Settings ▸
-Tools & MCP ▸ Servers ▸ built-in row ▸ Tool gates"; with tools switched on it
-lists them, and with Full agent tools on it names the agent groups. The same
-switches live there after setup (**Ctrl+9** opens Settings ▸ Tools & MCP). Tools from an MCP server you add yourself, and Library tools in
-a conversation that allows assistant Library access, are offered in plain
-chat too. A message that names a skill (`$skill`) gets the full agent surface
+question, plus tools from MCP servers you add and Library tools in chats you
+allow. Sub-agents, skills, web, Watchlists, workspace files and characters
+stay off until you turn on Full agent tools under Settings ▸ Tools & MCP ▸
+Servers ▸ built-in row ▸ Tool gates. A model with a small or not-yet-known
+context window gets no tools." With tools switched on it lists them (with Deep
+web research on, the off list says "web search and fetch" rather than "web"),
+and with Full agent tools on it names the agent groups. The same switches live
+there after setup (**Ctrl+9** opens Settings ▸ Tools & MCP); a switch flipped
+there shows the same way if you re-run setup in the same session. Tools from
+an MCP server you add yourself, and Library tools in a conversation that
+allows assistant Library access, are offered in plain chat too; a plugin's own
+MCP tools come with its skills and stay off with them. A message that names a
+skill (`$skill`) gets the full agent surface
 for that turn, since you asked for the skill. The app's internal
 `chat_with_llm` tool, which the in-process server cannot run, is never
 offered. A small local model whose context window cannot hold the light set
