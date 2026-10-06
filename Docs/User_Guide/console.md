@@ -1294,9 +1294,9 @@ covers the later re-sync that **Custom ID** plus a keystroke triggers
 `Tests/UI/test_console_model_popover_no_provider.py`). This carries no "Verified
 against" stamp on purpose: no profile that can be driven live reaches the broken
 state. With no provider configured, **Alt+M** is refused by the setup gate
-("Typing is locked until setup finishes — press Enter to continue setup"); with
-one configured, the draft always names a provider the picker lists. The evidence
-is the three headless pins, not a capture.
+("Typing is locked until setup finishes — press Enter to use the highlighted
+action"); with one configured, the draft always names a provider the picker
+lists. The evidence is the three headless pins, not a capture.
 
 *Verified against fix/library-notes-w4-docs — 2026-09-14 (task-32558, the
 wave-4 guide sweep). The Get started card's body said "Both actions" while
