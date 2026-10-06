@@ -2006,6 +2006,17 @@ which keeps the table), and the new test feeds the step the in-memory shape the
 real app has: decrypted key, no `[encryption]`. If a section is deliberately not
 copied, a reader of it must not use `app_config` at all.
 
+**TASK-34100.4 review round 1, 2026-10-06: the file read-back has its own trap.**
+Round 1 made Protect walk that read-back for every secret encryption would
+encrypt (`is_sensitive_config_key`: any `*_key`, `*_token`, ...), and tested it
+on hand-built dicts plus one real `config.toml` -- a FRESH one. Live, mid-setup,
+the file also holds the wizard's own checkpoint, and `[first_run.draft_values.
+provider] provider_key = "llama_cpp"` matches the `_key` suffix: a keyless user
+was offered encryption for "1 secret (first_run.draft_values.provider.
+provider_key)". A whole-file walk must be tested against the file as it is at
+the moment the code runs (after the flow has written its own state), not only
+against a fresh template.
+
 ## Tests/UI `RecoveryRequired` at setup is a profile-selection trip, not a broken test
 
 **TASK-32954, 2026-09-25.** Task 5's `Tests/UI/test_personas_character_changed.py`

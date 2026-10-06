@@ -152,6 +152,11 @@ def _display_name(provider_key: str) -> str:
     return re.sub(r"\s*\(legacy [^)]*\)\s*$", "", name) or provider_key
 
 
+#: Top-level tables that hold no user secret: the encryption metadata and
+#: setup's own checkpoint (its draft values are allowlisted non-secrets).
+_NEVER_SECRET_TABLES = frozenset({"encryption", "first_run"})
+
+
 def plaintext_secret_paths(config: Mapping[str, object]) -> tuple[tuple[str, ...], ...]:
     """Config paths of the real secrets that encrypting would encrypt.
 
@@ -161,7 +166,10 @@ def plaintext_secret_paths(config: Mapping[str, object]) -> tuple[tuple[str, ...
     On top of that, a template value is never the user's secret: one equal to
     the shipped default at the same path (the merged read-back always carries
     ``YOUR_OPENAI_API_KEY…`` and the tldw_api placeholder token), a known
-    provider-key placeholder, or the tldw_api placeholder token.
+    provider-key placeholder, or the tldw_api placeholder token. Nor is
+    anything in setup's own ``[first_run]`` checkpoint, which never holds a
+    credential: its ``provider_key = "llama_cpp"`` matches the ``_key``
+    suffix, and a keyless user was offered encryption for it (seen live).
 
     Args:
         config: The merged config read back from config.toml.
@@ -180,7 +188,7 @@ def plaintext_secret_paths(config: Mapping[str, object]) -> tuple[tuple[str, ...
 
     def _walk(table: Mapping, defaults: object, prefix: tuple[str, ...]) -> None:
         for key, value in table.items():
-            if not prefix and key == "encryption":
+            if not prefix and key in _NEVER_SECRET_TABLES:
                 continue
             default = defaults.get(key) if isinstance(defaults, Mapping) else None
             if isinstance(value, Mapping):
