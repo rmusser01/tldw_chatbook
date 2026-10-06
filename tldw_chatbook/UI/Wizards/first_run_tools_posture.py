@@ -131,7 +131,13 @@ def also_available_line(posture: ToolsPosture) -> str:
             "Web search, Watchlists, character and question tools are switched "
             f"off. Turn them on under {TOOL_GATES_PANE_PATH}."
         )
-    return f"Also available (asks first): {_join(posture.also_available)}."
+    # Live (TASK-34100.13): a model whose context window is unknown -- a
+    # fresh local server -- gets a plain request with no tools at all
+    # (TASK-34100.5), so the line says when these are offered.
+    return (
+        f"Also available (asks first) when the model's context window has room: "
+        f"{_join(posture.also_available)}."
+    )
 
 
 def tools_summary_detail(posture: ToolsPosture) -> str:
@@ -143,7 +149,10 @@ def tools_summary_detail(posture: ToolsPosture) -> str:
         switches = "file, note and document switches off"
     parts = [switches]
     if posture.also_available:
-        parts.append(f"also available, asks first: {_join(posture.also_available)}")
+        parts.append(
+            "also available, asks first, when the context window has room: "
+            f"{_join(posture.also_available)}"
+        )
     parts.append(AGENT_RUNTIME_TOOLS_NOTE)
     return " · ".join(parts) + f". Change them under {TOOL_GATES_PANE_PATH}"
 
@@ -154,7 +163,10 @@ def quick_defaults_note(posture: ToolsPosture, *, auto_retrieve: bool) -> str:
     if posture.switched_on:
         tools = f"{len(posture.switched_on)} file, note and document switches on"
     if posture.also_available:
-        tools += f" ({_join(posture.also_available)} available, asking first)"
+        tools += (
+            f" ({_join(posture.also_available)} available when the context "
+            "window has room, asking first)"
+        )
     search = (
         "Library searched on every message"
         if auto_retrieve
