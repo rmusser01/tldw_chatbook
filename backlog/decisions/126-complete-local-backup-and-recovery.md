@@ -2363,3 +2363,31 @@ error priority, repeated cancellation and timing limits remain mandatory.
 Explicit captured work references last until actual retirement; disposal
 refuses late publication. This refines existing ADR-085 view/App ownership and
 ADR-126 finite custody; no permission cache or new storage authority is added.
+
+### TASK-34406: default prompt-history selection starts in its actual worker
+
+Constructing the app-shared default PromptHistory is IO-free. An omitted path
+means unresolved default selection; an explicitly supplied path and the app's
+custom synchronous history factory retain their preceding APIs. The actual
+history callback resolves the default once while the existing load/append lock
+owns the sink, then retains that lexical source.path. It never follows a later
+profile retarget. Every subsequent job still performs the fresh original raw
+source-selection and native checks, and a default source whose fixed path no
+longer qualifies as the current default refuses rather than demoting to custom.
+
+Only the exact default-history instance defers the FileJob selection handshake.
+Its creator still owns the original pending acquisition, creator pid/thread/task
+identity, one-shot dispatch state and loop result bookkeeping. Pending registration
+grants no IO authority. The actual worker resolves and qualifies the source and
+checks its installed closed gate before the unchanged unbound history body and
+fresh raw scope. Explicit-path/custom histories, note templates and sidebar state
+retain their preceding creator-time selection and refusal timing.
+
+Queued cancellation prevents all source entry, including the deferred resolver.
+Running and repeatedly cancelled jobs retain the actual callback through default
+resolution, source IO, native retirement and loop bookkeeping. A fixed path or the
+private dispatch flag grants no permission and supplies no cached witness. Raw
+profile, parent identity, source demotion, pause and foreign-owner checks remain
+fresh. Capture inventory continues to derive the prompt-history leaf from the
+selected profile; an unstarted sink has no registered raw participant. Original
+startup and Send budgets remain unchanged and require separate native receipts.

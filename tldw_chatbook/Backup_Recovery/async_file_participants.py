@@ -33,7 +33,17 @@ class _FileJob:
     def __init__(self, source, route):
         self._attempt = storage._Acquisition()
         try:
-            self.selected, installed = raw._async_source_selection(source, route)
+            self._deferred_history = False
+            if route == "prompt_history":
+                from ..Chat.prompt_history import PromptHistory
+
+                self._deferred_history = (
+                    type(source) is PromptHistory and source._default_path
+                )
+            if self._deferred_history:
+                self.selected, installed = None, False
+            else:
+                self.selected, installed = raw._async_source_selection(source, route)
             self._attempt.check()
             if installed and raw._pinned_io_available():
                 participant = raw._raw_participant(source)
@@ -105,6 +115,17 @@ class _FileJob:
             if self._route == "prompt_history":
                 from ..Chat.prompt_history import PromptHistory
 
+                if self._deferred_history:
+                    PromptHistory._resolve_default_path(self._source)
+                    self.selected, installed = raw._async_source_selection(
+                        self._source, self._route
+                    )
+                    if not installed:
+                        raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+                    if raw._pinned_io_available():
+                        participant = raw._raw_participant(self._source)
+                        if raw._participant_state(participant).closed:
+                            raise bootstrap.RecoveryRequired("storage_locally_paused")
                 value = PromptHistory._history_io(self._source, self.selected, payload)
             elif self._route == "note_templates":
                 from ..Event_Handlers.note_ingest_events import _import_template_files

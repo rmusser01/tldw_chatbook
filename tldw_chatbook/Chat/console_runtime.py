@@ -1930,12 +1930,9 @@ class ConsoleRuntime:
             if callable(factory):
                 self._prompt_history = factory()
             else:
-                from tldw_chatbook.Chat.prompt_history import (
-                    PromptHistory,
-                    default_prompt_history_path,
-                )
+                from tldw_chatbook.Chat.prompt_history import PromptHistory
 
-                self._prompt_history = PromptHistory(default_prompt_history_path())
+                self._prompt_history = PromptHistory()
         return self._prompt_history
 
     async def _select_project_instruction_binding(
