@@ -1,6 +1,8 @@
 """Exact resources declared by the isolated prepared-Close fixture."""
 
 import asyncio
+import json
+import sqlite3
 from contextlib import nullcontext
 from pathlib import Path
 import threading
@@ -147,6 +149,110 @@ class PreparedCloseOwnedResources:
                 )
             )
 
+        def thread_facts(thread):
+            # Original stdlib Thread fields only; opaque/custom owners stay unknown.
+            stock = type(thread) in {
+                threading.Thread,
+                threading._MainThread,
+                threading._DummyThread,
+            }
+            values = vars(thread) if stock else {}
+            return {
+                "object_id": None if thread is None else id(thread),
+                "stock_thread": stock,
+                "ident": values.get("_ident") if stock else None,
+                "native_id": values.get("_native_id") if stock else None,
+                "creator_same": thread is self.creator,
+                "current_same": thread is threading.current_thread(),
+            }
+
+        def census(participant, expected_path, *, detailed=False):
+            # Caller already holds the original storage lock. Pre-close is scalar;
+            # native descriptors are examined only after the original helper fails.
+            path_leases = tuple(
+                lease
+                for lease in storage._live_leases
+                if lease.resource_path == expected_path
+            )
+            facts = {
+                "participant_closed": participant.closed,
+                "pause_present": storage._pause is not None,
+                "connection_count": len(participant.connections),
+                "retiring_thread_count": len(participant.retiring_threads),
+                "operation_count": sum(
+                    operation.participant is participant
+                    for operation in storage._operations
+                ),
+                "pending_count": sum(
+                    getattr(attempt.operation, "participant", None) is participant
+                    for attempt in storage._pending_acquisitions
+                ),
+                "path_lease_count": len(path_leases),
+            }
+            if detailed:
+                rows = []
+                for connection, lease in tuple(participant.connections.items())[:16]:
+                    # The base C descriptor bypasses every subclass/opaque getter.
+                    # Non-SQLite proxies are explicitly unknown, never probed.
+                    native = isinstance(connection, sqlite3.Connection)
+                    status, transaction = "unknown", None
+                    if native:
+                        try:
+                            transaction = sqlite3.Connection.in_transaction.__get__(
+                                connection
+                            )
+                        except sqlite3.ProgrammingError as error:
+                            status = (
+                                "closed"
+                                if "closed" in str(error).lower()
+                                else "unknown"
+                            )
+                        except Exception:
+                            status = "unknown"
+                        else:
+                            status = "open"
+                    rows.append(
+                        {
+                            "connection_id": id(connection),
+                            "lease_id": None if lease is None else id(lease),
+                            "lease_live": lease in storage._live_leases,
+                            "native_SQLite_descriptor": native,
+                            "native_status": status,
+                            "in_transaction": transaction,
+                            "resource_thread": thread_facts(
+                                lease.resource_thread
+                                if type(lease) is storage.StorageLease
+                                else None
+                            ),
+                        }
+                    )
+                facts.update(
+                    cached_connections=rows,
+                    cached_connection_rows_truncated=len(participant.connections) > 16,
+                    retiring_threads=[
+                        thread_facts(thread)
+                        for thread in tuple(participant.retiring_threads)[:16]
+                    ],
+                    path_leases=[
+                        {
+                            "lease_id": id(lease),
+                            "registered_connection_ids": [
+                                id(connection)
+                                for connection, registered in participant.connections.items()
+                                if registered is lease
+                            ][:16],
+                            "resource_thread": thread_facts(
+                                lease.resource_thread
+                                if type(lease) is storage.StorageLease
+                                else None
+                            ),
+                        }
+                        for lease in path_leases[:16]
+                    ],
+                    path_lease_rows_truncated=len(path_leases) > 16,
+                )
+            return facts
+
         participants = []
         for database, expected_type, expected_path in self.declarations:
             if (
@@ -161,9 +267,38 @@ class PreparedCloseOwnedResources:
                 already_retired = participant.closed and settled(
                     participant, expected_path
                 )
+                try:
+                    pre_close = census(participant, expected_path)
+                except Exception:
+                    pre_close = (
+                        None  # Optional metadata must not prevent the original close.
+                    )
             if already_retired:
                 continue
             if not _close_settled_core_cache(database):
+                # Failure-only evidence; neither census nor print grants retirement.
+                try:
+                    with storage._lock:
+                        post_close = census(participant, expected_path, detailed=True)
+                    print(
+                        json.dumps(
+                            {
+                                "diagnostic_only": True,
+                                "stage": "prepared_close_original_helper_false",
+                                "declared_index": len(participants) - 1,
+                                "declared_type": expected_type.__name__,
+                                "private_path_leaf": expected_path.name,
+                                "database_id": id(database),
+                                "participant_id": id(participant),
+                                "pre_close": pre_close,
+                                "post_close": post_close,
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                except Exception:
+                    # Optional facts must not replace the original negative oracle.
+                    pass
                 raise RuntimeError("prepared_close_database_not_retired")
             with storage._lock:
                 participant.close_admission()
