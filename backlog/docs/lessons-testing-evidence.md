@@ -1,5 +1,27 @@
 # Lessons: what counts as evidence a change works
 
+## A loguru sink added before the app mounts is gone by the time you read it (TASK-33628.5, 2026-10-05)
+
+**Incident.** The quit-mid-delete test added a loguru WARNING sink, ran the
+real app, and then asserted that no "shutdown failed at dispose" warning had
+been logged. It passed on the branch only because the shared test profile still
+had the splash enabled. Without a splash, `TldwCli.on_mount` sets logging up at
+once (`configure_application_logging`), and that calls `logger.remove()`,
+which deletes every sink. dev had just changed the shared Console readiness
+helper to save `splash_screen.enabled = false`, so on a merge with dev the
+sink was dead before the delete started. The "no such warning" checks then
+read an empty list. The only thing that failed was the `finally`, with
+`ValueError: There is no existing handler with id N`. Had that cleanup been
+wrapped in `suppress(ValueError)`, the test would have passed without checking
+anything.
+
+**What to do.** In a test that runs the real app, add a log sink only after the
+app has mounted. Before reading what the sink caught, log a unique probe
+through it and assert the probe arrived. A sink the app removed then fails
+loudly, instead of making every absence check pass on nothing. Mutation-check
+this: moving the attach back before `run_test` must fail on the probe
+(`Tests/UI/test_console_message_delete_quit.py`, `_WarningSink`).
+
 ## The function a review timed is not what the user waits for (TASK-33628.5, 2026-10-04)
 
 **Incident.** The task said Console Delete blocks the UI because the subtree
