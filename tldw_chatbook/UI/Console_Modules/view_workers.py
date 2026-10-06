@@ -12,6 +12,7 @@ _GROUPS = frozenset(
         "console-resume-navigation-startup",
         "console-resume-navigation-dispatch",
         "console-character-context-refresh",
+        "console-annotation-previews",
     }
 )
 _CANCEL, _WAIT = Worker.cancel, Worker.wait

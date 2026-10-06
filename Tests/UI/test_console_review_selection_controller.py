@@ -16,6 +16,10 @@ from tldw_chatbook.UI.Console_Modules.review_selection import (
 from tldw_chatbook.Widgets.Console.console_selection import SELECTION_QUOTE_CAP
 
 
+# Imported source-bound consumers use the collection-time admitted profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 class _EventLoopOnlyMap(dict[str, tuple[str, ...]]):
     """Reject mutation from any thread except the creating event-loop thread."""
 
