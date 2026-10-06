@@ -502,6 +502,47 @@ async def test_provider_control_names_the_choice_never_the_typed_filter(request)
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_choosing_the_held_provider_by_its_exact_name_selects_it(request):
+    """TASK-33007.9 (review round 4): Enter on the held provider's exact
+    name rewrites nothing, yet the name is still selected, so the next key
+    filters afresh instead of making "Anthropicx"."""
+    host = _anthropic_host()
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        control = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        await _type_filter(pilot, screen, "Anthropic")
+        await pilot.press("enter")
+        await _until(pilot, lambda: not picker.display)
+        assert _held(screen) == "anthropic"
+        await pilot.press("x")
+        await _until(pilot, lambda: control.value == "x")
+        assert control.value == "x"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_provider_name_typed_exactly_is_the_one_chosen(request):
+    """TASK-33007.9 (review round 4): Enter on "OpenAI" chooses OpenAI, not
+    "Azure OpenAI", which the list shows above it."""
+    host = _anthropic_host()
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        control = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        await _type_filter(pilot, screen, "OpenAI")
+        await pilot.press("enter")
+        await _until(pilot, lambda: _held(screen) != "anthropic" and not picker.display)
+        assert _held(screen) == "openai"
+        assert control.value == "OpenAI"
+
+
+@pytest.mark.asyncio
+@private_profile_test
 @pytest.mark.parametrize("revert_with", ["r", "button"])
 async def test_discard_changes_shows_the_saved_provider_and_no_filtered_list(
     request, revert_with

@@ -735,9 +735,11 @@ class ModelSearchPicker(Widget):
         if not input_widget.has_focus:
             self._rest_at_head(input_widget)
         else:
-            # Every focused caller is a choice, an Esc or a mode switch: the
-            # next key replaces the id, even when Enter chose exactly the text
-            # typed, not lands at the filter's caret (TASK-33007.9).
+            # Every focused caller puts a committed value back (a choice, Esc,
+            # a mode switch, a provider re-scope or a host sync), so the next
+            # key replaces it, even when Enter chose exactly the text typed,
+            # not lands at the filter's caret (TASK-33007.9). A new caller
+            # that sets an uncommitted value under focus is selected too.
             input_widget.select_all()
 
     @staticmethod
