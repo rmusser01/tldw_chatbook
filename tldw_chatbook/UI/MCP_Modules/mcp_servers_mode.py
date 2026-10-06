@@ -1345,6 +1345,35 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if widgets:
             await container.mount_all(widgets)
 
+    @staticmethod
+    def mirror_saved_tool_gate(
+        app: Any, section: str, key: str, value: bool, *, saved: bool
+    ) -> None:
+        """After a gate write, keep the app's in-memory config in step.
+
+        TASK-34100.5.3 review round 1 (B-F5): the write reached config.toml
+        but not ``app.app_config``, which setup's Tools step prefills from,
+        so re-running setup in the same session showed a gate switched on
+        here as OFF while its Summary (persisted config) said ON. A write
+        that did not land changes nothing and says so, as before.
+
+        Args:
+            app: The running app (its ``app_config`` dict, when it has one).
+            section: The gate's config section (``tools``/``console``).
+            key: The gate key written.
+            value: The value written.
+            saved: Whether the write landed.
+        """
+        if not saved:
+            app.notify(f"Failed to save {key}.", severity="error")
+            return
+        config = getattr(app, "app_config", None)
+        if isinstance(config, dict):
+            current = config.get(section)
+            if not isinstance(current, dict):
+                current = config[section] = {}
+            current[key] = value
+
     def _gate_button(self, gate: ToolGate, *, disabled: bool = False) -> Button:
         """Build one gate's toggle Button.
 
@@ -1475,11 +1504,18 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         if agent_gates:
             from tldw_chatbook.Agents.plain_chat_tool_surface import (
                 light_surface_note,
+                summarize_tool_surface,
             )
 
+            # Review round 1 (F4/B-F3): the line is read off the switches
+            # this pane shows, so it names only the light tools that are on.
+            shown = {
+                section: {g.key: g.enabled for g in gates if g.section == section}
+                for section in ("tools", "console")
+            }
             widgets.append(
                 Static(
-                    light_surface_note(),
+                    light_surface_note(summarize_tool_surface(shown)),
                     id="mcp-gate-heading-agent",
                     classes="ds-field-row",
                     markup=False,
