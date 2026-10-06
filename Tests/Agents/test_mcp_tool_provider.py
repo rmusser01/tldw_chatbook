@@ -2098,7 +2098,9 @@ def _console_exclusion_set() -> frozenset:
 
 
 def _mixed_library_inventory() -> dict:
-    names = sorted(_console_exclusion_set()) + ["chat_with_llm"]
+    # The unrelated built-in sample must be one the direct runtime can run:
+    # ``chat_with_llm`` is never offered at all (TASK-34100.5).
+    names = sorted(_console_exclusion_set()) + ["chat_with_character"]
     return {"tools": [_tool_dict(name, f"{name} description") for name in names]}
 
 
@@ -2113,7 +2115,7 @@ def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
     names = {entry.name for entry in provider.list_catalog()}
     assert "mcp__tldw_chatbook__library_list_media" in names
     assert "mcp__tldw_chatbook__search_rag" in names
-    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert "mcp__tldw_chatbook__chat_with_character" in names
     assert names == {
         f"mcp__tldw_chatbook__{tool['name']}"
         for tool in service.inventory["tools"]
@@ -2149,7 +2151,7 @@ def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
     names = {entry.name for entry in provider.list_catalog()}
     for raw_name in exclusions:
         assert f"mcp__tldw_chatbook__{raw_name}" not in names
-    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert "mcp__tldw_chatbook__chat_with_character" in names
     # Same raw names on a LOCAL profile are a different tool entirely.
     assert "mcp__docs__library_list_media" in names
     assert "mcp__docs__search_rag" in names
@@ -2206,13 +2208,13 @@ def test_compose_catalog_exclusion_set_stored_immutably():
         main_loop=asyncio.new_event_loop(),
         builtin_raw_name_exclusions=mutable,
     )
-    mutable.add("chat_with_llm")
+    mutable.add("chat_with_character")
 
     _compose(provider)
 
     names = {entry.name for entry in provider.list_catalog()}
     assert "mcp__tldw_chatbook__library_list_media" not in names
-    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert "mcp__tldw_chatbook__chat_with_character" in names
 
 
 # ---------------------------------------------------------------------------

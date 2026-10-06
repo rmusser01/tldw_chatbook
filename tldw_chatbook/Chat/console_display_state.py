@@ -707,9 +707,11 @@ class ConsoleLibraryPolicyDisplayState:
             chip_label = "Library: blocked · policy unavailable"
             source_status = "Unavailable — using Never and Blocked"
         else:
+            # TASK-34100.5 AC#9: say what is off (the agent's Library access),
+            # not "blocked" -- the normal default read as an error on arrival.
             chip_label = (
                 f"Library · Auto {'on' if automatic else 'off'} · "
-                f"Agent {'allowed' if allowed else 'blocked'}"
+                f"Agent access {'on' if allowed else 'off'}"
             )
             source_status = {
                 "durable": "Saved on this device · not synced",

@@ -1893,8 +1893,8 @@ class ChatScreen(BaseAppScreen):
     # directly over the Console composer's Send/Attach/Save cluster and the
     # staged-chip strip — and toasts intercept clicks, so a click aimed at those
     # controls during a ~5s toast dismisses the toast instead of pressing the
-    # button. Dock the Console screen's toast rack to the TOP-right so feedback
-    # never obscures, or swallows clicks aimed at, the composer's controls.
+    # button. Dock the Console toast rack TOP-right, below the nav, header and
+    # control rows and the tab strip (8 cells, TASK-34100.5), clear of composer.
     # Kept in BUNDLED_CSS (not the CSS_PATH bundle) so it applies in both the
     # real app and ConsolidatedCSSApp-based test harnesses, which load the
     # generated widget-defaults sheet but not necessarily the full CSS_PATH
@@ -1903,7 +1903,7 @@ class ChatScreen(BaseAppScreen):
     ChatScreen ToastRack {
         dock: top;
         align: right top;
-        margin-top: 1;
+        margin-top: 8;
         margin-bottom: 0;
     }
     """
@@ -15009,11 +15009,11 @@ class ChatScreen(BaseAppScreen):
             if settings_readiness is None
             else settings_readiness
         )
-        has_model = _has_selected_text(getattr(settings, "model", None))
+        model = getattr(settings, "model", None)
         return build_console_setup_card_state(
             readiness=readiness,
             provider_label=readiness.provider_display_name or "Provider",
-            has_model=has_model,
+            has_model=_has_selected_text(model), model=str(model or ""),
             first_send_completed=self._console_first_send_completed(),
             has_messages=self._message._active_console_transcript_has_messages(),
             guidance_dismissed=self._console_guidance_dismissed,

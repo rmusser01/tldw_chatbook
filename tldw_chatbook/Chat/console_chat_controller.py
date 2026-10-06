@@ -13573,19 +13573,12 @@ class ConsoleChatController:
             }
             else ConsoleDispatchRecoveryActionId.RETRY_RESPONSE
         )
-        claimed = self.store.claim_dispatch_recovery_action(session_id, action_id)
+        from tldw_chatbook.Chat.console_predispatch_block import claim_offered_action
+
+        # TASK-34100.5 review (F13): claim only what the presented card offers.
+        claimed, refusal = claim_offered_action(self.store, session_id, recovery, action_id)
         if claimed is None:
-            action = next(
-                (item for item in recovery.actions if item.action_id is action_id),
-                None,
-            )
-            return ConsoleSubmitResult(
-                False,
-                False,
-                action.disabled_reason
-                if action is not None and action.disabled_reason
-                else "That response recovery action is unavailable.",
-            )
+            return ConsoleSubmitResult(False, False, refusal)
         retry_attempt_id: str | None = None
         generation_token: int | None = None
         try:
@@ -24239,8 +24232,12 @@ class ConsoleChatController:
         assistant_message_id: str,
         visible_copy: str,
     ) -> ConsoleSubmitResult:
+        from tldw_chatbook.Chat import console_predispatch_block as predispatch
+
         # TASK-33621.3: copy first; a durable accepted turn fails closed below.
-        self._append_failure_system_row(session_id, visible_copy)
+        predispatch.note_if_overflow_alert(assistant_message_id, visible_copy)
+        if not predispatch.is_repeat_of_last_row(self.store, session_id, visible_copy):
+            self._append_failure_system_row(session_id, visible_copy)
         self._set_run_state(
             ConsoleRunState.blocked(visible_copy), session_id=session_id
         )
@@ -24261,9 +24258,11 @@ class ConsoleChatController:
         resolution: ConsoleProviderResolution,
     ) -> str | None:
         """Forward to the documented compaction preflight implementation."""
-        return self._compaction_preflight._context_overflow_alert(
+        from tldw_chatbook.Chat.console_predispatch_block import remember_overflow_alert
+
+        return remember_overflow_alert(self._compaction_preflight._context_overflow_alert(
             decision, resolved, capacity, prepared_before, resolution
-        )
+        ))
 
     def _assess_request_capacity_only(
         self,
@@ -28015,7 +28014,7 @@ class ConsoleChatController:
             return (
                 f"Agent run stuck: {reason or 'budget or loop limit reached'}.{suffix}"
             )
-        return f"Agent run failed: {reason or outcome.status}."
+        return f"Agent run failed: {(reason or outcome.status).rstrip('.')}."
 
     @staticmethod
     def _without_duplicated_summary(

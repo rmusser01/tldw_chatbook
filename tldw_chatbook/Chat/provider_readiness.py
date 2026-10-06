@@ -146,6 +146,24 @@ KEYLESS_PROVIDER_KEYS = frozenset(
 )
 KNOWN_PROVIDER_KEYS = PROVIDERS_REQUIRING_API_KEY_KEYS | KEYLESS_PROVIDER_KEYS
 
+
+def is_self_hosted_provider(provider: str | None) -> bool:
+    """Whether ``provider`` names a self-hosted endpoint (TASK-34100.5).
+
+    A keyless provider, or any custom endpoint (``custom``, ``custom_2``,
+    the ``custom-openai-api`` handler keys, the ``custom-hosted`` engine key
+    and a registry ``custom-ep:<slug>`` selection). The app cannot know such
+    a server's context window or how long its first token takes.
+
+    Args:
+        provider: A provider, execution or selection key.
+
+    Returns:
+        True for a self-hosted endpoint.
+    """
+    key = provider_config_key(provider)
+    return key in KEYLESS_PROVIDER_KEYS or key.startswith("custom")
+
 _DEFAULT_API_KEY_ENV_VAR_ALIASES = {
     # Registry parity (ADR-179): Databricks's conventional token env var is
     # DATABRICKS_TOKEN, not the DATABRICKS_API_KEY convention the generic

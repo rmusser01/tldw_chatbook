@@ -489,7 +489,7 @@ def test_triage_header_line_formats():
         _items_input(model_ready=False, runtime_source="server", server_label="lab"),
         now=_NOW,
     )
-    assert blocked.header_line == "Home | Blocked \u00b7 Server: lab"
+    assert blocked.header_line == "Home | Not set up \u00b7 Server: lab"
 
 
 def test_triage_default_selection_prefers_attention_and_builds_canvas():

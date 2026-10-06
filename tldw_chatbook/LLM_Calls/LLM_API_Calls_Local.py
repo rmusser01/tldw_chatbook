@@ -287,6 +287,9 @@ def _chat_with_openai_compatible_local_server(
         # Configure retries
         retry_strategy = Retry(
             total=llm_retry_count(api_retries),
+            # TASK-34100.5 review (B-F1): a read timeout means the server is
+            # still working on this prompt; re-sending makes it start over.
+            read=0,
             backoff_factor=api_retry_delay,
             status_forcelist=[
                 429,
@@ -297,6 +300,12 @@ def _chat_with_openai_compatible_local_server(
             ],  # Retry on these HTTP status codes
             allowed_methods=["POST"],  # Important: Retry POST requests
         )
+        from tldw_chatbook.Chat.stream_stall_watchdog import (
+            self_hosted_read_timeout,
+        )
+
+        # The first-token watchdog, not this read timeout, ends a cold wait.
+        timeout = self_hosted_read_timeout(timeout)
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("http://", adapter)
         session.mount("https://", adapter)

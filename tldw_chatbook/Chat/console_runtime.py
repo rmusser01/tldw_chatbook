@@ -1467,12 +1467,69 @@ class ConsoleRuntime:
                 return None
             offset += len(rows)
 
+    def _receipt_is_on_screen(self, conversation_id: str) -> bool:
+        """Whether the receipt's conversation is the tab the user is looking at.
+
+        TASK-34100.5 AC#8 / task-33620.6: "hidden" is decided when the turn
+        completes -- Console is the current screen AND the receipt's
+        conversation is its active tab. The attached view acknowledges the
+        receipt once it renders the row; until then it is not "hidden".
+        Review round 2 (V2-F1): a modal over Console (Alt+M's picker, a
+        rename dialog, the command palette) leaves Console on screen.
+        """
+        if not conversation_id or not self._console_is_on_screen():
+            return False
+        store = self._chat_store
+        active_id = getattr(store, "active_session_id", None)
+        if not active_id:
+            return False
+        try:
+            sessions = tuple(store.sessions())
+        except Exception:  # noqa: BLE001 -- unknown visibility stays "hidden"
+            return False
+        return any(
+            session.id == active_id
+            and getattr(session, "persisted_conversation_id", None) == conversation_id
+            for session in sessions
+        )
+
+    def _console_is_on_screen(self) -> bool:
+        """The attached view is current, or only modal screens cover it.
+
+        A modal suspends the view (``_reconciled_view`` is cleared), but the
+        screen still shows behind it, so only the stack above it counts.
+        """
+        if self.has_answerable_view():
+            return True
+        view = self.view
+        if view is None:
+            return False
+        try:
+            from textual.screen import ModalScreen
+
+            stack = list(view.app.screen_stack)
+            index = next(i for i, screen in enumerate(stack) if screen is view)
+        except Exception:  # noqa: BLE001 -- not in the stack: not on screen
+            return False
+        return all(isinstance(screen, ModalScreen) for screen in stack[index + 1 :])
+
+    def _request_visible_receipt_render(self) -> None:
+        """Re-arm the on-screen view's transcript sync (thread-safe post)."""
+        start = getattr(self.view, "_start_console_transcript_sync_timer", None)
+        call_later = getattr(self._app, "call_later", None)
+        if not callable(start) or not callable(call_later):
+            return
+        try:
+            call_later(start)
+        except RuntimeError:  # a closing scheduler: the mark stays durable
+            pass
+
     def _notify_terminal_receipt(
         self, conversation_id: str, receipt_id: str, *, revision: int
     ) -> bool:
         """Emit one sanitized terminal notice, recording only on success."""
         notify = getattr(self._app, "notify", None)
-        if not callable(notify):
+        if not callable(notify) or self._receipt_is_on_screen(conversation_id):
             return False
         with self._attention_lock:
             if (
@@ -1578,6 +1635,15 @@ class ConsoleRuntime:
                 return self.console_needs_attention
 
             active_receipts = {receipt_id for _conversation_id, receipt_id in marks}
+            # A receipt in the visible, active tab is not "away" work: no '!'.
+            # The view's transcript poll can stop a tick before the receipt
+            # lands, so ask it to render (and thereby acknowledge) the row;
+            # otherwise the mark lingers and turns "hidden" on navigation.
+            hidden_marks = [
+                pair for pair in marks if not self._receipt_is_on_screen(pair[0])
+            ]
+            if len(hidden_marks) != len(marks) and self.has_answerable_view():
+                self._request_visible_receipt_render()
             with self._attention_lock:
                 if marks_known:
                     self._notified_terminal_receipts.intersection_update(
@@ -1585,7 +1651,7 @@ class ConsoleRuntime:
                     )
                 previous = self._console_needs_attention
                 if marks_known or self._last_known_terminal_marks is not None:
-                    needs_attention = bool(marks or hidden_decisions)
+                    needs_attention = bool(hidden_marks or hidden_decisions)
                 elif hidden_decisions:
                     needs_attention = True
                 else:

@@ -401,7 +401,20 @@ class ConsoleTraceBoundaryFactory:
                         ).fetchall()
                     )
                 by_revision = {str(row[0]): (str(row[1]), str(row[2])) for row in rows}
-                if any(revision_id not in by_revision for revision_id in revision_ids):
+                missing = [r for r in unique_revision_ids if r not in by_revision]
+                if missing:
+                    # TASK-34100.5 AC#7: name the opaque ids (no content) so
+                    # the intermittent first-send failure can be traced.
+                    from loguru import logger
+
+                    logger.warning(
+                        "Console trace reservation found no saved revision row "
+                        "(missing={}, active_missing={}, present={}/{})",
+                        missing,
+                        [r for r in active_revision_ids if r in missing],
+                        len(by_revision),
+                        len(unique_revision_ids),
+                    )
                     raise ValueError("trace_revision_unavailable")
                 current_revision_id = active_revision_ids[0]
                 conversation_id, turn_id = by_revision[current_revision_id]

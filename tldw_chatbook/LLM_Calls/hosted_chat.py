@@ -817,7 +817,13 @@ def owned_json_post(
                         time.sleep(delay)
                     continue
                 if status >= 400:
-                    _raise_http_error(config.provider, status, label=label)
+                    _raise_http_error(
+                        config.provider,
+                        status,
+                        label=label,
+                        response=response,
+                        known_credentials=(config.api_key,),
+                    )
                 if streaming:
                     stream = OwnedSSEStream(response=response, session=session)
                     response = None
@@ -1430,40 +1436,55 @@ def _transport_error(
     )
 
 
-def _raise_http_error(provider: str, status: int, *, label: str | None = None) -> Never:
+def _raise_http_error(
+    provider: str,
+    status: int,
+    *,
+    label: str | None = None,
+    response: object | None = None,
+    known_credentials: tuple[str, ...] = (),
+) -> Never:
     name = label or provider
     if status in {401, 403}:
-        raise ChatAuthenticationError(
+        error: Exception = ChatAuthenticationError(
             provider=provider,
             message=f"{name} authentication failed. Check the API key.",
-        ) from None
-    if status == 429:
-        raise ChatRateLimitError(
+        )
+    elif status == 429:
+        error = ChatRateLimitError(
             provider=provider,
             message=f"{name} rate limit exceeded. Retry later.",
-        ) from None
-    if status == 404:
+        )
+    elif status == 404:
         # Usually an unknown model, or one this key cannot use: Fireworks,
         # SambaNova, Nous and GMI check the model before the key (probed
         # 2026-09-30, TASK-33640).
-        raise ChatBadRequestError(
+        error = ChatBadRequestError(
             provider=provider,
             message=(
                 f"{name} could not find that model or endpoint (status 404). "
                 "Check the model name and that your key can use it."
             ),
             status_code=404,
-        ) from None
-    if 400 <= status < 500:
-        raise ChatBadRequestError(
+        )
+    elif 400 <= status < 500:
+        error = ChatBadRequestError(
             provider=provider,
             message=f"{name} rejected the request (status {status}).",
-        ) from None
-    raise _transport_error(
-        provider,
-        f"service failed (status {status})",
-        status_code=status,
-        label=label,
+        )
+    else:
+        error = _transport_error(
+            provider,
+            f"service failed (status {status})",
+            status_code=status,
+            label=label,
+        )
+    # TASK-34100.5: keep the provider's own allowlisted sentence (error.message)
+    # as data on the exception; the chain stays severed (no body in str()).
+    from tldw_chatbook.Chat.provider_error_reason import attach_provider_reason
+
+    raise attach_provider_reason(
+        error, response, known_credentials=known_credentials
     ) from None
 
 

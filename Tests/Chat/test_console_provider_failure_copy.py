@@ -150,7 +150,10 @@ async def test_stream_chat_provider_400_reports_one_consistent_status() -> None:
     assert err.status_code == 400
 
     copy = describe_stream_failure(err)
-    assert "HTTP 400" in copy
+    # One status, stated once: the gateway's copy already names it, so it is
+    # not wrapped in a second "HTTP 400" (review round 2, V2-F6).
+    assert copy.count("400") == 1, copy
+    assert "Status: 400." in copy
     assert "502" not in copy
 
 

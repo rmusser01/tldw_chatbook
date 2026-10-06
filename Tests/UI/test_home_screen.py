@@ -2260,7 +2260,7 @@ def test_open_tasks_provider_wiring_flows_to_dashboard_input():
 async def test_home_model_badge_reports_blocked_without_credential(
     monkeypatch, request
 ):
-    """No valid credential for the selected provider -> 'Model: Blocked'.
+    """No valid credential for the selected provider -> 'Model: Not set up'.
 
     The old weak check ``model_ready = bool(providers_models)`` reported ready
     off a non-empty catalog alone, regardless of whether a send could
@@ -2287,7 +2287,7 @@ async def test_home_model_badge_reports_blocked_without_credential(
         home = _active_home_screen(host)
 
         status_text = str(home.query_one("#home-details-body").renderable)
-        assert "Model: Blocked" in status_text
+        assert "Model: Not set up" in status_text
         assert "Model: Ready" not in status_text
         # The honest signal also drives the next-best action guidance.
         assert home._current_dashboard.next_action.action_id == "fix_model_setup"
@@ -2318,5 +2318,5 @@ async def test_home_model_badge_reports_ready_with_credential(monkeypatch, reque
 
         status_text = str(home.query_one("#home-details-body").renderable)
         assert "Model: Ready" in status_text
-        assert "Model: Blocked" not in status_text
+        assert "Model: Not set up" not in status_text
         assert home._current_dashboard.next_action.action_id != "fix_model_setup"

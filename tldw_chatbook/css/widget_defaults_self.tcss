@@ -370,7 +370,7 @@
     ChatScreen ToastRack {
         dock: top;
         align: right top;
-        margin-top: 1;
+        margin-top: 8;
         margin-bottom: 0;
     }
 

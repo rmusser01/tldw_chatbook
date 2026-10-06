@@ -104,9 +104,18 @@ tool's plain-language name and one line about what it does — the read-class
 ones (Read file, List directory, Find files, Search in files, Expand
 document) add that they ask before running unless you approve a longer
 scope, and the ones that write are marked with ⚠. Leaving every switch off
-is a supported outcome: the summary then reads "all off; turn them on under
-MCP ▸ Servers ▸ Tool gates", which is where the same switches live after
-setup.
+is a supported outcome: the summary then reads "gates off; the assistant
+may still use chatbook's own tools (sub-agents, web search, notes, Watchlists)
+when the model's context window has room. Turn gates on under MCP ▸ Servers ▸
+built-in row ▸ Tool gates", which is
+where the same switches live after setup. The first half is there because
+the switches are not the whole story: Console's assistant also gets the agent
+runtime (sub-agents, skills), the local web and Watchlists tools
+(`[console] local_tools_enabled`) and chatbook's built-in notes and character
+tools, every call still subject to its MCP Ask/Allow/Off permission. The
+app's internal `chat_with_llm` tool, which the in-process server cannot run,
+is never offered. A self-hosted model whose context window the app has not
+read yet gets a plain request with no tools until it can be sized.
 
 The Voice step leads with a sample text and **Test and Hear**; the endpoint,
 model, and output settings sit under its "Advanced" section. Advancing saves
@@ -135,6 +144,12 @@ The Summary's exits are **Review provider setup**, **Add your first document**
 (lands on Library's Import canvas — this is where your content lives),
 **Write your first note** (lands on Library's New note view — no provider
 needed), **Explore Home**, and **Review settings**.
+
+Finishing with **Start chatting** opens Console on the provider and model you
+just saved, in one chat tab, with no warning. The empty transcript says what
+setup connected, for example "Setup complete — OpenAI · gpt-4.1-mini. Ready —
+type a message to begin." If the saved default changed between setup and
+Console opening, a single notice names the model Console is using instead.
 
 The Summary also asks — once, default off — whether chatbook may check your
 configured providers' model lists online at startup. Whatever you choose is

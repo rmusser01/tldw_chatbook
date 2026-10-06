@@ -2009,7 +2009,16 @@ def build_summary_rows(
             # "MCP ▸ Servers ▸ Tool gates" written here omitted the
             # built-in server ROW, and the pane only exists inside that
             # row's detail view -- so the breadcrumb did not lead anywhere.
-            else f"all off; turn them on under {TOOL_GATES_PANE_PATH}",
+            # TASK-34100.5 AC#2: not "all off" -- with every gate off, Console's
+            # assistant still gets the agent runtime, the local tools
+            # ([console] local_tools_enabled) and the built-in MCP source.
+            # Review round 1 (F10): "may ... when the window has room" -- a
+            # send planned against an unverified window carries no tools.
+            else (
+                "gates off; the assistant may still use chatbook's own tools "
+                "(sub-agents, web search, notes, Watchlists) when the model's "
+                f"context window has room. Turn gates on under {TOOL_GATES_PANE_PATH}"
+            ),
         ),
         SummaryRow(
             "Notes folder sync",

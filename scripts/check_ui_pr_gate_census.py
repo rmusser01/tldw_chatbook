@@ -118,7 +118,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Textual never fires, so autosave stayed dead after Keep editing on a refused
 # quit and after a rail switch away and back. The unit test that should have
 # caught it asserted the 0.0 against a fake ``set_timer``; these read the row.
-MINIMUM_FILES = 143
+# TASK-34100.5 raised it to 146 (dev's 143 plus its three files): the
+# first-run handoff's mounted guards -- Console's real first mount warns
+# nothing (test_console_first_chat_first_mount.py), toasts clear the nav and
+# chips at 120x40 (test_console_toast_clears_header.py), and a turn finishing
+# in the visible tab raises no hidden notice (test_console_visible_turn_
+# attention.py). About 3.5 min serial under load average 30 locally.
+MINIMUM_FILES = 146
 
 
 def read_census(path: Path) -> list[str]:

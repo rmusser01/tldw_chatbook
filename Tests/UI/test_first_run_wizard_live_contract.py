@@ -2065,9 +2065,12 @@ async def test_mounted_wizard_stage_failure_leaves_console_and_focus_unchanged(
 
 
 @pytest.mark.asyncio
-async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
+async def test_mounted_wizard_saved_pair_change_retires_intent_without_touching_console(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """A saved provider/model change after Start chatting never applies the
+    stale handoff (TASK-34100.5: the fence is the saved pair, not the config
+    generation; an unrelated write lets the handoff apply instead)."""
     _prepare_clean_environment(monkeypatch, tmp_path)
     _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
@@ -2079,7 +2082,13 @@ async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
         revision = real_stage(intent)
         staged.append(intent)
         assert save_settings_to_cli_config(
-            {"general": {"task5_generation_race": "published-after-stage"}}
+            {
+                "api_settings.custom": {
+                    "api_url": "http://127.0.0.1:8080/v1",
+                    "model": "model-b",
+                },
+                "chat_defaults": {"provider": "custom", "model": "model-b"},
+            }
         )
         return revision
 
@@ -2105,7 +2114,7 @@ async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
                 pilot,
                 lambda: (
                     app.screen is not wizard_screen
-                    and app.pending_handoffs.has_pending(
+                    and not app.pending_handoffs.has_pending(
                         HandoffChannel.CONSOLE_FIRST_CHAT
                     )
                 ),
@@ -2122,7 +2131,7 @@ async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
             assert all(
                 session.id != staged[0].session_id for session in store.sessions()
             )
-            assert _pending_first_chat(app) == staged[0]
+            assert _pending_first_chat(app) is None
 
 
 # ---------------------------------------------------------------------------

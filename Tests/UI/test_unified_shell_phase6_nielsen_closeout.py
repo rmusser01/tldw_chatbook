@@ -81,7 +81,7 @@ async def test_nielsen_closeout_replays_core_heuristic_signals_in_running_app() 
 
             home_text = _screen_text(app)
             assert "Details" in home_text
-            assert "Model: Blocked" in home_text
+            assert "Model: Not set up" in home_text
             assert "Needs Attention" in home_text
             assert "Set up Console model" in home_text
             # NV-01 (TASK-2154.21): at 180 cols every destination fits, so

@@ -165,7 +165,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
                 ),
             )
             home_text = _screen_text(app)
-            assert "Model: Blocked" in home_text
+            assert "Model: Not set up" in home_text
             assert "RAG: Missing sources" in home_text
             assert "Set up Console model" in home_text
             assert "Console needs a working model before live AI tasks." in home_text
