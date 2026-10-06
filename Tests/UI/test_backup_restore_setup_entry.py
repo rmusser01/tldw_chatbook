@@ -445,28 +445,28 @@ async def test_the_new_messages_fit_their_line_at_the_narrowest_width(tmp_path):
             shown, needed = _shown_and_needed(screen, "#backup-message")
             assert needed <= shown, (shown, needed)
 
-            # A short staging volume: macOS's temporary folder alone is wider
-            # than the line, so the reason must not need its path. Review
-            # round 2: both paths are synthetic. The real temporary folder
-            # held pytest's tmp_path, so a destination under tmp_path made
-            # the volume "hold the destination" and the test failed with the
-            # default TMPDIR on macOS.
+            # A short staging volume: a temporary folder's path can be wider
+            # than the line, so the reason must not need it. Review rounds
+            # 1-3: the test once used this Mac's real temporary folder, which
+            # holds tmp_path, so a destination under tmp_path took the
+            # "destination" branch instead, depending on TMPDIR. Both paths
+            # are now siblings under tmp_path: neither holds the other on any
+            # machine, so the staging branch is the one measured.
+            staging = tmp_path / "staging-volume" / ("w" * 60) / "T"
+            destination = tmp_path / "backup-volume" / "b.tldw-backup.zip"
+            width = screen.query_one("#backup-message").content_region.width
+            assert len(str(staging)) > width  # a reason naming it would not fit
             details = _review_details()
-            details["capacity"] = _capacity(
-                sufficient=False,
-                path="/private/var/folders/zz/" + "w" * 30 + "/T",
-            )
+            details["capacity"] = _capacity(sufficient=False, path=str(staging))
             screen._show_preview(
                 screen._revision,
                 details,
-                (
-                    (),
-                    Path("/Volumes/Backups/b.tldw-backup.zip"),
-                    {"allow_partial": False},
-                ),
+                ((), destination, {"allow_partial": False}),
             )
             await pilot.pause()
-            assert "temporary folder" in _text(screen, "#backup-message")
+            assert _text(screen, "#backup-message").startswith(
+                "Not enough free space in the system temporary folder"
+            )
             shown, needed = _shown_and_needed(screen, "#backup-message")
             assert needed <= shown, (shown, needed)
     finally:
