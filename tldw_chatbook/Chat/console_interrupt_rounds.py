@@ -2076,9 +2076,13 @@ class InterruptRoundHost:
         rows = payload.get("calls") or []
         if not round_id or not rows:
             return
-        # Lock order: config lock FIRST, then `_approval_state_lock` (see
-        # `run_if_runtime_config_generation_current` in config.py) -- so the
-        # config read happens before the approval lock is taken.
+        with self.lock:
+            state = self.registries["approval"].get(round_id)
+            if state is None or state.get("summary_fired"):
+                return
+        # Release the preliminary approval check before reading config.
+        # Nested lock order stays config first, then approval (see
+        # `run_if_runtime_config_generation_current` in config.py).
         try:
             from tldw_chatbook.Chat.permission_summary_service import (
                 resolve_permission_summary,
@@ -2089,7 +2093,6 @@ class InterruptRoundHost:
             )
         except Exception:  # noqa: BLE001 -- advisory only
             resolution = None
-        # A wasted resolve when the once-flag is already consumed is harmless.
         with self.lock:
             state = self.registries["approval"].get(round_id)
             if state is None or state.get("summary_fired"):
