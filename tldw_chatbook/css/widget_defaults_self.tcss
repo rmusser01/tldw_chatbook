@@ -1605,13 +1605,6 @@
         text-overflow: clip;
     }
 
-/* ===== WIDGET: ConsoleSetupBackdrop (Widgets/Console/console_setup_modal.py) ===== */
-
-    ConsoleSetupBackdrop {
-        width: 1fr;
-        height: 1fr;
-    }
-
 /* ===== WIDGET: ConsoleSideChatModal (Widgets/Console/console_side_chat_modal.py) ===== */
 
     ConsoleSideChatModal {

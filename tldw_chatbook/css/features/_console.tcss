@@ -2429,21 +2429,13 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     /* $background is a distinctly darker token than the Console shell's own
      * $ds-surface-panel background, so this alpha fill actually blends to a
      * dimmed shade (verified: ~#191d21 vs the shell's flat #242f38) instead
-     * of a same-color no-op like the previous $ds-surface-panel 80% fill. */
+     * of a same-color no-op like the previous $ds-surface-panel 80% fill.
+     * Nothing is drawn on it but the card (TASK-33008.4). */
     background: $background 60%;
-    layers: console-setup-snow console-setup-card;
-}
-
-.console-setup-modal-backdrop-snow {
-    layer: console-setup-snow;
-    width: $ds-width-full;
-    height: $ds-height-full;
-    color: $ds-text-muted;
 }
 
 /* Console's rendered frame color (#6f7782) — see Console_Modules.frame.CONSOLE_FRAME_COLOR. */
 .console-setup-modal-card {
-    layer: console-setup-card;
     /* TASK-389: 62 gave 56 content cells (−2 border −4 padding); the honest
        step-3 line "…Composer unlocks after setup" is 59 cells, so its last word
        wrapped off. 66 gives 60 content cells so the full sentence fits. */

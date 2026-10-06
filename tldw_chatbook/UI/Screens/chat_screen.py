@@ -14061,13 +14061,6 @@ class ChatScreen(BaseAppScreen):
             modal = self.query_one("#console-setup-modal", ConsoleSetupModal)
         except QueryError:
             return
-        # TASK-2154.10 (AC-04): vestibular-accessible static backdrop when the
-        # user opts into reduced motion; refreshed with every guidance sync.
-        modal.reduced_motion = bool(
-            self.app_instance.app_config.get("appearance", {}).get(
-                "reduce_motion", False
-            )
-        )
         modal.sync_card_state(
             card_state,
             action_label=action_label,

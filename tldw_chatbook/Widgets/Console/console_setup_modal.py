@@ -8,33 +8,27 @@ Console-scoped: it lives inside the ChatScreen (never an app-level modal), so th
 top navigation tab bar stays reachable. The modal dismisses automatically the
 moment readiness + model are satisfied (the guidance sync drives it).
 
-The backdrop itself renders a still snow field (``ConsoleSetupBackdrop``,
-styled after the classic ZSNES emulator background) behind the card -- drawn
-once per (re)size, never on a clock; see the comment above
-``_SNOW_FLAKE_GLYPHS`` for the measurements that retired the animation
-(TASK-23021). Textual's
-alpha-background compositing only blends a widget's background with its
-*ancestor* style chain (see ``DOMNode.background_colors`` /
-``Widget.opacity``) -- it does not re-composite the actual rendered pixels of
-sibling widgets sitting on a lower layer. That was verified directly against
-this Textual build: a same-color alpha fill over an identically-colored
-ancestor is a no-op (which is why the previous ``$ds-surface-panel 80%`` fill
-read as fully opaque), while a distinctly different token (``$background``,
-darker than the Console shell's ``$ds-surface-panel``) blended at the same
-layer produces a real, measurably darker fill. The Console workbench text
-itself cannot "show through" the overlay under this widget architecture; the
-snow backdrop is the closest achievable dim + decoration given that
-constraint.
+The dim is the modal's own flat fill (``$background 60%``) and nothing is
+drawn on it but the card (TASK-33008.4 retired the snow field that used to
+sit there). Textual's alpha-background compositing only blends a widget's
+background with its *ancestor* style chain (see ``DOMNode.background_colors``
+/ ``Widget.opacity``); it does not re-composite the rendered pixels of
+sibling widgets on a lower layer. So the fill hides the workbench beneath
+rather than tinting it, and it needs a token distinctly darker than the
+Console shell's ``$ds-surface-panel``: a same-color alpha fill over an
+identically-colored ancestor is a no-op.
+
+Tab and Shift+Tab cycle the actions the card shows, and wrap (TASK-32572).
 """
 
 from __future__ import annotations
 
-import random
-from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from tldw_chatbook.Utils.input_validation import escape_markup
+from textual.actions import SkipAction
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
 from textual.events import Key
 from textual.widgets import Button, Static
@@ -59,7 +53,6 @@ CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION = "use-detected-local-server"
 # server one -- same "extra affordance while blocking" shape.
 CONSOLE_SETUP_MODAL_NOTES_ACTION_ID = "console-setup-modal-notes-action"
 CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION = "write-note-library"
-CONSOLE_SETUP_MODAL_BACKDROP_ID = "console-setup-modal-snow"
 _DEFAULT_ACTION_LABEL = "Choose model"
 _DEFAULT_ACTION_TOOLTIP = "Choose the provider and model for this Console session."
 
@@ -69,157 +62,6 @@ _DEFAULT_ACTION_TOOLTIP = "Choose the provider and model for this Console sessio
 _TYPING_LOCKED_HINT = (
     "Typing is locked until setup finishes — press Enter to continue setup."
 )
-
-# Snow tuning: modest density (~1 flake per 40 cells). The field is a STILL
-# frame -- drawn when the widget (re)sizes, never on a clock.
-#
-# TASK-21134 halved the old tick's rate (5 Hz -> 2.5 Hz) and dropped its
-# layout pass; the tick itself got cheap (30 ms per 15 s) and the burn
-# survived one layer down. TASK-23021 measured where it lived: this backdrop
-# spans the whole Console shell, so each tick's `Static.update` dirtied a
-# full-viewport region and Textual's compositor re-rendered every widget
-# overlapping the dirty crop -- 124 widget renders x 44 rows, 13-16 ms per
-# repaint inside `Screen._on_timer_update`, 3.6-4.3% of a core at idle on the
-# first screen every new user sees, against a 0.04% floor with the tick
-# neutralised. Shrinking the dirty region does not help: Textual's
-# `Compositor.render_partial_update` crops to the *bounding box* of the dirty
-# cells, and flakes span the field, so a per-cell-dirty variant (the
-# render_line shape) measured 2.7-3.6% -- statistically the same burn. Even a
-# single 3x3-cell repaint at the same 2.5 Hz measured ~0.55%, an order of
-# magnitude above the floor, because ~30 widgets stack under any cell of this
-# overlay. On this screen ANY repeating repaint is too expensive for a
-# decoration, so the animation is retired: the flakes hold still, the field
-# re-scatters only on resize, and idle cost is zero. `appearance.
-# reduce_motion` keeps its meaning -- the field it used to freeze is now
-# frozen for everyone.
-_SNOW_FLAKE_GLYPHS = ("·", "•", "*")  # ·, •, *
-_SNOW_DENSITY_CELLS = 40
-
-
-@dataclass
-class _SnowFlake:
-    """Position state for a single glyph in the still flake field.
-
-    Kept as a mutable dataclass (not a bare tuple) because a resize clamps
-    existing flakes into the new bounds in place, so the field stays visually
-    stable across resizes instead of re-scattering wholesale.
-    """
-
-    x: float
-    y: float
-    glyph: str
-
-
-class ConsoleSetupBackdrop(Static):
-    """Dimmed backdrop behind the setup card with a still snow field.
-
-    Renders a static scatter of glyphs (mixed ``·`` / ``•`` / ``*``) over the
-    dim fill -- the ZSNES-style flourish, minus the motion (see the module
-    comment above ``_SNOW_FLAKE_GLYPHS`` for the measured reason,
-    TASK-23021). The field is (re)drawn only when the widget's size changes;
-    between resizes the widget arms no timers, performs no repaints, and
-    dirties nothing. Flake placement is seeded from an injectable
-    ``random.Random`` so tests can assert deterministic frames; production
-    code leaves ``rng`` unset (default-seeded, non-deterministic) since the
-    effect is purely decorative.
-    """
-
-    # Fallback sizing so the widget still fills its host when mounted in a
-    # bare test harness (no app-level stylesheet loaded); the real Console
-    # stylesheet's ``.console-setup-modal-backdrop-snow`` rule (width/height
-    # 100%) takes precedence wherever it is loaded.
-    BUNDLED_CSS = """
-    ConsoleSetupBackdrop {
-        width: 1fr;
-        height: 1fr;
-    }
-    """
-
-    def __init__(
-        self,
-        *,
-        rng: random.Random | None = None,
-        **kwargs: Any,
-    ) -> None:
-        kwargs.setdefault("id", CONSOLE_SETUP_MODAL_BACKDROP_ID)
-        classes = kwargs.pop("classes", "")
-        kwargs["classes"] = f"console-setup-modal-backdrop-snow {classes}".strip()
-        # TASK-21134: the field is only spaces and the three flake glyphs, none
-        # of which is markup. Parsing it as console markup on every repaint is
-        # pure waste, and a glyph set that grew a "[" would otherwise silently
-        # become a markup tag.
-        kwargs.setdefault("markup", False)
-        super().__init__(**kwargs)
-        self._rng = rng if rng is not None else random.Random()
-        self._flakes: list[_SnowFlake] = []
-        self._field_width = 0
-        self._field_height = 0
-
-    @property
-    def flake_count(self) -> int:
-        """Number of flakes currently tracked in the field."""
-        return len(self._flakes)
-
-    def on_mount(self) -> None:
-        self._resize_flake_field()
-
-    def on_resize(self, event: object) -> None:
-        self._resize_flake_field()
-
-    def _resize_flake_field(self) -> None:
-        """Adapt the flake field to the widget's current size.
-
-        Clamps existing flakes into the new bounds and tops up / trims the
-        field to the target density. Degrades to an empty, crash-free field
-        at zero/negative sizes (e.g. transient layout passes).
-        """
-        width, height = int(self.size.width), int(self.size.height)
-        if width <= 0 or height <= 0:
-            self._field_width = 0
-            self._field_height = 0
-            self._flakes = []
-            self._render_flakes()
-            return
-        self._field_width = width
-        self._field_height = height
-        target_count = max(1, (width * height) // _SNOW_DENSITY_CELLS)
-        for flake in self._flakes:
-            flake.x = min(flake.x, float(width - 1))
-            flake.y = min(flake.y, float(height - 1))
-        if len(self._flakes) > target_count:
-            self._flakes = self._flakes[:target_count]
-        else:
-            while len(self._flakes) < target_count:
-                self._flakes.append(self._new_flake())
-        self._render_flakes()
-
-    def _new_flake(self) -> _SnowFlake:
-        width = max(self._field_width, 1)
-        height = max(self._field_height, 1)
-        return _SnowFlake(
-            x=self._rng.uniform(0, max(width - 1, 0)),
-            y=self._rng.uniform(0, max(height - 1, 0)),
-            glyph=self._rng.choice(_SNOW_FLAKE_GLYPHS),
-        )
-
-    def _render_flakes(self) -> None:
-        """Draw the still flake field.
-
-        Reached only from the mount/resize path, where the field's dimensions
-        really did just change -- so the default ``layout=True`` of
-        ``Static.update`` is correct here, and there is no repeating caller
-        left to need the TASK-21134 ``layout=False`` opt-out.
-        """
-        width, height = self._field_width, self._field_height
-        if width <= 0 or height <= 0:
-            self.update("")
-            return
-        rows = [[" "] * width for _ in range(height)]
-        for flake in self._flakes:
-            fx, fy = int(flake.x), int(flake.y)
-            if 0 <= fx < width and 0 <= fy < height:
-                rows[fy][fx] = flake.glyph
-        self.update("\n".join("".join(row) for row in rows))
 
 
 def _coerce_card_state(value: object) -> ConsoleSetupCardState:
@@ -232,6 +74,14 @@ def _coerce_card_state(value: object) -> ConsoleSetupCardState:
 class ConsoleSetupModal(Vertical):
     """Console-scoped blocking overlay carrying the first-run setup card."""
 
+    # TASK-32572: the modal is the focused action's ancestor, so these run
+    # before ChatScreen's own Tab, which traps focus on the card but cannot
+    # move it between the card's actions.
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("tab", "cycle_action(1)", show=False),
+        Binding("shift+tab", "cycle_action(-1)", show=False),
+    ]
+
     def __init__(self, **kwargs: Any) -> None:
         kwargs.setdefault("id", "console-setup-modal")
         classes = kwargs.pop("classes", "")
@@ -241,6 +91,8 @@ class ConsoleSetupModal(Vertical):
         self._action_label = _DEFAULT_ACTION_LABEL
         self._action_tooltip = _DEFAULT_ACTION_TOOLTIP
         self._detected_action: ConsoleDetectedServerAction | None = None
+        #: TASK-33008.4: a newly offered detected action takes focus once.
+        self._detected_focus_pending = False
         # Task-2852: a receipt line for a pending "Use in Console" handoff
         # (e.g. Library Search/RAG evidence) staged while setup is still
         # incomplete -- see `sync_card_state`'s `staged_evidence_notice`.
@@ -248,13 +100,6 @@ class ConsoleSetupModal(Vertical):
         #: FR-09 (TASK-2154.8): whether the typing-locked toast already fired
         #: for the current blocking episode; re-arms when the block lifts.
         self._typing_hint_shown = False
-        #: TASK-2154.10 (AC-04): the app's `appearance.reduce_motion` setting,
-        #: written by the ChatScreen on every guidance sync. Since TASK-23021
-        #: the snow backdrop renders a still frame for everyone, so the flag
-        #: no longer changes what this modal paints -- it is kept as the
-        #: recorded preference (and the conduit, should animation ever
-        #: return) rather than silently dropped from the screen's sync path.
-        self._reduced_motion = False
         # Hidden until a card-mode state is synced in.
         self.display = False
 
@@ -264,37 +109,20 @@ class ConsoleSetupModal(Vertical):
         return self._detected_action
 
     @property
-    def reduced_motion(self) -> bool:
-        """The recorded `appearance.reduce_motion` preference.
-
-        The snow backdrop is a still frame for everyone since TASK-23021, so
-        this no longer selects between an animated and a static presentation
-        -- see the attribute comment in ``__init__``.
-        """
-        return self._reduced_motion
-
-    @reduced_motion.setter
-    def reduced_motion(self, value: bool) -> None:
-        """Record the app's reduced-motion preference."""
-        self._reduced_motion = bool(value)
-
-    @property
     def is_blocking(self) -> bool:
         """Return whether the modal is currently overlaying the workbench."""
         return self._card_state.mode == "card"
 
     def compose(self) -> ComposeResult:
-        """Build the backdrop and setup card, including its action buttons.
+        """Build the setup card, including its action buttons.
 
         Returns:
-            The backdrop widget followed by the setup card's title, steps,
-            and action buttons (provider recovery, notes, and any
-            detected-server action).
+            The setup card with its title, steps, and action buttons
+            (provider recovery, notes, and any detected-server action).
         """
         # Children mirror the container's blocking state so hidden-modal copy
         # never leaks into visible-text scrapes before the first guidance sync.
         blocking = self.is_blocking
-        yield ConsoleSetupBackdrop(id=CONSOLE_SETUP_MODAL_BACKDROP_ID)
         card = Vertical(
             id="console-setup-modal-card",
             classes="console-setup-modal-card",
@@ -455,9 +283,10 @@ class ConsoleSetupModal(Vertical):
             action: Affordance built by ``build_console_detected_server_action``
                 or ``None`` when no detected server should be offered.
         """
-        self._detected_action = (
-            action if isinstance(action, ConsoleDetectedServerAction) else None
-        )
+        action = action if isinstance(action, ConsoleDetectedServerAction) else None
+        if action != self._detected_action:
+            self._detected_focus_pending = action is not None
+        self._detected_action = action
         if self.is_mounted:
             self._sync_detected_action_button()
 
@@ -494,9 +323,17 @@ class ConsoleSetupModal(Vertical):
         That is "Use detected <server>" while one is offered (TASK-33008.3:
         Enter, Enter is the local first run), and the primary action
         otherwise. The button order on the card does not change.
+
+        Every guidance sync calls this, so focus already on a shown action
+        stays where Tab put it (TASK-33008.4). The one exception: a newly
+        offered detected action takes focus once.
         """
-        if not (self.is_mounted and self.is_blocking):
+        actions = self._displayed_actions()
+        if not actions:
             return
+        if self.app.focused in actions and not self._detected_focus_pending:
+            return
+        self._detected_focus_pending = False
         action_id = (
             CONSOLE_SETUP_MODAL_ACTION_ID
             if self._detected_action is None
@@ -506,6 +343,30 @@ class ConsoleSetupModal(Vertical):
             self.query_one(f"#{action_id}", Button).focus()
         except Exception:
             return
+
+    def _displayed_actions(self) -> list[Button]:
+        """The card's shown action buttons, in card order; none unless blocking."""
+        if not (self.is_mounted and self.is_blocking):
+            return []
+        return [button for button in self.query(Button) if button.display]
+
+    def action_cycle_action(self, step: int) -> None:
+        """Move focus ``step`` actions along the card's shown actions, wrapping.
+
+        Args:
+            step: 1 for Tab, -1 for Shift+Tab.
+
+        Raises:
+            SkipAction: The card shows no action, so the screen's Tab runs.
+        """
+        actions = self._displayed_actions()
+        if not actions:
+            raise SkipAction()
+        focused = self.app.focused
+        index = (
+            actions.index(focused) if focused in actions else (-1 if step > 0 else 0)
+        )
+        actions[(index + step) % len(actions)].focus()
 
     def on_key(self, event: Key) -> None:
         """Surface visible feedback when the user types while setup locks the composer.

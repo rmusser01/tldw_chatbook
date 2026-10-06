@@ -8188,19 +8188,10 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     align: center middle;
 
     background: $background 60%;
-    layers: console-setup-snow console-setup-card;
-}
-
-.console-setup-modal-backdrop-snow {
-    layer: console-setup-snow;
-    width: $ds-width-full;
-    height: $ds-height-full;
-    color: $ds-text-muted;
 }
 
 
 .console-setup-modal-card {
-    layer: console-setup-card;
 
     width: $ds-size-66;
     max-width: $ds-percent-90;
