@@ -1519,6 +1519,9 @@ WIZARD_OWNED_SECTIONS = frozenset(
         "model_catalog",
         "splash_screen",
         "transcription",
+        # TASK-34100.13 (voice-speech-15): the Speech step's cloud choice
+        # points remote Whisper at OpenAI (the key stays the provider's).
+        "transcription.remote_whisper",
         "provider_setup.confirmed",
         WIZARD_STATE_SECTION,
     }
@@ -2167,6 +2170,7 @@ def build_summary_rows(
     speech_runtime_installed: bool = False,
     rag_model: Any = None,
     themes: Mapping[str, Any] | None = None,
+    installed_stt: tuple[str, ...] = (),
 ) -> tuple[SummaryRow, ...]:
     """Build the summary matrix strictly from persisted config.
 
@@ -2200,6 +2204,9 @@ def build_summary_rows(
             unknown, and the Search row then names only the flag.
         themes: TASK-34100.13 -- the app's registered themes, for the Theme
             row's tone tag ("Nord · dark"); Textual's built-ins otherwise.
+        installed_stt: TASK-34100.13 -- the local speech engines whose
+            runtime imports (``installed_local_providers()``, resolved by the
+            caller), so the Speech row can name one already in use.
 
     Returns:
         Ordered tuple of SummaryRow for the Summary step to render.
@@ -2317,7 +2324,28 @@ def build_summary_rows(
     speech_configured = (
         speech_prefill.provider_id == routing_policy().parakeet_provider_id
     )
-    if not speech_configured:
+    from tldw_chatbook.UI.Wizards import first_run_speech_engine as engines
+
+    remote = _section(_section(app_config, "transcription"), "remote_whisper")
+    if (
+        speech_prefill.provider_id == engines.REMOTE_WHISPER_PROVIDER
+        and coerce_wizard_flag(remote.get("enabled"))
+    ):
+        # TASK-34100.13 (voice-speech-15): the Speech step's cloud choice.
+        speech_row = SummaryRow(
+            "Speech transcription",
+            ROW_CONFIGURED,
+            "OpenAI Whisper (cloud; for audio and video files)",
+        )
+    elif not speech_configured and speech_prefill.provider_id in installed_stt:
+        # An engine already installed here (the template's platform pick, or
+        # the step's "Already available" choice): name it, claim nothing.
+        speech_row = SummaryRow(
+            "Speech transcription",
+            ROW_DEFAULT,
+            f"{engines.engine_display_name(speech_prefill.provider_id)} on this computer",
+        )
+    elif not speech_configured:
         speech_row = SummaryRow(
             "Speech transcription", ROW_DEFAULT, "not set up (optional)"
         )

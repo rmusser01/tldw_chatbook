@@ -24,7 +24,7 @@ from textual.app import ComposeResult
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Button, RadioButton, Static
+from textual.widgets import Button, RadioButton, Select, Static
 
 from tldw_chatbook.Local_Ingestion.parakeet_v2_artifact import (
     PARAKEET_PRECISIONS,
@@ -246,7 +246,17 @@ def _step(*, installed=(), wizard=None, runtime_installed=None) -> SpeechSetupSt
         config=WizardStepConfig(id="speech", title="Speech", step_number=5),
         service_factory=lambda: _FakeService(installed=installed),
         runtime_installed=runtime_installed or (lambda: True),
+        # TASK-34100.13: these tests exercise the managed Parakeet path, which
+        # is now one choice of the engine radio ("No dictation for now" is
+        # the first-run default).
+        engine="parakeet",
+        engine_facts=_PARAKEET_FACTS,
     )
+
+
+_PARAKEET_FACTS = __import__(
+    "tldw_chatbook.UI.Wizards.first_run_speech_engine", fromlist=["EngineFacts"]
+).EngineFacts(parakeet_mib=633)
 
 
 def _active_lookup(result):
@@ -280,19 +290,23 @@ def _patch_app(monkeypatch) -> MagicMock:
 
 @pytest.mark.asyncio
 async def test_compose_shows_all_curated_parakeet_options():
+    """TASK-34100.13 (voice-speech-12): the curated options are a one-row
+    Language select and a plain-label Precision choice under Advanced."""
     step = _step(installed=())
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         text = "\n".join(str(s.render()) for s in step.query(Static))
-        assert "English" in text
-        assert "recommended" in text.lower()
-        assert "INT8" in text
-        radio_buttons = list(step.query(RadioButton))
+        assert text.count("Recommended: Parakeet v2") == 1
+        language = step.query_one("#setup-speech-language", Select)
+        labels = [str(prompt) for prompt, _value in language._options]
+        assert "English (recommended)" in labels
+        assert not language.disabled
+        radio_buttons = list(step.query("#setup-speech-precision-choice RadioButton"))
         enabled = [b for b in radio_buttons if not b.disabled]
         assert len(enabled) == len(radio_buttons)
-        assert any("English" in str(b.label) for b in enabled)
-        assert any(str(b.label).upper().startswith("F32") for b in enabled)
+        assert any("INT8" in str(b.label) for b in enabled)
+        assert any("F32" in str(b.label) for b in enabled)
 
 
 @pytest.mark.asyncio
@@ -306,7 +320,7 @@ async def test_non_english_f32_selection_changes_the_exact_managed_target():
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await pilot.click(f"#setup-speech-language-{language}")
+        step.query_one("#setup-speech-language", Select).value = language
         await pilot.pause()
         step.query_one("#setup-speech-precision-f32", RadioButton).value = True
         await pilot.pause()
@@ -408,6 +422,8 @@ def test_compose_step_alone_does_no_io():
     touches the service factory."""
     factory = MagicMock(return_value=_FakeService())
     step = SpeechSetupStep(
+        engine="parakeet",
+        engine_facts=_PARAKEET_FACTS,
         wizard=_wizard(),
         config=WizardStepConfig(id="speech", title="Speech", step_number=5),
         service_factory=factory,
@@ -683,7 +699,7 @@ async def test_missing_runtime_extra_shows_install_instructions_no_download_offe
         step.on_show()
         await pilot.pause(0.2)
         text = "\n".join(str(s.render()) for s in step.query(Static))
-        assert "onnx-asr" in text
+        assert "tldw_chatbook[transcription_parakeet_onnx]" in text
         assert step.query_one("#setup-speech-install", Button).disabled
         assert not step.query(ModelActivationControls)
 
@@ -694,9 +710,11 @@ async def test_missing_runtime_extra_message_shown_immediately_without_waiting_f
     user on a minimal install sees the real reason immediately instead of a
     "Checking installed models…" placeholder that never resolves into
     anything actionable."""
+    from tldw_chatbook.UI.Wizards.first_run_speech_engine import RUNTIME_MISSING_COPY
+
     step = _step(runtime_installed=lambda: False)
     status_text, action_widget = step._status_and_action()
-    assert "onnx-asr" in status_text
+    assert status_text == RUNTIME_MISSING_COPY
     assert isinstance(action_widget, Button)
     assert action_widget.id == "setup-speech-install"
     assert action_widget.disabled
@@ -715,22 +733,20 @@ async def test_runtime_extra_present_offers_the_normal_install_flow():
 
 @pytest.mark.asyncio
 async def test_missing_runtime_status_is_not_markup_parsed():
-    """Review NEW-1: the extras name and pinned profile contain literal
-    brackets ("tldw_chatbook[transcription_parakeet_onnx]",
-    "onnx-asr[cpu]==0.12.0"). Rich markup parses "[...]" as a tag and
-    silently deletes unrecognized ones unless the Static is built with
-    markup=False -- the same fix this file already applies to
-    "#setup-summary-rows" for the identical trap. Without it the user is
-    told to install an extras package with no extra named, and to run
-    pip install 'onnx-asr==0.12.0' (missing the pinned [cpu] profile)."""
+    """Review NEW-1: the extras name contains literal brackets
+    ("tldw_chatbook[transcription_parakeet_onnx]"); Rich markup would delete
+    "[...]" unless the Static is built with markup=False. TASK-34100.13
+    (voice-speech-12): the name is its own line with a copy action, and no
+    pinned runtime version or installer command is shown."""
     step = _step(runtime_installed=lambda: False)
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        status = step.query_one("#setup-speech-status", Static)
-        rendered = str(status.render())
+        rendered = "\n".join(str(s.render()) for s in step.query(Static))
         assert "tldw_chatbook[transcription_parakeet_onnx]" in rendered
-        assert "onnx-asr[cpu]==0.12.0" in rendered
+        assert "==" not in rendered
+        assert "pip install" not in rendered
+        assert step.query_one("#setup-speech-copy-extras", Button)
 
 
 # ---------------------------------------------------------------------------
@@ -890,6 +906,8 @@ def test_activate_worker_calls_service_activate_with_the_exact_reference(monkeyp
     fake_app.call_from_thread.side_effect = lambda fn, *a, **kw: fn(*a, **kw)
     service = _FakeService()
     step = SpeechSetupStep(
+        engine="parakeet",
+        engine_facts=_PARAKEET_FACTS,
         wizard=_wizard(),
         config=WizardStepConfig(id="speech", title="Speech", step_number=5),
         service_factory=lambda: service,
@@ -1135,7 +1153,7 @@ async def test_commit_follows_a_hypothetical_second_selectable_language(
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await pilot.click(f"#setup-speech-language-{v3_language}")
+        step.query_one("#setup-speech-language", Select).value = v3_language
         await pilot.pause()
         # commit() must run before the App tears its widget tree down (see
         # the sibling byte-identical test's comment for why).
@@ -1183,7 +1201,7 @@ async def test_commit_requires_and_persists_the_exact_v3_f32_artifact(
     app = _StepHost(step)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await pilot.click(f"#setup-speech-language-{language}")
+        step.query_one("#setup-speech-language", Select).value = language
         await pilot.pause()
         step.query_one("#setup-speech-precision-f32", RadioButton).value = True
         await pilot.pause()
@@ -1606,13 +1624,15 @@ async def test_commit_pending_physically_blocks_every_source_control(monkeypatch
             assert step._external_commit_pending is True
             disk = step.query_one("#setup-speech-use-from-disk", Button)
             install = step.query_one("#setup-speech-install", Button)
-            language = step.query_one("#setup-speech-language-fr", RadioButton)
+            language = step.query_one("#setup-speech-language", Select)
             precision = step.query_one("#setup-speech-precision-int8", RadioButton)
             assert all(
                 control.disabled for control in (disk, install, language, precision)
             )
 
-            for control in (disk, install, language, precision):
+            # TASK-34100.13: Language is a one-row Select now; its disabled
+            # state is asserted above, the key presses cover the buttons.
+            for control in (disk, install, precision):
                 control.disabled = False
                 control.focus()
                 await pilot.press(
@@ -1650,7 +1670,7 @@ async def test_commit_pending_physically_blocks_every_source_control(monkeypatch
         assert ok, error
         assert step._external_commit_pending is False
         assert not step.query_one("#setup-speech-use-from-disk", Button).disabled
-        assert not step.query_one("#setup-speech-language-en", RadioButton).disabled
+        assert not step.query_one("#setup-speech-language", Select).disabled
         restored = step.query_one(ModelActivationControls)
         assert not restored.query_one(".model-activate", Button).disabled
 
@@ -1706,12 +1726,12 @@ async def test_slow_external_prepare_fences_every_source_control(monkeypatch):
             assert step._external_commit_pending is True
             disk = step.query_one("#setup-speech-use-from-disk", Button)
             install = step.query_one("#setup-speech-install", Button)
-            language = step.query_one("#setup-speech-language-fr", RadioButton)
+            language = step.query_one("#setup-speech-language", Select)
             precision = step.query_one("#setup-speech-precision-f32", RadioButton)
             controls = (disk, install, language, precision)
             assert all(control.disabled for control in controls)
 
-            for control in controls:
+            for control in (disk, install, precision):
                 control.disabled = False
                 control.focus()
                 await pilot.press(
@@ -2452,6 +2472,8 @@ def test_managed_activation_prefers_managed_only_after_activation_succeeds(monke
     fake_app = _patch_app(monkeypatch)
     fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
     step = SpeechSetupStep(
+        engine="parakeet",
+        engine_facts=_PARAKEET_FACTS,
         wizard=_wizard_with_source(source_service),
         config=WizardStepConfig(id="speech", title="Speech", step_number=5),
         service_factory=lambda: managed_service,
@@ -2496,6 +2518,8 @@ def test_managed_activation_failure_never_prefers_managed(monkeypatch):
     managed_service.activate = fail_activation
     source_service = MagicMock()
     step = SpeechSetupStep(
+        engine="parakeet",
+        engine_facts=_PARAKEET_FACTS,
         wizard=_wizard_with_source(source_service),
         config=WizardStepConfig(id="speech", title="Speech", step_number=5),
         service_factory=lambda: managed_service,
@@ -2543,6 +2567,8 @@ def test_managed_activation_preference_failure_reports_partial_success(monkeypat
     source_service = MagicMock()
     source_service.prefer_managed.side_effect = OSError("preference write failed")
     step = SpeechSetupStep(
+        engine="parakeet",
+        engine_facts=_PARAKEET_FACTS,
         wizard=_wizard_with_source(source_service),
         config=WizardStepConfig(id="speech", title="Speech", step_number=5),
         service_factory=lambda: managed_service,
