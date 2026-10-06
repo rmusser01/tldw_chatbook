@@ -218,6 +218,7 @@ class SpeechSetupStep(SetupStep):
         )
         # TASK-34100.13 (voice-speech-15): the engine choice, built from what
         # this machine has; a first run starts on "No dictation for now".
+        self._facts_injected = engine_facts is not None
         self._engine_facts = engine_facts or engines.detect_engine_facts(
             app_config, parakeet_bytes=self._parakeet_bytes()
         )
@@ -1032,14 +1033,11 @@ class SpeechSetupStep(SetupStep):
         this is where the step first asks the artifact service (via
         ``_ensure_loaded`` -> ``_load_installed_state``, an exclusive
         background worker) whether the selected managed artifact already
-        exists, so the status line can move past "Checking installed
-        models…". Idempotent: a step already re-shown (rerun navigation)
-        does not re-trigger a redundant load (see ``_ensure_loaded``).
-
-        Returns:
-            None.
+        exists. Idempotent on re-show (see ``_ensure_loaded``). The engine
+        choice is re-detected: a key saved on Connect this run adds Cloud.
         """
         super().on_show()
+        engines.refresh_engine_facts(self)
         self._ensure_loaded()
 
     def _ensure_loaded(self, *, force: bool = False) -> None:
