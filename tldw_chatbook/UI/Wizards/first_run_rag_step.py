@@ -29,6 +29,7 @@ from textual.containers import (
     Horizontal,
     Vertical,
 )
+from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
     Label,
@@ -138,12 +139,13 @@ class RagStep(SetupStep):
         facts = await asyncio.get_running_loop().run_in_executor(
             None, self._resolve_model
         )
-        if not self.is_attached:
+        # The step can leave the DOM while the resolver runs (TASK-32892).
+        try:
+            line = self.query_one("#setup-rag-model", Static)
+            privacy = self.query_one("#setup-rag-privacy", Static)
+        except NoMatches:
             return
-        self.query_one("#setup-rag-model", Static).update(
-            rag_state.embedding_model_line(facts)
-        )
-        privacy = self.query_one("#setup-rag-privacy", Static)
+        line.update(rag_state.embedding_model_line(facts))
         if facts is not None and facts.cloud:
             privacy.update(rag_state.cloud_privacy_copy())
             privacy.display = True
