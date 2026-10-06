@@ -9,6 +9,12 @@ and Skip setup failed the same way, so the only way out was Ctrl+Q.
 Now a failed save asks once more: "Exit without saving progress" closes setup
 without the checkpoint (steps already saved stay saved; the next launch simply
 has no resume point), "Keep going" returns to the wizard.
+
+Review round 1 (R1-F6): "Skip setup" (Esc or the cancel button on Welcome)
+saves completion instead of a checkpoint, and when that save failed it only
+said "Retry before closing", so a re-run on an unwritable config could still
+trap the user on Welcome. It now gets the same offer; exiting there leaves
+setup unfinished, so it opens again at the next launch.
 """
 
 from __future__ import annotations
@@ -26,6 +32,11 @@ EXIT_UNSAVED_MESSAGE = (
     "this step. Rerun it any time from Settings ▸ Diagnostics."
 )
 EXIT_UNSAVED_LABEL = "Exit without saving progress"
+SKIP_UNSAVED_MESSAGE = (
+    "chatbook couldn't save that setup is finished, so it will open again the "
+    "next time chatbook starts. You can exit for now anyway: settings you "
+    "already saved stay saved."
+)
 
 
 async def finish_later(container: Any) -> None:
@@ -44,6 +55,35 @@ async def finish_later(container: Any) -> None:
     if saved:
         container._dismiss_screen(None)
         return
+    offer_exit_without_saving(container, EXIT_UNSAVED_MESSAGE)
+
+
+async def skip_setup(container: Any) -> None:
+    """Mark setup finished and close it, or offer to exit without saving.
+
+    Args:
+        container: The wizard's ``SetupWizardContainer``.
+    """
+    async with container._draft_mutation_lock:
+        saved = await container._complete_setup_locked()
+    if saved:
+        container._dismiss_screen({"completed": True, "exit_route": None})
+        return
+    container._show_completion_save_error()
+    if container.is_attached:
+        offer_exit_without_saving(container, SKIP_UNSAVED_MESSAGE)
+
+
+def offer_exit_without_saving(container: Any, message: str) -> None:
+    """Ask whether to close setup although its save failed.
+
+    "Exit without saving progress" closes the wizard with no result (the
+    finish-later outcome); "Keep going" leaves it open on the same step.
+
+    Args:
+        container: The wizard's ``SetupWizardContainer``.
+        message: Why nothing was saved and what exiting means.
+    """
 
     def _exit_anyway(confirmed: bool | None) -> None:
         if confirmed:
@@ -52,7 +92,7 @@ async def finish_later(container: Any) -> None:
     container.app.push_screen(
         ConfirmationDialog(
             title=EXIT_UNSAVED_TITLE,
-            message=EXIT_UNSAVED_MESSAGE,
+            message=message,
             confirm_label=EXIT_UNSAVED_LABEL,
             cancel_label="Keep going",
         ),

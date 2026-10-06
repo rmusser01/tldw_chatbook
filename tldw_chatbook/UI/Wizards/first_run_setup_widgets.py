@@ -406,6 +406,9 @@ class SetupStep(step_guard.WizardErrorGuard, WizardStep):
         TASK-34100.8 (new-voice-speech-03): a refused Next's reason used to
         stay on screen after its cause was fixed, next to a newer, different
         status. A step calls this from its input and choice handlers.
+        TASK-34100.4 review round 1: Protect also calls it when its own action
+        fails and then succeeds without a step change (it showed "✓ Encryption
+        enabled." beside the previous attempt's "Encrypting failed…").
         """
         try:
             strip = self.screen.query_one("#setup-step-error-pinned", Static)
