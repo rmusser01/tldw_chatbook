@@ -95,6 +95,31 @@ def test_a_legacy_alias_key_is_named_without_the_catalog_aside():
     assert state == ProtectState(PROTECT_PLAINTEXT, providers=("Mistral AI",))
 
 
+_MID_SETUP_DRAFT = {
+    "first_run": {
+        "setup_started": True,
+        "active_step_id": "protect-keys",
+        "draft_values": {
+            "provider": {"provider_key": "llama_cpp", "provider_value": "llama_cpp"}
+        },
+    }
+}
+
+
+def test_the_setup_checkpoint_is_never_a_secret():
+    # Seen live: mid-setup, config.toml holds the wizard's own checkpoint,
+    # whose `provider_key = "llama_cpp"` matches the `_key` suffix. A keyless
+    # user was offered encryption for "1 secret
+    # (first_run.draft_values.provider.provider_key)".
+    assert read_protect_state(_MID_SETUP_DRAFT, {}).kind == PROTECT_NOTHING
+    state = read_protect_state(
+        {**_MID_SETUP_DRAFT, "api_settings": {"openai": {"api_key": "sk-openai-x"}}},
+        {},
+    )
+
+    assert state == ProtectState(PROTECT_PLAINTEXT, providers=("OpenAI",))
+
+
 def test_a_custom_endpoint_key_is_named_by_its_endpoint():
     state = read_protect_state(
         {
