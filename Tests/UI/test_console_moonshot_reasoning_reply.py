@@ -21,12 +21,16 @@ is replaced: the adapter returns the real ``MoonshotResponse`` that
 ``chat_with_moonshot`` builds from a provider turn, so the real Moonshot
 continuation builder runs. The parametrization is the provider smoke matrix
 for this path: every listed Kimi model, plus a non-reasoning provider as the
-control, each sent once in a saved chat and once in a Temporary chat.
+control, each sent once in a saved chat and once in a Temporary chat. One
+kimi-k3 row streams: its adapter returns the real ``MoonshotStream`` over the
+real ``HostedChatStream`` SSE parser, so the gateway's streamed consumption of
+the continuation (read after the stream is exhausted) is covered too.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
@@ -47,8 +51,11 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleRunStatus,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
+from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatStream, HostedChatTurn
+from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecord
 from tldw_chatbook.LLM_Calls.moonshot import (
+    _FINISH_POLICY,
+    MoonshotStream,
     _moonshot_turn_response,
     resolve_moonshot_request,
 )
@@ -62,14 +69,57 @@ SYNTHETIC_KEY = "synthetic-test-key"
 
 # The models Moonshot's /v1/models listed on 2026-10-03 (gap-02 evidence).
 MOONSHOT_MODELS = ("kimi-k2.6", "kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k3")
-SMOKE_MATRIX = [("moonshot", model) for model in MOONSHOT_MODELS] + [
-    ("openai", "gpt-4.1"),
+SMOKE_MATRIX = [
+    pytest.param("moonshot", model, False, id=f"moonshot-{model}")
+    for model in MOONSHOT_MODELS
+] + [
+    pytest.param("moonshot", "kimi-k3", True, id="moonshot-kimi-k3-streaming"),
+    pytest.param("openai", "gpt-4.1", False, id="openai-gpt-4.1"),
 ]
 BLOCKED_COPY = (
     "could not be persisted",
     "delivery status is unknown",
     "Send blocked",
 )
+
+
+def _sse(model: str, *, delta=None, finish=None, usage=None) -> SSERecord:
+    body: dict = {
+        "id": "chatcmpl-34100",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": model,
+        "choices": (
+            []
+            if usage is not None
+            else [{"index": 0, "delta": delta or {}, "finish_reason": finish}]
+        ),
+    }
+    if usage is not None:
+        body["usage"] = usage
+    return SSERecord(None, json.dumps(body))
+
+
+def _moonshot_stream(model: str, resolution, provider_continuations) -> MoonshotStream:
+    """The real stream parser over the SSE records Moonshot sends for one reply."""
+    records = [
+        _sse(
+            model,
+            delta={"role": "assistant", "content": "", "reasoning_content": REASONING},
+        ),
+        _sse(model, delta={"content": REPLY}),
+        _sse(model, finish="stop"),
+        _sse(
+            model,
+            usage={"prompt_tokens": 7, "completion_tokens": 5, "total_tokens": 12},
+        ),
+        SSERecord(None, "[DONE]"),
+    ]
+    return MoonshotStream(
+        HostedChatStream(iter(records), finish_policy=_FINISH_POLICY),
+        resolution=resolution,
+        provider_continuations=provider_continuations,
+    )
 
 
 def _moonshot_adapter(calls: list[dict]):
@@ -82,6 +132,12 @@ def _moonshot_adapter(calls: list[dict]):
             app_config={},
             environ={},
         )
+        if kwargs.get("streaming"):
+            return _moonshot_stream(
+                resolution.model,
+                resolution,
+                tuple(kwargs.get("provider_continuations") or ()),
+            )
         turn = HostedChatTurn(
             text=REPLY,
             tool_calls=(),
@@ -112,7 +168,9 @@ def _plain_adapter(calls: list[dict]):
 
 
 @asynccontextmanager
-async def _mounted_console(tmp_path, monkeypatch, *, provider: str, model: str):
+async def _mounted_console(
+    tmp_path, monkeypatch, *, provider: str, model: str, streaming: bool = False
+):
     monkeypatch.setattr(
         console_runtime, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 600.0
     )
@@ -147,7 +205,7 @@ async def _mounted_console(tmp_path, monkeypatch, *, provider: str, model: str):
             original_resolve = gateway.resolve_for_send
 
             async def resolve(selection):
-                return replace(await original_resolve(selection), streaming=False)
+                return replace(await original_resolve(selection), streaming=streaming)
 
             monkeypatch.setattr(gateway, "resolve_for_send", resolve)
             runtime = console._console_runtime()
@@ -277,12 +335,12 @@ EXPECTED = {
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("provider", "model"), SMOKE_MATRIX)
+@pytest.mark.parametrize(("provider", "model", "streaming"), SMOKE_MATRIX)
 async def test_saved_chat_replies_like_a_temporary_chat(
-    tmp_path, monkeypatch, provider: str, model: str
+    tmp_path, monkeypatch, provider: str, model: str, streaming: bool
 ) -> None:
     async with _mounted_console(
-        tmp_path, monkeypatch, provider=provider, model=model
+        tmp_path, monkeypatch, provider=provider, model=model, streaming=streaming
     ) as h:
         saved = h.store.ensure_session()
         assert saved.ephemeral is False
@@ -313,6 +371,8 @@ async def test_saved_chat_replies_like_a_temporary_chat(
         assert second_view["blocked_copy"] == []
         assert second_view["dispatch_recovery"] is None
         assert len(h.calls) == 3
+        # The streaming row really streamed: the adapter returned a stream.
+        assert [bool(call.get("streaming")) for call in h.calls] == [streaming] * 3
         reasoning_model = provider == "moonshot" and (
             moonshot_model_returns_reasoning_content(model)
         )
@@ -397,6 +457,24 @@ async def test_unstored_reasoning_checkpoint_keeps_the_reply(
                 == 0
             )
 
+            # The run's recorded trace says what was lost, by code.
+            from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+                continuation_reasons,
+            )
+
+            runs = h.controller._agent_bridge.runs_db.list_runs(conversation_id)
+            notes = [
+                step
+                for run in runs
+                for step in run["steps"]
+                if step.get("summary") == "Reasoning not preserved for replay"
+            ]
+            assert len(notes) == 1, runs
+            assert continuation_reasons(notes[0]["field_states"]) == {
+                "continuation_error": "final_persist_failed",
+                "continuation_store_failure": "terminal_settlement_failed",
+            }
+
             # The chat stays usable: the next send reaches the provider too.
             await _send(h, "And again")
             assert len(h.calls) == 2
@@ -408,3 +486,69 @@ async def test_unstored_reasoning_checkpoint_keeps_the_reply(
         in line
         for line in warnings
     ), warnings
+
+
+TRACE_BLOCKED = "Trace capture blocked"
+THIRD_TURN_KNOWN_GAP = pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "TASK-34100.3.1: with trace capture on, the third send of a saved chat "
+        "that replays reasoning stops before the provider with 'Trace capture "
+        "blocked' (unsupported_surface_change). Remove this mark when that "
+        "task lands; strict=True fails the run the day it starts passing."
+    ),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [
+        pytest.param(
+            "moonshot", "kimi-k3", marks=THIRD_TURN_KNOWN_GAP, id="moonshot-kimi-k3"
+        ),
+        pytest.param(
+            "moonshot",
+            "kimi-k2.6",
+            marks=THIRD_TURN_KNOWN_GAP,
+            id="moonshot-kimi-k2.6",
+        ),
+        pytest.param("openai", "gpt-4.1", id="openai-gpt-4.1"),
+    ],
+)
+async def test_saved_chat_third_turn_with_trace_capture_on(
+    tmp_path, monkeypatch, provider: str, model: str
+) -> None:
+    """Pin the boundary this task leaves open (review F2/G3V-06).
+
+    This task makes turns 1 and 2 of a saved Kimi chat work. Turn 3, with
+    trace capture on (the default), is TASK-34100.3.1's: the Kimi rows are a
+    strict expected failure, the OpenAI row is the control that must pass.
+    """
+    async with _mounted_console(
+        tmp_path, monkeypatch, provider=provider, model=model
+    ) as h:
+        saved = h.store.ensure_session()
+        for turn, text in enumerate(("Say hello", "And again", "Once more"), 1):
+            await _send(h, text)
+
+            def settled(turn: int = turn) -> bool:
+                screen = " ".join(_frame_rows(h.host))
+                replies = [
+                    message.content
+                    for message in h.store.messages_for_session(saved.id)
+                    if message.role is ConsoleMessageRole.ASSISTANT
+                ]
+                return TRACE_BLOCKED in screen or replies == [REPLY] * turn
+
+            await _until(
+                h.pilot, settled, timeout=30.0, what=f"turn {turn} did not settle"
+            )
+            screen = "\n".join(_frame_rows(h.host))
+            assert TRACE_BLOCKED not in screen, f"turn {turn} hit the trace pause"
+            view = await _observed(h, saved.id)
+            assert view["blocked_copy"] == [], f"turn {turn}"
+            assert view["assistant_texts"] == [REPLY] * turn, f"turn {turn}"
+            assert view["dispatch_recovery"] is None, f"turn {turn}"
+        assert len(h.calls) == 3
