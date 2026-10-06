@@ -80,33 +80,36 @@ def _bridge_over(db_path) -> ConsoleAgentBridge:
 def _seed_done_primary_with_subagents(db_path, *, conversation_id="conv-A", tasks=()):
     """Persist one finished primary run plus a sub-agent run per ``tasks``."""
     db = AgentRunsDB(db_path, client_id="t")
-    primary_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
-    db.append_steps(
-        primary_id,
-        [
-            {
-                "index": 0,
-                "kind": "model",
-                "summary": "final answer",
-                "tool_name": "",
-                "args": None,
-                "result": "",
-                "created_at": "",
-            },
-        ],
-    )
-    db.set_status(primary_id, "done", result="final answer")
-    sub_ids = []
-    for task in tasks:
-        sub_id = db.create_run(
-            conversation_id=conversation_id,
-            agent_kind="subagent",
-            task=task,
-            parent_run_id=primary_id,
+    try:
+        primary_id = db.create_run(conversation_id=conversation_id, agent_kind="primary")
+        db.append_steps(
+            primary_id,
+            [
+                {
+                    "index": 0,
+                    "kind": "model",
+                    "summary": "final answer",
+                    "tool_name": "",
+                    "args": None,
+                    "result": "",
+                    "created_at": "",
+                },
+            ],
         )
-        db.set_status(sub_id, "done", result=f"done {task}")
-        sub_ids.append(sub_id)
-    return primary_id, sub_ids
+        db.set_status(primary_id, "done", result="final answer")
+        sub_ids = []
+        for task in tasks:
+            sub_id = db.create_run(
+                conversation_id=conversation_id,
+                agent_kind="subagent",
+                task=task,
+                parent_run_id=primary_id,
+            )
+            db.set_status(sub_id, "done", result=f"done {task}")
+            sub_ids.append(sub_id)
+        return primary_id, sub_ids
+    finally:
+        db.close()
 
 
 def _static_text(console, widget_id: str) -> str:

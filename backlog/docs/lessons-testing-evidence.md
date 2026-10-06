@@ -18625,3 +18625,7 @@ keep that canonical isolated test profile and retain singleton cleanup. Adding
 only the mark (preserving the worldbook module's existing asyncio mark) left all
 original test AST/assertions/bounds intact and the155 compatibility cases passed.
 An admission setup error is not a product regression or a passed product check.
+
+## Native lease registrations can retain an apparently discarded fixture DB
+
+During Console pause verification on 2026-10-06, the original Agent rail seed helper left one ordinary connection registered after it returned and two garbage collections ran, even with no observer retaining its DB. The participant registration held a strong connection reference and prevented destructor-based cleanup. An exact original API close removed the native handle, owner cache and lease and allowed the unchanged global drain to pass. Close creator-owned fixture DBs in their own finally scope; verify physical retirement separately from no-retention leak controls so the observer cannot manufacture the leak being diagnosed. This incident qualified one helper, not every earlier cohort lease.
