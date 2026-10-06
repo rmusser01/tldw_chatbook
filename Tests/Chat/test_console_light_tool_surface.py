@@ -308,3 +308,55 @@ def test_a_real_mcp_provider_attributes_user_servers_but_not_the_builtin_source(
         BUILTIN_MCP_SERVER_KEY
     )
     assert user_mcp_tool_names(provider) == frozenset({"mcp__weather__forecast"})
+
+
+class _PluginOwnedMCPProvider:
+    """A plugin's MCP component as ``PluginMCPProvider`` composes it: tools
+    renamed into the plugin namespace and sourced ``plugin_mcp``."""
+
+    name = "mcp__plugin_demo__lookup"
+
+    def list_catalog(self):
+        return [
+            ToolCatalogEntry(
+                id=self.name,
+                name=self.name,
+                one_line_description="A plugin's MCP tool",
+                source="plugin_mcp",
+            )
+        ]
+
+    def server_key_for(self, name):
+        return "local:plugin-demo" if name == self.name else None
+
+
+def test_a_plugin_group_keeps_user_servers_but_not_plugin_or_builtin_tools():
+    """Review round 1 (F1): with any plugin-owned skill available, the
+    controller wraps the MCP provider in ``MCPProviderGroup``. The group had
+    no ``server_key_for``, so the narrowing failed closed and dropped every
+    tool from the servers the user added. A plugin's own MCP tools come with
+    its skills, which stay off in plain chat, so they stay off too."""
+    import asyncio
+
+    from Tests.Agents.test_mcp_tool_provider import (
+        FakeMCPService,
+        _catalog_record,
+        _compose,
+        _tool_dict,
+    )
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+    from tldw_chatbook.Agents.plain_chat_tool_surface import user_mcp_tool_names
+    from tldw_chatbook.Plugins.mcp_provider import MCPProviderGroup
+
+    service = FakeMCPService(
+        inventory={"tools": [_tool_dict("create_note", "Create a note.")]},
+        catalog_records=[_catalog_record("weather", [_tool_dict("forecast")])],
+    )
+    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    _compose(provider)
+    group = MCPProviderGroup([provider, _PluginOwnedMCPProvider()])
+
+    assert group.server_key_for("mcp__weather__forecast") == "local:weather"
+    assert group.server_key_for("mcp__plugin_demo__lookup") == "local:plugin-demo"
+    assert group.server_key_for("missing") is None
+    assert user_mcp_tool_names(group) == frozenset({"mcp__weather__forecast"})

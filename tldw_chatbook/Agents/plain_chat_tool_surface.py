@@ -58,6 +58,11 @@ LIGHT_SURFACE_TOOL_TITLES: Mapping[str, str] = {
 #: under the ``[console] local_tools_enabled`` master, which defaults on).
 LIGHT_SURFACE_LOCAL_OPT_INS: tuple[str, ...] = ("web_deep_search",)
 
+#: The catalog ``source`` of a plugin's own MCP tools
+#: (``Plugins/mcp_provider.PluginMCPProvider``). They come with the plugin's
+#: skills, so plain chat leaves them off with the skills.
+PLUGIN_MCP_SOURCE = "plugin_mcp"
+
 #: The ``[tools]`` switch for the full agent surface. Off by default.
 FULL_AGENT_TOOLS_GATE_KEY = "full_agent_tools_enabled"
 FULL_AGENT_TOOLS_DEFAULT_ENABLED = False
@@ -167,9 +172,11 @@ def user_mcp_tool_names(mcp_provider: Any | None) -> frozenset[str]:
     """Names of MCP tools that come from servers the user added.
 
     The app's own built-in ``tldw_chatbook`` source is part of the full agent
-    surface, not something the user turned on, so its tools are left out. A
-    provider that cannot say which server a tool belongs to contributes
-    nothing (fail closed).
+    surface, not something the user turned on, so its tools are left out. So
+    are a plugin's own MCP tools (``source == "plugin_mcp"``): they come with
+    the plugin's skills, and skills stay off in plain chat. A provider that
+    cannot say which server a tool belongs to contributes nothing (fail
+    closed); ``MCPProviderGroup`` answers for each of its owners.
     """
     if mcp_provider is None:
         return frozenset()
@@ -184,6 +191,8 @@ def user_mcp_tool_names(mcp_provider: Any | None) -> frozenset[str]:
     except Exception:  # noqa: BLE001 -- an unreadable catalog offers nothing
         return frozenset()
     for entry in entries:
+        if entry.source == PLUGIN_MCP_SOURCE:
+            continue
         server_key = server_key_for(entry.name)
         if server_key and server_key != BUILTIN_MCP_SERVER_KEY:
             names.add(entry.name)
