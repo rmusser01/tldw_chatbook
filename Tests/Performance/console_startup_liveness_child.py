@@ -24,6 +24,7 @@ async def observe(args, result):
     stages = result["stages"] = []
     intervals = result["heartbeat_intervals"] = []
     census = None
+    timing = None
     current = None
     stop = False
 
@@ -67,6 +68,37 @@ async def observe(args, result):
     try:
         stage("python_import")
         from tldw_chatbook.app import TldwCli
+
+        if args.mode == "timing":
+            setup_entered = time.perf_counter()
+            timing_path = Path(__file__).with_name("console_startup_timing_witness.py")
+            assert args.expected_timing_sha256 is not None
+            assert (
+                hashlib.sha256(timing_path.read_bytes()).hexdigest()
+                == args.expected_timing_sha256
+            )
+            from Tests.Performance.console_startup_timing_witness import (
+                StartupTimingWitness,
+            )
+
+            result["executed_probe_helpers"]["timing"] = {
+                "path": str(timing_path.resolve()),
+                "raw_sha256": args.expected_timing_sha256,
+                "start_callable": result["_source_observer"](
+                    StartupTimingWitness.start, args.repo
+                ),
+            }
+            timing = StartupTimingWitness(args.repo)
+            try:
+                timing.start()
+            finally:
+                setup_exited = time.perf_counter()
+                result["timing_setup"] = {
+                    "entered": setup_entered,
+                    "exited": setup_exited,
+                    "seconds": setup_exited - setup_entered,
+                    "coverage": "Named diagnostic setup within import-stage envelope; outside original constructor interval.",
+                }
 
         stage("app_constructor")
         app = TldwCli()
@@ -149,6 +181,14 @@ async def observe(args, result):
         stage("after_shutdown")
         result["complete"] = True
     finally:
+        timing_stop_failure = None
+        timing_primary_error_present = sys.exception() is not None
+        if timing is not None:
+            try:
+                result["startup_timing"] = timing.stop()
+            except BaseException as error:
+                timing_stop_failure = type(error).__name__
+                result["startup_timing_retirement_error_type"] = timing_stop_failure
         if census is not None:
             result["io_census"] = census.stop()
         stop = True
@@ -189,18 +229,23 @@ async def observe(args, result):
             real_profile_guard.take_violations()
         )
         assert result["network_attempts"] == result["real_profile_guard_refusals"] == 0
+        if timing_stop_failure is not None and not timing_primary_error_present:
+            raise RuntimeError(
+                "Startup timing observer retirement failed: " + timing_stop_failure
+            )
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
-    parser.add_argument("--mode", choices=("liveness",), required=True)
+    parser.add_argument("--mode", choices=("liveness", "timing"), required=True)
     parser.add_argument("--launch", choices=("cold", "warm"), required=True)
     parser.add_argument("--parent-spawn", type=float, required=True)
     parser.add_argument("--driver-pid", type=int, required=True)
     parser.add_argument("--expected-driver-sha256", required=True)
     parser.add_argument("--expected-child-sha256", required=True)
+    parser.add_argument("--expected-timing-sha256")
     args = parser.parse_args()
     args.repo = args.repo.absolute()
     entered = time.perf_counter()
@@ -268,6 +313,10 @@ def main():
         "original timers/workers/seeders/guards. OS page cache uncontrolled. "
         "Global profiled time cannot qualify performance budget success.",
     }
+    if args.mode == "timing":
+        result.update(
+            diagnostic_only=True, budget_acceptance_eligible=False, budgets_pass=None
+        )
     result["_source_observer"] = process_helpers["observed_callable_source"]
     try:
         with user_fixture_default_owner():

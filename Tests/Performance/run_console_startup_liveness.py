@@ -255,6 +255,11 @@ def liveness_budget_result(result):
     """Evaluate pre-registered bounds only after original functional shutdown."""
     import math
 
+    assert (
+        result.get("mode", "liveness") == "liveness"
+        and not result.get("diagnostic_only", False)
+        and result.get("budget_acceptance_eligible", True) is True
+    ), "Diagnostic timing cannot qualify original startup budgets"
     input_result = result["usable_input"]
     elapsed = input_result["seconds_from_parent_spawn"]
     key_delay = input_result["accepted"] - result["key_posted"]
@@ -301,13 +306,50 @@ def liveness_budget_result(result):
     }
 
 
+def timing_diagnostic_result(result, expected_sha256):
+    """Accept source/retirement metadata only; never evaluate startup budgets."""
+    assert result["mode"] == "timing" and result["diagnostic_only"] is True
+    assert (
+        result["budget_acceptance_eligible"] is False and result["budgets_pass"] is None
+    )
+    assert result.get("startup_timing_retirement_error_type") is None
+    timing = result["startup_timing"]
+    assert timing["diagnostic_only"] is True
+    assert (
+        timing["budget_acceptance_eligible"] is False and timing["budgets_pass"] is None
+    )
+    for name in (
+        "complete",
+        "source_current",
+        "monitoring_global_zero",
+        "monitoring_masks_owned",
+        "monitoring_callbacks_owned",
+        "monitoring_masks_cleared_while_active",
+        "monitoring_tool_freed",
+    ):
+        assert timing[name] is True, ("Incomplete startup timing witness", name)
+    path = "Tests/Performance/console_startup_timing_witness.py"
+    helper = result["executed_probe_helpers"]["timing"]
+    assert helper["raw_sha256"] == expected_sha256
+    assert helper["start_callable"]["source_relative_path"] == path
+    assert helper["start_callable"]["raw_sha256"] == expected_sha256
+    assert helper["start_callable"]["actual_defining_code"] is True
+    assert result["loaded_source_sha256"][path] == expected_sha256
+    return {
+        "diagnostic_only": True,
+        "budget_acceptance_eligible": False,
+        "budgets_pass": None,
+        "timing_complete": True,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--python", type=Path, required=True)
     parser.add_argument("--pair-root", type=Path, required=True)
     parser.add_argument("--receipt-root", type=Path, required=True)
-    parser.add_argument("--mode", choices=("liveness",), default="liveness")
+    parser.add_argument("--mode", choices=("liveness", "timing"), default="liveness")
     parser.add_argument("--expected-commit")
     args = parser.parse_args()
     repo = args.repo.absolute()
@@ -371,10 +413,17 @@ def main():
         Path(__file__),
         Path(__file__).with_name("console_startup_liveness_child.py"),
     )
+    if args.mode == "timing":
+        helper_paths += (Path(__file__).with_name("console_startup_timing_witness.py"),)
     before = source_snapshot(repo, helper_paths)
-    (receipts / "startup-liveness.source-before.json").write_text(
-        json.dumps(before, indent=2), encoding="utf-8"
-    )
+    (
+        receipts
+        / (
+            "startup-timing.source-before.json"
+            if args.mode == "timing"
+            else "startup-liveness.source-before.json"
+        )
+    ).write_text(json.dumps(before, indent=2), encoding="utf-8")
     pair = {
         "mode": args.mode,
         "diagnostic_only": args.mode == "io",
@@ -388,6 +437,10 @@ def main():
         "forced_timeout_descendant_retirement_proven": False,
         "timeout_retirement_coverage": "Original Popen kill/wait observes the launched process only; Windows redirector interpreter/descendant retirement is unqualified on forced timeout. Normal exits and actual parent chain are verified.",
     }
+    if args.mode == "timing":
+        pair.update(
+            diagnostic_only=True, budget_acceptance_eligible=False, budgets_pass=None
+        )
     try:
         for launch in ("cold", "warm"):
             child_receipt = receipts / f"startup-{args.mode}-{launch}.json"
@@ -419,6 +472,15 @@ def main():
                     "raw_sha256"
                 ],
             ]
+            if args.mode == "timing":
+                command.extend(
+                    (
+                        "--expected-timing-sha256",
+                        before["probe_helpers"]["console_startup_timing_witness.py"][
+                            "raw_sha256"
+                        ],
+                    )
+                )
             with log.open("w", encoding="utf-8") as output:
                 child = subprocess.Popen(
                     command,
@@ -464,7 +526,15 @@ def main():
                     path,
                 )
             row["result"] = actual
-            row["budgets"] = liveness_budget_result(actual)
+            if args.mode == "timing":
+                row["timing_diagnostic"] = timing_diagnostic_result(
+                    actual,
+                    before["probe_helpers"]["console_startup_timing_witness.py"][
+                        "raw_sha256"
+                    ],
+                )
+            else:
+                row["budgets"] = liveness_budget_result(actual)
             # A second Popen creates a new interpreter only after the first has
             # exited. The profile is not reset/reseeded and config is not rewritten.
         assert (
@@ -484,13 +554,16 @@ def main():
             == pair["launches"][0]["result"]["durable_builtin_state"]
         ), "Warm durable builtin state changed"
         pair["complete"] = True
-        pair["budget_failures"] = [
-            row["launch"] + ":" + key
-            for row in pair["launches"]
-            for key in ("usable_within_limit", "mounted_heartbeat_within_limit")
-            if row["budgets"][key] is not True
-        ]
-        pair["budgets_pass"] = not pair["budget_failures"]
+        if args.mode == "timing":
+            pair.update(budget_failures=None, budgets_pass=None)
+        else:
+            pair["budget_failures"] = [
+                row["launch"] + ":" + key
+                for row in pair["launches"]
+                for key in ("usable_within_limit", "mounted_heartbeat_within_limit")
+                if row["budgets"][key] is not True
+            ]
+            pair["budgets_pass"] = not pair["budget_failures"]
         pair["exact_key_gate_coverage"] = (
             "Not attached; exact original insertion timing remains a separate qualified observer requirement"
         )
@@ -512,7 +585,8 @@ def main():
         )
         assert before == after, "Source changed during startup pair"
         assert git_before == git_after, "Git HEAD changed during startup pair"
-    assert pair["budgets_pass"], pair["budget_failures"]
+    if args.mode == "liveness":
+        assert pair["budgets_pass"], pair["budget_failures"]
 
 
 if __name__ == "__main__":

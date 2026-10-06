@@ -383,6 +383,29 @@ jobs:
           $startupHead = git rev-parse HEAD
           & $startupPython -I -X utf8 Tests/Performance/run_console_startup_liveness.py --repo $env:GITHUB_WORKSPACE --python $startupPython --pair-root $startupPair --receipt-root $startupReceipts --mode liveness --expected-commit $startupHead
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify passive startup timing and diagnostic mode controls
+        id: startup_timing_controls
+        if: ${{ !cancelled() && steps.startup_sources.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          python -I -X utf8 -m unittest discover -s Tests/Performance -p test_console_startup_timing_witness.py -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -I -X utf8 -m unittest discover -s Tests/Performance -p test_console_startup_timing_mode.py -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Diagnose original startup bodies with separate cold and warm profiles
+        if: ${{ !cancelled() && steps.startup_sources.outcome == 'success' && steps.startup_timing_controls.outcome == 'success' }}
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          $startupPython = (Get-Command python).Source
+          $startupPairBase = $env:RUNNER_TEMP
+          if ($env:RUNNER_OS -eq 'Windows') { $startupPairBase = $env:TEMP }
+          $startupPair = Join-Path $startupPairBase 'console-startup-timing-private-pair'
+          $startupReceipts = Join-Path $env:RUNNER_TEMP 'console-startup-timing'
+          $startupHead = git rev-parse HEAD
+          & $startupPython -I -X utf8 Tests/Performance/run_console_startup_liveness.py --repo $env:GITHUB_WORKSPACE --python $startupPython --pair-root $startupPair --receipt-root $startupReceipts --mode timing --expected-commit $startupHead
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain original startup liveness/source receipts on every outcome
         if: always()
         uses: actions/upload-artifact@v4
@@ -391,4 +414,5 @@ jobs:
           path: |
             ${{ runner.temp }}/console-startup-source-qualification
             ${{ runner.temp }}/console-startup-liveness
+            ${{ runner.temp }}/console-startup-timing
           if-no-files-found: error
