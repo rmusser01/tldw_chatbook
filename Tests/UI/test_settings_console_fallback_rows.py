@@ -12,7 +12,11 @@ writer, Providers & Models' inherited streaming row, and Ctrl+T in Console.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
+import toml
 from rich.cells import cell_len
 from textual.containers import Horizontal
 from textual.widgets import Collapsible, Input, Select, Static
@@ -570,6 +574,61 @@ async def test_a_hand_edited_choice_with_no_option_reads_saved_and_names_its_val
             "saved 'High' is not a choice",
         )
         assert not _dirty(screen)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_default_after_an_option_stops_sending_a_choice_with_no_option(
+    request,
+):
+    """Review round 5 (2), with the real writer on a private profile: a blank
+    Select over a saved "bogus" is no edit at rest, but a blank chosen after
+    an option is "default". It reads "edited *" with "blank = provider
+    default", and Save writes it, so a new chat sends nothing."""
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    on_disk = toml.loads(config_path.read_text())
+    on_disk.setdefault("chat_defaults", {})["verbosity"] = "bogus"
+    config_path.write_text(toml.dumps(on_disk))
+    host = _SettingsCssHarness(_app({"verbosity": "bogus"}), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        verbosity = screen.query_one(f"#{_cid('verbosity')}", Select)
+        assert verbosity.value is Select.NULL
+        assert _row_copy(screen, "verbosity")[1] == "saved 'bogus' is not a choice"
+        assert not _dirty(screen)
+
+        verbosity.value = "low"
+        await _wait_until(pilot, lambda: bool(_dirty(screen)), "the staged choice")
+        verbosity.value = Select.NULL
+        await _wait_until(
+            pilot,
+            lambda: (
+                _row_copy(screen, "verbosity")[0] == "edited *"
+                and verbosity.value is Select.NULL
+            ),
+            "the staged default",
+        )
+        await pilot.pause()
+        assert _dirty(screen) == {"verbosity"}
+        assert _row_copy(screen, "verbosity") == (
+            "edited *",
+            "blank = provider default",
+        )
+        screen.set_focus(None)
+        await pilot.pause()
+        await pilot.press("s")
+        await _wait_until(
+            pilot,
+            lambda: not screen._category_has_unsaved_changes(CONSOLE_BEHAVIOR),
+            "the save",
+        )
+        await host.workers.wait_for_complete()
+
+    saved = toml.loads(config_path.read_text())["chat_defaults"]
+    assert saved["verbosity"] == ""
+    resolved = build_default_console_session_settings({"chat_defaults": saved})
+    assert resolved.verbosity is None
 
 
 @pytest.mark.asyncio
