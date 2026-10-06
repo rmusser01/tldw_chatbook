@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import pytest
 import pytest_asyncio
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Static
 
 from Tests.UI.test_console_workbench_contract import (
     ConsoleHarness,
@@ -303,6 +303,225 @@ async def test_installed_activation_rejects_stale_or_failed_owner_and_preserves_
         assert not modal._activation_completion_consumed
         if fault != "overlay":
             assert host.screen is modal
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cause", "size"),
+    [
+        ("owned-quit", (120, 50)),
+        ("owned-quit", (52, 20)),
+        ("owned-enter", (120, 50)),
+        ("owned-click", (120, 50)),
+        ("foreign-question", (120, 50)),
+        ("open-failure", (120, 50)),
+        ("stale-owner", (120, 50)),
+    ],
+)
+async def test_character_open_under_quit_question_explains_only_owned_interruption(
+    activation_library, monkeypatch, tmp_path, cause, size
+):
+    """An intentional quit fence is recoverable, not an unexplained open failure."""
+    from tldw_chatbook.Chat.console_conversation_activation import (
+        ConsoleActivationCommit,
+    )
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    owner, _, db = activation_library
+    _seed(owner, db)
+    host = ConsoleHarness(owner)
+    async with host.run_test(size=size) as pilot:
+        chat = host.screen
+        await _until(lambda: chat.query("#console-native-composer"))
+        modal = await _open_switcher(chat, host)
+        store = chat._ensure_console_chat_store()
+        prior = store.active_session_id
+        selected = modal._entries[modal._candidate_index].target
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = chat._workspace._open_character_conversation_activation
+
+        async def held(request):
+            opened = await original(request)
+            entered.set()
+            await asyncio.wait_for(release.wait(), 5)
+            if cause == "open-failure":
+                return ConsoleActivationCommit(False, opened.owned_runtime_token)
+            return opened
+
+        monkeypatch.setattr(
+            chat._workspace, "_open_character_conversation_activation", held
+        )
+        await pilot.press("enter")
+        await asyncio.wait_for(entered.wait(), 5)
+        await _until(
+            lambda: modal._activation_phase is ConsoleActivationPhase.COMMITTING
+        )
+        quit_worker = None
+        if cause == "foreign-question":
+            # Identical words are not evidence that this switcher owns the question.
+            question = ConfirmationDialog(
+                title="Quit while still working?", cancel_label="Wait"
+            )
+            await host.push_screen(question)
+        else:
+            assert await modal.confirm_quit() is False
+            quit_worker = host.run_worker(modal.confirm_quit(), exit_on_error=False)
+            await _until(lambda: isinstance(host.screen, ConfirmationDialog))
+            question = host.screen
+        if cause == "stale-owner":
+            modal._request_generation += 1
+        release.set()
+        await asyncio.wait_for(modal._activation_task, 5)
+        assert host.screen is question
+        assert modal in host.screen_stack
+        assert store.active_session_id == prior
+        assert not [
+            s for s in store.sessions() if s.persisted_conversation_id == "exact"
+        ]
+        expected = (
+            "Open interrupted by quit confirmation"
+            if cause.startswith("owned-")
+            else "Could not open chat"
+        )
+        assert (
+            str(modal.query_one("#console-switcher-status", Static).renderable)
+            == expected
+        )
+
+        await pilot.press("escape")  # Wait, through the question's own safe action.
+        if quit_worker is not None:
+            assert await quit_worker.wait() is False
+        await _until(lambda: host.screen is modal)
+        await pilot.pause()
+        assert modal.query_one("#console-switcher-query", Input).value == "Exact"
+        assert modal._entries[modal._candidate_index].target == selected
+        if cause.startswith("owned-"):
+            modal._poll_active_projection()
+            selected_button = modal._button_for_key(modal._candidate_key())
+            assert "RESUME CHAT" in str(selected_button.label)
+            recovery = modal.query_one("#console-switcher-recovery", Button)
+            assert recovery.display and not recovery.disabled
+            assert str(recovery.label) == "Retry"
+            assert (
+                expected
+                in modal.query_one(
+                    "#console-switcher-selected-detail", Static
+                ).renderable.plain
+            )
+            host.save_screenshot(path=str(tmp_path), filename="quit-interruption.svg")
+            # Retry is explicit and starts a fresh exact attempt; no automatic replay.
+            monkeypatch.setattr(
+                chat._workspace, "_open_character_conversation_activation", original
+            )
+            previous_attempt = modal._activation_task
+            if cause == "owned-enter":
+                modal.query_one("#console-switcher-query", Input).focus()
+                await pilot.press("enter")
+            elif cause == "owned-click":
+                await pilot.click(selected_button)
+            else:
+                await pilot.click("#console-switcher-recovery")
+            await _until(lambda: modal._activation_task is not previous_attempt)
+            await asyncio.wait_for(modal._activation_task, 5)
+            assert host.screen is chat, (
+                modal._activation_failure_kind,
+                str(modal.query_one("#console-switcher-status", Static).renderable),
+            )
+            assert chat._workspace._character_conversation_target_visible(selected)
+            assert (
+                len(
+                    [
+                        s
+                        for s in store.sessions()
+                        if s.persisted_conversation_id == "exact"
+                    ]
+                )
+                == 1
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change", [None, "deleted", "query", "mode", "overlay", "close"]
+)
+async def test_interrupted_retry_refreshes_only_the_same_live_target(change):
+    """A refreshed neighbor or a changed visit cannot inherit the Retry action."""
+    from textual.screen import Screen
+
+    from Tests.UI.test_console_character_switcher import (
+        _character_row,
+        _CharacterSwitcherApp,
+    )
+    from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+        CharacterConversationPage,
+    )
+    from tldw_chatbook.Chat.console_conversation_activation import (
+        ConsoleConversationActivationResult,
+    )
+
+    exact = _character_row("exact", "Exact", "2026-09-01T12:00:00Z")
+    neighbor = _character_row("neighbor", "Exact neighbor", "2026-09-01T12:00:00Z")
+    entered, release = asyncio.Event(), asyncio.Event()
+    calls = 0
+    opened = []
+
+    async def load(**_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            entered.set()
+            await asyncio.wait_for(release.wait(), 5)
+        rows = (neighbor,) if calls > 1 and change == "deleted" else (exact, neighbor)
+        return CharacterConversationPage(rows, len(rows), None, calls)
+
+    async def activate(request, _cancellation):
+        opened.append(request)
+        return ConsoleConversationActivationResult(
+            ConsoleActivationResultKind.FAILED, request.target, False
+        )
+
+    host = _CharacterSwitcherApp(
+        character_loader=load,
+        character_activate=activate,
+        initial_mode=SwitcherMode.CHARACTER_CHATS,
+        initial_character_query="Exact",
+    )
+    async with host.run_test() as pilot:
+        modal = host.screen
+        await _until(lambda: modal._entries and not modal._query_pending)
+        modal._committed_character_result = modal._entries[0]
+        modal._activation_interrupted_by_quit = True
+        modal._show_activation_failure(ConsoleActivationResultKind.FAILED)
+        retry = asyncio.create_task(
+            modal._recover_character_activation(
+                Button.Pressed(modal.query_one("#console-switcher-recovery", Button))
+            )
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            refresh_attempt = modal._activation_task
+            if change == "query":
+                modal.query_one("#console-switcher-query", Input).value = "Other"
+            elif change == "mode":
+                modal._mode = SwitcherMode.ACTIVE
+            elif change == "overlay":
+                await host.push_screen(Screen())
+            elif change == "close":
+                modal.dismiss_safe_once(None)
+            release.set()
+            await asyncio.wait_for(retry, 5)
+            await asyncio.wait_for(refresh_attempt, 5)
+            await pilot.pause()
+            if change is None:
+                await asyncio.wait_for(modal._activation_task, 5)
+                assert len(opened) == 1
+                assert opened[0].target == exact.target
+                assert opened[0].data_revision == 2
+            else:
+                assert not opened
+        finally:
+            release.set()
+            await asyncio.gather(retry, return_exceptions=True)
 
 
 @pytest.mark.asyncio

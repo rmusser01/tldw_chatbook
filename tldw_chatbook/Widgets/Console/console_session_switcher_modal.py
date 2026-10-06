@@ -342,6 +342,7 @@ class ConsoleSessionSwitcherModal(
         self._activation_completion_consumed = False
         self._screen_change_epoch = 0
         self._activation_failure_kind: ConsoleActivationResultKind | None = None
+        self._activation_interrupted_by_quit = False
         self._committed_character_result: ConsoleSwitcherCharacterResult | None = None
         self._pointer_result_key = ""
         self._pointer_result: ConsoleSwitcherResult | None = None
@@ -655,6 +656,13 @@ class ConsoleSessionSwitcherModal(
         # Live Active data may advance, but a frozen Character open owns its
         # query, selection, and request generation until that attempt settles.
         if self._activation_in_flight:
+            return
+        if (
+            self._activation_phase is ConsoleActivationPhase.FAILURE_VISIBLE
+            and self._activation_interrupted_by_quit
+        ):
+            self._sync_candidate_labels()
+            self._update_hints(self._committed_character_result)
             return
         try:
             query = self.query_one("#console-switcher-query", Input).value
@@ -2237,8 +2245,25 @@ class ConsoleSessionSwitcherModal(
     def _begin_character_activation(
         self, entry: ConsoleSwitcherCharacterResult
     ) -> None:
-        if self._activation_in_flight:
+        if self._activation_in_flight or self._query_pending:
             return
+        if (
+            self._activation_interrupted_by_quit
+            and self._committed_character_result is not None
+            and self._committed_character_result.target == entry.target
+        ):
+            query = self.query_one("#console-switcher-query", Input).value
+            owner = (
+                self._safe_mount_generation,
+                self._screen_change_epoch,
+                self._request_generation,
+            )
+            self._set_results_pending("Loading local chats…")
+            self._activation_task = asyncio.create_task(
+                self._retry_interrupted_character_activation(entry, query, owner)
+            )
+            return
+        self._activation_interrupted_by_quit = False
         self._committed_character_result = entry
         if entry.target is None:
             self._show_activation_failure(
@@ -2276,6 +2301,51 @@ class ConsoleSessionSwitcherModal(
     def _record_screen_change(self, _screen: object) -> None:
         self._screen_change_epoch += 1
 
+    async def _retry_interrupted_character_activation(
+        self,
+        entry: ConsoleSwitcherCharacterResult,
+        query: str,
+        owner: tuple[int, int, int],
+    ) -> None:
+        """Refresh explicit Retry/Enter/click without substituting its target."""
+        # Cold hydration may persist settings and advance the search revision.
+        if not await self._refresh_results(query):
+            return
+        if (
+            self._closed
+            or not self.is_mounted
+            or self.app.screen is not self
+            or owner
+            != (
+                self._safe_mount_generation,
+                self._screen_change_epoch,
+                self._request_generation - 1,
+            )
+            or self._mode is not SwitcherMode.CHARACTER_CHATS
+        ):
+            return
+        refreshed = next(
+            (
+                result
+                for result in self._entries
+                if isinstance(result, ConsoleSwitcherCharacterResult)
+                and result.target == entry.target
+            ),
+            None,
+        )
+        if refreshed is None:
+            self._selection_feedback = RESULT_DISAPPEARED_COPY
+            self._set_status(RESULT_DISAPPEARED_COPY)
+            return
+        payload = self._committed_payload_for_key(refreshed.stable_result_key)
+        if payload is None or not self._payload_is_current(payload):
+            return
+        self._begin_character_activation(refreshed)
+        # The scheduled refresh attempt settles only after its exact open does.
+        attempt = self._activation_task
+        if attempt is not None and attempt is not asyncio.current_task():
+            await attempt
+
     def complete_character_activation(
         self,
         request: CharacterConversationActivationRequest,
@@ -2302,7 +2372,10 @@ class ConsoleSessionSwitcherModal(
             or result.target != request.target
             or not result.commit_started
             or self._mode is not SwitcherMode.CHARACTER_CHATS
-            or self._activation_owner
+        ):
+            return False
+        if (
+            self._activation_owner
             != (
                 self._safe_mount_generation,
                 self._request_generation,
@@ -2313,6 +2386,26 @@ class ConsoleSessionSwitcherModal(
             or stack[-1] is not self
             or stack[-2] is not console
         ):
+            from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+            # Explain only one exact owned quit cover, never a stale visit or
+            # an unrelated/away-and-back overlay. Completion is still refused.
+            question = stack[-1] if stack else None
+            self._activation_interrupted_by_quit = bool(
+                len(stack) >= 3
+                and stack[-2] is self
+                and stack[-3] is console
+                and isinstance(question, ConfirmationDialog)
+                and question._quit_owner_ref is not None
+                and question._quit_owner_ref() is self
+                and self._activation_owner
+                == (
+                    self._safe_mount_generation,
+                    self._request_generation,
+                    self._screen_change_epoch - 1,
+                    self._activation_cancellation,
+                )
+            )
             return False
         self._activation_phase = ConsoleActivationPhase.COMMITTING
         restore_focus = self.SAFE_MODAL_RESTORE_FOCUS
@@ -2361,6 +2454,7 @@ class ConsoleSessionSwitcherModal(
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - adapter failure stays visible in modal
+            self._activation_interrupted_by_quit = False
             self._show_activation_failure(ConsoleActivationResultKind.FAILED)
             return
         finally:
@@ -2393,6 +2487,9 @@ class ConsoleSessionSwitcherModal(
             self._sync_candidate_labels()
             self._update_selection_status()
             return
+        self._activation_interrupted_by_quit = (
+            self._activation_interrupted_by_quit and result.presentation_refused
+        )
         self._show_activation_failure(result.kind)
 
     def _show_activation_failure(self, kind: ConsoleActivationResultKind) -> None:
@@ -2404,6 +2501,11 @@ class ConsoleSessionSwitcherModal(
             ConsoleActivationResultKind.OPENED: "Could not open chat",
             ConsoleActivationResultKind.CANCELLED_PRECOMMIT: "Open cancelled",
         }[kind]
+        if (
+            kind is ConsoleActivationResultKind.FAILED
+            and self._activation_interrupted_by_quit
+        ):
+            copy = "Open interrupted by quit confirmation"
         action = {
             ConsoleActivationResultKind.NOT_FOUND: "Refresh results",
             ConsoleActivationResultKind.DATA_PROFILE_CHANGED: "Refresh results",
@@ -2430,6 +2532,7 @@ class ConsoleSessionSwitcherModal(
             return
         self._activation_phase = ConsoleActivationPhase.IDLE
         self._activation_failure_kind = None
+        self._activation_interrupted_by_quit = False
         self._committed_character_result = None
         try:
             self.query_one("#console-switcher-recovery", Button).display = False
@@ -2483,7 +2586,16 @@ class ConsoleSessionSwitcherModal(
             )
             return
         recovery.display = False
+        if (
+            self._activation_interrupted_by_quit
+            and failure is ConsoleActivationResultKind.FAILED
+            and retry_entry is not None
+            and retry_entry.target is not None
+        ):
+            self._begin_character_activation(retry_entry)
+            return
         self._activation_failure_kind = None
+        self._activation_interrupted_by_quit = False
         self._activation_phase = ConsoleActivationPhase.IDLE
         self._committed_character_result = None
         self._set_activation_controls_disabled(False)

@@ -5,6 +5,7 @@
 import asyncio
 import inspect
 from typing import Any, Optional, Callable
+from weakref import ReferenceType, ref
 
 #
 # 3rd-Party Imports
@@ -113,6 +114,8 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         self.confirm_callback = confirm_callback
         self.cancel_callback = cancel_callback
         self.result: bool | None = None
+        # Only the quit flow sets this; never retain its dismissed source.
+        self._quit_owner_ref: ReferenceType[Screen] | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the dialog UI."""
@@ -399,16 +402,14 @@ async def confirm_quit_discarding_edits(
         True when the user chose to quit; False to stay, including when the
         prompt vanished before it was answered.
     """
-    choice = await await_quit_prompt(
-        screen.app,
-        ConfirmationDialog(
-            title=title,
-            message=message,
-            confirm_label=confirm_label,
-            cancel_label=cancel_label,
-        ),
-        no_answer=False,
+    prompt = ConfirmationDialog(
+        title=title,
+        message=message,
+        confirm_label=confirm_label,
+        cancel_label=cancel_label,
     )
+    prompt._quit_owner_ref = ref(screen)
+    choice = await await_quit_prompt(screen.app, prompt, no_answer=False)
     return choice is True
 
 

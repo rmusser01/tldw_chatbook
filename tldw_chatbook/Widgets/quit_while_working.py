@@ -37,8 +37,10 @@ Known limits. The refused activity is remembered on the modal for its
 lifetime, so after one refusal a later operation with the same words in the
 same modal asks on its first Ctrl+Q. The session switcher's character open
 reveals the chat synchronously as it commits; under the question that
-reveal is refused, so the open rolls back and the switcher shows "Could not
-open chat" with Retry. And BulkSourcesModal's owner drops a batch's result
+reveal is refused, so the open rolls back and the switcher explains "Open
+interrupted by quit confirmation" with explicit exact-target Retry. Genuine
+open or rollback failures still show "Could not open chat". And
+BulkSourcesModal's owner drops a batch's result
 when anything covers the modal, this question included, so Wait can reveal
 it still creating sources; Ctrl+Q there still asks and quits.
 
