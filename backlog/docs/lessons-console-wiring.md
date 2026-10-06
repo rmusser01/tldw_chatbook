@@ -486,3 +486,15 @@ to fourteen actual calls (thirteen OmniVoice plus one setup-resume) before
 review, with stopped metadata invocations retained. All positive/NON-GREEN
 raw/XML, late stale-cleanup tails and physical/service/provisioning/playback
 limits remain. Overlapping selections are never summed.
+
+## Busy configuration locks must not park the Console event loop
+
+**TASK-34415, 2026-10-06.** Forwarding observations found real REBUILD waits
+outside the control render callback. A held-native-lock regression made both
+refresh callers block until its two-second watchdog. Reuse the installed
+coalesced fresh-state retry, not a config cache: probe the same REBUILD then
+FILE RLocks nonblocking and retain acquired locks across unchanged checked
+entry/retirement, so a writer cannot win between probe and entry. Release a
+partial REBUILD acquisition when FILE is busy. Real-holder, fresh-source and
+cleanup assertions establish this repair; they do not prove the full 50ms
+activation matrix or native terminal qualification.
