@@ -489,9 +489,21 @@ async def test_unstored_reasoning_checkpoint_keeps_the_reply(
 
 
 TRACE_BLOCKED = "Trace capture blocked"
+
+
+class _TraceBlockedAtTurnThree(AssertionError):
+    """The one failure TASK-34100.3.1 owns: turn 3 stopped at the trace pause.
+
+    The strict xfail below accepts only this class. A failure on turn 1 or 2,
+    or a different failure on turn 3 (a timeout, a delivery-unknown card),
+    raises a plain AssertionError and so fails the run instead of hiding
+    behind XFAIL (review R2-4).
+    """
+
+
 THIRD_TURN_KNOWN_GAP = pytest.mark.xfail(
     strict=True,
-    raises=AssertionError,
+    raises=_TraceBlockedAtTurnThree,
     reason=(
         "TASK-34100.3.1: with trace capture on, the third send of a saved chat "
         "that replays reasoning stops before the provider with 'Trace capture "
@@ -546,7 +558,9 @@ async def test_saved_chat_third_turn_with_trace_capture_on(
                 h.pilot, settled, timeout=30.0, what=f"turn {turn} did not settle"
             )
             screen = "\n".join(_frame_rows(h.host))
-            assert TRACE_BLOCKED not in screen, f"turn {turn} hit the trace pause"
+            if TRACE_BLOCKED in screen:
+                blocked = _TraceBlockedAtTurnThree if turn == 3 else AssertionError
+                raise blocked(f"turn {turn} hit the trace pause")
             view = await _observed(h, saved.id)
             assert view["blocked_copy"] == [], f"turn {turn}"
             assert view["assistant_texts"] == [REPLY] * turn, f"turn {turn}"
