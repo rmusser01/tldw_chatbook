@@ -425,3 +425,25 @@ warnings; substring matching would accept the failed experiment. The 114-case
 covering run passes without warnings or retained database files. This is fixture
 ownership only: production emergency detachment still cannot make a closed-loop
 Task terminal. Do not catch authority-reset errors or claim normal native quit.
+
+## Installed runtime identity survives a refresh; controller-only fakes do not
+
+**PR3024, 2026-10-06.** The surviving-child Close fixture passed prepared authority
+into a controller-only namespace bridge. Real Console synchronization then rebound
+the controller from its installed runtime, invalidating that authority. Installing
+the incumbent complete bridge through the runtime and explicitly refreshing before
+the original assertions repaired the intended workflow without weakening any of
+its 208 assertions. Bind the owner that normal synchronization actually reads.
+
+## Zero registered handles does not prove every native allocation retired
+
+**PR3024, 2026-10-06.** Strict Close bodies passed while Chat SQLite files remained.
+Forwarding traces proved successful quiescence, zero registrations and no later
+registered opens, but a live native lease still belonged to an exited worker.
+The actual getter captured maintenance rejecting an initialization PRAGMA after
+allocation and before publication; the SQLite/path-only cleanup missed RuntimeError.
+A real acquisition/barrier RED and the existing initializer-owned cleanup repair
+cleared the 21-case strict gate. Trace unpublished allocations and the first opener
+(including requester attribution before later source reads), not just caches or
+registry counts. Preserve the original error and failed-close evidence; do not
+invent a global closer or GC policy to hide a failed initialization owner.

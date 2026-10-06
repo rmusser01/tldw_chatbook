@@ -3521,7 +3521,10 @@ class InterruptRoundHost:
         get_run = getattr(agent_db, "get_run", None)
         if true_run_id and callable(get_run):
             try:
-                row = get_run(str(true_run_id))
+                from tldw_chatbook.DB.base_db import operation_owned_connection
+
+                with operation_owned_connection(agent_db):
+                    row = get_run(str(true_run_id))
             except Exception:  # noqa: BLE001 -- identity is best-effort
                 row = None
             if isinstance(row, dict) and row.get("agent_kind"):

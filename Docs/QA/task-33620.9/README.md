@@ -762,3 +762,101 @@ also pass after documentation edits. The two affected CI contract modules pass
 SHA256 `4652125092d82f67edcfc15a51476afdd002998ec9f2cebc1ed69627a585eeb9`;
 CI contract `/tmp/pr3024-run-log-ci-contract.log`
 `6523a39bdb6a8e82597177020e2b065f8e5264f1287b4e87d15939d1e9d37228`.
+
+### Close fixture authority and interrupted initialization — 2026-10-06
+
+Published source `ed4b0541987b8ef52b9a02c432aa55bbe904ee64` fails UI shard 2
+at the prepared surviving-child authority check. A real Console refresh replaces
+the fixture's controller-only namespace bridge with the installed runtime bridge.
+The fixture now installs a complete incumbent `ConsoleAgentBridge` through that
+runtime, and explicitly exercises the real refresh before its original checks.
+All **208 original assertions are AST-identical**; timeouts, native clicks,
+declined decisions, cancellation and fleet checks are unchanged. Existing opt-in
+fixture capture owns constructor databases and explicitly registered Chat/runs
+files, retiring them after successful runtime disposal.
+
+The first behavioral correction still fails strict resource retirement. Native
+allocation tracing identifies two finite request reads: requester attribution
+opens the first runs handle before the later source observer could borrow it.
+Both now use the existing `operation_owned_connection` at their respective
+boundaries, outside locks and human waits. Real SQLite RED has **four cold
+failures/four warm passes**; final eight controls also prove remembered-grant
+success, unknown-requester denial on actual SQL failure, copied parent/child
+identity and preservation of a warm transaction. No permission or cache policy
+changes.
+
+That correction removes runs-file retention but still leaves Chat files. Actual
+quiescence succeeds with zero registered handles, with no later registration;
+the forwarding-only getter trace then captures the real missing cleanup path:
+`RuntimeError(database_maintenance_in_progress)` during an initialization PRAGMA,
+with the native handle **open, unpublished and unregistered**. The initializer's
+existing cleanup caught only SQLite/path exceptions. Extend that same cold-owner
+cleanup to escaping exceptions, keeping existing SQLite/path conversion,
+rethrowing other original exceptions and preserving failed-close evidence.
+No registry, admission, borrower, transaction, GC or shutdown policy changes.
+
+The deterministic real acquisition/quiescence race fails before repair at the
+native-closed expectation, then the complete quiescence file passes **10 in
+4.07s**, no pytest warnings. The uninstrumented complete Close file plus eight
+request controls and ten quiescence cases passes **21 in 127.36s**, no pytest
+warnings, strict exit **0**, zero database files in each of the three private
+Close children and every outer teardown. Bootstrap admission/lease files are
+still present in the outer census; zero database files is not zero resources.
+Final ownership/quiescence/CI contracts pass **43 in 7.22s**, no warnings.
+The earlier affected request-authority batch passes **201 in 64.14s**, no warnings.
+
+The wider native-owner suite remains **1 failed, 59 passed in 18.97s**: its
+ChaChaNotes case consumes the transaction's already-closed cursor after scope
+exit. Temporarily reversing only this initializer patch leaves the database file
+byte-identical to published HEAD and reproduces the identical failure (**1 in
+1.25s**). The patch was restored. This separate existing contract finding is
+retained, not silently fixed, excluded, or counted as GREEN.
+
+Independent scoped review finds no actionable issue. Incremental Ruff adds no
+diagnostics (controller 182/182, interrupt host 50/50, Chat DB 603/603,
+Close 6/5, quiescence 5/5); normalized formatter debt is unchanged. New request
+test is Ruff/format clean; whitespace passes. Initial failed static annotations
+and diagnostic observer/startup attempts remain in their temporary receipts.
+Both regressions join the existing admission-sensitive CI invocation only.
+All eleven publication artifact guards pass after the documentation update:
+`/tmp/pr3024-close-create-final-preflight.log`, SHA256
+`4652125092d82f67edcfc15a51476afdd002998ec9f2cebc1ed69627a585eeb9`.
+Existing ADR126 applies; no new ADR. Native/Windows/actual participants,
+full measured latency, application retirement and actual external review remain
+HOLDs; tasks and unchecked acceptance criteria are unchanged.
+
+Temporary local receipts, not portable qualification archives:
+
+- Getter trace `/tmp/pr3024-close-getter-nVOyTA/pytest.log`, SHA256
+  `798cc6699f95176fad6a809244fc5d4d18b861c9dc57ce4356bbda5f3d6718f5`;
+  its private child `0c70968602d295f8074a427783ea0dc02672429f45151cf69a00b2d4d8982fce`.
+  Forwarding plugin `/tmp/pr3024_close_getter_failures.py`:
+  `97457958326cdfedc9d591ead7d1e9ba8505dc2a33dd0060d690282cbc7bc746`.
+- Deterministic race RED `/tmp/pr3024-init-race-red-xYvHTC/pytest.log`:
+  `e9e2e73075b65394b128334368f278b9b964e6ae5a15c575852beee3e170fcac`;
+  ten-case GREEN `/tmp/pr3024-init-race-green-GLo7x7/pytest.log`:
+  `fe0f5d7111421e7ea4e6e18a72be3511d05897fa8e1aa0d5fa3a91cc5b9bef74`.
+- Complete strict GREEN `/tmp/pr3024-close-init-green-KMHIPz/pytest.log`:
+  `afbd5b1941fef20715bd7fe9af3de2de0c459c542b676aa53085f5d8dbcb627b`;
+  pending/fleet private child:
+  `2ab3aa381c6d0a545c139a5baaf0b26ec091816b25bab4b0e5cb6062cec8c8a4`.
+- Final controls `/tmp/pr3024-final-owner-ci-controls-JhQRSs/pytest.log`:
+  `0a05b05edbb49655cd3f01abc587ddb89e951966db1780b0ec133ad31ad47e51`;
+  static `/tmp/pr3024-close-create-static-verified.log`:
+  `f395fcdfa18968ca29b62f32a5690742a75b6bfac749efd682b2b13e34a14da3`.
+- Separate failed owner suite `/tmp/pr3024-core-owner-controls-C98UB8/pytest.log`:
+  `a1cbe07ae7a029e0aceaf7c9fd20119e155132cde46399d18b84f85952590a9b`;
+  exact pre-fix comparison `/tmp/pr3024-core-cursor-baseline-1N5LtW/pytest.log`:
+  `b28f45e37fe9bf655d71713ee0a50b3e5f86920c0e10a6778098f2abf183045c`.
+
+Reproduce the strict corrected gate from the repository root:
+
+```sh
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+PYTHONPATH="$PWD/Docs/QA/task-31245:$PWD" \
+PYTEST_PLUGINS=descriptor_census_probe TLDW_TEST_REQUIRE_FILE_RETIREMENT=1 \
+python -m pytest Tests/UI/test_console_session_tab_close.py \
+  Tests/Chat/test_console_chat_create_connection_ownership.py \
+  Tests/DB/test_chachanotes_connection_quiescence.py \
+  -p pytest_asyncio.plugin -p pytest_timeout -q --basetemp=/fresh/owned/root/pytest
+```

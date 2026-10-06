@@ -16797,13 +16797,16 @@ class ConsoleChatController:
             return None
         payload = observation.payload
         try:
-            row = observation.runs_db.get_run(payload.get("source_run_id"))
-            parent_id = payload.get("source_parent_run_id")
-            parent = (
-                observation.runs_db.get_run(parent_id)
-                if payload.get("source_agent_kind") == "subagent" and parent_id
-                else None
-            )
+            from tldw_chatbook.DB.base_db import operation_owned_connection
+
+            with operation_owned_connection(observation.runs_db):
+                row = observation.runs_db.get_run(payload.get("source_run_id"))
+                parent_id = payload.get("source_parent_run_id")
+                parent = (
+                    observation.runs_db.get_run(parent_id)
+                    if payload.get("source_agent_kind") == "subagent" and parent_id
+                    else None
+                )
             fields = ("conversation_id", "agent_kind", "parent_run_id", "status")
             return replace(
                 observation,
