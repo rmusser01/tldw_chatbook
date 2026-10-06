@@ -15,6 +15,7 @@ from tldw_chatbook.config import (
     application_owned_config_directory,
     get_cli_config_path,
     resolve_tldw_api_config,
+    without_ciphertext,
 )
 
 from .source_state import RuntimeSourceStateStore
@@ -209,19 +210,18 @@ def build_runtime_api_client(
     resolved_auth_method = (
         str(auth_method or api_config.get("auth_mode") or "").strip().lower()
     )
-    resolved_auth_token = auth_token
+    # TASK-34100.4 AC #10: a credential still `enc:` reads as absent, so the
+    # next one is used and ciphertext is never sent as the token.
+    config_token = without_ciphertext(api_config.get("auth_token"))
+    config_api_key = without_ciphertext(api_config.get("api_key"))
+    config_bearer = without_ciphertext(api_config.get("bearer_token"))
+    resolved_auth_token = without_ciphertext(auth_token)
     if resolved_auth_token is None:
-        resolved_auth_token = (
-            api_config.get("auth_token")
-            or api_config.get("api_key")
-            or api_config.get("bearer_token")
-        )
+        resolved_auth_token = config_token or config_api_key or config_bearer
 
     if not resolved_auth_method:
         resolved_auth_method = (
-            "bearer"
-            if api_config.get("bearer_token") and not api_config.get("api_key")
-            else "api_key"
+            "bearer" if config_bearer and not config_api_key else "api_key"
         )
 
     if resolved_auth_method in {"bearer", "custom_token"}:
