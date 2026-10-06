@@ -447,7 +447,6 @@ class TestSetupRecoveryAction:
 from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     STEP_APPEARANCE,
     STEP_MODEL,
-    STEP_NOTES,
     STEP_PROTECT,
     STEP_PROVIDER,
     STEP_RAG,
@@ -474,7 +473,8 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
 class TestActiveStepIds:
     def test_full_track_without_key(self):
         """Voice follows Model; Speech remains after RAG; Protect is always
-        present (TASK-21148, UAT N-6 — stable step totals)."""
+        present (TASK-21148, UAT N-6 — stable step totals). TASK-34100.13
+        removed the Notes step, which configured nothing (fulltrack-05)."""
         assert active_step_ids(TRACK_FULL, key_entered=False) == (
             STEP_WELCOME,
             STEP_PROVIDER,
@@ -483,7 +483,6 @@ class TestActiveStepIds:
             STEP_RAG,
             STEP_SPEECH,
             STEP_TOOLS,
-            STEP_NOTES,
             STEP_APPEARANCE,
             STEP_PROTECT,
             STEP_SUMMARY,
@@ -498,7 +497,6 @@ class TestActiveStepIds:
             STEP_RAG,
             STEP_SPEECH,
             STEP_TOOLS,
-            STEP_NOTES,
             STEP_APPEARANCE,
             STEP_PROTECT,
             STEP_SUMMARY,
