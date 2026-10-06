@@ -942,6 +942,27 @@ _CHARACTER_TOOLS_DESCRIPTION = (
 )
 
 
+#: The web_deep_search gate's row title, shared by ``all_tool_gates()`` and
+#: ``local_opt_in_gates()``.
+WEB_DEEP_SEARCH_GATE_TITLE = "Deep web research (web_deep_search)"
+
+
+def local_opt_in_gates() -> dict[str, tuple[str, str]]:
+    """Local tools with their OWN default-off ``[tools]`` gate, without config.
+
+    TASK-34100.5.3 review round 1: setup's Summary names these from the gate
+    table, and must stay pure -- ``all_tool_gates()`` loads the live config,
+    so the Summary (which reads the persisted mapping it is given) reads this
+    instead.
+
+    Returns:
+        ``{tool name: (gate key, gate row title)}``.
+    """
+    from .local_tool_provider import WEB_DEEP_SEARCH_GATE_KEY
+
+    return {"web_deep_search": (WEB_DEEP_SEARCH_GATE_KEY, WEB_DEEP_SEARCH_GATE_TITLE)}
+
+
 def _gate_config_snapshot() -> tuple[dict, dict]:
     """Load the config ONCE and return its ``[tools]`` and ``[console]`` sections.
 
@@ -1047,7 +1068,7 @@ def all_tool_gates() -> list[ToolGate]:
             section="tools",
             key=WEB_DEEP_SEARCH_GATE_KEY,
             tool_name="web_deep_search",
-            title="Deep web research (web_deep_search)",
+            title=WEB_DEEP_SEARCH_GATE_TITLE,
             description=_WEB_DEEP_SEARCH_DESCRIPTION,
             enabled=coerce_bool_setting(
                 tools_cfg.get(WEB_DEEP_SEARCH_GATE_KEY, False), False

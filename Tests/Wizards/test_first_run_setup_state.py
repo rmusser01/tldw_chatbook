@@ -2253,10 +2253,14 @@ class TestSummaryThreeState:
         # chat asked approval for one.
         # TASK-34100.5.3: plain chat now offers exactly the light set until
         # the user turns more on, so the row names it instead of hedging.
+        # Review round 1 (F4): and says plainly that a small or unread window
+        # gets no tools.
         assert rows["Tools"].detail == (
-            "on: date and time, calculator and ask you a question. Sub-agents, "
-            "skills, web, Watchlists, workspace files and characters stay off "
-            f"until you turn on Full agent tools under {TOOL_GATES_PANE_PATH}"
+            "on: date and time, calculator and ask you a question, plus tools "
+            "from MCP servers you add and Library tools in chats you allow. "
+            "Sub-agents, skills, web, Watchlists, workspace files and characters "
+            f"stay off until you turn on Full agent tools under {TOOL_GATES_PANE_PATH}. "
+            "A model with a small or not-yet-known context window gets no tools."
         )
         assert "all off" not in rows["Tools"].detail
         assert "may still" not in rows["Tools"].detail

@@ -346,7 +346,7 @@ def summarize_tool_surface(app_config: Mapping[str, Any]) -> ToolSurfaceSummary:
     """
     from tldw_chatbook.Agents.builtin_tool_gate import (
         LOCAL_TOOLS_DEFAULT_ENABLED,
-        all_tool_gates,
+        local_opt_in_gates,
     )
     from tldw_chatbook.Agents.local_tool_provider import (
         ASK_USER_DEFAULT_ENABLED,
@@ -374,14 +374,15 @@ def summarize_tool_surface(app_config: Mapping[str, Any]) -> ToolSurfaceSummary:
         entry.title for entry in _GATEABLE_BUILTINS if flag(tools, entry.gate_key, False)
     ]
     # The local opt-ins come from the one list, named by their own gate rows
-    # ("Deep web research (web_deep_search)" -> "Deep web research").
-    gates = {gate.tool_name: gate for gate in all_tool_gates()}
+    # ("Deep web research (web_deep_search)" -> "Deep web research"), read
+    # from the config-free gate table so this stays pure.
+    gates = local_opt_in_gates()
     opt_ins_on = [
-        gates[name]
+        name
         for name in LIGHT_SURFACE_LOCAL_OPT_INS
-        if name in gates and local_on and flag(tools, gates[name].key, False)
+        if name in gates and local_on and flag(tools, gates[name][0], False)
     ]
-    switched_on.extend(gate.title.split(" (", 1)[0] for gate in opt_ins_on)
+    switched_on.extend(gates[name][1].split(" (", 1)[0] for name in opt_ins_on)
     return ToolSurfaceSummary(
         full_agent=full_agent_tools_enabled(tools),
         light_names=light_names,
@@ -390,7 +391,7 @@ def summarize_tool_surface(app_config: Mapping[str, Any]) -> ToolSurfaceSummary:
         character_tools_on=flag(
             tools, CHARACTER_TOOLS_GATE_KEY, CHARACTER_TOOLS_DEFAULT_ENABLED
         ),
-        web_research_on=any(gate.tool_name == "web_deep_search" for gate in opt_ins_on),
+        web_research_on="web_deep_search" in opt_ins_on,
     )
 
 
