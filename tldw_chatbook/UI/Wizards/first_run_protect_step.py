@@ -213,7 +213,16 @@ class ProtectKeysStep(SetupStep):
         """
         self._state = state
         self.encryption_enabled = state.kind == protect_state.PROTECT_ENCRYPTED
-        copy = protect_state.protect_copy(state, config_path=self._config_path)
+        # One line, middle-truncated like Summary's footer (UAT S-4): a long
+        # path otherwise hard-wraps mid-name.
+        path_text = (
+            wizard_state.middle_truncate_path(
+                self._config_path, max(40, (self.size.width or 120) - 20)
+            )
+            if self._config_path
+            else ""
+        )
+        copy = protect_state.protect_copy(state, config_path=path_text)
         try:
             self.query_one("#setup-protect-title", Static).update(copy.title)
             self.query_one("#setup-protect-body", Static).update(copy.body)
