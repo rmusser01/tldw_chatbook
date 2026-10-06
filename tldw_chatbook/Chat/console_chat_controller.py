@@ -15751,6 +15751,15 @@ class ConsoleChatController:
         except Exception:  # noqa: BLE001 -- qualification drift refuses composition
             publish(None, None)
             return None
+        # An empty frozen maximum has no stock MCP tools to prepare.
+        if (
+            composition is not None
+            and plugin_maximum is None
+            and type(maximum_tool_ids) is frozenset  # noqa: E721 -- exact frozen bound
+            and not maximum_tool_ids
+        ):
+            publish(None, None)
+            return None
         provider = (factory if composition is not None else MCPToolProvider)(
             service=service,
             main_loop=asyncio.get_running_loop(),

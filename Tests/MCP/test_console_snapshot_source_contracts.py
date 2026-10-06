@@ -1,7 +1,9 @@
 """Native source callback contracts substituted by Console joined workers."""
 
 import asyncio
+import dis
 import inspect
+import sys
 import threading
 from types import MethodType, SimpleNamespace
 
@@ -562,3 +564,206 @@ async def test_unrelated_custom_catalog_descriptor_is_not_read_by_preparation(
     assert probe.permission_calls and all(
         thread is not threading.current_thread() for _, thread in probe.permission_calls
     )
+
+
+class _EmptyMCPCompositionProbe(catalog_controls._ReadProbe):
+    """Count original constructor/catalog work without replacing stock code."""
+
+    def __init__(self, case):
+        from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+
+        super().__init__(case.source)
+        self.service = case.service
+        self.constructor_code = MCPToolProvider.__init__.__code__
+        self.catalog_code = MCPToolProvider._compose_catalog.__code__
+        self.catalog_start = next(
+            instruction.offset
+            for instruction in dis.get_instructions(self.catalog_code)
+            if instruction.opname == "RESUME" and instruction.arg == 0
+        )
+        self.provider_constructions = 0
+        self.catalog_preparations = 0
+
+    def observe(self, frame, event, arg):
+        if event == "call":
+            if (
+                frame.f_code is self.constructor_code
+                and frame.f_locals.get("service") is self.service
+            ):
+                self.provider_constructions += 1
+            if (
+                frame.f_code is self.catalog_code
+                and frame.f_lasti == self.catalog_start
+            ):
+                receiver = frame.f_locals.get("self")
+                if getattr(receiver, "_service", None) is self.service:
+                    self.catalog_preparations += 1
+        super().observe(frame, event, arg)
+
+
+def _require_stock_empty_route(case):
+    from tldw_chatbook.Agents import mcp_tool_provider as provider_source
+
+    composition = provider_source.capture_standard_controller_composition(
+        provider_source.MCPToolProvider, case.service
+    )
+    assert composition is not None, "fixture did not qualify the stock MCP route"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("publish_counts", [True, False], ids=["dispatch", "preview"])
+async def test_empty_stock_mcp_maximum_skips_catalog_work(
+    snapshot_case, publish_counts, record_property
+):
+    """An empty stock bound must avoid construction and real catalog reads."""
+    case = snapshot_case
+    _loop_projection(case)
+    _require_stock_empty_route(case)
+    case.app.console_mcp_tool_count = 3
+    case.app.console_mcp_not_connected_count = 1
+    probe = _EmptyMCPCompositionProbe(case)
+    with probe.installed():
+        provider = await case.controller._compose_mcp_provider(
+            case.session.id,
+            publish_counts=publish_counts,
+            maximum_tool_ids=frozenset(),
+            plugin_maximum=None,
+        )
+    record_property("mcp_provider_constructions", probe.provider_constructions)
+    record_property("mcp_catalog_preparations", probe.catalog_preparations)
+    record_property("mcp_catalog_source_reads", len(probe.read_threads))
+    assert provider is None
+    assert (
+        case.app.console_mcp_tool_count,
+        case.app.console_mcp_not_connected_count,
+    ) == ((None, None) if publish_counts else (3, 1))
+    assert probe.provider_constructions == 0
+    assert probe.catalog_preparations == 0
+    assert probe.read_threads == []
+
+
+@pytest.mark.asyncio
+async def test_empty_mcp_live_clears_previous_counts(snapshot_case):
+    case = snapshot_case
+    _loop_projection(case)
+    _require_stock_empty_route(case)
+    with _EmptyMCPCompositionProbe(case).installed() as original:
+        populated = await case.controller._compose_mcp_provider(case.session.id)
+    assert populated is not None and populated.list_catalog()
+    assert original.provider_constructions == 1 and original.read_threads
+    assert case.app.console_mcp_tool_count > 0
+    with _EmptyMCPCompositionProbe(case).installed() as empty:
+        provider = await case.controller._compose_mcp_provider(
+            case.session.id, maximum_tool_ids=frozenset()
+        )
+    assert provider is None
+    assert case.app.console_mcp_tool_count is None
+    assert case.app.console_mcp_not_connected_count is None
+    assert empty.provider_constructions == 0 and not empty.read_threads
+
+
+class _CustomEmptyMaximum(frozenset):
+    pass
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "maximum,has_provider",
+    [
+        (None, True),
+        (frozenset({"local:one::first"}), True),
+        (_CustomEmptyMaximum(), False),
+    ],
+    ids=["unset", "nonempty", "custom-empty-set"],
+)
+async def test_empty_mcp_maximum_keeps_ordinary_bounds(
+    snapshot_case, maximum, has_provider
+):
+    case = snapshot_case
+    _loop_projection(case)
+    _require_stock_empty_route(case)
+    with _EmptyMCPCompositionProbe(case).installed() as probe:
+        provider = await case.controller._compose_mcp_provider(
+            case.session.id, maximum_tool_ids=maximum
+        )
+    assert (provider is not None) is has_provider
+    assert probe.provider_constructions == 1
+    assert probe.catalog_preparations == 1 and probe.read_threads
+    assert all(lease not in storage_admission._live_leases for lease in probe.leases)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["factory", "service", "factory-defaults"])
+async def test_empty_mcp_maximum_keeps_ordinary_fallback(
+    snapshot_case, monkeypatch, kind
+):
+    """Custom and changed inputs must retain original native preparation."""
+    from tldw_chatbook.Agents import mcp_tool_provider as provider_source
+    from tldw_chatbook.Chat import console_chat_controller as controller_source
+
+    case = snapshot_case
+    _loop_projection(case)
+    _require_stock_empty_route(case)
+    if kind == "factory":
+
+        class CustomProvider(provider_source.MCPToolProvider):
+            pass
+
+        monkeypatch.setattr(controller_source, "MCPToolProvider", CustomProvider)
+        factory = CustomProvider
+    elif kind == "service":
+
+        class CustomService(UnifiedMCPControlPlaneService):
+            pass
+
+        case.service = CustomService(
+            target_store=None,
+            context_store=None,
+            local_service=case.local,
+            server_service=None,
+        )
+        case.service._permission_store = case.permissions
+        case.app.unified_mcp_service = case.service
+        factory = provider_source.MCPToolProvider
+    else:
+        factory = provider_source.MCPToolProvider
+        original = factory.__init__.__kwdefaults__
+        assert original is not None
+        monkeypatch.setattr(factory.__init__, "__kwdefaults__", dict(original))
+    assert (
+        provider_source.capture_standard_controller_composition(factory, case.service)
+        is None
+    )
+    with _EmptyMCPCompositionProbe(case).installed() as probe:
+        provider = await case.controller._compose_mcp_provider(
+            case.session.id, maximum_tool_ids=frozenset()
+        )
+    assert provider is None
+    assert probe.provider_constructions == 1
+    assert probe.catalog_preparations == 1 and probe.read_threads
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "plugin_maximum", [{}, {"plugin_run_id": "pending:console-mcp"}]
+)
+async def test_empty_mcp_maximum_preserves_plugin_route(snapshot_case, plugin_maximum):
+    case = snapshot_case
+    _loop_projection(case)
+    _require_stock_empty_route(case)
+    assert case.controller._skills_service is None
+    # The current plugin module has a POSIX-only import on Windows. An empty
+    # bound must not silently bypass that existing route or its original error.
+    if sys.platform == "win32":
+        expected_error, reason = AttributeError, "O_DIRECTORY"
+    else:
+        expected_error, reason = PermissionError, "plugin_mcp_authority_unavailable"
+    with _EmptyMCPCompositionProbe(case).installed() as probe:
+        with pytest.raises(expected_error, match=reason):
+            await case.controller._compose_mcp_provider(
+                case.session.id,
+                maximum_tool_ids=frozenset(),
+                plugin_maximum=plugin_maximum,
+            )
+    assert probe.provider_constructions == 1
+    assert probe.catalog_preparations == 1 and probe.read_threads
