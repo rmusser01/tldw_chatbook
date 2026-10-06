@@ -543,6 +543,24 @@ async def test_a_provider_name_typed_exactly_is_the_one_chosen(request):
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_typing_a_legacy_alias_id_chooses_the_canonical_provider(request):
+    """TASK-33007.9 (review round 5): "Mistral" is the legacy alias row's id,
+    yet Enter chooses Mistral AI, not "Mistral AI (legacy alias)" listed
+    last."""
+    host = _anthropic_host()
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        await _type_filter(pilot, screen, "Mistral")
+        await pilot.press("enter")
+        await _until(pilot, lambda: _held(screen) != "anthropic" and not picker.display)
+        assert _held(screen) == "mistralai"
+
+
+@pytest.mark.asyncio
+@private_profile_test
 @pytest.mark.parametrize("revert_with", ["r", "button"])
 async def test_discard_changes_shows_the_saved_provider_and_no_filtered_list(
     request, revert_with
