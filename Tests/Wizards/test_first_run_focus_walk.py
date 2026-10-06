@@ -360,7 +360,12 @@ async def test_quick_track_keyboard_walk_never_loses_focus(monkeypatch):
         await walk.next("voice")
 
         # Voice: "Test and Hear" from the keyboard; the sample is async work.
+        # TASK-34100.8: the step starts on "No voice for now"; the arrow key
+        # picks PocketTTS (selection follows the highlight), which shows it.
         voice = walk.container.steps[walk.container.current_step]
+        await walk.tab_to("setup-voice-preset")
+        await pilot.press("right")
+        await walk.until(lambda: voice._preset == "pocket_tts", "PocketTTS picked")
         await walk.tab_to("setup-voice-test")
         await pilot.press("enter")
         await walk.until(
@@ -370,6 +375,8 @@ async def test_quick_track_keyboard_walk_never_loses_focus(monkeypatch):
         )
         await pilot.pause(0.1)
         _assert_focus_alive(app, "after the voice sample completed")
+        # voice-speech-05: focus came back to the button, not the top.
+        assert app.focused is voice.query_one("#setup-voice-test")
 
         await walk.next("protect-keys")
 

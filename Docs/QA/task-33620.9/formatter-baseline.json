@@ -1,0 +1,135 @@
+{
+  "base_ref": "HEAD",
+  "base_sha": "7d155170dc95557736a239a1ce7427981f4d50ec",
+  "baseline_red_paths": [
+    "tldw_chatbook/Chat/console_chat_store.py",
+    "tldw_chatbook/UI/Console_Modules/session.py",
+    "tldw_chatbook/UI/Console_Modules/wiring.py"
+  ],
+  "files": {
+    "tldw_chatbook/Chat/console_chat_store.py": {
+      "debt_units": 2,
+      "formatter_required": true,
+      "normalized_diff_sha256": "d88b293c90fdc6aacea18596c90fd1b0cf73871d8604ed611d9cf1f559ef2eb0",
+      "source_hunks": [
+        [
+          13826,
+          13831
+        ],
+        [
+          15642,
+          15647
+        ]
+      ],
+      "source_sha256": "49f521c3e2547c03656646c68a4609e68fd3f6b34c39e3d37f7c3d70b2023830"
+    },
+    "tldw_chatbook/UI/Console_Modules/session.py": {
+      "debt_units": 70,
+      "formatter_required": true,
+      "normalized_diff_sha256": "032a37088d45b0281ddc33ccb2e2b56feb7600bd44d5127572531baaaf036a7d",
+      "source_hunks": [
+        [
+          530,
+          539
+        ],
+        [
+          642,
+          650
+        ],
+        [
+          2783,
+          2789
+        ],
+        [
+          3576,
+          3583
+        ],
+        [
+          3680,
+          3694
+        ],
+        [
+          3699,
+          3705
+        ],
+        [
+          3929,
+          3937
+        ],
+        [
+          4412,
+          4420
+        ],
+        [
+          4697,
+          4705
+        ],
+        [
+          5566,
+          5574
+        ],
+        [
+          5603,
+          5612
+        ],
+        [
+          5615,
+          5622
+        ],
+        [
+          5665,
+          5673
+        ],
+        [
+          5707,
+          5715
+        ]
+      ],
+      "source_sha256": "6b2a7f6564db68df3ebc7a436068d011a1da81a657fe046dc2960b1c6850f06a"
+    },
+    "tldw_chatbook/UI/Console_Modules/wiring.py": {
+      "debt_units": 40,
+      "formatter_required": true,
+      "normalized_diff_sha256": "fb5d5c820712239ff90542b1d887ad650e80308e0b392a6778b9946308218be2",
+      "source_hunks": [
+        [
+          127,
+          133
+        ],
+        [
+          320,
+          329
+        ],
+        [
+          877,
+          885
+        ],
+        [
+          1181,
+          1186
+        ],
+        [
+          1256,
+          1289
+        ],
+        [
+          2090,
+          2095
+        ],
+        [
+          2112,
+          2117
+        ]
+      ],
+      "source_sha256": "35338d458a68e82d062950fd09e02629ac052b70ed48641cb454154642313e07"
+    }
+  },
+  "generated_at_utc": "2026-10-04T17:55:56.648610+00:00",
+  "paths": [
+    "tldw_chatbook/Chat/console_chat_store.py",
+    "tldw_chatbook/UI/Console_Modules/session.py",
+    "tldw_chatbook/UI/Console_Modules/wiring.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

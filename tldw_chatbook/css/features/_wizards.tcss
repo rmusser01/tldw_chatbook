@@ -1118,6 +1118,20 @@ SmartContentTree Tree > .selected-node {
     height: auto;
 }
 
+/* TASK-34100.8: the try-it body ("No voice for now" hides it) and the inline
+ * OpenAI key row are Verticals too; 1fr here made the step under-report its
+ * height, so Advanced fields scrolled out of reach. */
+#setup-voice-body,
+#setup-voice-key-row {
+    height: auto;
+}
+
+/* The line under the Service radio: will this service work? */
+#setup-voice-service-status {
+    height: auto;
+    min-height: $ds-size-1;
+}
+
 .setup-voice-segmented {
     layout: horizontal;
     height: $ds-size-3;
@@ -1132,19 +1146,60 @@ SmartContentTree Tree > .selected-node {
     height: $ds-size-3;
 }
 
+/* TASK-34100.8 review round 1 (F8): five equal segments clipped the lead
+ * "No voice for now" to "No voice for no…" at 120 columns once the step
+ * scrolled. Share the row in proportion to each label's own width (label +
+ * radio glyph), so every label fits whenever the row has room for all five
+ * and they shrink together when it has not. */
+#setup-voice-preset-none {
+    width: 21fr;
+}
+
+#setup-voice-preset-pocket,
+#setup-voice-preset-omnivoice {
+    width: 14fr;
+}
+
+#setup-voice-preset-official,
+#setup-voice-preset-custom {
+    width: 11fr;
+}
+
+/* TASK-34100.8 review round 2 (R2-F3 / G8-R2-F4): the five labels need 71
+ * cells, so below about 87 columns one row clipped every one of them (80x24:
+ * "No voice for …", "PocketTT…"). VoiceServiceRadioSet adds -stacked exactly
+ * then, and the radio wraps to two rows of three columns, each as wide as
+ * its widest label needs (No voice for now / Custom, PocketTTS / OmniVoice,
+ * OpenAI). */
+#setup-voice-preset.-stacked {
+    layout: grid;
+    grid-size: 3 2;
+    grid-columns: 21fr 14fr 11fr;
+    grid-rows: $ds-size-1;
+    height: $ds-size-4;
+    min-height: $ds-size-4;
+}
+
+#setup-voice-preset.-stacked SetupRadioButton {
+    width: 1fr;
+    height: $ds-size-1;
+}
+
 .setup-voice-segmented SetupRadioButton.-on {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
 }
 
+/* TASK-34100.8: Format is a picker whose "Other…" reveals a text field, so
+ * the row grows with it instead of clipping at a fixed height. */
 .setup-voice-output-row {
-    height: $ds-size-5;
+    height: auto;
 }
 
 .setup-voice-output-row > Vertical {
     width: $ds-width-fill;
-    height: $ds-size-5;
+    height: auto;
 }
 
 #setup-voice-sample-count {

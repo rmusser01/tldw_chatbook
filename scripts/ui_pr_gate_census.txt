@@ -29,6 +29,7 @@ Tests/UI/test_console_dictionaries_inspector.py
 Tests/UI/test_console_edit_modal_keystroke_guard.py
 Tests/UI/test_console_feedback_comment_modal.py
 Tests/UI/test_console_fewer_permission_prompts_command.py
+Tests/UI/test_console_first_chat_first_mount.py
 Tests/UI/test_console_frame_states.py
 Tests/UI/test_console_image_viewer.py
 Tests/UI/test_console_library_policy_controller.py
@@ -52,9 +53,11 @@ Tests/UI/test_console_settings_model_change.py
 Tests/UI/test_console_settings_saved_defaults.py
 Tests/UI/test_console_system_prompt_chip.py
 Tests/UI/test_console_temporary_capture_admission.py
+Tests/UI/test_console_toast_clears_header.py
 Tests/UI/test_console_trace_call_recovery.py
 Tests/UI/test_console_trace_maintenance_status.py
 Tests/UI/test_console_turn_resend_ui.py
+Tests/UI/test_console_visible_turn_attention.py
 Tests/UI/test_console_voice_accessibility.py
 Tests/UI/test_console_workspace_details_tray.py
 Tests/UI/test_css_generated_comments.py
@@ -146,3 +149,20 @@ Tests/UI/test_approval_batch_geometry.py
 # TASK-34000 wave 1a final review (C1): autosave after its burst's max wait ran
 # out. Appended, so no other file changes shard.
 Tests/UI/test_library_note_autosave_recovers.py
+
+# TASK-33620.9: durable rename publication through the mounted rail menu.
+Tests/UI/test_console_rename_consistency.py
+
+# TASK-31245: constructor hydration and finite workspace handle ownership.
+Tests/UI/test_console_fixture_ownership.py
+Tests/UI/test_console_finite_read_ownership.py
+
+# TASK-31966: stable recovery-bar refresh and real recovery-height transitions.
+Tests/UI/test_console_control_bar_recovery_height.py
+
+# TASK-31966: Send-reason size idempotence, resize and override repair.
+Tests/UI/test_console_composer_reason_restyles.py
+
+# TASK-34100.16: setup's Restore entry (Inspect mode, title, format hint), the
+# settings-file / folder pre-checks, and the reason line above a disabled Create.
+Tests/UI/test_backup_restore_setup_entry.py

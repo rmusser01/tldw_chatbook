@@ -3738,9 +3738,11 @@ class _StreamingModelAdapter:
                 ),
             )
             from tldw_chatbook.Chat.stream_stall_watchdog import (
+                first_token_timeout_seconds,
                 watch_content_stalls,
             )
 
+            stall_timeout = _stall_timeout_seconds()
             async for chunk in watch_content_stalls(
                 self._gateway.stream_chat(
                     effective_resolution,
@@ -3751,8 +3753,13 @@ class _StreamingModelAdapter:
                     capture_mode=self._capture_mode,
                     **stream_kwargs,
                 ),
-                _stall_timeout_seconds(),
+                stall_timeout,
                 provider=effective_resolution.provider,
+                # TASK-34100.5 AC#5: a cold local model's first token waits
+                # longer than the gap between tokens.
+                first_item_timeout_seconds=first_token_timeout_seconds(
+                    effective_resolution.provider, stall_timeout=stall_timeout
+                ),
             ):
                 synthetic = emission_synthetic is True
                 emission_synthetic = None
@@ -5049,6 +5056,9 @@ def build_console_first_request_plan(
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
+    # Lazy (ADR-097 UI-ready census): only a send plans its first request.
+    from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
+
     schemas = build_first_request_schema_plan(
         registry,
         allowed_tools,
@@ -5073,6 +5083,12 @@ def build_console_first_request_plan(
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
         discovery_system_prompt=discovery_prompt,
+        # TASK-34100.5 AC#6: the same window the send preflight used, and a
+        # tool-less request carries only the session's own prompt (or a
+        # neutral one-liner, never the tool-protocol prompt: V2-F2).
+        context_window=getattr(resolution, "context_window", None),
+        plain_system_prompt=(session_system_prompt or "").strip()
+        or PLAIN_CHAT_SYSTEM_PROMPT,
     )
     config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     profile_workspace_id = (
@@ -10061,9 +10077,10 @@ class ConsoleAgentBridge:
             rather than a lookup error); its ``parent_run_id`` when it is
             a recorded sub-agent run.
         """
-        record = self._db.get_run_metadata(run_id)
-        parent_run_id = record.get("parent_run_id") if record else None
-        return parent_run_id or run_id
+        with operation_owned_connection(self._db):
+            record = self._db.get_run_metadata(run_id)
+            parent_run_id = record.get("parent_run_id") if record else None
+            return parent_run_id or run_id
 
     def run_log_available(
         self, run_id: str, *, cancelled: Callable[[], bool] | None = None

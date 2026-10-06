@@ -44,6 +44,7 @@ from Tests.UI.app_factory import (
     drain_active_service_patches,
     drain_created_dirs,
 )
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_console_button_routing import (
     _mounted_console,
     _wait_for_confirmation,
@@ -215,10 +216,11 @@ def _session_ids(store) -> list[str]:
     return [session.id for session in store.sessions()]
 
 
-def _saved_conversation(app, tmp_path):
+def _saved_conversation(app, tmp_path, request):
     """Back one saved conversation with a real ChaChaNotes DB file."""
 
     db = CharactersRAGDB(tmp_path / "tab-close.db", client_id="tab-close")
+    request.getfixturevalue("owned_console_apps")(app.console_runtime, db)
     app.chachanotes_db = db
     app.local_chat_conversation_service = ChatConversationService(db)
     conversation_id = db.add_conversation({"title": _SAVED_TITLE})
@@ -269,7 +271,7 @@ async def _verify_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(
     """AC #1 / #5: the real ✕ click runs the close worker and the tab goes."""
 
     app = _ready_app()
-    db, conversation_id, message_id = _saved_conversation(app, tmp_path)
+    db, conversation_id, message_id = _saved_conversation(app, tmp_path, request)
     notes = _record_notifications(app)
     host = ProductionConsoleHarness(app)
     try:
@@ -391,7 +393,7 @@ async def _verify_internal_close_error_names_the_tab_but_never_the_error_text(
     """
 
     app = _ready_app()
-    db, conversation_id, message_id = _saved_conversation(app, tmp_path)
+    db, conversation_id, message_id = _saved_conversation(app, tmp_path, request)
     notes = _record_notifications(app)
     records: list[str] = []
     sink = logger.add(records.append, level="WARNING", format="{message}")
@@ -473,7 +475,7 @@ async def _verify_close_that_does_not_finish_is_reported_and_keeps_tab_state(
     """
 
     app = _ready_app()
-    db, conversation_id, message_id = _saved_conversation(app, tmp_path)
+    db, conversation_id, message_id = _saved_conversation(app, tmp_path, request)
     notes = _record_notifications(app)
     host = ProductionConsoleHarness(app)
     try:
@@ -808,8 +810,8 @@ async def _pending_close_app(request, kind, *, surviving_child=False):
 
 def _prepare_surviving_child(controller, session_id):
     """Keep existing child authority live after the primary turn has ended."""
-    from types import SimpleNamespace
     from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
 
     source = controller.store._sessions[session_id]
     source.persisted_conversation_id = controller.store.persistence.create_conversation(
@@ -827,11 +829,12 @@ def _prepare_surviving_child(controller, session_id):
         parent_run_id=parent,
         run_id=f"close-chat_create-{session_id}",
     )
-    controller._agent_bridge = SimpleNamespace(
-        runs_db=runs,
+    controller._agent_bridge = ConsoleAgentBridge(
         agent_runs_db=runs,
-        live_primary_run_id=lambda conversation: parent,
+        store=controller.store,
+        provider_gateway=controller.provider_gateway,
     )
+    controller._hooks_v2_runtime.set_agent_bridge(controller._agent_bridge)
     actor = CurrentRunActor("subagent", child, parent)
     with use_run_actor(actor):
         prepared = controller.prepare_agent_chat_create(
@@ -849,10 +852,12 @@ def _prepare_surviving_child(controller, session_id):
 
 
 def _assert_surviving_creation_is_live(controller, pending):
+    """Require prepared child authority to survive a normal Console refresh."""
     from tldw_chatbook.Agents.run_context import use_run_actor
 
     prepared = pending._prepared_creation_payload
     with use_run_actor(pending._prepared_creation_actor):
+        controller._hooks_v2_runtime.view._sync_console_chat_core_state()
         assert controller._chat_creation_source_live(prepared)
         record = controller._chat_creation_record(prepared)
         assert record is controller._chat_creation_records[prepared["_creation_token"]]
@@ -1475,6 +1480,9 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
         with monkeypatch.context() as patch:
             app = _ready_app()
             _attach_real_dbs(app, case_path)
+            request.getfixturevalue("owned_console_apps")(
+                app.console_runtime, app.chachanotes_db
+            )
             notes = _record_notifications(app)
             host = ProductionConsoleHarness(app)
             async with host.run_test(size=_SIZE) as pilot:

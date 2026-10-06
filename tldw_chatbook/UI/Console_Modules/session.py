@@ -117,6 +117,7 @@ otherwise suggest belong here, for the reasons noted:
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from functools import partial
 import json
@@ -252,6 +253,7 @@ from ...Character_Chat.persona_visual_identity import (
     resolve_persona_visual_identity,
 )
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
+from ...DB.base_db import operation_owned_connection
 from ...config import (
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -694,25 +696,32 @@ def _resolve_visual_identity_for_db(
 ) -> VisualIdentityResolution | None:
     """Resolve one immutable preview request without retaining its screen."""
 
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
     _session_id, actor_kind, actor_id = scope
     try:
-        if actor_kind == "persona":
-            if local_persona_service is None:
-                return None
-            return resolve_persona_visual_identity(
+        with (
+            operation_owned_connection(db)
+            if type(db) is CharactersRAGDB and not db.is_memory_db
+            else nullcontext()
+        ):
+            if actor_kind == "persona":
+                if local_persona_service is None:
+                    return None
+                return resolve_persona_visual_identity(
+                    db,
+                    local_persona_service,
+                    persona_id=actor_id,
+                    requested_state=requested_state,
+                    manual_expression_key=manual_expression_key,
+                )
+            return resolve_visual_identity(
                 db,
-                local_persona_service,
-                persona_id=actor_id,
+                actor_kind=actor_kind,
+                actor_id=actor_id,
                 requested_state=requested_state,
                 manual_expression_key=manual_expression_key,
             )
-        return resolve_visual_identity(
-            db,
-            actor_kind=actor_kind,
-            actor_id=actor_id,
-            requested_state=requested_state,
-            manual_expression_key=manual_expression_key,
-        )
     except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
         logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
             "Console reaction resolution failed for actor_kind={} actor_id={} "
@@ -731,24 +740,35 @@ def _visual_identity_options_for_db(
 ) -> tuple[ReactionOption, ...]:
     """Read metadata-only preview options without retaining its screen."""
 
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
     _session_id, actor_kind, actor_id = scope
     try:
-        persona_authority = None
-        if actor_kind == "persona":
-            if local_persona_service is None:
-                return ()
-            persona_authority = capture_local_persona_visual_identity(
-                local_persona_service, actor_id
-            )
-            if persona_authority is None:
-                return ()
-        graph = VisualIdentityRepository(db).get_active_actor_pack(actor_kind, actor_id)
-        if (
-            actor_kind == "persona"
-            and capture_local_persona_visual_identity(local_persona_service, actor_id)
-            != persona_authority
+        with (
+            operation_owned_connection(db)
+            if type(db) is CharactersRAGDB and not db.is_memory_db
+            else nullcontext()
         ):
-            return ()
+            persona_authority = None
+            if actor_kind == "persona":
+                if local_persona_service is None:
+                    return ()
+                persona_authority = capture_local_persona_visual_identity(
+                    local_persona_service, actor_id
+                )
+                if persona_authority is None:
+                    return ()
+            graph = VisualIdentityRepository(db).get_active_actor_pack(
+                actor_kind, actor_id
+            )
+            if (
+                actor_kind == "persona"
+                and capture_local_persona_visual_identity(
+                    local_persona_service, actor_id
+                )
+                != persona_authority
+            ):
+                return ()
     except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
         logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
             "Console reaction inventory failed for actor_kind={} actor_id={} "
@@ -899,6 +919,7 @@ class ConsoleSessionController:
         painted_session_accessor: Callable[[], str | None] = lambda: None,
         refresh_manual_read_rows: Callable[[], None] = lambda: None,
         on_draft_session_changed: Callable[[], None] | None = None,
+        rename_saved_conversation: Callable[[str, str], None] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -962,6 +983,7 @@ class ConsoleSessionController:
                 `self.app_instance`. Snapshotted as a plain attribute: it
                 does not change identity over the controller's life, and
                 the pre-extraction methods never called it, only read it.
+            rename_saved_conversation: Late-bound durable saved-title rename owner.
             chat_store_accessor: `ChatScreen._ensure_console_chat_store`
                 (lazily creates the store) -- used where the original body
                 called it as a method.
@@ -1110,6 +1132,7 @@ class ConsoleSessionController:
         self._switcher_authority_accessor = switcher_authority_accessor
         self._console_runtime_accessor = console_runtime_accessor
         self._set_active_workspace_for_session_fn = set_active_workspace_for_session
+        self._rename_saved_conversation_fn = rename_saved_conversation
         self._resume_workspace_conversation_fn = resume_workspace_conversation
         self._workspace_initial_session_title_fn = workspace_initial_session_title
         self._merge_workspace_rows_fn = merge_workspace_rows
@@ -1494,20 +1517,60 @@ class ConsoleSessionController:
         *,
         provider: str,
         model: str,
-        config_revision: int,
-    ) -> ConsoleSessionSettings | None:
-        """Resolve exact current defaults only while the config fence matches."""
+    ) -> tuple[ConsoleSessionSettings | None, int, ConsoleSessionSettings]:
+        """Resolve the saved defaults while they still name the intent's pair.
+
+        The fence is the saved provider and model, not the global config
+        generation (TASK-34100.5 AC#1): Console's own first-mount rail-scope
+        write advances the generation between Start chatting and the consume,
+        which released every fresh-profile handoff with a false warning.
+
+        Returns:
+            ``(matching settings or None, generation read, settings read)``.
+        """
 
         snapshot = get_runtime_config_snapshot()
-        if snapshot.generation != config_revision:
-            return None
         settings = build_default_console_session_settings(snapshot.values)
         if (
             provider_config_key(settings.provider) != provider_config_key(provider)
             or str(settings.model or "").strip() != str(model or "").strip()
         ):
-            return None
-        return settings
+            return None, snapshot.generation, settings
+        return settings, snapshot.generation, settings
+
+    def _settle_stale_first_chat_claim(
+        self, claim, current: ConsoleSessionSettings
+    ) -> bool:
+        """Retire a handoff whose saved pair changed, naming the pair in use."""
+
+        model = str(current.model or "").strip()
+        provider = provider_config_key(current.provider)
+        label = " · ".join(
+            part
+            for part in (provider_display_name(provider) if provider else "", model)
+            if part
+        )
+        message = (
+            f"Your default chat model changed to {label} after setup — "
+            f"Console is using {model or label}."
+            if label
+            else "Your default chat model changed after setup — Console is using the saved default."
+        )
+        handoffs = self.app_instance.pending_handoffs
+        try:
+            settled = handoffs.acknowledge_current(claim)
+        except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
+            self._log_first_chat_handoff_exception("stale-claim-settle", exc)
+            settled = False
+        if not settled:
+            # Superseded by a newer Start chatting: releasing settles it.
+            self._release_first_chat_claim(claim, message)
+            return False
+        try:
+            self.app_instance.notify(message, severity="information")
+        except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
+            self._log_first_chat_handoff_exception("notification", exc)
+        return False
 
     def eligible_console_first_chat_session_id(self) -> str | None:
         """Return an exact untouched target without changing Console.
@@ -1652,16 +1715,12 @@ class ConsoleSessionController:
                 claim,
                 "The first chat could not be opened yet; review provider setup.",
             )
-        defaults = self._current_first_chat_defaults(
+        defaults, verified_generation, saved = self._current_first_chat_defaults(
             provider=intent.provider,
             model=intent.model,
-            config_revision=intent.config_revision,
         )
         if defaults is None:
-            return self._release_first_chat_claim(
-                claim,
-                "Provider settings changed before Console opened. Review setup and try again.",
-            )
+            return self._settle_stale_first_chat_claim(claim, saved)
 
         store = self._ensure_console_chat_store()
         prior_active_id = store.active_session_id
@@ -1726,11 +1785,13 @@ class ConsoleSessionController:
             return self._release_first_chat_claim(claim, message)
 
         def fence_matches(*, expected_active_id: str) -> bool:
-            current = self._current_first_chat_defaults(
+            nonlocal verified_generation
+            current, generation, _saved = self._current_first_chat_defaults(
                 provider=intent.provider,
                 model=intent.model,
-                config_revision=intent.config_revision,
             )
+            if current == defaults:
+                verified_generation = generation
             return (
                 current == defaults
                 and store.active_session_id == expected_active_id
@@ -1856,10 +1917,21 @@ class ConsoleSessionController:
                 "Console changed before the first chat finished opening. It will retry.",
             )
         try:
-            acknowledged = run_if_runtime_config_generation_current(
-                intent.config_revision,
-                lambda: self.app_instance.pending_handoffs.acknowledge_current(claim),
-            )
+            # Linearize the acknowledgement against the generation whose
+            # VALUES were just re-verified; an unrelated write in between only
+            # re-runs the value check, a changed pair rolls back below.
+            acknowledged = False
+            for _attempt in range(3):
+                acknowledged = run_if_runtime_config_generation_current(
+                    verified_generation,
+                    lambda: self.app_instance.pending_handoffs.acknowledge_current(
+                        claim
+                    ),
+                )
+                if acknowledged or not fence_matches(
+                    expected_active_id=intent.session_id
+                ):
+                    break
         except Exception as exc:  # noqa: BLE001 - mount/resume must not fail
             self._log_first_chat_handoff_exception("guarded-acknowledgement", exc)
             return rollback_and_release(
@@ -1870,7 +1942,45 @@ class ConsoleSessionController:
                 "The first chat could not be acknowledged yet. It will retry.",
             )
         self._first_chat_handoff_notified_revision = None
+        if created_target is not None:
+            self._retire_untouched_first_mount_chat(
+                prior_active_id, intent.session_id, sync=not defer_presentation
+            )
         return True
+
+    def _retire_untouched_first_mount_chat(
+        self, prior_id: str | None, target_id: str, *, sync: bool
+    ) -> None:
+        """Drop the empty chat Console's first mount made next to the handoff's.
+
+        TASK-34100.5 AC#1: on a never-mounted Console the first-chat intent
+        reserves a new session, and Console's first mount had already opened
+        its own untouched 'Chat 1' -- the tab strip read 'Chat 1  Chat 1'.
+        Only an exact pristine, never-persisted session is removed; anything
+        with work, or saved from an earlier run, stays.
+        """
+        store = self._console_chat_store
+        prior = next(
+            (s for s in store.sessions() if s.id == prior_id and s.id != target_id),
+            None,
+        ) if store is not None else None
+        baseline = getattr(prior, "canonical_settings_baseline", None)
+        if prior is None or baseline is None:
+            return
+        if prior.ephemeral or prior.persisted_conversation_id is not None:
+            return
+        try:
+            removed = store.rollback_created_pristine_session(
+                prior.id,
+                expected_session=prior,
+                expected_settings=baseline,
+                prior_active_session_id=target_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - an extra tab is not a failure
+            self._log_first_chat_handoff_exception("retire-first-mount-chat", exc)
+            return
+        if removed and sync and self._screen_mounted_accessor():
+            self._sync_console_chat_core_state()
 
     # -- Session-local character reactions ----------------------------------
 
@@ -2000,6 +2110,8 @@ class ConsoleSessionController:
     ) -> VisualIdentityResolution | None:
         """Resolve a message's exact immutable character expression."""
 
+        from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
         _session_id, actor_kind, actor_id = scope
         db = self._visual_identity_db_accessor()
         if (
@@ -2009,15 +2121,20 @@ class ConsoleSessionController:
         ):
             return None
         try:
-            return resolve_historical_visual_identity(
-                db,
-                actor_id=identity.actor_id,
-                pack_id=identity.pack_id,
-                pack_version_id=identity.pack_version_id,
-                expression_key=identity.expression_key,
-                expression_id=identity.expression_id,
-                asset_id=identity.asset_id,
-            )
+            with (
+                operation_owned_connection(db)
+                if type(db) is CharactersRAGDB and not db.is_memory_db
+                else nullcontext()
+            ):
+                return resolve_historical_visual_identity(
+                    db,
+                    actor_id=identity.actor_id,
+                    pack_id=identity.pack_id,
+                    pack_version_id=identity.pack_version_id,
+                    expression_key=identity.expression_key,
+                    expression_id=identity.expression_id,
+                    asset_id=identity.asset_id,
+                )
         except (SQLiteError, TypeError, ValueError, OverflowError):
             logger.debug(
                 "Console historical reaction resolution failed actor_id={}",
@@ -2382,8 +2499,30 @@ class ConsoleSessionController:
             )
             return
 
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        conversation_id = session.persisted_conversation_id
+
         def _apply_rename(result: str | None) -> None:
             if result is None:
+                return
+            if (
+                getattr(self.app_instance, "chachanotes_db", None) is not db
+                or self._console_chat_store is not store
+                or not any(candidate is session for candidate in store.sessions())
+                or session.persisted_conversation_id != conversation_id
+            ):
+                self.app_instance.notify(
+                    "The profile or chat changed. Open Rename again.",
+                    severity="warning",
+                )
+                return
+            if conversation_id is not None:
+                if self._rename_saved_conversation_fn is None:
+                    self.app_instance.notify(
+                        "Conversation rename is unavailable.", severity="error"
+                    )
+                    return
+                self._rename_saved_conversation_fn(conversation_id, result)
                 return
             try:
                 _renamed, persisted = store.rename_session(session_id, result)

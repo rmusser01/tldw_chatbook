@@ -442,6 +442,9 @@ def frozen_workspace_roots(
     if not workspace_id:
         return ()
     try:
+        binding_authority = tuple(binding_authority)
+        if not binding_authority:
+            return ()
         registry = registry or _registry_factory()
         live = {
             str(getattr(item, "binding_id", "")): item

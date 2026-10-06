@@ -269,7 +269,21 @@ one frame (it re-scatters only when the window resizes) and costs nothing
 while the card waits. Its button follows the current step (**Set up
 provider**, then **Choose model**) and opens **Chat settings**.
 The composer stays locked until a provider and model are configured; once
-they are, the empty transcript reads "Ready — type a message to begin."
+they are, the empty transcript names what is connected, for example
+"Setup complete — OpenAI · gpt-4.1-mini. Ready — type a message to begin."
+(a model saved as a file path, as llama.cpp models often are, shows its file
+name). That line is the arrival receipt: it shows until your first-ever send,
+and nothing about it is sent to the model.
+
+**Arriving from setup.** Finishing first-run setup with **Start chatting**
+opens one chat on the saved provider and model, with no notice. Notices that
+do appear in Console are drawn below the nav tabs, header and control rows
+and the chat tab strip, so they never cover the tab bar, the voice controls,
+the readiness badge or the New tab and Temporary buttons.
+"A Console turn completed while hidden" appears only when the turn finished
+while Console was not on screen, or in a tab you were not viewing. A dialog
+open over Console (Switch model, Rename, the command palette) does not count
+as hidden.
 
 **Readiness words.** Every model surface — the header's status badge, the
 Model section's status line, this card's current step, the
@@ -391,7 +405,7 @@ fails without playing a truncated file.
 | Chip | What it shows |
 |---|---|
 | **Provider** / **Model** | The active provider and model for this session. The provider shows its display name — "llama.cpp", "OpenAI", or a custom endpoint's own name — never its config key; a long name is shortened with "…" and shows in full when the chip has focus. |
-| **Assistant** / **Library** | The active assistant; the Library chip summarizes the two independent conversation controls as **Auto: Never / Automatic** and **Assistant: Blocked / Allowed**. Open it to edit those controls and see whether allowed assistant tools use **Direct / RAG** mode. |
+| **Assistant** / **Library** | The active assistant; the Library chip summarizes the two independent conversation controls in plain words, **Auto off/on · Agent access off/on**, for example **Library · Auto off · Agent access off** (its editor labels them **Auto: Never / Automatic** and **Assistant: Blocked / Allowed**). Open it to edit those controls and see whether allowed assistant tools use **Direct / RAG** mode. |
 | **Sources** / **Tools** | Staged source count (e.g. "Sources: 0"); tool readiness (e.g. "Tools: 10 ready" — hidden until tools are counted). |
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |
 | **Scope** | Appears when retrieval is narrowed ("Scope: N"); Enter or Space opens the scope picker. |
@@ -1092,6 +1106,36 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
 
 - **Status chips look truncated.** They ellipsize to fit the row — hover a
   chip for its full text.
+- **The status strip shows no "Context" figure.** While the model's context
+  window is unknown the cost chip leaves the context share out (hover it for
+  why). It only matters if a send is refused, and then the refusal names the
+  fix — see [When a message doesn't fit the model](console/chat-basics.md#when-a-message-doesnt-fit-the-model).
+- **A small local model gets a plain request.** The assistant's tool list
+  is sized against the context window the send itself uses. When a
+  self-hosted server's window is only a guess (no catalog entry, and the
+  server didn't report one), it is planned as 4,096 tokens; when the tools
+  don't fit, the request carries just your system prompt (with it off,
+  "You are a helpful assistant."), any workspace note, and the conversation,
+  with no tool instructions. A
+  llama.cpp server started with `-c 4096` therefore still answers a first
+  "hi". A model with a known, large window keeps its tools, and so does a
+  cloud model the catalog doesn't list yet (its provider's window is used).
+- **The first reply from a large local model takes minutes.** Loading a
+  model and reading the prompt can take a while on CPU. A self-hosted
+  provider gets 300 seconds for the *first* token
+  (`[chat_defaults] first_token_timeout_seconds`, or
+  `TLDW_FIRST_TOKEN_TIMEOUT_SECONDS`); gaps between later tokens keep the
+  90-second stall window (`stream_stall_timeout_seconds`). After 15 seconds
+  with no answer the reply line reads "Waiting for a reply · 42s · model may
+  be loading" (a cloud model's line has no loading hint). The
+  composer's **Stop** (Ctrl+G) ends the wait. If the wait runs out, the
+  failure says the model may still be loading and names that setting, or
+  suggests a smaller model. A cloud model's first token gets the 90-second
+  window unless you set `first_token_timeout_seconds`; if it runs out, the
+  failure says the provider hasn't started answering and suggests Retry or
+  that same setting. Console stops waiting at once, but a local server may
+  keep reading the abandoned prompt for up to 30 seconds more, until its
+  connection times out.
 - **There's no Tools chip before the first send.** Tools are counted lazily,
   so the chip stays hidden until your first send in the session; it then
   reads e.g. "Tools: 10 ready".

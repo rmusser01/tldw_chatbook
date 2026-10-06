@@ -2786,6 +2786,8 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         # Ready state is compact: one displayed ready line, no action row at all.
         body = empty_panel.query_one("#console-empty-body", Static)
         assert getattr(body.render(), "plain", str(body.render())) == (
+            # TASK-34100.5 AC#11: the arrival line names what setup connected.
+            "Setup complete — llama.cpp · local-model. "
             "Ready — type a message to begin."
         )
         assert body.display is True
@@ -3439,7 +3441,7 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
         assert "Provider:" in text
         assert "Model:" in text
         assert "Assistant: General" in text
-        assert "Library · Auto off · Agent blocked" in text
+        assert "Library · Auto off · Agent access off" in text
         assert "Sources: 1" in text
         assert "Transformer notes" in text
         assert "ready" in text
@@ -3522,7 +3524,7 @@ def test_console_control_state_tolerates_missing_config_and_precise_rag_source()
         ConsoleLiveWorkLaunch(source="Library Search/RAG", title="RAG result"),
     )
 
-    assert non_rag_state.rag_label == "Library · Auto off · Agent blocked"
+    assert non_rag_state.rag_label == "Library · Auto off · Agent access off"
     assert rag_state.rag_label == non_rag_state.rag_label
 
 
@@ -3534,7 +3536,7 @@ def test_console_control_state_tolerates_missing_launch_source():
         ConsoleLiveWorkLaunch(source=None, title="Unknown source"),
     )
 
-    assert state.rag_label == "Library · Auto off · Agent blocked"
+    assert state.rag_label == "Library · Auto off · Agent access off"
 
 
 @pytest.mark.asyncio

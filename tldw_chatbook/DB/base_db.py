@@ -40,7 +40,8 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
 
     Inspect without acquiring a handle. A pre-existing registered connection,
-    including its active transaction, remains owned by the caller.
+    including its active transaction, remains owned by the caller unless retired
+    during the operation; a newly acquired replacement is operation-owned.
     """
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
@@ -62,14 +63,16 @@ def operation_owned_connection(database: object) -> Iterator[None]:
         # evidence as the getter; a still-live borrowed handle remains owned.
         local = database._thread_local
         close = database.close
-        borrowed = _core_cached_connection(database, getattr(local, "conn", None)) is not None
+        previous = _core_cached_connection(database, getattr(local, "conn", None))
+        borrowed = previous is not None
     else:
         previous = getattr(local, "conn", None)
         borrowed = previous is not None and registry.is_registered(previous)
     try:
         yield
     finally:
-        if not borrowed and getattr(local, "conn", None) is not None:
+        current = getattr(local, "conn", None)
+        if current is not None and (not borrowed or current is not previous):
             close()
 
 

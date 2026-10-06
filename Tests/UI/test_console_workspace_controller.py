@@ -4814,3 +4814,70 @@ def test_native_character_session_rows_carry_character_identity():
     assert by_key["native:s1"].character_label == "Detective Vale"
     assert by_key["native:s2"].character_id is None
     assert by_key["native:s2"].character_label == ""
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "names,deleted_fallback,expected_labels,expected_reads",
+    [
+        (
+            (" Session Amber ", "Session Indigo"),
+            False,
+            ["Session Amber", "Session Indigo"],
+            0,
+        ),
+        (("Session Amber", None), False, ["Session Amber", "Card Indigo"], 1),
+        (("", "  "), False, ["Card Amber", "Card Indigo"], 2),
+        (("Session Amber", None), True, ["Session Amber", ""], 1),
+    ],
+    ids=["named", "fallback", "blank", "deleted-fallback"],
+)
+def test_native_rows_query_cards_only_for_missing_session_names(
+    tmp_path, names, deleted_fallback, expected_labels, expected_reads
+):
+    """Native authoritative labels must not pay an unused guarded card read."""
+    from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "native-labels.sqlite", "native-labels-test")
+    try:
+        amber_id = db.add_character_card({"name": "Card Amber"})
+        indigo_id = db.add_character_card({"name": "Card Indigo"})
+        assert amber_id is not None and indigo_id is not None
+        if deleted_fallback:
+            assert db.delete_character_card(indigo_id)
+        store = ConsoleChatStore()
+        for session_id, card_id, name in zip(
+            ("amber", "indigo"), (amber_id, indigo_id), names, strict=True
+        ):
+            store.create_session(
+                session_id=session_id,
+                workspace_id=CONSOLE_GLOBAL_WORKSPACE_ID,
+                assistant_kind="character",
+                assistant_id=str(card_id),
+                character_id=card_id,
+                character_name=name,
+            )
+        controller = _workspace_controller(
+            app_instance=SimpleNamespace(chachanotes_db=db),
+            current_chat_store_accessor=lambda: store,
+        )
+        statements = []
+        connection = db.get_connection()
+        connection.set_trace_callback(statements.append)
+        try:
+            rows = controller._native_console_browser_rows()
+        finally:
+            connection.set_trace_callback(None)
+
+        assert [row.character_label for row in rows] == expected_labels
+        assert [row.native_session_id for row in rows] == ["amber", "indigo"]
+        assert [row.character_id for row in rows] == [str(amber_id), str(indigo_id)]
+        card_reads = [
+            sql for sql in statements if "FROM CHARACTER_CARDS " in sql.upper()
+        ]
+        assert len(card_reads) == expected_reads
+    finally:
+        with db.quiesce_connections(timeout_seconds=5):
+            pass
+        assert db.registered_connection_count() == 0

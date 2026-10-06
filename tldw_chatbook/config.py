@@ -5408,6 +5408,10 @@ rag_auto_retrieve_on_send = false  # New Console chats do not search Library aut
 # not trip. Non-positive disables the watchdog. Default 90s. Env override:
 # TLDW_STREAM_STALL_TIMEOUT_SECONDS (precedence: env -> this key -> default).
 # stream_stall_timeout_seconds = 90
+# TASK-34100.5: the wait for a reply's FIRST token. A large local model can
+# take minutes to load; default 300 for self-hosted providers, the stall window
+# above for cloud ones. Env override: TLDW_FIRST_TOKEN_TIMEOUT_SECONDS.
+# first_token_timeout_seconds = 300
 # Default settings specifically for the 'Chat' tab
 user_display_name = "User"
 provider = "OpenAI"

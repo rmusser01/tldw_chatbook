@@ -155,7 +155,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             )
 
             home_text = _screen_text(app)
-            assert "Model: Blocked" in home_text
+            assert "Model: Not set up" in home_text
             assert "Set up Console model" in home_text
             assert "Console needs a working model before live AI tasks." in home_text
 

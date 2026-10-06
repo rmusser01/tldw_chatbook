@@ -280,6 +280,13 @@ the same markers, after the CLI's short summary.
 hand-edit to elaborate — never the other order. Diff the task file after any `--notes`
 call to confirm what survived.
 
+**Another instance, 2026-10-04 (TASK-31966).** A status/plan edit discarded the
+free-form `## Evidence and scope` section, including the original frozen source
+IDs and failed latency measurements. The task diff caught it before commit. The
+historical evidence was recovered from the committed file into the CLI-owned
+plan markers. Essential evidence must live in an owned section, and every CLI
+task edit needs a diff check, not only `--notes` edits.
+
 **Second instance, 2026-09-11 (critique-10 fix wave, task-32057).** Nearly four
 years of this file saying so did not stop it. Closing out the pagers branch,
 `backlog task edit 32057 --notes "<short summary>"` was run on a task that

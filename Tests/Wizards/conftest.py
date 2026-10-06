@@ -28,6 +28,18 @@ def _silent_audio_player(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_voice_reachability_probe(monkeypatch):
+    """TASK-34100.8: the Voice step probes PocketTTS / Custom with one TCP
+    connect so its status line can say whether the service is running. Wizard
+    tests must not open sockets (the egress guard fails them), so the probe
+    answers "not running" here; a test that pins the probe re-patches it."""
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Wizards.first_run_voice_step.probe_endpoint_reachable",
+        lambda _url: False,
+    )
+
+
+@pytest.fixture(autouse=True)
 def _restore_shared_bootstrap_config(request, isolate_test_environment):
     """Put the shared bootstrap ``config.toml`` back after a ``bootstrap_profile`` test.
 

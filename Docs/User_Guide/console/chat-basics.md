@@ -91,6 +91,43 @@ this blocker. After **Discard**, your user message offers **Resend** to ask
 again without forking, including after you reopen the conversation — see
 [Resend a broken turn](#resend-a-broken-turn).
 
+### When a message doesn't fit the model
+
+If compacting older turns cannot make a message fit the selected model,
+Console refuses it before anything is sent or saved, and the message stays in
+the composer. One system line names the model, what fills its window and the
+setting that changes it, for example "Your message was not sent:
+brand-new-model-x's 4,096-token context window (an estimate) is used up by the
+response reservation, Max tokens (4,096), and the safety margin, so compacting
+older turns cannot make room. Lower Max tokens in Conversation settings >
+Model and generation. This model's context window is an estimate; if it is
+larger, set the real value in F4 Settings > Providers & Models." It mentions
+an estimate only when the window really is one. Switching to a model with a
+larger window (Alt+M) also works. [When a chat reaches its context
+limit](context-and-rag.md#when-a-chat-reaches-its-context-limit) lists each
+cause and its fix.
+
+A message that was already accepted when it was refused (a queued prompt, for
+example) gets a recovery card above the composer instead: "Not sent — this
+message doesn't fit the selected model. Change a setting above, then Discard
+and Resend the message." **Retry response** stays disabled: it would replay
+the message exactly as it was accepted, with the same model and reply limit,
+so it could only be refused again. Change the model (Alt+M) or the limit,
+press **Discard**, then select your message and press **r** (Resend), which
+sends it with the current settings.
+
+### When a reply fails
+
+A failed reply quotes the provider's own reason, prefixed with its name, and
+says what to do: for example "Provider error from OpenRouter: authentication
+failed. Status: 401. OpenRouter says: “API key expired.” Update the API key in Settings ▸ Providers & Models,
+or run Ctrl+P ▸ Setup: Run setup wizard." A model the provider no longer
+serves (a 404) names **Alt+M: Switch model**. Only the provider's one-line
+message is shown, capped at 200 characters and with anything shaped like a
+key hidden. A provider that stops sending mid-reply reads "no reply for 90 s
+— the provider stopped sending. Retry, or wait longer by raising
+chat_defaults.stream_stall_timeout_seconds in config.toml."
+
 ### Collapsed rail labels
 
 Collapsed Console rails use horizontal **Context->** and **<-Inspect** handles

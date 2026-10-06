@@ -371,6 +371,16 @@ class SetupStep(step_guard.WizardErrorGuard, WizardStep):
         """
         return None
 
+    def refusal_message(self, error: str) -> str:
+        """The pinned line for a refused Next: its reason, then what to do.
+
+        TASK-21140 (UAT F-1 follow-on): name only affordances that are on
+        screen -- the old suffix offered "Skip this step", which does not
+        exist. TASK-34100.8 (SF3 stage 3): a step whose refusal a retry
+        cannot fix overrides this and names its own escapes instead.
+        """
+        return f"{error}  Retry with Next, or go Back."
+
     def show_step_error(self, message: str) -> None:
         """Render a step error on the wizard's pinned error strip.
 
@@ -389,6 +399,20 @@ class SetupStep(step_guard.WizardErrorGuard, WizardStep):
             return
         strip.update(message)
         strip.remove_class("hidden")
+
+    def clear_step_error(self) -> None:
+        """Empty the pinned error strip once the user changes something.
+
+        TASK-34100.8 (new-voice-speech-03): a refused Next's reason used to
+        stay on screen after its cause was fixed, next to a newer, different
+        status. A step calls this from its input and choice handlers.
+        """
+        try:
+            strip = self.screen.query_one("#setup-step-error-pinned", Static)
+        except Exception:  # noqa: BLE001 - not mounted, or a bare test host
+            return
+        strip.update("")
+        strip.add_class("hidden")
 
     def refresh(
         self,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PurePath
 from typing import Any
 from urllib.parse import urlparse
 
@@ -183,6 +184,22 @@ def coerce_console_first_send_completed(raw: Any) -> bool:
     return False
 
 
+def _ready_line_copy(provider_label: str, model: str) -> str:
+    """The one arrival line: what setup connected, then the ready prompt.
+
+    TASK-34100.5 AC#11 (E10): first-run arrival raised a stack of toasts;
+    the empty transcript now names the provider and model instead. A model
+    saved as a file path (llama.cpp) shows its file name.
+    """
+    provider = str(provider_label or "").strip()
+    name = str(model or "").strip()
+    if name.startswith(("/", "~")):
+        name = PurePath(name).name
+    if not provider or not name:
+        return CONSOLE_READY_EMPTY_COPY
+    return f"Setup complete — {provider} · {name}. {CONSOLE_READY_EMPTY_COPY}"
+
+
 def build_console_setup_card_state(
     *,
     readiness: ConsoleSettingsReadiness,
@@ -191,6 +208,7 @@ def build_console_setup_card_state(
     first_send_completed: bool,
     has_messages: bool,
     guidance_dismissed: bool,
+    model: str = "",
 ) -> ConsoleSetupCardState:
     """Derive the onboarding surface state from the readiness single source.
 
@@ -203,6 +221,7 @@ def build_console_setup_card_state(
             returns, including new tabs and workspaces.
         has_messages: Whether the active transcript has any messages.
         guidance_dismissed: In-session dismissal (user started composing).
+        model: The selected model, named in the ready line (TASK-34100.5).
 
     Returns:
         Card state: full ``card`` while setup is incomplete, one ``ready_line``
@@ -221,7 +240,7 @@ def build_console_setup_card_state(
                 mode="quiet", body_copy=CONSOLE_QUIET_EMPTY_COPY
             )
         return ConsoleSetupCardState(
-            mode="ready_line", body_copy=CONSOLE_READY_EMPTY_COPY
+            mode="ready_line", body_copy=_ready_line_copy(provider_label, model)
         )
 
     provider_name = str(provider_label or "Provider").strip() or "Provider"

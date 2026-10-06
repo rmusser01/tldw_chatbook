@@ -459,14 +459,18 @@ def build_console_context_cost_state(
         if current_label.endswith(suffix):
             current_label = current_label.removesuffix(suffix)
             break
+    # TASK-34100.5 AC#9: an unknown window only matters when it blocks a
+    # send, and that refusal names the fix; the chip drops the segment.
+    context_part = "" if fullness == "unknown" else f"Context {fullness} · "
+    compact_part = "" if fullness == "unknown" else f"Ctx {fullness} · "
     return replace(
         cost,
         label=(
-            f"Context {fullness} · Current {current_label} "
+            f"{context_part}Current {current_label} "
             f"· On next send {next_send.label}"
         ),
         compact_label=(
-            f"Ctx {fullness} · Now {current_label} · Next {next_send.label}"
+            f"{compact_part}Now {current_label} · Next {next_send.label}"
         ),
         tooltip="\n".join(
             (

@@ -1894,8 +1894,8 @@ class ChatScreen(BaseAppScreen):
     # directly over the Console composer's Send/Attach/Save cluster and the
     # staged-chip strip — and toasts intercept clicks, so a click aimed at those
     # controls during a ~5s toast dismisses the toast instead of pressing the
-    # button. Dock the Console screen's toast rack to the TOP-right so feedback
-    # never obscures, or swallows clicks aimed at, the composer's controls.
+    # button. Dock the Console toast rack TOP-right, below the nav, header and
+    # control rows and the tab strip (8 cells, TASK-34100.5), clear of composer.
     # Kept in BUNDLED_CSS (not the CSS_PATH bundle) so it applies in both the
     # real app and ConsolidatedCSSApp-based test harnesses, which load the
     # generated widget-defaults sheet but not necessarily the full CSS_PATH
@@ -1904,7 +1904,7 @@ class ChatScreen(BaseAppScreen):
     ChatScreen ToastRack {
         dock: top;
         align: right top;
-        margin-top: 1;
+        margin-top: 8;
         margin-bottom: 0;
     }
     """
@@ -9167,9 +9167,13 @@ class ChatScreen(BaseAppScreen):
             ("console-model-section-max-tokens", summary_state.max_tokens),
             ("console-model-section-streaming", summary_state.streaming),
         ):
-            rows = self.query(f"#{section_id} .console-model-section-value")
-            if rows:
-                rows.first(Static).update(value or "—")
+            try:
+                row = self.query_one(f"#{section_id}").query_one(
+                    ".console-model-section-value", Static
+                )
+            except NoMatches:
+                continue
+            row.update(value or "—")
         # TASK-33005.3: the rail line shows the one word; red only when blocked.
         word = summary_state.readiness_label
         blocked = getattr(summary_state.readiness, "operability", "") == "not_ready"
@@ -14006,6 +14010,21 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             logger.debug("No Console workspace context tray available for sync")
 
+    async def _await_console_title_views(self) -> bool:
+        """Prove both current rail projections settled before rename feedback.
+
+        Returns:
+            False if a title-bearing tray is no longer mounted.
+        """
+        for selector in ("#console-workspace-context", "#console-workspaces-context"):
+            try:
+                tray = self.query_one(selector, ConsoleWorkspaceContextTray)
+            except (NoMatches, QueryError):
+                return False
+            if not await tray.wait_for_publication():
+                return False
+        return True
+
     async def _sync_console_legacy_workspace_context_aliases(self) -> None:
         """Expose transitional legacy new-conversation control while grouped browser is active."""
         try:
@@ -15121,11 +15140,11 @@ class ChatScreen(BaseAppScreen):
             if settings_readiness is None
             else settings_readiness
         )
-        has_model = _has_selected_text(getattr(settings, "model", None))
+        model = getattr(settings, "model", None)
         return build_console_setup_card_state(
             readiness=readiness,
             provider_label=readiness.provider_display_name or "Provider",
-            has_model=has_model,
+            has_model=_has_selected_text(model), model=str(model or ""),
             first_send_completed=self._console_first_send_completed(),
             has_messages=self._message._active_console_transcript_has_messages(),
             guidance_dismissed=self._console_guidance_dismissed,
@@ -18004,6 +18023,8 @@ class ChatScreen(BaseAppScreen):
         repository_token: tuple[str, int, int, int] | None = None,
     ) -> None:
         """Discover citation footer counts off-loop and refresh current rows."""
+        from ...DB.base_db import run_owned_db_call
+
         if repository_token is None:
             repository_token, current_repository = (
                 self._console_citation_repository_readiness()
@@ -18011,7 +18032,8 @@ class ChatScreen(BaseAppScreen):
             if current_repository is not repository:
                 return
         queried = signature[1] if eligible is None else eligible
-        counts = await asyncio.to_thread(
+        counts = await run_owned_db_call(
+            getattr(repository, "db", None),
             self._read_console_citation_counts,
             repository,
             queried,
@@ -23015,7 +23037,10 @@ class ChatScreen(BaseAppScreen):
                 self.notify("No review notes for this message.", severity="warning")
                 return
             try:
-                rows = await asyncio.to_thread(
+                from ...DB.base_db import run_owned_db_call
+
+                rows = await run_owned_db_call(
+                    database,
                     database.get_transcript_annotations,
                     conversation_id,
                     str(persisted_message_id),
@@ -24941,7 +24966,11 @@ class ChatScreen(BaseAppScreen):
                 self.ui_state.last_active_section = sidebar_data.get(
                     "last_active_section", None
                 )
-                self.sidebar_state = dict(self.ui_state.collapsible_states)
+                # Hydration is not a user edit. Firing the save watcher here
+                # starts a debounce timer before this screen has an app context.
+                self.set_reactive(
+                    ChatScreen.sidebar_state, dict(self.ui_state.collapsible_states)
+                )
                 self._sidebar_state_persistence_error = None
         except Exception as error:
             self._sidebar_state_persistence_error = type(error).__name__

@@ -3,29 +3,24 @@
 Moved out of ``FirstRunSetupWizard.py`` (TASK-33921) so that module stays
 under its size budget. The class moved whole, so its ``@on`` handlers and
 workers stay registered on it; ``FirstRunSetupWizard`` re-exports the name.
-Patch this module, not the wizard, to replace what the step calls.
+Patch this module, not the wizard, to replace what the step calls; the
+OmniVoice half lives in ``first_run_voice_omnivoice.py`` (TASK-34100.8).
+
+TASK-34100.8 (SF3 "untouched means unwritten"): the step starts from the
+saved voice (or "No voice for now"), says on a line under the Service radio
+whether the chosen service will work, explains a failed test, and posts a
+save only when something changed or the user tested this run.
 """
 
 from __future__ import annotations
 
 import asyncio
 import math
-import os
-import tempfile
-from pathlib import Path
-from typing import (
-    Any,
-    Dict,
-    Mapping,
-)
+from typing import Any, Dict, Mapping
 
-from loguru import logger
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import (
-    Horizontal,
-    Vertical,
-)
+from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
@@ -38,179 +33,165 @@ from textual.widgets import (
     Static,
 )
 
-from tldw_chatbook.TTS.omnivoice_artifact_catalog import (
-    omnivoice_setup_state,
-    run_omnivoice_preflight,
-    run_omnivoice_provision,
-)
-from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
+from tldw_chatbook.config import resolve_provider_api_key
+from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+from tldw_chatbook.UI.Wizards import first_run_voice_prefill as prefill
+from tldw_chatbook.UI.Wizards import first_run_voice_status as voice_status
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupCheckbox,
     SetupRadioButton,
-    SetupRadioSet,
-    SetupStep,
 )
 from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker, wizard_work
-from tldw_chatbook.Widgets.ModelArtifacts import (
-    InstallProgressed,
-    ModelInstallModal,
-    ModelInstallProgress,
-    make_progress_callback,
+from tldw_chatbook.UI.Wizards.first_run_voice_credentials import find_openai_credential
+from tldw_chatbook.UI.Wizards.first_run_voice_omnivoice import OmniVoiceStepBase
+from tldw_chatbook.UI.Wizards.first_run_voice_pickers import (
+    VoiceOptionPicker,
+    compose_voice_advanced,
 )
+from tldw_chatbook.UI.Wizards.first_run_voice_service_row import (
+    BUTTON_BY_PRESET,
+    PRESET_BY_BUTTON,
+    SERVICES,
+    VoiceServiceRadioSet,
+)
+from tldw_chatbook.UI.Wizards.first_run_voice_status import probe_endpoint_reachable
+from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+#: Probed with one sub-second connect: the two services that are local servers.
+_PROBED_PRESETS = {voice_state.VOICE_PRESET_POCKET_TTS, voice_state.VOICE_PRESET_CUSTOM}
 
 
-class VoiceSetupStep(SetupStep):
+class VoiceSetupStep(OmniVoiceStepBase):
     """Compact OpenAI-compatible TTS setup shared by Quick and Full tracks."""
 
-    _SAVE_TIMEOUT_SECONDS = 30.0
+    @property
+    def KEY_HINTS(self) -> str:  # noqa: N802 - the container reads this name
+        """TASK-34100.8 (voice-speech-05): Enter in Sample text runs the test,
+        so the hint line says so -- while Sample text is on screen (review
+        round 1, G8-V1-F6), and still saying Enter advances elsewhere (F13)."""
+        if self._preset == voice_state.VOICE_PRESET_NONE:
+            return ""
+        return voice_status.KEY_HINTS_WITH_SAMPLE
 
     def __init__(self, wizard=None, config=None, **kwargs: Any) -> None:
         super().__init__(wizard=wizard, config=config, **kwargs)
-        self._preset = voice_state.VOICE_PRESET_POCKET_TTS
         self._custom_draft: voice_state.VoiceSetupDraft | None = None
         self._verified_draft: voice_state.VoiceSetupDraft | None = None
-        self._next_save_request_id = 1
-        self._save_request_id: int | None = None
         self._save_draft: voice_state.VoiceSetupDraft | None = None
-        self._save_future: asyncio.Future[tuple[bool, str]] | None = None
-        self._test_generation = 0
-        self._test_in_progress_generation: int | None = None
-        self._sample_audio_path: Path | None = None
-        self._omnivoice_state: str | None = None
-        # Bumped per state check and on leaving OmniVoice; a check applies
-        # only while it is still the latest one (a stale read is dropped).
-        self._omnivoice_state_generation = 0
-        self._omnivoice_installing = False
-        self._omnivoice_report: Any = None
-        self._omnivoice_seed: int | None = None
-        self._save_provider = "openai"
-        self._save_use_as_default = False
+        self._saved: prefill.SavedVoice | None = None
+        self._baseline: voice_state.VoiceSetupDraft | None = None
+        self._staged_key: wizard_state.ProviderCredentialDraft | None = None
+        self._probe_generation = 0
+        self._reachable: bool | None = None
+        self._probe_timer: Any = None
+        self._seen_inputs: dict[str, str] = {}
+        # Review round 1 (F1): the box is locked on while the OpenAI slot
+        # reads replies; _default_choice is the user's own value under it.
+        self._default_locked = False
+        self._default_choice = False
 
-    @staticmethod
-    def _initial_draft() -> voice_state.VoiceSetupDraft:
-        return voice_state.VoiceSetupDraft(
-            endpoint=voice_state.POCKET_TTS_ENDPOINT,
-            authentication_mode="none",
-            model_id=voice_state.POCKET_TTS_MODEL,
-            voice_id=voice_state.POCKET_TTS_VOICE,
-            response_format="wav",
-            speed=1.0,
-            sample_text="Hello from Chatbook.",
-            use_as_default=False,
+    def _raw_table(self) -> Mapping[str, object]:
+        app_instance = getattr(self.wizard, "app_instance", None)
+        return prefill.raw_app_tts(getattr(app_instance, "app_config", {}) or {})
+
+    def _initial_draft(self) -> voice_state.VoiceSetupDraft:
+        """The controls' starting values: the saved voice, else PocketTTS's."""
+        if self._saved is not None:
+            return self._saved.draft
+        return prefill.initial_voice_draft()
+
+    def _refresh_saved(self) -> None:
+        """Read what is saved now: at compose, and after this step's save (a
+        Back then "No voice for now" must name the voice just saved)."""
+        self._saved = prefill.saved_voice_from_config(self._raw_table())
+        saved = self._saved
+        self._baseline = (
+            saved.draft if saved is not None and saved.slot_preset else None
         )
+        self._tested_this_run = False
 
     def compose_step(self) -> ComposeResult:
-        # TASK-21148 (UAT V-1/V-2): outcome first. The step used to open on
-        # raw plumbing (endpoint URL, model ids) and hid its human parts —
-        # sample text, "Test and Hear", the default toggle — below the fold
-        # at 40-row terminals with no hint of what "voice" was even for.
-        # Now: purpose line, service choice, try-it controls; the plumbing
-        # lives under an Advanced disclosure with unchanged widget ids.
+        # TASK-21148 (UAT V-1/V-2): outcome first -- purpose line, service
+        # choice, try-it controls; the plumbing lives under Advanced.
+        # TASK-34100.8: the saved voice (raw [app_tts]) is preselected, else
+        # "No voice for now", never a server that probably isn't running.
+        self._refresh_saved()
+        saved = self._saved
+        self._preset = saved.preset if saved else voice_state.VOICE_PRESET_NONE
+        # The box is locked on wherever the pick is the reply voice; free, it
+        # starts unticked (another provider keeps replies; R2-F1).
         draft = self._initial_draft()
         with Vertical(classes="setup-voice"):
             yield Static("Set up a voice", classes="setup-title")
-            yield Static(
-                "Hear replies read aloud — optional. PocketTTS or OmniVoice "
-                "run locally, no account needed; skip with Next if you "
-                "don't want voice.",
-                classes="setup-subtitle",
-            )
+            yield Static(voice_status.subtitle_copy(saved), classes="setup-subtitle")
             yield Label("Service", classes="setup-field-label")
-            with SetupRadioSet(id="setup-voice-preset", classes="setup-voice-segmented"):
-                yield SetupRadioButton(
-                    "PocketTTS",
-                    id="setup-voice-preset-pocket",
-                    value=True,
-                )
-                yield SetupRadioButton(
-                    "OpenAI",
-                    id="setup-voice-preset-official",
-                )
-                yield SetupRadioButton(
-                    "Custom",
-                    id="setup-voice-preset-custom",
-                )
-                yield SetupRadioButton("OmniVoice", id="setup-voice-preset-omnivoice")
-            with Vertical(id="setup-voice-omnivoice-panel") as panel:
-                panel.display = False
-                yield Static(
-                    voice_state.OMNIVOICE_CHECKING_COPY,
-                    id="setup-voice-omnivoice-status",
-                    classes="setup-subtitle",
-                )
-                install = Button("Install voice model", id="setup-voice-omnivoice-install")
-                install.display = False
-                yield install
-                progress = ModelInstallProgress(None, id="setup-voice-omnivoice-progress")
-                progress.display = False
-                yield progress
-            yield Label("Sample text", classes="setup-field-label")
-            yield Input(
-                value=draft.sample_text,
-                id="setup-voice-sample",
-                max_length=500,
-            )
+            with VoiceServiceRadioSet(
+                id="setup-voice-preset", classes="setup-voice-segmented"
+            ):
+                for button_id, label, preset in SERVICES:
+                    yield SetupRadioButton(
+                        label, id=button_id, value=preset == self._preset
+                    )
             yield Static(
-                f"{len(draft.sample_text)} / 500",
-                id="setup-voice-sample-count",
+                self._service_line(),
+                id="setup-voice-service-status",
                 classes="setup-field-help",
             )
-            yield Button(
-                "Test and Hear",
-                id="setup-voice-test",
-                variant="primary",
-            )
-            yield Static(
-                "Not tested yet — that's fine. You can save now and test later.",
-                id="setup-voice-status",
-                classes="setup-subtitle",
-            )
-            add_key = Button(
-                "Add API key in Settings",
-                id="setup-voice-add-key",
-            )
-            add_key.display = False
-            yield add_key
-            yield SetupCheckbox(
-                "Use as default",
-                id="setup-voice-default",
-                value=False,
-            )
-            with Collapsible(
-                title="Advanced — endpoint, model & output",
-                collapsed=True,
-                id="setup-voice-advanced",
-            ):
-                yield Label("Endpoint", classes="setup-field-label")
+            with Vertical(id="setup-voice-body") as body:
+                body.display = self._preset != voice_state.VOICE_PRESET_NONE
+                yield from self._compose_omnivoice_panel()
+                yield Label("Sample text", classes="setup-field-label")
                 yield Input(
-                    value=draft.endpoint,
-                    id="setup-voice-endpoint",
-                    placeholder="http://127.0.0.1:8765/v1/audio/speech",
+                    value=draft.sample_text,
+                    id="setup-voice-sample",
+                    max_length=500,
+                    select_on_focus=False,
                 )
-                yield Label("Authentication", classes="setup-field-label")
-                with SetupRadioSet(
-                    id="setup-voice-auth", classes="setup-voice-segmented"
-                ):
-                    yield SetupRadioButton(
-                        "None",
-                        id="setup-voice-auth-none",
-                        value=True,
+                yield Static(
+                    f"{len(draft.sample_text)} / 500",
+                    id="setup-voice-sample-count",
+                    classes="setup-field-help",
+                )
+                yield Button("Test and Hear", id="setup-voice-test")
+                yield Static(
+                    prefill.current_voice_copy(saved)
+                    if saved is not None
+                    and saved.preset != voice_state.VOICE_PRESET_NONE
+                    else voice_status.DEFAULT_STATUS_COPY,
+                    id="setup-voice-status",
+                    classes="setup-subtitle",
+                )
+                with Vertical(id="setup-voice-key-row") as key_row:
+                    key_row.display = False
+                    yield Label("OpenAI API key", classes="setup-field-label")
+                    yield Input(
+                        id="setup-voice-api-key",
+                        password=True,
+                        placeholder="Paste your OpenAI API key (sk-…)",
                     )
-                    yield SetupRadioButton("API key", id="setup-voice-auth-key")
-                yield Label("Model", classes="setup-field-label")
-                yield Input(value=draft.model_id, id="setup-voice-model")
-                yield Label("Voice", classes="setup-field-label")
-                yield Input(value=draft.voice_id, id="setup-voice-voice")
-                with Horizontal(classes="setup-voice-output-row"):
-                    with Vertical():
-                        yield Label("Format", classes="setup-field-label")
-                        yield Input(
-                            value=draft.response_format, id="setup-voice-format"
-                        )
-                    with Vertical():
-                        yield Label("Speed", classes="setup-field-label")
-                        yield Input(value=str(draft.speed), id="setup-voice-speed")
+                    yield Button(
+                        "Leave setup and add key in Settings…", id="setup-voice-add-key"
+                    )
+                yield SetupCheckbox(
+                    "Use this voice when Chatbook reads replies aloud",
+                    id="setup-voice-default",
+                    value=draft.use_as_default,
+                )
+                yield Static(
+                    voice_status.DEFAULT_HELP_COPY,
+                    id="setup-voice-default-help",
+                    classes="setup-field-help",
+                )
+                with Collapsible(
+                    title="Advanced — endpoint, model & output",
+                    collapsed=True,
+                    id="setup-voice-advanced",
+                ) as advanced:
+                    advanced.display = (
+                        self._preset != voice_state.VOICE_PRESET_OMNIVOICE
+                    )
+                    yield from compose_voice_advanced(draft, self._preset)
 
     def _selected_authentication(self) -> str:
         pressed = self.query_one("#setup-voice-auth", RadioSet).pressed_button
@@ -259,7 +240,17 @@ class VoiceSetupStep(SetupStep):
             )
         else:
             self._set_radio(auth_id)
+        self._sync_pickers()
         self._refresh_sample_state()
+
+    def _sync_pickers(self) -> None:
+        for picker in self.query(VoiceOptionPicker):
+            options = (
+                prefill.voices_for(self._preset)
+                if picker.id == "setup-voice-voice-picker"
+                else prefill.formats_for(self._preset)
+            )
+            picker.set_options(options)
 
     def _set_radio(self, button_id: str) -> None:
         radio_set = self.query_one(f"#{button_id}", RadioButton).parent
@@ -281,14 +272,10 @@ class VoiceSetupStep(SetupStep):
     def _on_preset(self, event: RadioSet.Changed) -> None:
         if event.pressed is None:
             return
-        preset = {
-            "setup-voice-preset-pocket": voice_state.VOICE_PRESET_POCKET_TTS,
-            "setup-voice-preset-official": voice_state.VOICE_PRESET_OFFICIAL_OPENAI,
-            "setup-voice-preset-custom": voice_state.VOICE_PRESET_CUSTOM,
-            "setup-voice-preset-omnivoice": voice_state.VOICE_PRESET_OMNIVOICE,
-        }.get(event.pressed.id)
+        preset = PRESET_BY_BUTTON.get(event.pressed.id or "")
         if preset is None or preset == self._preset:
             return
+        self.clear_step_error()
         try:
             current = self._draft_from_controls()
         except (TypeError, ValueError):
@@ -297,246 +284,133 @@ class VoiceSetupStep(SetupStep):
             )
             return
         # Fix round 1, Important 1: capture the outgoing Custom draft BEFORE
-        # switching, whether the destination is OmniVoice or anything else --
-        # the old code captured this only on the non-OmniVoice path, so a
-        # Custom edit made just before entering OmniVoice was silently lost
-        # (never reached _custom_draft) and a later return to Custom replayed
-        # the stale cached draft over it.
+        # switching, whatever the destination.
         if self._preset == voice_state.VOICE_PRESET_CUSTOM:
             self._custom_draft = current
         leaving_omnivoice = self._preset == voice_state.VOICE_PRESET_OMNIVOICE
         self._preset = preset
+        self.query_one("#setup-voice-body").display = (
+            preset != voice_state.VOICE_PRESET_NONE
+        )
         if preset == voice_state.VOICE_PRESET_OMNIVOICE:
             self._set_omnivoice_mode(True)
+            self._refresh_service_status()
             return
         if leaving_omnivoice:
             self._set_omnivoice_mode(False)
+        if preset == voice_state.VOICE_PRESET_NONE:
+            self._invalidate_sample_evidence()
+            self._refresh_service_status()
+            return
         base = (
             self._custom_draft
             if preset == voice_state.VOICE_PRESET_CUSTOM
             and self._custom_draft is not None
             else current
         )
+        # The box carries the user's own choice, never the last service's
+        # (locked) tick, which would read as a tick here (R2-F1).
+        base = voice_state.replace_draft(base, use_as_default=self._default_choice)
         self._apply_draft_to_controls(voice_state.apply_voice_preset(base, preset))
+        self._start_probe()
 
-    def _omnivoice_settings(self) -> Mapping[str, object]:
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        raw = (
-            app_config.get("COMPREHENSIVE_CONFIG_RAW")
-            if isinstance(app_config, Mapping)
-            else None
-        )
-        source = raw if isinstance(raw, Mapping) else app_config
-        section = (
-            source.get("OmniVoiceSettings") if isinstance(source, Mapping) else None
-        )
-        return section if isinstance(section, Mapping) else {}
+    def _maybe_switch_to_custom(self) -> None:
+        """An Advanced edit away from the preset makes the service Custom.
 
-    def _omnivoice_seed_value(self) -> int:
-        if self._omnivoice_seed is None:
-            self._omnivoice_seed = voice_state.choose_omnivoice_seed(
-                self._omnivoice_settings().get("seed")
-            )
-        return self._omnivoice_seed
-
-    def _set_omnivoice_mode(self, enabled: bool) -> None:
-        self.query_one("#setup-voice-omnivoice-panel").display = enabled
-        self.query_one("#setup-voice-advanced", Collapsible).display = not enabled
-        if enabled:
-            self.query_one("#setup-voice-add-key", Button).display = False
-            # Fix round 1, Minor 2: the PREVIOUS visit's state/status text
-            # would otherwise stay live (e.g. a stale "ready") until the
-            # fresh read lands, briefly letting Test and Hear enable on
-            # data that no longer reflects this visit. Reset to "checking"
-            # up front -- unless an install is actively running, in which
-            # case that state is still correct and must not flicker.
-            if not self._omnivoice_installing:
-                self._omnivoice_state = None
-                self.query_one("#setup-voice-omnivoice-status", Static).update(
-                    voice_state.OMNIVOICE_CHECKING_COPY
-                )
-                self._refresh_sample_state()
-            self._request_omnivoice_state()
-        else:
-            self._omnivoice_state_generation += 1
-        self._invalidate_sample_evidence()
-
-    def _request_omnivoice_state(self) -> None:
-        self._omnivoice_state_generation += 1
-        self._load_omnivoice_state(self._omnivoice_state_generation)
-
-    @wizard_work(
-        thread=True,
-        group="setup-voice-omnivoice-state",
-        exclusive=True,
-    )
-    def _load_omnivoice_state(self, generation: int) -> None:
-        model_root = self._omnivoice_settings().get("model_root")
+        TASK-34100.8 (new-voice-speech-02): the radio kept saying PocketTTS
+        while the endpoint pointed elsewhere, and a later service switch
+        rebuilt the fields from presets, dropping the typed endpoint.
+        """
+        if self._preset not in {
+            voice_state.VOICE_PRESET_POCKET_TTS,
+            voice_state.VOICE_PRESET_OFFICIAL_OPENAI,
+        }:
+            return
         try:
-            state = omnivoice_setup_state(
-                model_root if isinstance(model_root, str) else None
-            )
-        except ImportError:
-            # The engine's own imports are broken; a model download can't help.
-            logger.opt(exception=True).warning("OmniVoice setup state read failed")
-            state = "engine_missing"
-        except Exception:
-            logger.opt(exception=True).warning("OmniVoice setup state read failed")
-            state = "model_missing"
-        self.app.call_from_thread(self._apply_checked_omnivoice_state, generation, state)
-
-    def _apply_checked_omnivoice_state(self, generation: int, state: str) -> None:
-        if (
-            generation != self._omnivoice_state_generation
-            or self._preset != voice_state.VOICE_PRESET_OMNIVOICE
-        ):
+            current = self._draft_from_controls()
+        except (TypeError, ValueError):
             return
-        self._apply_omnivoice_state(state)
-
-    def _apply_omnivoice_state(self, state: str, message: str | None = None) -> None:
-        self._omnivoice_state = state
-        copy = {
-            "engine_missing": voice_state.OMNIVOICE_ENGINE_MISSING_COPY,
-            "model_missing": voice_state.OMNIVOICE_MODEL_MISSING_COPY,
-            "path_invalid": voice_state.OMNIVOICE_PATH_INVALID_COPY,
-            "ready": voice_state.OMNIVOICE_READY_COPY,
-        }[state]
-        try:
-            # Fix round 1, Minor 3: a re-read while an install is running
-            # (e.g. the step was hidden and re-shown mid-download) must not
-            # stomp the status line with e.g. OMNIVOICE_MODEL_MISSING_COPY --
-            # the progress bar already shows the install, and this would
-            # otherwise be an invented, misleading "not started" message
-            # while Install itself correctly stays disabled below. A
-            # genuine failure message (`message`) always reaches the user:
-            # by the time one is produced, the caller has already reset
-            # `_omnivoice_installing` to False.
-            if not self._omnivoice_installing:
-                self.query_one("#setup-voice-omnivoice-status", Static).update(
-                    message or copy
-                )
-            install = self.query_one("#setup-voice-omnivoice-install", Button)
-            install.display = state in {"engine_missing", "model_missing"}
-            install.disabled = state != "model_missing" or self._omnivoice_installing
-        except NoMatches:
+        if prefill.draft_matches_preset(current, self._preset):
             return
-        # Test and Hear is shared with the other services; only OmniVoice's
-        # own state may drive it.
-        if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
-            self._refresh_sample_state()
+        self._preset = voice_state.VOICE_PRESET_CUSTOM
+        self._custom_draft = current
+        self._set_radio("setup-voice-preset-custom")
+        self._sync_pickers()
+        self._refresh_service_status()
 
-    @on(Button.Pressed, "#setup-voice-omnivoice-install")
-    def _on_omnivoice_install(self, event: Button.Pressed) -> None:
-        event.stop()
-        if self._omnivoice_installing or self._omnivoice_state != "model_missing":
-            return
-        self._omnivoice_installing = True
-        self.query_one("#setup-voice-omnivoice-install", Button).disabled = True
-        self._refresh_sample_state()
-        self._omnivoice_preflight()
+    def on_mount(self) -> None:
+        # Seed what each Input holds, so the Changed an Input posts for its
+        # own initial value at mount is not taken for an edit.
+        self._seen_inputs = {field.id or "": field.value for field in self.query(Input)}
 
-    @wizard_work(
-        thread=True,
-        group="setup-voice-omnivoice-install",
-        exclusive=True,
-    )
-    def _omnivoice_preflight(self) -> None:
-        try:
-            report = asyncio.run(run_omnivoice_preflight())  # policy-exception: worker-thread loop
-        except Exception as exc:
-            logger.opt(exception=True).error("OmniVoice model preflight failed")
-            self.app.call_from_thread(
-                self._finish_omnivoice_install,
-                install_failure_message(exc, model_label="OmniVoice voice model"),
-            )
-            return
-        self.app.call_from_thread(self._show_omnivoice_consent, report)
+    def _input_really_changed(self, event: Input.Changed) -> bool:
+        """Whether an Input's value differs from the last one this step saw.
 
-    def _show_omnivoice_consent(self, report: Any) -> None:
-        self._omnivoice_report = report
-        self.app.push_screen(
-            ModelInstallModal(
-                report,
-                model_label="OmniVoice voice model",
-                container_id="setup-voice-omnivoice-install-modal",
-                confirm_id="setup-voice-omnivoice-install-confirm",
-                cancel_id="setup-voice-omnivoice-install-cancel",
-            ),
-            self._confirm_omnivoice_install,
-        )
-
-    def _confirm_omnivoice_install(self, confirmed: bool) -> None:
-        if not confirmed:
-            self._finish_omnivoice_install(None)
-            return
-        self._omnivoice_provision()
-
-    @wizard_work(
-        thread=True,
-        group="setup-voice-omnivoice-install",
-        exclusive=True,
-    )
-    def _omnivoice_provision(self) -> None:
-        report = self._omnivoice_report
-        try:
-            asyncio.run(  # policy-exception: worker-thread loop
-                run_omnivoice_provision(
-                    report, progress=make_progress_callback(self.post_message)
-                )
-            )
-        except Exception as exc:
-            logger.opt(exception=True).error("OmniVoice model installation failed")
-            self.app.call_from_thread(
-                self._finish_omnivoice_install,
-                install_failure_message(exc, model_label="OmniVoice voice model"),
-            )
-            return
-        self.app.call_from_thread(self._finish_omnivoice_install, None)
-
-    def _finish_omnivoice_install(self, error: str | None) -> None:
-        self._omnivoice_installing = False
-        self._omnivoice_report = None
-        try:
-            self.query_one(
-                "#setup-voice-omnivoice-progress", ModelInstallProgress
-            ).display = False
-        except NoMatches:
-            pass
-        if error is not None:
-            self._omnivoice_state_generation += 1  # drop any pre-install check
-            self._apply_omnivoice_state("model_missing", message=error)
-            return
-        self._request_omnivoice_state()
-
-    @on(InstallProgressed)
-    def _omnivoice_install_progressed(self, event: InstallProgressed) -> None:
-        event.stop()
-        try:
-            progress = self.query_one(
-                "#setup-voice-omnivoice-progress", ModelInstallProgress
-            )
-        except NoMatches:
-            return
-        progress.display = True
-        progress.update_progress(event.progress)
+        The mount-time Changed used to wipe the re-run "Current voice" line.
+        """
+        input_id = event.input.id or ""
+        changed = self._seen_inputs.get(input_id) != event.value
+        self._seen_inputs[input_id] = event.value
+        return changed
 
     @on(Input.Changed, "#setup-voice-sample")
-    def _on_sample_changed(self) -> None:
+    def _on_sample_changed(self, event: Input.Changed) -> None:
+        if not self._input_really_changed(event):
+            return
+        self.clear_step_error()
         self._invalidate_sample_evidence()
         self._refresh_sample_state()
 
     @on(Input.Changed)
     def _on_voice_input_changed(self, event: Input.Changed) -> None:
+        input_id = event.input.id or ""
         if (
-            event.input.id
-            and event.input.id.startswith("setup-voice-")
-            and event.input.id != "setup-voice-sample"
+            not input_id.startswith("setup-voice-")
+            or input_id in {"setup-voice-sample", "setup-voice-api-key"}
+            or not self._input_really_changed(event)
         ):
-            self._invalidate_sample_evidence()
+            return
+        self.clear_step_error()
+        self._invalidate_sample_evidence()
+        self._maybe_switch_to_custom()
+        if input_id == "setup-voice-endpoint":
+            self._schedule_probe()
 
     @on(RadioSet.Changed, "#setup-voice-auth")
     def _on_authentication_changed(self) -> None:
+        self.clear_step_error()
         self._invalidate_sample_evidence()
+        self._maybe_switch_to_custom()
+
+    @on(Checkbox.Changed, "#setup-voice-default")
+    def _on_default_changed(self, event: Checkbox.Changed) -> None:
+        self.clear_step_error()
+        if not self._default_locked:
+            self._default_choice = event.value
+        self._refresh_service_status()
+
+    @on(Input.Changed, "#setup-voice-api-key")
+    def _on_api_key_changed(self, event: Input.Changed) -> None:
+        """Stage a pasted key in memory only, the way Provider stages its key.
+
+        TASK-34100.8 (voice-speech-04): nothing is written until Next, and
+        then only to ``api_settings.openai.api_key`` (where Settings ▸ Speech
+        & TTS writes it), so Protect can still encrypt it.
+        """
+        if not self._input_really_changed(event):
+            return
+        self.clear_step_error()
+        key = resolve_provider_api_key(event.value)
+        self._staged_key = (
+            wizard_state.ProviderCredentialDraft("draft", key) if key else None
+        )
+        self._invalidate_sample_evidence()
+
+    @on(Input.Submitted, "#setup-voice-sample")
+    def _on_sample_submitted(self, event: Input.Submitted) -> None:
+        """Enter in Sample text runs the test (the hint line says so)."""
+        event.stop()
+        self._on_test_and_hear()
 
     def _invalidate_sample_evidence(self) -> None:
         self._test_generation += 1
@@ -548,7 +422,7 @@ class VoiceSetupStep(SetupStep):
             pass
         try:
             self.query_one("#setup-voice-status", Static).update(
-                "Not tested yet — that's fine. You can save now and test later."
+                voice_status.DEFAULT_STATUS_COPY
             )
         except Exception:
             pass
@@ -570,62 +444,133 @@ class VoiceSetupStep(SetupStep):
 
     def _refresh_sample_state(self) -> None:
         try:
-            sample = self.query_one("#setup-voice-sample", Input).value
-            trimmed_count = len(sample.strip())
+            sample = self.query_one("#setup-voice-sample", Input).value.strip()
             self.query_one("#setup-voice-sample-count", Static).update(
-                f"{trimmed_count} / 500"
+                f"{len(sample)} / 500"
             )
+            key_row = self.query_one("#setup-voice-key-row")
+            testing = self._test_in_progress_generation is not None
             if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
-                self.query_one("#setup-voice-add-key", Button).display = False
+                key_row.display = False
+                blocked = None if sample else voice_status.BLANK_SAMPLE_COPY
+                self._show_blocked(blocked, testing=testing)
                 self.query_one("#setup-voice-test", Button).disabled = (
-                    self._test_in_progress_generation is not None
+                    testing
                     or self._omnivoice_installing
                     or self._omnivoice_state != "ready"
-                    or not 1 <= trimmed_count <= 500
+                    or blocked is not None
                 )
                 return
-            try:
-                draft = self._draft_from_controls()
-                valid = voice_state.validate_voice_setup_draft(
-                    draft
-                ).configuration_valid
-            except (TypeError, ValueError):
-                valid = False
-                draft = None
-            missing_key = (
-                draft is not None
-                and draft.authentication_mode == "api_key"
-                and self._existing_openai_credential() is None
-            )
-            self.query_one("#setup-voice-add-key", Button).display = missing_key
+            draft, blocked = voice_status.sample_readiness(self._draft_from_controls)
+            uses_key = draft is not None and draft.authentication_mode == "api_key"
+            missing_key = uses_key and self._existing_openai_credential() is None
+            key_row.display = missing_key or (uses_key and self._staged_key is not None)
             self.query_one("#setup-voice-test", Button).disabled = (
-                self._test_in_progress_generation is not None
-                or not valid
-                or missing_key
+                testing or blocked is not None or missing_key
             )
-            status = self.query_one("#setup-voice-status", Static)
-            status_text = str(status.renderable)
-            if missing_key and self._test_in_progress_generation is None:
+            if missing_key:
                 self._verified_draft = None
-                status.update(
-                    "API key required. Add an API key in Settings to test or save."
-                )
-            elif (
-                not missing_key
-                and status_text.startswith("API key required")
-                and self._test_in_progress_generation is None
-            ):
-                status.update(
-                    "Not tested yet — that's fine. You can save now and test later."
-                )
+                blocked = voice_status.KEY_NEEDED_COPY
+            self._show_blocked(blocked, testing=testing)
+            self._refresh_service_status()
         except Exception:
             return
+
+    # -- service status ----------------------------------------------------
+    def _service_line(self) -> str:
+        if self._preset == voice_state.VOICE_PRESET_NONE:
+            return voice_status.no_voice_copy(self._saved)
+        try:
+            endpoint = self.query_one("#setup-voice-endpoint", Input).value
+        except NoMatches:
+            endpoint = self._initial_draft().endpoint
+        key_found = None
+        if self._preset == voice_state.VOICE_PRESET_OFFICIAL_OPENAI:
+            key_found = self._find_openai_credential() is not None
+        return voice_status.service_status_copy(
+            self._preset,
+            endpoint=endpoint,
+            reachable=self._reachable,
+            key_found=key_found,
+        )
+
+    def _refresh_service_status(self) -> None:
+        """The line under the radio, and the default box that follows it."""
+        try:
+            self.query_one("#setup-voice-service-status", Static).update(
+                self._service_line()
+            )
+        except NoMatches:
+            return
+        self._sync_default_box()
+        sync_hints = getattr(self.wizard, "_sync_exit_controls", None)
+        if callable(sync_hints):
+            sync_hints()  # the hint line follows the chosen service
+
+    def _sync_default_box(self) -> None:
+        """Lock "Use this voice…" on while the OpenAI slot reads replies (F1)."""
+        try:
+            box = self.query_one("#setup-voice-default", Checkbox)
+            draft = self._draft_from_controls()
+        except (NoMatches, TypeError, ValueError):
+            return
+        locked = prefill.default_box_locked(self._preset, self._raw_table())
+        value = True if locked else self._default_choice
+        if locked or self._default_locked:
+            with box.prevent(Checkbox.Changed):
+                box.value = value
+        self._default_locked = box.disabled = locked
+        self.query_one("#setup-voice-default-help", Static).update(
+            voice_status.default_help_copy(
+                self._preset,
+                locked=locked,
+                ticked=box.value,
+                reply_voice=prefill.reply_voice_name(self._saved),
+                replaces=prefill.replaced_voice(self._saved, self._preset, draft),
+            )
+        )
+
+    def _schedule_probe(self) -> None:
+        """Debounce endpoint typing: probe once the user pauses."""
+        if self._probe_timer is not None:
+            self._probe_timer.stop()
+        self._probe_timer = self.set_timer(0.4, self._start_probe)
+
+    def _start_probe(self) -> None:
+        self._probe_timer = None
+        self._probe_generation += 1
+        self._reachable = None
+        if self._preset not in _PROBED_PRESETS or not self.is_attached:
+            self._refresh_service_status()
+            return
+        try:
+            url = voice_state.validate_voice_setup_draft(
+                self._draft_from_controls(), require_sample=False
+            ).normalized_endpoint
+        except (TypeError, ValueError):
+            url = None
+        self._refresh_service_status()
+        if url:
+            self._probe_service(self._probe_generation, url)
+
+    @wizard_work(thread=True, group="setup-voice-probe", exclusive=True)
+    def _probe_service(self, generation: int, url: str) -> None:
+        """One sub-second TCP connect, off the event loop (voice-speech-03)."""
+        reachable = probe_endpoint_reachable(url)
+        self.app.call_from_thread(self._apply_probe, generation, reachable)
+
+    def _apply_probe(self, generation: int, reachable: bool | None) -> None:
+        if generation != self._probe_generation:
+            return
+        self._reachable = reachable
+        self._refresh_service_status()
 
     def on_show(self) -> None:
         super().on_show()
         self._refresh_sample_state()
         if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
             self._request_omnivoice_state()
+        self._start_probe()
 
     def _cancel_active_sample(self) -> None:
         if self._test_in_progress_generation is None:
@@ -640,7 +585,7 @@ class VoiceSetupStep(SetupStep):
             pass
         try:
             self.query_one("#setup-voice-status", Static).update(
-                "Not tested yet — the sample was cancelled. Retry when ready."
+                voice_status.CANCELLED_COPY
             )
         except Exception:
             pass
@@ -652,14 +597,17 @@ class VoiceSetupStep(SetupStep):
 
     def on_unmount(self) -> None:
         self._cancel_active_sample()
+        self._staged_key = None
         if self._sample_audio_path is not None:
             self._sample_audio_path.unlink(missing_ok=True)
             self._sample_audio_path = None
 
     @on(Button.Pressed, "#setup-voice-test")
     def _on_test_and_hear(self) -> None:
+        held = self.app.focused is self.query_one("#setup-voice-test", Button)
         if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
             self._start_omnivoice_sample()
+            self._hold_test_focus(held)
             return
         try:
             draft = self._draft_from_controls()
@@ -670,8 +618,9 @@ class VoiceSetupStep(SetupStep):
         self._test_generation += 1
         generation = self._test_generation
         self._test_in_progress_generation = generation
-        self.query_one("#setup-voice-status", Static).update("Testing voice…")
+        self.query_one("#setup-voice-status", Static).update(voice_status.TESTING_COPY)
         self._refresh_sample_state()
+        self._hold_test_focus(held)
         run_wizard_worker(
             self,
             self._run_voice_sample(generation, draft),
@@ -681,21 +630,33 @@ class VoiceSetupStep(SetupStep):
 
     @on(Button.Pressed, "#setup-voice-add-key")
     def _on_add_api_key(self) -> None:
+        """Leaving for Settings ends setup, so ask first (voice-speech-04)."""
+        self.app.push_screen(
+            ConfirmationDialog(
+                title=voice_status.LEAVE_TITLE,
+                message=voice_status.LEAVE_MESSAGE,
+                confirm_label="Leave setup",
+                cancel_label="Stay",
+            ),
+            self._leave_for_settings,
+        )
+
+    def _leave_for_settings(self, confirmed: bool | None) -> None:
+        if not confirmed:
+            return
         callback = getattr(self.wizard, "open_voice_api_key_settings", None)
+        status = self.query_one("#setup-voice-status", Static)
         if not callable(callback):
-            self.query_one("#setup-voice-status", Static).update(
+            status.update(
                 "Open Settings, then Speech & TTS, to add the OpenAI API key."
             )
             return
         try:
             route = callback(self)
         except Exception:
-            self.query_one("#setup-voice-status", Static).update(
-                "Could not open Settings. Use Speech & TTS to add the API key."
-            )
-            return
+            route = None
         if not asyncio.iscoroutine(route):
-            self.query_one("#setup-voice-status", Static).update(
+            status.update(
                 "Could not open Settings. Use Speech & TTS to add the API key."
             )
             return
@@ -706,41 +667,30 @@ class VoiceSetupStep(SetupStep):
             group="setup-voice-api-key-settings",
         )
 
+    def _find_openai_credential(self) -> tuple[str, bool] | None:
+        """The OpenAI key a test or save would use, and whether Next writes it."""
+        return find_openai_credential(
+            getattr(self.wizard.app_instance, "app_config", {}) or {},
+            staged_key=self._staged_key,
+            staged_provider_draft=getattr(self.wizard, "staged_provider_draft", None),
+            provider_setup_committed=bool(
+                getattr(self.wizard, "provider_setup_committed", False)
+            ),
+        )
+
     def _existing_openai_credential(self) -> str | None:
         if self._selected_authentication() != "api_key":
             return None
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        if isinstance(app_config, Mapping):
-            persisted = app_config.get("COMPREHENSIVE_CONFIG_RAW")
-            source = persisted if isinstance(persisted, Mapping) else app_config
-            locations = (
-                ("api_settings", "openai", "api_key"),
-                ("openai_api", "api_key"),
-                ("API", "openai_api_key"),
-            )
-            for location in locations:
-                current: object = source
-                for part in location:
-                    if not isinstance(current, Mapping):
-                        current = None
-                        break
-                    current = current.get(part)
-                if isinstance(current, str) and current:
-                    return current
-            api_settings = source.get("api_settings")
-            if isinstance(api_settings, Mapping):
-                openai = api_settings.get("openai")
-                if isinstance(openai, Mapping):
-                    environment_name = openai.get("api_key_env_var")
-                    if isinstance(environment_name, str) and environment_name:
-                        environment_value = os.environ.get(environment_name)
-                        if environment_value:
-                            return environment_value
-            projected = app_config.get("OPENAI_API_KEY")
-            if isinstance(projected, str) and projected:
-                return projected
-        value = os.environ.get("OPENAI_API_KEY")
-        return value if value else None
+        found = self._find_openai_credential()
+        return found[0] if found else None
+
+    def _mark_sample_verified(self) -> None:
+        """A successful test ticks "Use as default" and counts as acting."""
+        self._tested_this_run = True
+        try:
+            self.query_one("#setup-voice-default", Checkbox).value = True
+        except NoMatches:
+            pass
 
     async def _run_voice_sample(
         self,
@@ -755,13 +705,15 @@ class VoiceSetupStep(SetupStep):
         except asyncio.CancelledError:
             if generation == self._test_generation:
                 self.query_one("#setup-voice-status", Static).update(
-                    "Not tested yet — the sample was cancelled. Retry when ready."
+                    voice_status.CANCELLED_COPY
                 )
             raise
-        except Exception:
+        except Exception as error:
             if generation == self._test_generation:
                 self.query_one("#setup-voice-status", Static).update(
-                    "Not tested yet — the sample failed. Check the service, then retry."
+                    voice_status.voice_test_failure_copy(
+                        error, preset=self._preset, endpoint=draft.endpoint
+                    )
                 )
             return
         else:
@@ -774,72 +726,27 @@ class VoiceSetupStep(SetupStep):
             if self._sample_identity(current) != self._sample_identity(draft):
                 return
             self._verified_draft = draft
+            self._mark_sample_verified()
             try:
                 played = await self._play_sample(result)
             except asyncio.CancelledError:
                 if generation == self._test_generation:
                     self.query_one("#setup-voice-status", Static).update(
-                        "Verified, playback failed. Retry playback/test."
+                        voice_status.PLAYBACK_FAILED_COPY
                     )
                 raise
             if generation != self._test_generation:
                 return
             self.query_one("#setup-voice-status", Static).update(
-                "Verified. The sample is ready to hear."
+                voice_status.PLAYED_COPY
                 if played
-                else "Verified, playback failed. Retry playback/test."
+                else voice_status.PLAYBACK_FAILED_COPY
             )
         finally:
             if self._test_in_progress_generation == generation:
                 self._test_in_progress_generation = None
                 self._refresh_sample_state()
-
-    async def _play_sample(self, result: voice_state.VoiceSampleResult) -> bool:
-        audio_player = getattr(self.app, "audio_player", None)
-        if audio_player is None:
-            # First run: no Speech screen has created the shared player yet
-            # (speech_playback_mixin creates it lazily the same way).
-            try:
-                from tldw_chatbook.TTS.audio_player import AsyncAudioPlayer
-
-                audio_player = self.app.audio_player = AsyncAudioPlayer()
-            except Exception:
-                logger.debug("Voice sample player unavailable (category=playback)")
-                return False
-        play = getattr(audio_player, "play", None)
-        if not callable(play):
-            return False
-        suffix = "." + result.response_format
-        sample_path: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                prefix="chatbook-voice-sample-",
-                suffix=suffix,
-                delete=False,
-            ) as handle:
-                handle.write(result.body)
-                sample_path = Path(handle.name)
-            prior_path = self._sample_audio_path
-            played = play(sample_path)
-            if asyncio.iscoroutine(played):
-                played = await played
-            if played is False:
-                # AsyncAudioPlayer reports "no OS player found" as False.
-                sample_path.unlink(missing_ok=True)
-                return False
-            if prior_path is not None:
-                prior_path.unlink(missing_ok=True)
-            self._sample_audio_path = sample_path
-            return True
-        except asyncio.CancelledError:
-            if sample_path is not None:
-                sample_path.unlink(missing_ok=True)
-            raise
-        except Exception:
-            if sample_path is not None:
-                sample_path.unlink(missing_ok=True)
-            logger.debug("Voice sample playback failed (category=playback)")
-            return False
+                self._restore_test_focus()
 
     def _speed_or_default(self) -> float:
         try:
@@ -848,91 +755,57 @@ class VoiceSetupStep(SetupStep):
             return 1.0
         return speed if math.isfinite(speed) and 0.25 <= speed <= 4.0 else 1.0
 
-    def _start_omnivoice_sample(self) -> None:
-        if self._omnivoice_state != "ready" or self._omnivoice_installing:
-            return
-        text = self.query_one("#setup-voice-sample", Input).value
-        self._test_generation += 1
-        generation = self._test_generation
-        self._test_in_progress_generation = generation
-        self.query_one("#setup-voice-status", Static).update(
-            voice_state.OMNIVOICE_GENERATING_COPY
+    def _omnivoice_untouched(self) -> bool:
+        saved = self._saved
+        return (
+            saved is not None
+            and saved.preset == voice_state.VOICE_PRESET_OMNIVOICE
+            and not self._tested_this_run
+            and self.query_one("#setup-voice-default", Checkbox).value
+            and self._speed_or_default() == saved.draft.speed
         )
-        self._refresh_sample_state()
-        run_wizard_worker(
-            self,
-            self._run_omnivoice_sample(
-                generation, text, self._speed_or_default(), self._omnivoice_seed_value()
-            ),
-            exclusive=True,
-            group="setup-voice-sample",
-        )
-
-    def _update_voice_status_text(self, text: str) -> None:
-        """Update the shared status line, tolerating an unmounted step.
-
-        Textual worker contract (W002): both call sites in
-        ``_run_omnivoice_sample`` resume this lookup after an ``await``, and
-        the step can be hidden/unmounted while the sample synthesizes.
-        """
-        try:
-            self.query_one("#setup-voice-status", Static).update(text)
-        except NoMatches:
-            pass
-
-    async def _run_omnivoice_sample(
-        self, generation: int, text: str, speed: float, seed: int
-    ) -> None:
-        try:
-            try:
-                result = await voice_state.run_omnivoice_sample(
-                    text, speed=speed, seed=seed
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                if generation == self._test_generation:
-                    self._test_in_progress_generation = None
-                    self._update_voice_status_text(
-                        voice_state.OMNIVOICE_SAMPLE_FAILED_COPY
-                    )
-                    self._refresh_sample_state()
-                return
-            if generation != self._test_generation:
-                return
-            played = await self._play_sample(result)
-            # A newer test (or a control change) during playback owns the
-            # status now; this older result must not overwrite it.
-            if generation != self._test_generation:
-                return
-            self._test_in_progress_generation = None
-            self._update_voice_status_text(
-                "Verified. The sample is ready to hear."
-                if played
-                else "Verified, playback failed. Retry playback/test."
-            )
-            self._refresh_sample_state()
-        finally:
-            if self._test_in_progress_generation == generation:
-                self._test_in_progress_generation = None
 
     async def commit(self) -> tuple[bool, str]:
+        # TASK-34100.8 (voice-speech-01): "No voice for now" and an untouched
+        # step post nothing -- Next used to save the PocketTTS draft always.
+        if self._preset == voice_state.VOICE_PRESET_NONE:
+            return True, ""
         if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
-            return await self._commit_omnivoice()
+            if self._omnivoice_untouched():
+                return True, ""
+            outcome = await self._commit_omnivoice()
+            if outcome[0]:
+                self._refresh_saved()
+            return outcome
+        self._sync_default_box()
         try:
             draft = self._draft_from_controls()
         except (TypeError, ValueError) as error:
             return False, str(error) or "Review the Voice setup fields."
+        if not draft.sample_text.strip():
+            # The sample only matters to the test (voice-speech-05).
+            draft = voice_state.replace_draft(
+                draft, sample_text=voice_state.DEFAULT_SAMPLE_TEXT
+            )
+        # Gate first: an untouched step writes nothing, so it never refuses
+        # over a saved value it would not write (review round 2, G8-R2-F1).
+        if not prefill.should_persist_voice_config(
+            draft, self._baseline, acted_this_run=self._tested_this_run
+        ):
+            return True, ""
         validation = voice_state.validate_voice_setup_draft(draft)
         if not validation.configuration_valid:
             return False, validation.errors[
                 0
             ] if validation.errors else "Review the Voice setup fields."
-        if (
-            draft.authentication_mode == "api_key"
-            and self._existing_openai_credential() is None
-        ):
-            return False, "Add an API key in Settings before saving this voice."
+        found = (
+            self._find_openai_credential()
+            if draft.authentication_mode == "api_key"
+            else None
+        )
+        if draft.authentication_mode == "api_key" and found is None:
+            return False, voice_status.KEY_REFUSAL_COPY
+        credential = found[0] if found is not None and found[1] else None
         request_id = self._next_save_request_id
         self._next_save_request_id += 1
         self._save_request_id = request_id
@@ -944,10 +817,11 @@ class VoiceSetupStep(SetupStep):
                 draft,
                 request_id=request_id,
                 reply_to=self,
+                credential=credential,
             )
         )
         try:
-            return await asyncio.wait_for(
+            outcome = await asyncio.wait_for(
                 asyncio.shield(self._save_future),
                 timeout=self._SAVE_TIMEOUT_SECONDS,
             )
@@ -957,95 +831,43 @@ class VoiceSetupStep(SetupStep):
             self._save_request_id = None
             self._save_draft = None
             self._save_future = None
+        if outcome[0]:
+            self._refresh_saved()
+        if outcome[0] and credential is not None:
+            note = getattr(self.wizard, "note_key_entered", None)
+            if callable(note):
+                note()  # Protect now offers to encrypt the saved key.
+        return outcome
 
-    async def _commit_omnivoice(self) -> tuple[bool, str]:
-        if not self.query_one("#setup-voice-default", Checkbox).value:
-            return True, ""
-        if self._omnivoice_state is None:
-            return False, voice_state.OMNIVOICE_CHECKING_COPY
-        if self._omnivoice_state == "engine_missing":
-            return False, voice_state.OMNIVOICE_ENGINE_MISSING_COPY
-        if self._omnivoice_state == "path_invalid":
-            return False, voice_state.OMNIVOICE_PATH_INVALID_COPY
-        if self._omnivoice_state != "ready":
-            return False, voice_state.OMNIVOICE_DEFAULT_WITHOUT_MODEL_COPY
-        request_id = self._next_save_request_id
-        self._next_save_request_id += 1
-        self._save_request_id = request_id
-        self._save_provider = "omnivoice"
-        self._save_use_as_default = True
-        self._save_future = asyncio.get_running_loop().create_future()
-        self.app.post_message(
-            voice_state.build_omnivoice_save_event(
-                speed=self._speed_or_default(),
-                seed=self._omnivoice_seed_value(),
-                request_id=request_id,
-                reply_to=self,
-            )
-        )
-        try:
-            return await asyncio.wait_for(
-                asyncio.shield(self._save_future), timeout=self._SAVE_TIMEOUT_SECONDS
-            )
-        except TimeoutError:
-            return False, "Voice settings are still applying. Retry to continue."
-        finally:
-            self._save_request_id = None
-            self._save_future = None
-            self._save_provider = "openai"
-
-    def _receive_save_result(self, result: object) -> None:
-        from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
-            STTSSettingsSaveResult,
-        )
-
-        provider = self._save_provider
-        future = self._save_future
-        if (
-            type(result) is not STTSSettingsSaveResult
-            or result.request_id != self._save_request_id
-            or future is None
-            or future.done()
-        ):
-            return
-        if not result.persisted:
-            future.set_result((False, "Saving the Voice settings failed. Retry."))
-            return
-        provider_status = result.provider_statuses.get(provider)
-        if provider_status == "pending":
-            return
-        runtime_ready = (
-            provider_status in {"applied", "unchanged"}
-            and provider in result.provider_configuration_revisions
-            and provider in result.provider_runtime_revisions
-        )
-        if not runtime_ready:
-            future.set_result(
-                (False, "The Voice settings were saved, but are not active. Retry.")
-            )
-            return
-        if not self._save_use_as_default:
-            future.set_result((True, ""))
-            return
-        if result.defaults_activated is True:
-            future.set_result((True, ""))
-            return
-        future.set_result(
-            (
-                False,
-                "The Voice settings were saved, but the default was not activated. Retry.",
-            )
-        )
-
-    def receive_stts_settings_save_result(self, result: object) -> None:
-        self._receive_save_result(result)
-
-    def receive_stts_settings_runtime_result(self, result: object) -> None:
-        self._receive_save_result(result)
+    def refusal_message(self, error: str) -> str:
+        """No "Retry with Next" when Next alone cannot succeed (G8-V1-F4)."""
+        if error == voice_status.KEY_REFUSAL_COPY:
+            return error
+        return super().refusal_message(error)
 
     def busy_label(self) -> str:
         """What a slow Next from Voice is doing: the save can take 30 s."""
         return "Saving voice settings…"
+
+    def restore_checkpoint(self, values: Mapping[str, object]) -> None:
+        """Put a resumed run's non-secret Voice values back (TASK-1264)."""
+        if prefill.is_legacy_checkpoint(values):
+            return  # the old wizard's 8765 write: keep the prefill (R2-F4)
+        preset = values.get("preset")
+        if preset not in BUTTON_BY_PRESET:
+            preset = voice_state.VOICE_PRESET_CUSTOM
+        draft = prefill.draft_from_checkpoint(values, self._initial_draft())
+        self._preset = str(preset)
+        if preset == voice_state.VOICE_PRESET_CUSTOM:
+            self._custom_draft = draft
+        self._apply_draft_to_controls(draft)
+        self._set_radio(BUTTON_BY_PRESET[self._preset])
+        self.query_one("#setup-voice-body").display = (
+            self._preset != voice_state.VOICE_PRESET_NONE
+        )
+        if preset == voice_state.VOICE_PRESET_OMNIVOICE:
+            self._set_omnivoice_mode(True)
+        self._refresh_service_status()
 
     def get_step_data(self) -> Dict[str, Any]:
         values: Dict[str, Any] = {

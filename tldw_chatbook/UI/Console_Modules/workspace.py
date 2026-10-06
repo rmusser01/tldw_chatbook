@@ -23,7 +23,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import partial
@@ -682,6 +682,8 @@ class ConsoleWorkspaceController:
         resolve_resumed_persona_name: Callable[[str, str], Any] | None = None,
         begin_manual_read_visit: Callable[..., Any] | None = None,
         complete_manual_read_visit: Callable[..., None] | None = None,
+        sync_session_titles: Callable[[], Awaitable[None]] | None = None,
+        await_title_views: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
         """Bind canonical Workspace state and its late-bound dependencies.
 
@@ -693,6 +695,8 @@ class ConsoleWorkspaceController:
 
         Args:
             screen: Owning Console screen for retained framework services.
+            sync_session_titles: Late-bound tab and transcript-header publisher.
+            await_title_views: Mounted rail/tree publication receipt.
             app_instance: Application service container.
             chat_store_accessor: Resolve or create the Console chat store.
             current_chat_store_accessor: Return the current Console chat store.
@@ -755,6 +759,9 @@ class ConsoleWorkspaceController:
         self._complete_manual_read_visit = complete_manual_read_visit
         self._notify_character_navigation = notify_character_navigation
         self.app_instance = app_instance
+        self._conversation_rename_lock = asyncio.Lock()
+        self._sync_session_titles_fn = sync_session_titles
+        self._await_title_views_fn = await_title_views
         self._chat_store_accessor = chat_store_accessor
         self._current_chat_store_accessor = current_chat_store_accessor
         self._current_conversation_id_accessor = current_conversation_id_accessor
@@ -3162,10 +3169,14 @@ class ConsoleWorkspaceController:
         # Review finding 7: resolve labels only for the character sessions
         # that actually exist -- never a full-library read, and no database
         # access at all for the common no-character-sessions build.
+        # A session's authoritative name already wins below, so only an
+        # unnamed session needs a checked card fallback.
         session_character_ids = [
             character_id
             for character_id in (
-                _session_character_id(session) for session in store.sessions()
+                _session_character_id(session)
+                for session in store.sessions()
+                if not str(getattr(session, "character_name", "") or "").strip()
             )
             if character_id is not None
         ]
@@ -5899,8 +5910,8 @@ class ConsoleWorkspaceController:
         db = getattr(registry_service, "db", None)
         if getattr(db, "is_memory_db", False):
             return registry_service.get_workspace_scope(workspace_id)
-        return await asyncio.to_thread(
-            registry_service.get_workspace_scope, workspace_id
+        return await run_owned_db_call(
+            db, registry_service.get_workspace_scope, workspace_id
         )
 
     @staticmethod
@@ -5914,8 +5925,8 @@ class ConsoleWorkspaceController:
         if getattr(db, "is_memory_db", False):
             registry_service.set_workspace_scope(workspace_id, scope)
         else:
-            await asyncio.to_thread(
-                registry_service.set_workspace_scope, workspace_id, scope
+            await run_owned_db_call(
+                db, registry_service.set_workspace_scope, workspace_id, scope
             )
 
     # -- Resuming a persisted conversation ------------------------------------
@@ -5980,6 +5991,7 @@ class ConsoleWorkspaceController:
             CharacterConversationActivationRequest,
             ConsoleActivationResultKind,
         )
+        from ...DB.ChaChaNotes_DB import CharactersRAGDB
 
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
@@ -5990,7 +6002,12 @@ class ConsoleWorkspaceController:
             else request
         )
         try:
-            with db.transaction() as connection:
+            with (
+                operation_owned_connection(db)
+                if type(db) is CharactersRAGDB and not db.is_memory_db
+                else nullcontext(),
+                db.transaction() as connection,
+            ):
                 authority_row = connection.execute(
                     "SELECT local_authority_id FROM rag_identity_context "
                     "WHERE context_name = 'default' LIMIT 2"
@@ -7895,8 +7912,19 @@ class ConsoleWorkspaceController:
             ConsoleRenameSessionModal,
         )
 
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        store = self._console_chat_store
+
         def _apply(new_title: str | None) -> None:
             if not new_title:
+                return
+            if (
+                getattr(self.app_instance, "chachanotes_db", None) is not db
+                or self._console_chat_store is not store
+            ):
+                self.app_instance.notify(
+                    "The profile changed. Open Rename again.", severity="warning"
+                )
                 return
             candidate = new_title.strip()
             if not candidate or candidate == current_title.strip():
@@ -7925,7 +7953,25 @@ class ConsoleWorkspaceController:
     def _rename_console_conversation(
         self, conversation_id: str, new_title: str
     ) -> None:
-        """Write a new conversation title off the event loop."""
+        """Commit a validated saved title, then publish it to live Console aliases.
+
+        Args:
+            conversation_id: Exact local persisted conversation identity.
+            new_title: Nonblank user-supplied title to validate before writing.
+        """
+
+        candidate = new_title.strip()
+        if not candidate or not validate_text_input(
+            candidate, max_length=_CONVERSATION_TITLE_MAX
+        ):
+            self.app_instance.notify("That title cannot be used.", severity="warning")
+            return
+        new_title = sanitize_string(
+            candidate, max_length=_CONVERSATION_TITLE_MAX
+        ).strip()
+        if not new_title:
+            self.app_instance.notify("That title cannot be used.", severity="warning")
+            return
 
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
@@ -7933,41 +7979,135 @@ class ConsoleWorkspaceController:
                 "Conversation storage is unavailable.", severity="error"
             )
             return
+        store = self._console_chat_store
 
         async def _run() -> None:
+            lifecycle = self._screen_lifecycle_token()
+
+            def view_is_current() -> bool:
+                return (
+                    getattr(self.app_instance, "chachanotes_db", None) is db
+                    and self._console_chat_store is store
+                    and self._screen_lifecycle_token() == lifecycle
+                    and self._screen_running_accessor()
+                )
+
             def _write() -> None:
                 current = db.get_conversation_by_id(conversation_id)
-                if not current:
+                if not current or current.get("deleted"):
                     raise LookupError("conversation not found")
-                db.update_conversation(
+                applied = db.update_conversation(
                     conversation_id,
                     {"title": new_title},
                     expected_version=current["version"],
                 )
+                if not applied:
+                    raise RuntimeError("conversation rename was not applied")
 
-            try:
-                await asyncio.to_thread(_write)
-            except LookupError:
-                self.app_instance.notify(
-                    "Could not find that conversation; it may have been deleted.",
-                    severity="warning",
-                )
-                return
-            except Exception as exc:  # noqa: BLE001 - surfaced to the user
-                logger.error(
-                    "Console conversation rename failed: exception_type={}",
-                    type(exc).__name__,
-                )
-                self.app_instance.notify(
-                    "Could not rename that conversation.", severity="error"
-                )
-                return
-            self.app_instance.notify(f"Renamed to {new_title}.")
-            await self._refresh_console_conversation_browser_after_selection()
+            async with self._conversation_rename_lock:
+                if (
+                    getattr(self.app_instance, "chachanotes_db", None) is not db
+                    or self._console_chat_store is not store
+                ):
+                    return
+                cancelled = False
+                try:
+                    admission = (
+                        store.conversation_title_transition(conversation_id)
+                        if store is not None
+                        else nullcontext(None)
+                    )
+                    with admission as publish:
+                        write_task = asyncio.create_task(asyncio.to_thread(_write))
+                        # Cancellation cannot stop the SQLite thread. Keep the
+                        # serialization/admission scope until it settles, then
+                        # publish into its captured store even if the view or
+                        # profile changed. Never paint/toast the detached view.
+                        while not write_task.done():
+                            try:
+                                await asyncio.shield(write_task)
+                            except asyncio.CancelledError:
+                                cancelled = True
+                        write_task.result()
+                        if publish is not None:
+                            publish(new_title)
+                except LookupError:
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    if view_is_current():
+                        self.app_instance.notify(
+                            "Could not find that conversation; it may have been deleted.",
+                            severity="warning",
+                        )
+                    return
+                except Exception as exc:  # noqa: BLE001 - surfaced to the user
+                    logger.error(
+                        "Console conversation rename failed: exception_type={}",
+                        type(exc).__name__,
+                    )
+                    if cancelled:
+                        raise asyncio.CancelledError
+                    if view_is_current():
+                        self.app_instance.notify(
+                            "Could not rename that conversation.", severity="error"
+                        )
+                    return
+                if cancelled:
+                    raise asyncio.CancelledError
+                if not view_is_current():
+                    return
+                self._invalidate_console_persisted_rows_cache()
+                self._publish_cached_conversation_title(conversation_id, new_title)
+                if self._sync_session_titles_fn is not None:
+                    await self._sync_session_titles_fn()
+                if not view_is_current():
+                    return
+                if self._workspace_tree_search.query.strip():
+                    await self.refresh_workspace_tree_search(
+                        self._workspace_tree_search.query
+                    )
+                if not view_is_current():
+                    return
+                await self._refresh_console_conversation_browser_after_selection()
+                if (
+                    self._await_title_views_fn is not None
+                    and not await self._await_title_views_fn()
+                ):
+                    return
+                if not view_is_current():
+                    return
+                self.app_instance.notify(f"Renamed to {new_title}.")
 
         self.run_worker(
             _run(), group="console-conversation-rename", exit_on_error=False
         )
+
+    def _publish_cached_conversation_title(
+        self, conversation_id: str, title: str
+    ) -> None:
+        """Update exact local title copies without changing ownership or row IDs.
+
+        Args:
+            conversation_id: Committed local persisted identity.
+            title: Validated durable title.
+        """
+
+        def renamed(rows):
+            return tuple(
+                replace(row, title=title)
+                if row.conversation_id == conversation_id
+                else row
+                for row in rows
+            )
+
+        for lane in (self._workspace_tree_search, self._flat_conversation_search):
+            lane.rows = renamed(lane.rows)
+            lane.settled_rows = renamed(lane.settled_rows)
+            lane.cache.clear()
+        for attempt in self._workspace_page_attempts.values():
+            attempt.rows = renamed(attempt.rows)
+        for workspace_id, rows in tuple(self._workspace_membership_rows.items()):
+            self._workspace_membership_rows[workspace_id] = renamed(rows)
 
     def confirm_console_conversation_delete(
         self, conversation_id: str, conversation_title: str

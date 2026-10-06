@@ -1116,6 +1116,8 @@ def build_console_controllers(
     #: only the bounded plain-value input delegate and DOM edges.
     screen._workspace = ConsoleWorkspaceController(
         screen,
+        sync_session_titles=lambda: screen._sync_console_native_session_tabs(),
+        await_title_views=lambda: screen._await_console_title_views(),
         notify_character_navigation=lambda message, severity: screen._notify(
             message, severity
         ),
@@ -1730,6 +1732,9 @@ def build_console_controllers(
         ),
         reconcile_resume_session_with_registry=lambda: (
             screen._workspace._reconcile_console_session_with_registry()
+        ),
+        rename_saved_conversation=lambda conversation_id, title: (
+            screen._workspace._rename_console_conversation(conversation_id, title)
         ),
         on_draft_session_changed=lambda: (
             screen._hooks.cancel_pending(),

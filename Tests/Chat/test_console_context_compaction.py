@@ -3871,6 +3871,8 @@ async def test_known_overflow_still_blocks_when_compaction_is_unavailable() -> N
     assert result.visible_copy.startswith("Your message was not sent:")
     assert "system prompt, tools and attached context" in result.visible_copy
     assert "compacting older turns cannot make room" in result.visible_copy
+    # TASK-34100.5 AC#3: no internal policy jargon reaches the user.
+    assert "Mandatory request material" not in result.visible_copy
     assert gateway.calls == 0
 
 

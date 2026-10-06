@@ -9482,7 +9482,9 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
                 _tool_dict(name)
                 for name in sorted(CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS)
             ),
-            _tool_dict("chat_with_llm"),
+            # TASK-34100.5: ``chat_with_llm`` is never offered (the direct
+            # runtime refuses it), so the surviving sample is another built-in.
+            _tool_dict("chat_with_character"),
         ]
     }
     service = FakeMCPService(
@@ -9498,7 +9500,7 @@ async def test_compose_mcp_provider_excludes_console_shadowed_builtin_names():
     assert provider is not None
     names = {entry.name for entry in provider.list_catalog()}
     assert names == {
-        "mcp__tldw_chatbook__chat_with_llm",
+        "mcp__tldw_chatbook__chat_with_character",
         "mcp__docs__library_list_media",
     }
 

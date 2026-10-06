@@ -69,6 +69,13 @@ if condition == 'served':
 selector.write_text(toml.dumps(document))
 selector.chmod(0o600)
 before = selector.read_bytes()
+# TASK-34100.16: a config carried to another machine and launched with
+# --config, while TLDW_CONFIG_PATH names another file (the flag must win).
+decoy = selector.parent / 'decoy.toml'
+launch_flags = []
+if os.environ.get('UNLOCK_CONFIG_VIA_FLAG') == '1':
+    os.environ['TLDW_CONFIG_PATH'] = str(decoy)
+    launch_flags = ['--config', str(selector)]
 # Published to the parent so it can prove the verifier never reached output.
 print('VERIFIER=' + verifier, file=open(os.environ['VERIFIER_FILE'], 'w'))
 from tldw_chatbook.Backup_Recovery import launcher
@@ -170,13 +177,13 @@ def guarded(name, globals=None, locals=None, fromlist=(), level=0):
 builtins.__import__ = guarded
 if entry == 'cli':
     from tldw_chatbook.cli import main_cli_runner
-    sys.argv = ['tldw-cli']
+    sys.argv = ['tldw-cli', *launch_flags]
     try:
         print('EXIT=' + str(main_cli_runner()))
     except ReachedApplication:
         print('REACHED_APPLICATION')
 else:
-    sys.argv = ['tldw_chatbook.app']
+    sys.argv = ['tldw_chatbook.app', *launch_flags]
     try:
         runpy.run_module('tldw_chatbook.app', run_name='__main__', alter_sys=True)
     except ReachedApplication:
@@ -186,6 +193,7 @@ else:
 builtins.__import__ = original
 assert not answers and not choices, (answers, choices)
 print('RECOVERY=' + ','.join(observed))
+print('DECOY_CREATED=' + str(decoy.exists()))
 text = selector.read_text()
 print('FILE_UNCHANGED=' + str(selector.read_bytes() == before))
 print('FILE_HAS_CIPHERTEXT=' + str('enc:' in text))
@@ -212,7 +220,7 @@ assert not blocked_attempts(), blocked_attempts()
 
 
 def _run_module_entry(
-    tmp_path: Path, condition: str, *, entry: str = "module"
+    tmp_path: Path, condition: str, *, entry: str = "module", via_flag: bool = False
 ) -> tuple[subprocess.CompletedProcess, str]:
     root = tmp_path.resolve()
     for name in ("home", "config", "data"):
@@ -230,6 +238,7 @@ def _run_module_entry(
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         VERIFIER_FILE=str(verifier_file),
         UNLOCK_ENTRY=entry,
+        UNLOCK_CONFIG_VIA_FLAG="1" if via_flag else "0",
     )
     environment.pop("TLDW_VERBOSE_STARTUP", None)
     result = subprocess.run(
@@ -274,6 +283,30 @@ def _assert_no_log_lines(region: str) -> None:
     assert "no password is set" not in region, region[-3000:]
     lines = [line for line in region.splitlines() if _LOG_LINE.search(line)]
     assert not lines, lines
+
+
+@pytest.mark.timeout(240)
+@pytest.mark.parametrize("entry", ["module", "cli"])
+def test_config_flag_sends_an_encrypted_copied_config_through_the_one_unlock(
+    tmp_path, entry
+):
+    """TASK-34100.16: ``--config`` selects the file the unlock asks about.
+
+    An encrypted config.toml carried to another machine and launched with
+    ``--config`` asks for its master password through the same pre-TUI
+    unlock as a default profile, on both entry points -- even when
+    ``TLDW_CONFIG_PATH`` names a different file, because the flag wins.
+    """
+    result, verifier = _run_module_entry(tmp_path, "good", entry=entry, via_flag=True)
+    out = result.stdout
+    assert "REACHED_APPLICATION" in out, result.stderr[-4000:]
+    assert "Enter the master password you set during setup." in result.stderr
+    assert "PASSWORD_SET=True" in out
+    assert "KEY_DECRYPTED=True" in out
+    assert "FILE_UNCHANGED=True" in out
+    assert "DECOY_CREATED=False" in out
+    assert "RECOVERY=\n" in out
+    _secrets_absent(result, verifier)
 
 
 @pytest.mark.timeout(240)

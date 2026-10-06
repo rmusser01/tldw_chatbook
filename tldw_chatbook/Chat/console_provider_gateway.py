@@ -1464,12 +1464,19 @@ def _cap_automatic_prepared(
     )
 
 
-def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
+def safe_provider_error_copy(
+    provider: str,
+    exc: BaseException,
+    *,
+    known_credentials: tuple[str, ...] = (),
+) -> str:
     """Return safe user-visible provider failure copy.
 
     Args:
         provider: Provider name associated with the failed request.
         exc: Exception raised by the provider adapter.
+        known_credentials: The exact credentials the request carried; an
+            echo of one in the provider's reason is hidden.
 
     Returns:
         Redacted user-facing error text that categorizes the failure without
@@ -1486,8 +1493,22 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
         category = "configuration error"
     elif isinstance(exc, ChatProviderError):
         category = "provider unavailable"
-    if isinstance(exc, ChatBadRequestError) and getattr(exc, "status_code", None) == 404:
+    if getattr(exc, "status_code", None) == 404 and not isinstance(
+        exc, (ChatAuthenticationError, ChatRateLimitError)
+    ):
+        # TASK-34100.5 AC#4: a 404 is the model, whichever class carried it
+        # (live: Gemini's retired-model 404 arrived as a provider error).
         category = "model or endpoint not found"
+    from tldw_chatbook.Chat.provider_error_reason import (
+        CONTEXT_OVERFLOW_CATEGORY,
+        CONTEXT_OVERFLOW_FIX,
+        is_context_overflow_error,
+        provider_reason_for_exception,
+    )
+
+    overflow = is_context_overflow_error(exc)
+    if overflow:
+        category = CONTEXT_OVERFLOW_CATEGORY  # review round 2, V2-F3
     # The catalog name the user sees elsewhere ("NVIDIA NIM", not "nvidia");
     # an unmapped or custom-endpoint id stays as given (TASK-33002.14).
     provider_copy = _sanitized_provider_diagnostic(
@@ -1511,9 +1532,77 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
             f"Request to {provider_copy} not sent: it failed a local check on {field}."
         )
     status_copy = f" Status: {status_code}." if type(status_code) is int else ""
-    return _sanitized_provider_diagnostic(
-        f"Provider error from {provider_copy}: {category}.{status_copy}"
+    # TASK-34100.5 AC#4: the provider's own allowlisted sentence, and the fix.
+    reason = provider_reason_for_exception(exc, known_credentials=known_credentials)
+    action_copy = (
+        " Update the API key in Settings ▸ Providers & Models, or run "
+        "Ctrl+P ▸ Setup: Run setup wizard."
+        if category == "authentication failed"
+        else CONTEXT_OVERFLOW_FIX if overflow else ""
     )
+    head = f"Provider error from {provider_copy}: {category}.{status_copy}"
+    if reason:
+        # Review round 1 (F2): a reason the sanitizer rejects (a masked key
+        # fragment, a hex id) drops alone -- never the category or the fix.
+        # A reason with no final punctuation still ends its sentence before
+        # the fix ("... try increasing it”. Start the server ...").
+        quote_end = "”" if reason[-1:] in ".!?…" else "”."
+        with_reason = _sanitized_provider_diagnostic(
+            f"{head} {provider_copy} says: “{reason}{quote_end}{action_copy}",
+            known_credentials=known_credentials,
+        )
+        if with_reason != _PROVIDER_REQUEST_FAILED_COPY:
+            return with_reason
+    return _sanitized_provider_diagnostic(f"{head}{action_copy}")
+
+
+def _raise_if_context_overflow(
+    exc: httpx.HTTPStatusError, *, provider: str, api_key: str | None
+) -> None:
+    """Report a request longer than a llama.cpp server's context, once.
+
+    Review round 2 (V2-F3): the stream path's non-streaming fallback re-sent
+    the identical, still-too-long request, and the failure read "provider
+    returned HTTP 400 (...)" with no provider and no fix. An overflow is the
+    same with or without streaming, so it is raised here, before the
+    fallback, with the provider's sentence and the fix.
+
+    Raises:
+        ChatBadRequestError: When ``exc`` is a context-size refusal.
+    """
+    from tldw_chatbook.Chat.provider_error_reason import (
+        attach_provider_reason,
+        is_context_overflow_error,
+    )
+
+    if not is_context_overflow_error(exc):
+        return
+    credentials = (api_key or "",)
+    status = exc.response.status_code
+    error = ChatBadRequestError(provider=provider, status_code=status)
+    error.context_overflow = True  # type: ignore[attr-defined]
+    attach_provider_reason(error, exc.response, known_credentials=credentials)
+    raise ChatBadRequestError(
+        safe_provider_error_copy(provider, error, known_credentials=credentials),
+        provider=provider,
+        status_code=status,
+    ) from None
+
+
+def _error_copy_for(copy_fn: Any, resolution: Any, exc: BaseException) -> str:
+    """Run ``copy_fn``, handing the default the credential the call carried.
+
+    Review round 1 (F3): an echo of the exact key is then hidden in place
+    rather than collapsing the whole line. An injected formatter keeps its
+    two-argument contract.
+    """
+    if copy_fn is safe_provider_error_copy:
+        return safe_provider_error_copy(
+            resolution.provider,
+            exc,
+            known_credentials=(getattr(resolution, "api_key", None) or "",),
+        )
+    return copy_fn(resolution.provider, exc)
 
 
 def adapter_wire_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
@@ -1718,7 +1807,8 @@ def _provider_error_copy_with_model_recovery(
         return (
             f"{copy}{named} The provider could not find this model or "
             "endpoint, or this key cannot use it. Check the model name and "
-            "the key, or choose another model from the model picker."
+            "the key, or choose another model from the model picker "
+            "(Alt+M: Switch model)."
         )
     if status_code != 400:
         return copy
@@ -4915,6 +5005,8 @@ class ConsoleProviderGateway:
                     headers=headers,
                 )
                 async with stream_context as response:
+                    if getattr(response, "is_error", False) is True:
+                        await response.aread()  # the body says why (V2-F3)
                     response.raise_for_status()
                     async for line in response.aiter_lines():
                         _check_automatic_dispatch()
@@ -4966,6 +5058,8 @@ class ConsoleProviderGateway:
         except httpx.HTTPError as exc:
             if emitted_content:
                 raise
+            if isinstance(exc, httpx.HTTPStatusError):
+                _raise_if_context_overflow(exc, provider=provider, api_key=api_key)
             stream_error = exc
         finally:
             if call_signals is not None:
@@ -5441,7 +5535,7 @@ class ConsoleProviderGateway:
             else:
                 status_code = getattr(exc, "status_code", 502)
             raise ChatProviderError(
-                safe_provider_error_copy(provider, exc),
+                _error_copy_for(safe_provider_error_copy, resolution, exc),
                 provider=provider,
                 status_code=status_code if isinstance(status_code, int) else 502,
             ) from None
@@ -6741,7 +6835,9 @@ class ConsoleProviderGateway:
                 raw_status = getattr(exc, "status_code", None)
                 status_code = raw_status if type(raw_status) is int else None
                 try:
-                    raw_error_copy = self._safe_error_copy(resolution.provider, exc)
+                    raw_error_copy = _error_copy_for(
+                        self._safe_error_copy, resolution, exc
+                    )
                 except BaseException:  # failure context can contain credentials
                     raw_error_copy = _PROVIDER_REQUEST_FAILED_COPY
                 try:

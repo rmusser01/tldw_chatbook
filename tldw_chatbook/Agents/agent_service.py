@@ -800,6 +800,8 @@ def build_first_request_schema_plan(
     discovery_system_prompt: str | None = None,
     spawn_override_enabled: bool = False,
     spawn_override_targets: tuple[tuple[str, tuple[str, ...]], ...] = (),
+    context_window: object | None = None,
+    plain_system_prompt: str | None = None,
 ) -> FirstRequestSchemaPlan:
     """Choose direct disclosure only when schema share and request both fit.
 
@@ -831,6 +833,11 @@ def build_first_request_schema_plan(
         spawn_override_targets: Allowlisted ``(provider, models)`` pairs the
             spawn schema enumerates when the override gate is open;
             identity-only, from ``_spawn_override_targets``.
+        context_window: The send's own ``ContextWindowResolution``; when given,
+            the plan is sized against it (an unverified one conservatively,
+            see ``first_request_window``) instead of the static catalog limit.
+        plain_system_prompt: Prompt sent when no tool is disclosed, so a
+            tool-less request carries no instructions for an absent protocol.
 
     Returns:
         A frozen schema plan whose ``request_fits`` flag proves whether any
@@ -977,7 +984,7 @@ def build_first_request_schema_plan(
             runtime_schemas=(),
             offer_find_load=False,
             log_active=False,
-            system_prompt=direct_prompt,
+            system_prompt=plain_system_prompt or direct_prompt,
             agent_definitions=agent_definitions,
             fleet_max_live=fleet_max_live,
         )
@@ -993,7 +1000,30 @@ def build_first_request_schema_plan(
         )
 
     try:
-        context_limit = get_model_token_limit(config.model, api_endpoint)
+        from .first_request_window import planning_window
+
+        # TASK-34100.5 AC#6: plan against the send's own window when known.
+        unclamped = config
+        planned = planning_window(
+            context_window, config.response_reserve_tokens, provider=api_endpoint
+        )
+        if planned is not None:
+            context_limit = planned[0]
+            config = dataclasses.replace(config, response_reserve_tokens=planned[1])
+        else:
+            context_limit = get_model_token_limit(config.model, api_endpoint)
+
+        def settle(plan: FirstRequestSchemaPlan) -> FirstRequestSchemaPlan:
+            # A guessed window only shapes tool disclosure; whether the request
+            # fits a window nobody verified is the send preflight's call.
+            if plan.request_fits or planned is None or getattr(
+                context_window, "verified", False
+            ) is True:
+                return plan
+            return dataclasses.replace(plan, request_fits=_first_request_plan_fits(
+                plan, config=unclamped, api_endpoint=api_endpoint,
+                messages=messages, context_limit=context_window.tokens,
+            ))
         if type(context_limit) is not int or context_limit <= 0:
             return discovery
         schema_limit = int(context_limit * DIRECT_DISCLOSURE_CONTEXT_FRACTION)
@@ -1010,7 +1040,7 @@ def build_first_request_schema_plan(
             ),
         )
         if active is None:
-            return validated_fallback(context_limit)
+            return settle(validated_fallback(context_limit))
         direct = make_plan(active, False, direct_prompt)
         if not _first_request_plan_fits(
             direct,
@@ -1019,7 +1049,7 @@ def build_first_request_schema_plan(
             messages=messages,
             context_limit=context_limit,
         ):
-            return validated_fallback(context_limit)
+            return settle(validated_fallback(context_limit))
         return direct
     except Exception:
         return discovery
@@ -8710,6 +8740,7 @@ class AgentService:
                 )
             except Exception as exc:  # noqa: BLE001 — a run never raises out
                 from tldw_chatbook.Chat.provider_failures import (
+                    FAILURE_SUMMARY_MAX_CHARS,
                     describe_stream_failure,
                 )
                 from tldw_chatbook.Chat.console_trace_service import (
@@ -8731,7 +8762,8 @@ class AgentService:
                     status=RUN_ERROR,
                     steps=[
                         self._service_error_step(
-                            run_id, describe_stream_failure(exc)[:500]
+                            run_id,
+                            describe_stream_failure(exc)[:FAILURE_SUMMARY_MAX_CHARS],
                         )
                     ],
                 )

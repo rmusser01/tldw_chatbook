@@ -46,6 +46,14 @@ def main_cli_runner() -> Any:
         parser.error("both recovery profile and control root are required")
     if selected.recovery_launch_attempt is not None and not selected.recovery_profile:
         parser.error("launch attempt requires recovery profile selectors")
+    # TASK-34100.16: --config PATH is TLDW_CONFIG_PATH for this launch, set
+    # before the startup unlock reads the profile; a recovery profile names
+    # its own config, so the two never mix.
+    from tldw_chatbook.Utils.launch_options import adopt_config_flag, config_flag
+
+    if selected.recovery_profile and config_flag(remaining) is not None:
+        parser.error("--config cannot be combined with recovery profile selectors")
+    adopt_config_flag(remaining)
     if selected.recovery_profile:
         from tldw_chatbook.Backup_Recovery.isolated_restore import select_profile
 

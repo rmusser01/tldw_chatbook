@@ -1069,6 +1069,8 @@ async def test_console_ready_empty_transcript_exposes_activation_panel_copy():
         assert _is_displayed(empty_panel)
         # Ready state shows one ready line and hides the setup card + action row.
         assert _widget_text(console.query_one("#console-empty-body")) == (
+            # TASK-34100.5 AC#11: the arrival line names what setup connected.
+            "Setup complete — llama.cpp · local-model. "
             "Ready — type a message to begin."
         )
         assert not list(console.query("#console-empty-title"))
@@ -1119,6 +1121,8 @@ async def test_console_ready_empty_transcript_omits_setup_action_row():
         assert not list(console.query("#console-empty-action-row"))
         assert not list(console.query("#console-empty-choose-model"))
         assert _widget_text(console.query_one("#console-empty-body")) == (
+            # TASK-34100.5 AC#11: the arrival line names what setup connected.
+            "Setup complete — llama.cpp · local-model. "
             "Ready — type a message to begin."
         )
 

@@ -40,3 +40,21 @@ Found by the 26003 adversarial review (finding I1).
 - [ ] #3 Repeated stalls do not accumulate live worker threads or provider connections - verified by a test that stalls N times and asserts no thread/connection growth
 - [ ] #4 stdio/local paths and the normal streaming path are unaffected
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+**Live evidence from TASK-34100.5 (review round 2, V2-F8, 2026-10-04).** The
+same leak reaches self-hosted servers on the first-token path. TASK-34100.5
+gave a self-hosted first token a 300 s window and raised the local handler's
+HTTP read timeout to that window plus 30 s, so the watchdog decides. When the
+window ran out, the run ended at ~300 s, but the request was not aborted: the
+CPU-only llama-server kept processing the prompt until the read timeout
+closed the connection 30 s later. Log
+`setup-wizard-ux-qa/evidence/g5-v2-slow/llama-server-9412.log`: task 111
+"new prompt" at 7.21.16, the UI timeout at ~300 s (02-slow-t312), and the
+server's "cancel task, id_task = 111" at 12.51.30 (+330 s). Task 1045 shows the
+same. The User Guide (console.md, "The first reply from a large local model
+takes minutes") now says the server may keep working for up to 30 s. Closing
+the held response on `StreamStallError` (AC#2 here) would end that too.
+<!-- SECTION:NOTES:END -->

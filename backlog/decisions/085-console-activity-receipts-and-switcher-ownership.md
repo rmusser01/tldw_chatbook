@@ -132,6 +132,44 @@ remain disabled during activation, and only `OPENED` dismisses the modal after
 the exact Console destination is current and visible. This amendment is owned
 by [TASK-31241](../tasks/task-31241%20-%20Align-character-conversation-navigation-decisions.md).
 
+## Amendment (2026-10-04, TASK-33620.9 — explicit title publication)
+
+An explicit rename of a saved local conversation commits its optimistic-lock
+database write before publishing the new title to any matching open Console
+runtime. Rail/tree and bound tab/F2/palette actions share the existing Console
+workspace rename worker. The store publishes a committed title by exact
+persisted-conversation identity to every matching runtime; the captured database
+and store must still belong to the same Data Profile. An unsuccessful durable
+write leaves both saved and live titles unchanged. Unbound scratch-session
+renaming and automatic first-message titles retain their existing behavior.
+
+Before the durable write, the store reserves existing fork-source admissions
+for every exact alias and rejects new hydration or rebinding into that title
+transition. Publication verifies both the captured runtime instance and its
+persisted binding; rebinding away is not renamed. The publication callback is
+valid only inside its admission scope. Same-binding preparation cleanup remains
+a no-op rather than being refused. A cancelled worker drains its retained
+SQLite write and publishes any committed title into the captured store before
+releasing admission, but never paints or toasts a retired or changed-profile
+view. Complete renames serialize through the existing workspace owner.
+
+The worker invalidates persisted-row projections and awaits the existing
+tab/header and conversation-browser publication before success feedback.
+Requesting a coalesced broad refresh alone does not prove publication. No new
+event bus, persistence owner, Library title editor, or cross-profile mutation is
+introduced. Library currently has no conversation-title editing control; a
+future editor must use this same durable-before-publication contract. Renames
+never activate a tab or infer identity from the title. Publishing only the
+active runtime was rejected because inactive and intentionally duplicated
+runtimes can refer to the same saved conversation.
+
+For an unchanged saved binding, an older send's title snapshot is not title
+authority: preparation cancellation, optimistic-send rollback, and delayed
+successful-send publication preserve the current committed title. Scratch or
+changed-binding rollback still restores its prior identity, and first
+persistence still publishes its staged title. Saved rename input is checked
+again after sanitization, before admitting any durable write.
+
 ## Context
 
 The incumbent switcher eagerly loads a mixed local tuple, mounts at most twenty
