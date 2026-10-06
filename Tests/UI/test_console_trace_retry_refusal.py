@@ -36,6 +36,16 @@ def _screen(h) -> str:
     return "\n".join(_frame_rows(h.host))
 
 
+def _checkpoints(h) -> list[tuple]:
+    return [
+        tuple(row)
+        for row in h.database.get_connection().execute(
+            "SELECT state, checkpoint_revision, assistant_message_version "
+            "FROM console_dispatch_checkpoints ORDER BY created_at"
+        )
+    ]
+
+
 def _replies(h, session_id: str) -> list[str]:
     return [
         message.content
@@ -68,13 +78,16 @@ async def test_refused_retry_capture_keeps_the_trace_pause(
             what="turn 3 did not stop at the trace pause (TASK-34100.3.1 landed?)",
         )
         assert len(h.calls) == 2
+        paused_checkpoints = _checkpoints(h)
 
         await _wait_for_selector(h.console, h.pilot, "#console-trace-retry")
         await h.pilot.click("#console-trace-retry")
         await _until(
             h.pilot,
-            lambda: "refused again" in _screen(h)
-            or any(copy in _screen(h) for copy in DELIVERY_UNKNOWN),
+            lambda: (
+                "refused again" in _screen(h)
+                or any(copy in _screen(h) for copy in DELIVERY_UNKNOWN)
+            ),
             timeout=30.0,
             what="Retry capture did not settle",
         )
@@ -87,6 +100,8 @@ async def test_refused_retry_capture_keeps_the_trace_pause(
         assert recovery is None or not recovery.recovery_needed
         assert h.controller.trace_call_recovery_preparation() is not None
         assert len(h.calls) == 2, "a refused retry must not reach the provider"
+        # The refused retry wrote no dispatch state of its own.
+        assert _checkpoints(h) == paused_checkpoints
 
         # The pause is still the ordinary one: Send without capture answers.
         await h.pilot.click("#console-trace-send-without")
