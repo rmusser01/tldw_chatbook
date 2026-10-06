@@ -17153,6 +17153,22 @@ about screens or widgets. Then check whether your PR touches
 clean `dev` before touching your feature. Two green runs -- feature commit
 alone green, dummy section on `dev` red -- settle it in about five minutes and
 stop you from redesigning something that was never broken.
+
+**Addendum (2026-10-05, TASK-34000.5).** The same admission refusal is not a
+Tests/UI-only shape. The root-level config suites that `monkeypatch.setenv
+("TLDW_CONFIG_PATH", <tmp file>)` and then call the SHARED module's
+`load_settings(force_reload=True)` -- `test_config_mcp_defaults.py` (4 of 5),
+`test_config_library_defaults.py`, `test_config_console_defaults.py`, and
+`Tests/App/test_submit_library_ingest_job.py` (38 of 146) -- were red on wave
+base 3027850197 with `raw_source_selection_changed` at fixture setup, before
+any assertion; it took three recipe probes to establish that the file's
+content (a `[database]` sentinel table was the first suspect) had nothing to
+do with it. A new config-loader test must use the fresh-module recipe from
+the start: `Tests/Backup_Recovery/config_test_support.install_config_source
+(monkeypatch)` after the `setenv`, then `fresh.load_settings(force_reload=
+True)` -- `Tests/test_config_model_catalog_defaults.py` is the worked example
+and runs in ~3 s. `Tests/test_config_load_settings_table_guard.py` and
+`Tests/Library/test_ingest_analysis_load_settings.py` are written that way.
 ### An AST guard that greps a dumped statement list passes on an unawaited call (PR #2813)
 
 **What happened.** `test_every_replacement_progress_timer_retires_its_predecessor`
