@@ -143,6 +143,18 @@ def _report_census(case: str, census: dict[str, Any]) -> None:
     if census_log is None:
         return
     line = {"case": case, "platform": sys.platform, "census": census}
+    if _STORAGE_UNIT_OBSERVER_RECEIPTS:
+        receipt = _STORAGE_UNIT_OBSERVER_RECEIPTS[-1]
+        diagnostic = receipt.get("credential_os_open_diagnostic")
+        if diagnostic is not None:
+            line["credential_os_open_diagnostic"] = {
+                **diagnostic,
+                "original_observer_complete": receipt["complete"],
+                "original_observer_source_current": receipt["original_source_current"],
+                "original_observer_hooks_retired_before_inactive": receipt[
+                    "hooks_retired_before_inactive"
+                ],
+            }
     with open(census_log, "a", encoding="utf-8") as handle:
         handle.write(json.dumps(line, sort_keys=True) + "\n")
 

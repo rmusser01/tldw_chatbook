@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-06 17:46'
+updated_date: '2026-10-06 18:12'
 labels: []
 dependencies: []
 ---
@@ -250,6 +250,8 @@ Default-history lifetime fixture correction: actual original explicit-path cance
 AC25 refinement: install the reviewed v3 Collections creator retirement witness only after exact before-hash and AST scope checks; preserve historical native_retired=False and require actual closed descriptors, absent live leases/core/ordinary registries, exact worker cache and all creator/source/Task fences. Run the unchanged original refusal and borrower controls first, followed by remaining Collections controls. ADR required: no new ADR; existing ADR-126 governs the preserved producer/creator ownership boundary.
 
 AC35 test-source prerequisites: move existing logger.remove ahead of project imports in the two original uncertain-close child scripts to avoid unread startup stderr pipe backpressure; select a private profile before collection for only the three mounted composer cases using the existing private_profile_test marker and required request fixture. Preserve every original test body, assertion, close injection and deadline; qualify with the original close pair and composer module. Broader credential diagnosis: add bounded actor/calling-code facts only to the existing os.open audit callback while idle counting is active, leaving all original counters, hooks, limits, actions and retirement checks unchanged. ADR required: no; test setup and diagnostic-only changes preserve existing contracts.
+
+Original failure-only diagnostic refinement before installation: extend the existing CI storage-census JSONL payload with its already-retired observer receipt caller diagnostic and literal qualification flags, without changing counters or limits. For the separate PreparedClose creator refusal, capture bounded exact declared-owner connection/lease/thread facts only after the original close helper returns False; preserve the helper call, original negative RuntimeError and all waits. Closed status requires explicit native descriptor closed evidence; opaque or other errors stay unknown. For Collections AC25, add bounded scalar start/normal-return attribution of only the original config publisher body to the existing code-local observer; keep producer generation/source refusal, custody and all original monitor retirement and .35/.1/10/240 bounds. Run the unchanged single history host case and original Collections refusal/borrower controls serially before any further production fix. ADR required: no; diagnostic-only observation preserves existing ADR126 contracts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -316,6 +318,8 @@ Current committed af514 platform evidence is qualified: exact unchanged7725-sour
 AC35 verified: five targeted current-source history modules passed all81 tests (191.741s pytest/199.984s driver) in post-dev-history-current-default-original-composer-all-native-1, with unchanged source and normal owned-process cleanup. Actual original resolver Main-thread RED became off-Main GREEN; queued/running/repeated-cancel, source/path retarget, closed-gate refusal, custom factory and all original composer recall/send behaviors pass. Original uncertain-close pair separately passed after moving logger.remove before project imports, resolving identical4060-byte unread startup stderr cutoff. Original body/assertion/deadline byte-AST audits pass; rejected implicit-Windows-decode draft never installed. Independent four-file contract review found no blocker. Existing ADR126 amended for worker selection; broader startup/Collections/global performance work remains open. Differential lint has zero new findings; one inherited prompts E721 remains, with baseline formatter differences outside selected changes.
 
 Credential attribution diagnostic installed and reviewed: only the existing idle os.open audit callback gains bounded actor/calling-code facts; full actual-byte AST reversal restores all original counters, actions, phase settles, limits, source and retirement behavior. Six scalar callback controls and current-file Ruff/format pass; these are diagnostic logic checks, not native opening or Linux cost evidence. Actual caller attribution remains pending CI; original140/167 opens over8 ticks include1 config/2 storage admissions and do not prove repeated synchronous poll I/O.
+
+Credential diagnostic report delivery: the existing CI census JSONL now copies its own already-retired original observer receipt diagnostic and literal qualification flags. Independent exact-byte AST review confirms counters, limits, actions, hooks, outcome checks and existing log I/O unchanged; Ruff and format pass. Actual Linux caller attribution remains pending the next committed CI run. Administrative task-ID correction passed all three original uniqueness checks in 2.13 seconds; landed owners stay34403/34410 and existing performance/Vision tasks are now34561/34562, with unchanged executable AST.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up
