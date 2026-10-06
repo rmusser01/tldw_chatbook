@@ -67,7 +67,7 @@ async def test_first_run_step_names_the_default_on_groups_and_claims_nothing_fal
         also = str(step.query_one("#setup-tools-also-available", Static).render())
     for claim in FALSE_CLAIMS:
         assert claim not in text
-    assert also.startswith("Also available (asks first):")
+    assert also.startswith("Also available (asks first)")
     for group in ("web search", "Watchlists", "character cards", "questions for you"):
         assert group in also
 
@@ -133,7 +133,10 @@ def test_summary_tools_row_is_derived_not_all_off() -> None:
     assert row.state == wizard_state.ROW_DEFAULT
     for claim in FALSE_CLAIMS:
         assert claim not in row.detail
-    assert "also available, asks first: web search and Watchlists" in row.detail
+    assert (
+        "also available, asks first, when the context window has room: "
+        "web search and Watchlists"
+    ) in row.detail
     assert builtin_tool_gate.TOOL_GATES_PANE_PATH in row.detail
 
 
