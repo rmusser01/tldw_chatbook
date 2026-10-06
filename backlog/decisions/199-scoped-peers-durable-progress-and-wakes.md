@@ -127,3 +127,10 @@ therefore uses the same finite local worker wrapper. This retires only a Chat
 cache first acquired by that report; a prior caller's worker cache remains
 borrowed. The original synchronous report API and caller-owned main-thread
 handle are preserved, and commit still precedes a queued receipt.
+
+
+## October 6, 2026 — compose native start receipts before fleet progress
+
+This amendment supersedes the earlier unmerged current-version paragraph. The landed ADR219 native Chat76→77 receipt migration and its SQL remain unchanged; fleet progress follows in77→78. Current primary/shared recovery admits complete exact78 catalogs, preserving frozen75/76/77 native and dictionary variants and their catalog-specific stamp checks. Earlier private progress-at76 shapes remain refused without conversion. AgentRuns23 composes the landed native22 allowance/start tables with fallback columns and progress claims in22→23; exact historical18/21/22 catalogs remain unchanged.
+
+Native starts and progress/completion wakes share the existing automatic target exclusion and allowance. Both provider dispatch boundaries resolve the original live accepted/receipted native-start authorization or live accepted wake authorization against the exact session, chain, runtime and store. Saved provenance is display-only; explicit machine Retry remains manual. A native created chat restores on the UI thread with progress preparation disabled, then the existing finite worker prepares the exact inbox before native admission. The UI completion observer restores only forks and cannot replace that native target. No scheduler, permission, budget, fallback or recovery authority is added. Relevant governance: ADR219 and ADR211.

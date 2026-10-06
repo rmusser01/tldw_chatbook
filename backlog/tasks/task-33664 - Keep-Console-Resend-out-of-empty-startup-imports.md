@@ -5,14 +5,15 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-06 14:44'
+updated_date: '2026-10-06 16:08'
 labels:
   - agents
   - console
   - integration
 dependencies: []
 documentation:
-  - backlog/decisions/211-ephemeral-provider-failure-presentation.md
+  - backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md
+  - backlog/decisions/219-console-chat-destinations-and-bounded-starts.md
 priority: high
 ---
 
@@ -1053,4 +1054,6 @@ New23Python compiles/fatal0/zeroNEW after only F811physical-definition-line norm
 All historical positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/warning/FD/style/size/optional/physical/wider/separate-task/ADR limits remain in complete records. Read-only truncated/locked-path searches, absent guessed script, wrong dev-CSS comparison domain, initial unmatched PyAudio literal and duplicate cache count retain corrections/initial metadata/raw; no application/test change followed. ONLY four owned Markdown closure after Ready preserves3930/full28066outside4/all history/all16scopedDone/CLIAC3DoneAC4checked. ONE exact observed adb lease publication and factual body require actual local/remote/GH/GraphQL authentication, then normal protected head-matched auto-merge/fresh exact-head Qodo/allFOUR/allTHREEUI. Strict/admin/conversation/required protection remains; later concurrency separately unqualified. Never update armed PR/chase dev while checks run; no bypass/protection/queue changes/retrydispatch/dummyhead. Verify actual GitHub MERGED parents/tree/concurrency before stopping heartbeat/reportcompletion.
 
 Evidence: /private/tmp/pr2918-after-adb-{pre-plan,planned-source,composition-proof,reviewed-source-manifest,candidate-tree,functional-proof,incoming-failed-proof,incoming-serialized-tree,guard-css-proof,static-proof,artifact-result,worker-result,independent-review}.json; original/current raw/child/XML/command/exit/plan/rebase/disarm receipts retained. Never replay any completed check or mutation.
+
+October6 human-authorized repair on exact dev76d: root storage census owns wall-clock native polling, drains its serial in-flight call and bills the retained real probe at production cadence. New current storage2PASS59.193XML; added real-I/O negative1FAIL30.499 expected (config2>1/storage4>2), caps/counts/slack unchanged. Original FIVE never replayed. Compose landed native Chat77 before fleet78 and native AgentRuns22 before composed23; preserve exact historical catalogs, strict stamps/authorizer/rollback, shared automatic exclusion and original live native/wake provider authority. Native UI restore defers progress loading to its existing finite worker; completion restores only forks. Separate migration44PASS28.706, native4PASS11.281 and159PASS111.357, backup1PASS3.406, provider/mounted corrected6PASS21.339 retain initial non-green receipts. Production diagnostic removals22 match incoming dev exactly (controller71→71); no new sink. Same-filename static23files zeroNEW/fatal0 retains1196prior/1257incoming/1250current inherited diagnostics. ADR199 October6 amendment links219/211; testing incident appended. Raw/XML/hash index: /private/tmp/pr2918-oct06-repair-evidence.json. AC3 and child acceptance remain pending immutable independent review; no fresh publication/arm/merge or heartbeat action. Linux failure stacks, inherited FD/warnings and all earlier qualification limits stay unqualified and separate.
 <!-- SECTION:NOTES:END -->

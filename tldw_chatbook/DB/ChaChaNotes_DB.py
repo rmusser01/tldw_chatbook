@@ -7778,6 +7778,10 @@ DELETE FROM keywords
     def _migrate_from_v76_to_v77(self, conn: sqlite3.Connection) -> None:
         """Preserve checkpoint owners while adding native chat-start receipts."""
         self._require_migration_entry_version(conn, 76, "V76→V77")
+        if conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='fleet_progress_messages'"
+        ).fetchone() is not None:
+            raise SchemaError("V76 to V77 unsupported native receipt catalog (progress predecessor)")
         migration = (
             Path(__file__).parent
             / "migrations"

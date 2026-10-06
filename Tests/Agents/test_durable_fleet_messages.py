@@ -252,7 +252,7 @@ def test_chat_v76_installed_backup_and_shared_subscription_schema(tmp_path, requ
         core = next(
             a for a in core_adapters() if a.owner_id == "db.chachanotes.primary"
         )
-        assert core.schema_policy().schema_sql[0] == (77, actual)
+        assert core.schema_policy().schema_sql[0] == (78, actual)
         assert core.validate(path) == ()
         current = tmp_path / "core-current.sqlite"
         assert db.backup_database(str(current))
@@ -272,7 +272,7 @@ def test_chat_v76_installed_backup_and_shared_subscription_schema(tmp_path, requ
         assert old.read_bytes() == old_bytes
         with db.transaction() as cursor:
             cursor.execute(
-                "UPDATE db_schema_version SET version = 77 WHERE schema_name = ?",
+                "UPDATE db_schema_version SET version = 78 WHERE schema_name = ?",
                 (db._SCHEMA_NAME,),
             )
         subscriptions = SubscriptionsDB(path)
@@ -509,7 +509,7 @@ def test_existing_chat_migrates_and_progress_metadata_never_exposes_bodies(
                 (db._SCHEMA_NAME,),
             )
             .fetchone()[0]
-            == 77
+            == 78
         )
         if version >= 74:
             assert tuple(
@@ -791,11 +791,11 @@ async def test_threaded_saved_child_report_retires_only_new_chat_db_cache(
 
 
 @private_profile_test
-def test_v76_progress_migration_rolls_back_partial_ddl_then_retries(
+def test_v77_progress_migration_rolls_back_partial_ddl_then_retries(
     tmp_path, request, monkeypatch
 ):
     path = tmp_path / "rollback.sqlite"
-    with chachanotes_db_at_version(path, 76) as old:
+    with chachanotes_db_at_version(path, 77) as old:
         conversation_id = old.add_conversation({"title": "Retained after rollback"})
         with old.transaction() as cursor:
             cursor.execute(
@@ -812,7 +812,7 @@ def test_v76_progress_migration_rolls_back_partial_ddl_then_retries(
     original = CharactersRAGDB._execute_migration_statements
 
     def fail_after_table(db, cursor, script, label):
-        assert label == "V76→V77"
+        assert label == "V77→V78"
         first_statement = script[: script.index(";") + 1]
         original(db, cursor, first_statement, label)
         assert (
@@ -827,7 +827,7 @@ def test_v76_progress_migration_rolls_back_partial_ddl_then_retries(
         patch.setattr(
             CharactersRAGDB, "_execute_migration_statements", fail_after_table
         )
-        with pytest.raises(SchemaError, match="V76 to V77"):
+        with pytest.raises(SchemaError, match="V77 to V78"):
             CharactersRAGDB(path, "failed-upgrade")
     with open_recovery_validation(
         "db.chachanotes.primary", path, writable=False
@@ -835,7 +835,7 @@ def test_v76_progress_migration_rolls_back_partial_ddl_then_retries(
         assert connection.execute(
             "SELECT version FROM db_schema_version WHERE schema_name = ?",
             (CharactersRAGDB._SCHEMA_NAME,),
-        ).fetchone() == (76,)
+        ).fetchone() == (77,)
         assert (
             connection.execute(
                 "SELECT name FROM sqlite_schema WHERE name IN "
@@ -855,7 +855,7 @@ def test_v76_progress_migration_rolls_back_partial_ddl_then_retries(
         )
     db = CharactersRAGDB(path, "retry-upgrade")
     try:
-        assert db._get_db_version(db.get_connection()) == 77
+        assert db._get_db_version(db.get_connection()) == 78
         assert tuple(
             db.get_connection()
             .execute(
@@ -890,7 +890,7 @@ def test_unreleased_progress_catalog_at_v76_is_refused_without_conversion(
         conversation_id = historical.add_conversation({"title": "Keep private data"})
         script = (
             Path(__file__).parents[2]
-            / "tldw_chatbook/DB/migrations/chachanotes_v76_to_v77_fleet_progress.sql"
+            / "tldw_chatbook/DB/migrations/chachanotes_v77_to_v78_fleet_progress.sql"
         ).read_text(encoding="utf-8")
         with historical.transaction() as cursor:
             historical._execute_migration_statements(cursor, script, "private catalog")

@@ -466,6 +466,9 @@ class _CoreAdapter:
             CHACHANOTES_V76_SHIPPED_SCHEMAS,
             CHACHANOTES_V76_NATIVE_SCHEMAS,
             CHACHANOTES_NATIVE_V76_TO_V77_SQL,
+            CHACHANOTES_V77_SCHEMAS,
+            CHACHANOTES_V78_SCHEMAS,
+            CHACHANOTES_FLEET_V77_TO_V78_SQL,
             CORE_SCHEMAS,
             PROMPTS_V4_SCHEMA,
             PROMPTS_V4_TO_V5_SQL,
@@ -486,9 +489,13 @@ class _CoreAdapter:
                 for schema in CHACHANOTES_V76_SHIPPED_SCHEMAS
                 + CHACHANOTES_V76_NATIVE_SCHEMAS
             )
-            schemas += tuple((77, schema) for schema in CHACHANOTES_V76_NATIVE_SCHEMAS)
-            versions += (76, 75)
-            migrations = ((76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),)
+            schemas += tuple((77, schema) for schema in CHACHANOTES_V77_SCHEMAS)
+            schemas += tuple((78, schema) for schema in CHACHANOTES_V78_SCHEMAS[2:])
+            versions += (77, 76, 75)
+            migrations = (
+                (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
+                (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
+            )
         elif self.owner_id == "db.prompts.primary":
             schemas += ((4, PROMPTS_V4_SCHEMA),)
             versions += (4,)

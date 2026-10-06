@@ -368,7 +368,9 @@ async def test_typed_console_presentation_never_enters_durable_agent_error(
     assert errors
     summary = errors[-1]["summary"]
     assert f"HTTP {status}" in summary
-    assert "Invalid request sent to the chat provider." in summary
+    assert summary == (
+        f"provider returned HTTP {status} (Invalid request sent to the chat provider)"
+    )
     assert model not in summary
     assert "Provider error from Anthropic" not in summary
     assert "SECRET-CANARY" not in summary

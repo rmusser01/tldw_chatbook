@@ -830,7 +830,10 @@ CHACHANOTES_V77_SCHEMAS = (
     CHACHANOTES_V77_DICTIONARY_UPDATE_SCHEMA,
     *CHACHANOTES_V76_NATIVE_SCHEMAS,
 )
-CHACHANOTES_FLEET_PROGRESS_SQL = ('CREATE INDEX idx_fleet_progress_conversation_sequence\n  ON fleet_progress_messages(conversation_id, sequence)', 'CREATE TABLE fleet_progress_messages (\n  sequence INTEGER PRIMARY KEY AUTOINCREMENT,\n  message_id TEXT NOT NULL UNIQUE CHECK(length(message_id) BETWEEN 1 AND 128),\n  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,\n  handle_id TEXT NOT NULL CHECK(length(handle_id) BETWEEN 1 AND 128),\n  run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 128),\n  parent_run_id TEXT NOT NULL CHECK(length(parent_run_id) BETWEEN 1 AND 128),\n  chain_id TEXT CHECK(chain_id IS NULL OR length(chain_id) BETWEEN 1 AND 128),\n  agent TEXT NOT NULL CHECK(length(agent) BETWEEN 1 AND 80),\n  body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)')
+CHACHANOTES_FLEET_PROGRESS_SQL = (
+    "CREATE INDEX idx_fleet_progress_conversation_sequence\n  ON fleet_progress_messages(conversation_id, sequence)",
+    "CREATE TABLE fleet_progress_messages (\n  sequence INTEGER PRIMARY KEY AUTOINCREMENT,\n  message_id TEXT NOT NULL UNIQUE CHECK(length(message_id) BETWEEN 1 AND 128),\n  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,\n  handle_id TEXT NOT NULL CHECK(length(handle_id) BETWEEN 1 AND 128),\n  run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 128),\n  parent_run_id TEXT NOT NULL CHECK(length(parent_run_id) BETWEEN 1 AND 128),\n  chain_id TEXT CHECK(chain_id IS NULL OR length(chain_id) BETWEEN 1 AND 128),\n  agent TEXT NOT NULL CHECK(length(agent) BETWEEN 1 AND 80),\n  body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+)
 
 
 def _fleet_progress_catalog(schema):
@@ -839,7 +842,7 @@ def _fleet_progress_catalog(schema):
 
     def catalog_key(sql):
         match = re.match(
-            r'CREATE (?:UNIQUE |VIRTUAL )?(INDEX|TABLE|TRIGGER) (?:IF NOT EXISTS )?["`]?([^"` (]+)',
+            r"""CREATE (?:UNIQUE |VIRTUAL )?(INDEX|TABLE|TRIGGER|VIEW) (?:IF NOT EXISTS )?["`']?([^"`' (]+)""",
             sql,
         )
         assert match is not None

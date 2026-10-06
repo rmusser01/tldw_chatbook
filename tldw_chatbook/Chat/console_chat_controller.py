@@ -13222,6 +13222,12 @@ class ConsoleChatController:
                         and not continuation.explicit_manual_retry
                         else WorkOrigin.MANUAL
                     ),
+                    chat_start_authorization=(
+                        self._chat_start._active[session_id]
+                        if continuation.origin is ConsoleSubmissionOrigin.AGENT_CHAT_START
+                        and not continuation.explicit_manual_retry
+                        else None
+                    ),
                     work_chain_id=(
                         self._chat_start._active[session_id].context.chain_id
                         if continuation.origin
@@ -24595,6 +24601,7 @@ class ConsoleChatController:
         work_chain_id: str | None = None,
         compaction_ask_bypassed: bool = False,
         wake_authorization: AgentWakeAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
 
@@ -24610,6 +24617,7 @@ class ConsoleChatController:
                     work_origin=work_origin,
                     work_chain_id=work_chain_id,
                     wake_authorization=wake_authorization,
+                    chat_start_authorization=chat_start_authorization,
                     provider_messages=provider_messages,
                     assistant_message_id=assistant_message_id,
                     route=route,
@@ -24675,6 +24683,7 @@ class ConsoleChatController:
         work_chain_id: str | None = None,
         compaction_ask_bypassed: bool = False,
         wake_authorization: AgentWakeAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -24962,15 +24971,12 @@ class ConsoleChatController:
         try:
             work_conversation_id = self._agent_conversation_id(owner_id)
             if work_origin is WorkOrigin.AUTOMATIC:
-                if (
-                    not self._fleet_wake.authorizes(wake_authorization, owner_id)
-                    or not wake_authorization.accepted
-                    or wake_authorization.work_chain_id != work_chain_id
-                ):
-                    raise PermissionError(
-                        "Automatic source requires live wake authority."
-                    )
-                work_conversation_id = wake_authorization.conversation_id
+                work_conversation_id = self._automatic_source_conversation(
+                    owner_id,
+                    work_chain_id,
+                    wake_authorization=wake_authorization,
+                    chat_start_authorization=chat_start_authorization,
+                )
             runs_db = getattr(self._agent_bridge, "runs_db", None)
             ledger = getattr(runs_db, "automatic_work", None)
             try:
@@ -25016,6 +25022,7 @@ class ConsoleChatController:
                     work_origin=work_origin,
                     work_chain_id=work_chain_id,
                     wake_authorization=wake_authorization,
+                    chat_start_authorization=chat_start_authorization,
                     provider_messages=provider_messages,
                     assistant_message_id=assistant_message_id,
                     prepare_retry=prepare_retry,
@@ -26623,6 +26630,7 @@ class ConsoleChatController:
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         """Run the agent loop as the reply engine, streaming into the target row."""
         logger.info(
@@ -26958,13 +26966,12 @@ class ConsoleChatController:
         conversation_id = self._agent_conversation_id(session_id)
         work_conversation_id = conversation_id
         if work_origin is WorkOrigin.AUTOMATIC:
-            if (
-                not self._fleet_wake.authorizes(wake_authorization, session_id)
-                or not wake_authorization.accepted
-                or wake_authorization.work_chain_id != work_chain_id
-            ):
-                raise PermissionError("Automatic source requires live wake authority.")
-            work_conversation_id = wake_authorization.conversation_id
+            work_conversation_id = self._automatic_source_conversation(
+                session_id,
+                work_chain_id,
+                wake_authorization=wake_authorization,
+                chat_start_authorization=chat_start_authorization,
+            )
         # noqa: E731 — tiny closure. Fix round 1 (Critical 1): reads ONLY
         # `cancel_event` -- captured by value, not via `self.
         # _active_cancel_events[session_id]` -- never the shared
@@ -27626,6 +27633,40 @@ class ConsoleChatController:
             stream_signals=stream_signals,
             resolution=resolution,
         )
+
+    def _automatic_source_conversation(
+        self,
+        session_id: str,
+        work_chain_id: str | None,
+        *,
+        wake_authorization: AgentWakeAuthorization | None,
+        chat_start_authorization: AgentChatStartAuthorization | None,
+    ) -> str:
+        """Resolve a live automatic owner; stored provenance grants no authority."""
+        if chat_start_authorization is not None:
+            start = chat_start_authorization
+            if (
+                wake_authorization is not None
+                or not self._chat_start.authorizes(start, session_id)
+                or not start.accepted
+                or not start.receipted
+                or start.bridge is not self._agent_bridge
+                or start.database is not getattr(self._agent_bridge, "runs_db", None)
+                or start.capacity_owner is not self._fleet_wake
+                or start.runtime_owner_id != self._fleet_wake.runtime_owner_id
+                or start.context.chain_id != work_chain_id
+            ):
+                raise PermissionError(
+                    "Automatic source requires live chat start authority."
+                )
+            return start.request.conversation_id
+        if (
+            not self._fleet_wake.authorizes(wake_authorization, session_id)
+            or not wake_authorization.accepted
+            or wake_authorization.work_chain_id != work_chain_id
+        ):
+            raise PermissionError("Automatic source requires live wake authority.")
+        return wake_authorization.conversation_id
 
     def _agent_conversation_id(self, session_id: str) -> str:
         """Return the durable id the run store is keyed by (persisted id when set)."""

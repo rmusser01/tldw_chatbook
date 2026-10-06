@@ -528,7 +528,7 @@ async def test_the_stream_path_hides_the_sent_key_and_keeps_the_copy() -> None:
     )
     gateway = ConsoleProviderGateway(chat_api_call_fn=failing_call)
 
-    with pytest.raises(ChatProviderError) as caught:
+    with pytest.raises(ChatAuthenticationError) as caught:
         _ = [
             item
             async for item in gateway.stream_chat(
@@ -536,7 +536,12 @@ async def test_the_stream_path_hides_the_sent_key_and_keeps_the_copy() -> None:
             )
         ]
 
-    copy = str(caught.value)
+    assert type(caught.value) is ChatAuthenticationError
+    assert caught.value.provider == "openai"
+    assert caught.value.status_code == 401
+    assert str(caught.value) == str(ChatAuthenticationError())
+    assert credential not in describe_stream_failure(caught.value)
+    copy = caught.value.console_copy
     assert credential not in copy
     assert "authentication failed" in copy, copy
     assert "(key hidden)" in copy

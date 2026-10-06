@@ -30,6 +30,8 @@ from tldw_chatbook.Workspaces.workspace_tree_state import build_workspace_tree_s
 async def test_reopened_saved_progress_paints_count_and_explicit_read_discard(
     tmp_path, request, monkeypatch
 ):
+    import asyncio
+
     db = CharactersRAGDB(tmp_path / "chat.sqlite", "progress-ui")
     runs = AgentRunsDB(tmp_path / "runs.sqlite", client_id="progress-ui")
     try:
@@ -101,6 +103,10 @@ async def test_reopened_saved_progress_paints_count_and_explicit_read_discard(
             )
             await pilot.click("#agent-progress-discard")
             await pilot.pause()
+            await asyncio.wait_for(host.workers.wait_for_complete(), 5)
+            assert "Discarded 1" in str(
+                modal.query_one("#agent-progress-status").renderable
+            )
             assert current.snapshot() == ()
             assert (
                 db.get_connection()
