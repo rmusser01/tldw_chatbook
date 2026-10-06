@@ -1,9 +1,10 @@
 ---
 id: TASK-31202
 title: settings_screen.py needs a size-ratchet budget row
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-02 19:25'
+updated_date: '2026-10-06 06:59'
 labels: []
 dependencies: []
 ---
@@ -16,31 +17,12 @@ Spec 2026-09-01 non-goal follow-up: the ratchet that let library_screen triple a
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Budget row added at measured values
-- [ ] #2 Mutation-checked (dummy method -> fails)
+- [x] #1 Budget row added at measured values
+- [x] #2 Mutation-checked (dummy method -> fails)
 <!-- AC:END -->
 
-## Renumbering provenance
+## Implementation Notes
 
-Filed as `TASK-27020` on the wave-2 branch (2026-09-02 19:25). Merging
-`origin/dev` (2026-09-03) surfaced a collision with dev's own
-`TASK-27020` ("Webhooks fire needs-approval lifecycle event when a run
-pauses for human approval"), an unrelated, already-filed task -- per the
-2026-08-21 owner rule (TASK-19601) and the precedent recorded in
-`backlog/docs/lessons-backlog-hygiene.md`, the OLDER arrival keeps the
-id and this, the younger claimant, renumbers.
-
-Renumbered `TASK-27020` -> `TASK-31202`, derived from a fresh sweep of
-`refs/remotes/*` plus every local worktree at merge time (true max:
-31201, the foundation's own `TASK-27019` -> `TASK-31201` renumber
-already landed on `dev`), not this branch's own prior max (27021), per
-the lesson file's warning against trusting a single ref's view. No code
-or test referenced `task-27020`/`TASK-27020` (freshly filed, not yet
-implemented); the SDD ledger references in
-`.superpowers/sdd/2026-09-02-library-decomposition-wave2-cold-trio/`
-(`task-1-report.md`) were updated to the new id in the same merge
-commit. The archival `review-*.diff` snapshots in that same directory
-are frozen `git diff` captures of specific historical commit ranges and
-were deliberately left unedited -- rewriting their content to a
-different task number would make them no longer match the named commit
-range, the same reasoning that keeps git log messages immutable.
+<!-- SECTION:NOTES:BEGIN -->
+Closed by TASK-33007.8 (model-config Phase 7): Tests/Architecture/test_module_size_ratchet.py pins tldw_chatbook/UI/Screens/settings_screen.py at its measured 33,607 lines. Mutation-checked: a 4-line dummy method on SettingsScreen made test_module_does_not_grow_past_its_budget fail ("grew to 33611 lines (budget 33607, +4)"); restored. The rest of the split stays with task-1378.
+<!-- SECTION:NOTES:END -->
