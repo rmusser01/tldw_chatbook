@@ -58,6 +58,34 @@ class ConsoleMessageDeleteReceiptModal(SafeModalDismissMixin, ModalScreen[str | 
     BINDINGS: ClassVar = [("escape", "request_safe_cancel", "Done")]
     AUTO_FOCUS = "#console-delete-receipt-undo"
 
+    @classmethod
+    def preload_sheet(cls, app: object) -> None:
+        """Parse the lazy sheet before the first push, restyling no mounted node.
+
+        ``push_screen`` would read it through ``App._load_screen_css``, which
+        then restyles every node of every screen: 5.3 s live on the first
+        Delete with a scrolled-back 420-row transcript, 9.3 s with 3,000 rows
+        (TASK-33628.5.1). Every rule build_css.py splits into this sheet names
+        only receipt tokens, so no node outside a receipt can match one (pinned
+        by ``Tests/UI/test_console_long_chat_bounds.py``), and a receipt's own
+        nodes take the rules as they mount. The push then finds the sheet read.
+
+        Args:
+            app: The running app whose stylesheet gets the sheet. Anything
+                else, or a sheet that cannot be read here, leaves the load to
+                ``push_screen`` exactly as before.
+        """
+        stylesheet = getattr(app, "stylesheet", None)
+        if stylesheet is None or stylesheet.has_source(cls.CSS_PATH, ""):
+            return
+        try:
+            stylesheet.read(cls.CSS_PATH)
+            stylesheet.reparse()
+        except Exception:  # noqa: BLE001 - push_screen reports it as it always did
+            # A failed reparse keeps the old rules; drop the source so the
+            # push reads the sheet, and fails, exactly as it did before.
+            stylesheet.source.pop((cls.CSS_PATH, ""), None)
+
     def __init__(
         self,
         *,
