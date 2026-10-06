@@ -153,7 +153,9 @@ _BASE_ON_HANDLERS = {
         "_on_authentication_changed", "_on_omnivoice_install", "_on_preset",
         "_on_sample_changed", "_on_test_and_hear", "_on_voice_input_changed",
     ),
-    "RagStep": ("_on_model",),
+    # TASK-34100.13 rebuilt the step around one control: the embedding-model
+    # picker (`_on_model`) is gone with the legacy [embedding_config] write.
+    "RagStep": ("_on_auto_retrieve", "_on_copy_extras"),
     "SpeechSetupStep": (
         "_activation_requested", "_cancel_external_pressed",
         "_choose_transcribe_cpp_gguf_pressed", "_deletion_requested",

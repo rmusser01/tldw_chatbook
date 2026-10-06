@@ -46,7 +46,6 @@ from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupRadioButton as SetupRadioButton,  # re-exported: old import path
-    _radio_model_id,
     SetupCheckbox as SetupCheckbox,  # re-exported: old import path
     SetupRadioSet,
     REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES as REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES,
@@ -1200,12 +1199,12 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
 
             rag_values = draft.values.get(wizard_state.STEP_RAG, {})
             rag_step = self.steps[self._step_index_for_id(wizard_state.STEP_RAG)]
-            if isinstance(rag_step, RagStep) and "embedding_model" in rag_values:
-                embedding_model = str(rag_values["embedding_model"])
-                rag_step.selected_embedding_model = embedding_model
+            if isinstance(rag_step, RagStep) and "auto_retrieve" in rag_values:
+                automatic = rag_values["auto_retrieve"] is True
+                rag_step.auto_retrieve = automatic
                 self._restore_radio_selection(
-                    rag_step.query_one("#setup-rag-model-choice", RadioSet),
-                    lambda button: _radio_model_id(button) == embedding_model,
+                    rag_step.query_one("#setup-rag-auto-retrieve", RadioSet),
+                    lambda button: (button.id or "").endswith("-automatic") == automatic,
                 )
 
             appearance_values = draft.values.get(wizard_state.STEP_APPEARANCE, {})
