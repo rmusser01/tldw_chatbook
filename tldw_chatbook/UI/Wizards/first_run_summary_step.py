@@ -300,10 +300,15 @@ class SummaryStep(SetupStep):
         except NoMatches:
             self._model_catalog_consent_offered = False
 
+        from tldw_chatbook.Utils.local_stt_providers import installed_local_providers
+
         rows_inputs = {
             "rag_deps_installed": deps(),
             "speech_installed": speech_installed,
             "speech_runtime_installed": speech_runtime_installed,
+            "installed_stt": await asyncio.get_running_loop().run_in_executor(
+                None, installed_local_providers
+            ),
         }
         self._paint_rows(config, rag_model=None, **rows_inputs)
         from tldw_chatbook.config import get_cli_config_path
@@ -354,6 +359,7 @@ class SummaryStep(SetupStep):
         rag_deps_installed: bool,
         speech_installed: bool,
         speech_runtime_installed: bool,
+        installed_stt: tuple[str, ...],
         rag_model: Any,
     ) -> None:
         """Build the read-back rows from ``config`` and paint them."""
@@ -365,6 +371,7 @@ class SummaryStep(SetupStep):
             rag_deps_installed=rag_deps_installed,
             speech_installed=speech_installed,
             speech_runtime_installed=speech_runtime_installed,
+            installed_stt=installed_stt,
             rag_model=rag_model,
             themes=getattr(self.app, "available_themes", None),
         )

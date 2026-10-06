@@ -26,9 +26,10 @@ from textual.css.query import NoMatches
 from textual.widget import Widget
 from textual.widgets import (
     Button,
-    Label,
+    Collapsible,
     RadioButton,
     RadioSet,
+    Select,
     Static,
 )
 from textual.worker import (
@@ -71,7 +72,9 @@ from tldw_chatbook.Third_Party.textual_fspicker import (
 )
 from tldw_chatbook.Model_Artifacts.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Screens.model_installed_view import lifecycle_failure_message
+from tldw_chatbook.UI.Wizards import first_run_speech_engine as engines
 from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
+from tldw_chatbook.UI.Wizards.first_run_speech_layout import compose_speech_step
 from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
 from tldw_chatbook.Widgets.ModelArtifacts import (
     ActivationRequested,
@@ -83,15 +86,20 @@ from tldw_chatbook.Widgets.ModelArtifacts import (
     make_progress_callback,
 )
 from tldw_chatbook.Widgets.delete_confirmation_dialog import DeleteConfirmationDialog
-from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
-    SetupRadioButton,
-    SetupRadioSet,
-    SetupStep,
-)
+from tldw_chatbook.UI.Wizards.first_run_setup_widgets import SetupStep
 from tldw_chatbook.UI.Wizards.first_run_step_guard import wizard_work
 
 if TYPE_CHECKING:
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
+
+
+def wizard_state_sections(app_config: Any) -> Mapping[str, Any]:
+    """The full-TOML ``[transcription]`` table, with this run's saves on top."""
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import full_config_sections
+
+    if not isinstance(app_config, Mapping):
+        return {}
+    return full_config_sections(app_config, "transcription")["transcription"]
 
 
 class SpeechSetupStep(SetupStep):
@@ -140,6 +148,8 @@ class SpeechSetupStep(SetupStep):
         *,
         service_factory: Optional[Callable[[], Any]] = None,
         runtime_installed: Optional[Callable[[], bool]] = None,
+        engine: Optional[str] = None,
+        engine_facts: Optional[engines.EngineFacts] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(wizard=wizard, config=config, **kwargs)
@@ -206,160 +216,23 @@ class SpeechSetupStep(SetupStep):
             if isinstance(direct_config, Mapping)
             else False
         )
+        # TASK-34100.13 (voice-speech-15): the engine choice, built from what
+        # this machine has; a first run starts on "No dictation for now".
+        self._engine_facts = engine_facts or engines.detect_engine_facts(
+            app_config, parakeet_bytes=self._parakeet_bytes()
+        )
+        self._engine = engine or engines.saved_engine(
+            wizard_state_sections(app_config), self._engine_facts
+        )
+        self._advanced_expanded = False
 
     def compose_step(self) -> ComposeResult:
-        """Render the title/prefill/status/action block, then the language
-        and precision catalogs.
+        """The engine choice, then (under Parakeet) choice-then-action.
 
-        Entirely pure/I/O-free: it builds from ``self`` bookkeeping already
-        in memory and the canonical Parakeet routing policy/precision values.
-        Any I/O (checking installed state) is deferred to ``on_show``.
-
-        Returns:
-            The composed widgets: title, optional prefill line, status line
-            plus its action control, an optional "use as default" affordance,
-            then the language and precision ``RadioSet`` catalogs (see the
-            Review Important 2 note below for the ordering rationale).
+        Pure: built from in-memory state (``first_run_speech_layout``); the
+        installed-state check runs in ``on_show``'s worker.
         """
-        # Review Important 2: the primary action must be visible at the
-        # wizard's own tested 120x40 budget -- title/subtitle/prefill/
-        # status/action come FIRST (typically <=6 rows); the informational
-        # language/precision catalog (up to 27 disabled rows, already
-        # capped by ".setup-choice-list") comes after, reachable by
-        # scrolling like any other step's overflow content.
-        with Vertical(classes="setup-speech"):
-            yield Static("Speech transcription (optional)", classes="setup-title")
-            yield Static(
-                f"Selected: {self._model_label()} — on-device "
-                "speech-to-text for dictation. Optional; Next skips it.",
-                classes="setup-subtitle",
-            )
-            prefill_text = self._prefill_status_text()
-            if prefill_text:
-                # NEW-1 (review): persisted values (and, below, the runtime-
-                # missing message's bracketed extras names) may contain
-                # literal "[...]" -- markup=False, same fix already applied
-                # to "#setup-summary-rows" for the identical trap.
-                yield Static(
-                    prefill_text,
-                    id="setup-speech-prefill",
-                    classes="setup-subtitle",
-                    markup=False,
-                )
-            status_text, action_widget = self._status_and_action()
-            yield Static(
-                status_text,
-                id="setup-speech-status",
-                classes="setup-subtitle",
-                markup=False,
-            )
-            progress = ModelInstallProgress(
-                self._progress, id="setup-speech-install-progress", cancellable=True
-            )
-            progress.display = (
-                self._operation == "install" and self._progress is not None
-            )
-            yield progress
-            yield Button(
-                "Use model from disk…",
-                id="setup-speech-use-from-disk",
-                variant=(
-                    "primary"
-                    if action_widget is None
-                    or getattr(action_widget, "disabled", False)
-                    else "default"
-                ),
-                disabled=self._external_busy or self._lifecycle_pending,
-            )
-            external_status = Static(
-                self._external_status,
-                id="setup-speech-external-status",
-                classes="setup-subtitle",
-                markup=False,
-            )
-            external_status.display = bool(self._external_status)
-            yield external_status
-            if self._external_busy:
-                yield Button(
-                    "Cancel external setup",
-                    id="setup-speech-cancel-external",
-                    variant="default",
-                )
-            if action_widget is not None:
-                yield action_widget
-            if self._use_as_default_offer():
-                # Review NEW-2: installed + active + configured elsewhere is
-                # the one state where neither "install" nor "activate" is a
-                # real action -- offer the affordance the prefill sentence
-                # actually promises instead of leaving it undeliverable.
-                yield Button(
-                    f"Use {self._model_label()} as my default",
-                    id="setup-speech-use-as-default",
-                    variant="primary",
-                )
-            yield Static(
-                "Existing local transcribe.cpp GGUF configured."
-                if self._transcribe_cpp_configured
-                else "No existing local transcribe.cpp GGUF configured.",
-                id="setup-speech-transcribe-cpp-status",
-                classes="setup-subtitle",
-                markup=False,
-            )
-            yield Button(
-                "Choose another GGUF…"
-                if self._transcribe_cpp_configured
-                else "Use an existing transcribe.cpp GGUF…",
-                id="setup-speech-choose-transcribe-cpp-gguf",
-                disabled=self._external_commit_pending or self._lifecycle_pending,
-            )
-            yield Label("Language", classes="setup-field-label")
-            with SetupRadioSet(
-                id="setup-speech-language-choice", classes="setup-choice-list"
-            ):
-                for option in speech_state.speech_language_options(
-                    curated_model_ids=self._curated_model_ids()
-                ):
-                    label = option.display_name + (
-                        " (recommended)"
-                        if option.code == "en"
-                        else " — not yet available for managed install"
-                        if not option.selectable
-                        else ""
-                    )
-                    yield SetupRadioButton(
-                        label,
-                        id=f"setup-speech-language-{option.code}",
-                        value=option.selectable
-                        and option.code == self._selected_language,
-                        disabled=not option.selectable or self._lifecycle_pending,
-                    )
-            yield Label("Precision", classes="setup-field-label")
-            with SetupRadioSet(
-                id="setup-speech-precision-choice", classes="setup-choice-list"
-            ):
-                for option in speech_state.speech_precision_options(
-                    model_id=self._selection().model_id,
-                    curated_selections=self._curated_selections(),
-                ):
-                    label = option.display_name + (
-                        " (recommended)"
-                        if option.value == "int8"
-                        else " — not yet available for managed install"
-                        if not option.selectable
-                        else ""
-                    )
-                    # Minor 8: pre-press ONLY the one recommended option --
-                    # "selectable" alone would pre-press every selectable
-                    # precision the moment a second one is ever curated.
-                    yield SetupRadioButton(
-                        label,
-                        id=f"setup-speech-precision-{option.value}",
-                        value=(
-                            option.selectable
-                            and option.value == self._selected_precision
-                        ),
-                        disabled=not option.selectable or self._lifecycle_pending,
-                    )
+        yield from compose_speech_step(self)
 
     # -- pure, I/O-free helpers ------------------------------------------
     @staticmethod
@@ -401,16 +274,67 @@ class SpeechSetupStep(SetupStep):
         return f"Parakeet {version} ({language}, {descriptor.precision.upper()})"
 
     # -- review finding 2: read the PRESSED radio, never a hardcoded default --
-    _LANGUAGE_RADIO_ID_PREFIX = "setup-speech-language-"
     _PRECISION_RADIO_ID_PREFIX = "setup-speech-precision-"
 
-    @on(RadioSet.Changed, "#setup-speech-language-choice")
-    def _on_speech_language_changed(self, event: RadioSet.Changed) -> None:
-        if self._lifecycle_pending or event.pressed is None:
+    @on(Select.Changed, "#setup-speech-language")
+    def _on_speech_language_changed(self, event: Select.Changed) -> None:
+        # A Select posts Changed when it mounts with a value (lessons-textual):
+        # the stored value tells that echo from a real pick.
+        language = event.value if isinstance(event.value, str) else ""
+        if self._lifecycle_pending or not language:
             return
-        button_id = event.pressed.id or ""
-        language = button_id.removeprefix(self._LANGUAGE_RADIO_ID_PREFIX)
-        self._set_exact_selection(language, self._selected_precision)
+        if language != self._selected_language:
+            self._set_exact_selection(language, self._selected_precision)
+
+    @on(RadioSet.Changed, "#setup-speech-engine")
+    def _on_engine_changed(self, event: RadioSet.Changed) -> None:
+        event.stop()
+        key = (event.pressed.id or "").removeprefix("setup-speech-engine-")
+        if key == self._engine or not key:
+            return
+        self._engine = key
+        self.refresh(recompose=True)
+        if key == engines.ENGINE_PARAKEET:
+            self._ensure_loaded()
+
+    @on(Collapsible.Expanded, "#setup-speech-advanced")
+    @on(Collapsible.Collapsed, "#setup-speech-advanced")
+    def _on_advanced_toggled(self, event: Collapsible.Toggled) -> None:
+        event.stop()
+        self._advanced_expanded = isinstance(event, Collapsible.Expanded)
+
+    @on(Button.Pressed, "#setup-speech-copy-extras")
+    def _on_copy_extras(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.app.copy_to_clipboard(engines.PARAKEET_EXTRAS_PACKAGE)
+        self.notify(
+            f"Copied {engines.PARAKEET_EXTRAS_PACKAGE} (if your terminal allows it).",
+            markup=False,
+        )
+
+    def _advanced_open(self) -> bool:
+        """Advanced stays open while a from-disk flow is in progress or reports."""
+        return self._advanced_expanded or bool(
+            self._external_busy
+            or self._external_status
+            or self._external_commit_pending
+            or self._pending_external_selection is not None
+        )
+
+    def _parakeet_bytes(self) -> int:
+        selection = self._selection()
+        try:
+            return int(
+                parakeet_descriptor(
+                    selection.model_id, selection.precision
+                ).expected_installed_bytes
+                + parakeet_vad_descriptor().expected_installed_bytes
+            )
+        except Exception:
+            return 0
+
+    def _parakeet_mib(self) -> int:
+        return round(self._parakeet_bytes() / 1048576)
 
     @on(RadioSet.Changed, "#setup-speech-precision-choice")
     def _on_speech_precision_changed(self, event: RadioSet.Changed) -> None:
@@ -455,12 +379,11 @@ class SpeechSetupStep(SetupStep):
         valid, skip-safe result -- ``resolve_speech_selection`` falls back
         to the recommended default for it.
         """
-        return (
-            self._pressed_radio_code(
-                "#setup-speech-language-choice", self._LANGUAGE_RADIO_ID_PREFIX
-            )
-            or self._selected_language
-        )
+        try:
+            value = self.query_one("#setup-speech-language", Select).value
+        except Exception:
+            value = None
+        return value if isinstance(value, str) and value else self._selected_language
 
     def _effective_precision(self) -> str:
         """The value of the currently pressed precision radio, or "" for none."""
@@ -548,12 +471,7 @@ class SpeechSetupStep(SetupStep):
         # visible for orientation but cannot start an unusable download.
         if not self._runtime_installed():
             return (
-                'The "onnx-asr" runtime is not installed, so a downloaded '
-                "model could not run. Install the extras package "
-                '"tldw_chatbook[transcription_parakeet_onnx]" (or run '
-                "pip install 'onnx-asr[cpu]==0.12.0'), then revisit this "
-                "step. Skipping is safe — set this up later from Lab ▸ "
-                "Models.",
+                engines.RUNTIME_MISSING_COPY,
                 Button(
                     "Review and install…",
                     id="setup-speech-install",
@@ -1589,6 +1507,20 @@ class SpeechSetupStep(SetupStep):
             succeeded; ``(False, <message>)`` when work is still pending or
             preparing, writing, or accepting an external selection failed.
         """
+        if self._engine != engines.ENGINE_PARAKEET:
+            # voice-speech-15: "No dictation for now" writes nothing; the
+            # installed and cloud engines write [transcription] only when this
+            # run changed it.
+            app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
+            mutation = engines.build_engine_commit(
+                self._engine,
+                facts=self._engine_facts,
+                transcription=wizard_state_sections(app_config),
+            )
+            if not mutation:
+                return True, ""
+            ok = await self.wizard.commit_config(mutation)
+            return (True, "") if ok else (False, "Saving the dictation engine failed.")
         if self._external_busy:
             return False, "Wait for external model verification to finish."
         if self._pending_external_selection is not None:
