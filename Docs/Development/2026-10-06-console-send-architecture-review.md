@@ -1,6 +1,6 @@
 # Console Send architecture direction review
 
-Status: historical working notes consolidated into the [written specification](../superpowers/specs/2026-10-06-console-send-preparation-architecture-design.md) and [ADR-222](../../backlog/decisions/222-console-send-preparation-and-io-ownership.md). Written review is pending; proposed-section labels below record the discussion sequence. No implementation or performance acceptance is claimed.
+Status: historical working notes consolidated into the [written specification](../superpowers/specs/2026-10-06-console-send-preparation-architecture-design.md) and [ADR-222](../../backlog/decisions/222-console-send-preparation-and-io-ownership.md). Written review and the requested issue audit are complete; proposed-section labels below record the discussion sequence. No implementation or performance acceptance is claimed.
 
 Task: TASK-34563. User approved the coordinated phase direction and requested this review before continuing. Review used the current Console sources in the integration worktree at HEAD d382e1cda1ede77a49da1c64391d2a36c53d6c4d, including its working-tree source. Earlier latency samples belong to their recorded bases and do not qualify this newer source.
 
@@ -220,3 +220,19 @@ After approval of the remaining in-chat sections, consolidate these decisions in
 - Required postcommit ordering, trace requirements, checkpoint uncertainty and current recovery entry points remain explicit. History is still awaited.
 - Receipt scheduling accounts for eager tasks and headless work; actual input/render evidence is required before claiming the 100 ms target.
 - Migration and evidence are reviewable design boundaries only; no implementation plan, product change, completion claim or full test sweep has been performed by this design stage.
+
+
+## Consolidated written-spec review
+
+The user reviewed the written specification and requested an issue audit before planning. The audit retained the architecture and corrected these implementation-readiness gaps in the spec and ADR:
+
+- Store/controller received admission and complete promotion share one atomic claim across entry points; runtime remains lifetime ownership. Cleanup is generation-specific, and archive/Close guards include received work without claiming it is saved.
+- The runtime hook-review bridge and native outcome custody are prerequisites to early-receipt enablement. Hook read consolidation can follow later; approval ownership cannot.
+- Tool maxima are attempt-scoped. Current checkpoints persist Library/destination authority, not the old MCP maximum, so restart follows existing fresh recovery rather than a fictitious preserved ceiling. Stronger persistence is outside this no-format-change design.
+- Domain acceptance and UI clear effects are distinct. Clearing must compare input revision and view generation, including identical text retyped later. Complete-request attachment-prefix compatibility is retained separately from the strict received-intent capture rule.
+- Unknown-authority hardening covers upstream stock wrappers and approved-call paths; a local closure currently converts switch errors to false before the provider sees them. Demand-driven capture avoids unused catalogs/providers and does not reuse live data as preview publication.
+- Performance evidence reports raw elapsed samples. Send-triggered setup, native checks, worker queues, history and trace preparation remain application cost; phase labels do not remove it.
+
+Source checks: ConsoleChatStore.begin_preparation accepts a complete preparation; Runtime._register_custody counts requests by turn ID and archive owner; attachment transfer retains an exact prefix; the checkpoint contains no MCP maximum; retry captures fresh configuration; the controller-injected local switch closure converts read errors to false. These are verified source facts, not runtime bug or latency acceptance claims.
+
+Document validation and whitespace checks are run before the correction commit. Runtime verification remains part of the implementation plan; no full suite or product changes were made by this review.

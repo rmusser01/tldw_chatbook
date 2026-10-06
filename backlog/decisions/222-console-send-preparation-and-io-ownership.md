@@ -1,7 +1,7 @@
 # ADR-222: Console Send preparation and I/O ownership
 
 Date: 2026-10-06
-Status: In-chat decision approved; consolidated written review pending.
+Status: Accepted following written review and the requested issue audit.
 Task: [TASK-34563](../tasks/task-34563%20-%20Design-Console-Send-preparation-and-I-O-ownership.md)
 Spec: [Console Send preparation architecture](../../Docs/superpowers/specs/2026-10-06-console-send-preparation-architecture-design.md)
 Extends: ADR-094, ADR-098, ADR-126, ADR-148, ADR-163, ADR-197 and ADR-220.
@@ -33,6 +33,16 @@ ADR-197 retains observed consent history and launch/revocation requirements. Ini
 
 The stock tool error refinement must cover actual switch/permission and approved-call entry points with focused tests. It is not claimed as an existing universal deny-on-uncertainty property. Stronger store writer serialization or reordered history requires a separate decision behind the same domain boundary.
 
+## Written-spec review clarifications
+
+Received reservation and complete promotion use the same atomic admission owner across entry points, with exact-generation cleanup and no release/reacquire gap. Runtime custody remains lifetime ownership. Safe native custody and the runtime hook-review bridge are both prerequisites to enabling early receipt.
+
+Tool ceilings are attempt-bound. The existing durable checkpoint does not persist the original MCP maximum; restart follows its existing fresh-context and Library/destination compatibility rules. This decision adds no hidden maximum persistence or restart replay.
+
+Domain acceptance and generation-checked UI clearing remain distinct, including retyped identical text and attachment-prefix compatibility. Unknown-authority hardening covers upstream stock closures as well as leaf readers. Domain captures are demand-driven, and live/preview operations retain separate publication lifetimes.
+
+Performance qualification reports raw elapsed samples and includes Send-triggered application setup. Phase labels cannot remove that cost from an acceptance claim.
+
 ## Alternatives considered
 
 | Alternative | Tradeoff |
@@ -49,4 +59,4 @@ Cross-module contracts and received-intent promotion require phased migration an
 
 Acceptance requires actual rendered/input feedback within 100 ms and ordinary application overhead under one second to adapter entry, unchanged required durability, and positive native retirement. Observe original I/O counts and minimally instrumented cold/warm comparisons. Qualify supported hosts separately; full sweeps remain opt-in. Moved code, a faster empty path or a successful reply does not establish acceptance.
 
-The linked spec defines lifecycle, freshness, errors, compatibility and verification. Written review precedes implementation planning and plan review precedes product changes. TASK-34563 remains In Progress while written review is pending.
+The linked spec defines lifecycle, freshness, errors, compatibility and verification. Written review precedes implementation planning and plan review precedes product changes. TASK-34563 records the completed design review; product work remains gated on implementation-plan review.
