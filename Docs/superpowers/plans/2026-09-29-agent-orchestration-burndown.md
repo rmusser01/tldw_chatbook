@@ -1445,3 +1445,29 @@ Shared tab-strip immutable source 2b0de111843bb774e77d8acda57aa223d6804f7a, tree
 ## October 6 Console lifecycle source qualification and task closure
 
 Console lifecycle source publication 50b8cb72d165009030cbf186e5405af3ac67477f passed fresh PR Fast Lane, all three UI shards, latency and Derived artifacts. Immutable source 2b0de111843bb774e77d8acda57aa223d6804f7a independent Ready 14d19a7425bd369dfee3b72f9da122e42c3458704aca344b14e439037a5cfdb0, prepared-close independent review and separate local real-detach/delayed-write/mounted/live-control receipts remain authenticated. Only shared view-liveness guards changed production since ec; prepared-close tests and captured-owner fixture remain exact. Current source hosted qualification /private/tmp/pr2918-oct06-tabs-hosted-qualification.json retains raw logs/hashes and separate counts; selections NEVER SUM. Reader /private/tmp/pr2918-oct06-tabs-source-qualified-20261006-1921 authenticates full pagination/resolved conversations/older nested feedback unchanged/live strict-admin-conversation protection and actual dev 76d5d157aa6a628584ead573976c9adee72f5412. Parent AC3 and TASK33664.2/.3 are closed through CLI only after this source qualification; parent AC4 and Done33664.1 remain exact. Only six owned Markdown records change, preserving full31089/all31083 outside six bytes/modes and all historical prefixes/notes/plans. Fresh documentation-head checks/current Qodo or the unanswered explicit human exception remain merge prerequisites. Original FIVE stays historical only; all initial failed/setup/oracle/config-admission receipts and inherited warnings/FD/resource/timeout-cause/optional/platform/physical/wider limits remain retained. No source/test edits after review, completed selection/budget replay, retry, arm, merge or heartbeat action.
+
+
+## October 6 UI shard capacity repair — prospective
+
+**Goal:** Finish the complete gated UI census within the existing job cap.
+
+**Architecture:** Reuse the existing round-robin checker and required matrix aggregation; add one shard.
+
+**Spec:** Existing TASK-34353 policy and ADR103.
+
+October 6 PR2918 UI shard capacity repair (prospective, after the final 2cd CI cycle settled):
+ADR required: no
+ADR path: backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md (existing); existing TASK-34353 policy applies.
+Reason: tune the accepted generic round-robin split without changing required context, triggers, dependencies, census, test workload or timeout.
+1. Preserve actual final UI3 maximum-execution annotation, raw canceled log, 96% progress and failed UI prerequisite. Source50 UI3 581PASS974.13 remains separate; duration variance/stalled-test causes stay unqualified.
+2. Change ONLY derived-artifacts.yml ui-fast-lane matrix shard [1,2,3] to [1,2,3,4]. Keep 20-minute cap, --timeout=180, serial minimal-dependency census order, fail-fast:false and required aggregation unchanged. Preserve all152 census entries and product/test bodies.
+3. Add total4 to the existing real-command census coverage parametrization. Run ONLY its new4 case plus affected lane-shape and required-aggregator controls once on changed workflow; preserve command/raw/XML/exit and targeted static/Backlog/whitespace evidence.
+4. Commit immutable source for focused independent review of exact workflow/test delta, full tree/history and unchanged app/budget/CSS/runtime/test bodies. ParentAC3 stays unchecked/InProgress and AC4checked; new child hosted AC stays unchecked; .1/.2/.3 and incoming34353 states remain untouched.
+5. After Ready/all activity settled, publish one necessary source update with exact observed2cd lease and fresh read-only feedback/protection/refs. Require fresh PRFast, ALL FOUR UI components, latency and Derived artifacts to succeed; close through CLI only after actual hosted qualification. No completed-budget/test replay, retry/dispatch/dummy head, bypass or heartbeat operation.
+6. Require current Qodo or explicit pending human exception, current strict/admin/conversation protection and qualified concurrency before normal protected head-matched merge. Verify actual GitHub MERGED parents/tree/concurrency before completion.
+
+- [ ] Change `.github/workflows/derived-artifacts.yml` matrix to `shard: [1, 2, 3, 4]`.
+- [ ] Change only the existing coverage inputs in `Tests/CI/test_derived_artifacts_workflow.py` to include total4.
+- [ ] Verify the new `[4]` real-command coverage case, lane shape and failed-lane aggregation on changed source; preserve raw/XML/exit.
+- [ ] Obtain focused immutable Ready review, then one exact observed-head publication.
+- [ ] Authenticate ALL FOUR hosted UI components and existing conceptual gates before CLI closure; current review/protection/concurrency still gate merge.

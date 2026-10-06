@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-06 19:23'
+updated_date: '2026-10-06 19:53'
 labels:
   - agents
   - console
@@ -27,7 +27,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -563,6 +563,17 @@ Reason: routine post-await view-lifecycle repair within the existing shared Cons
 4. Verify the new regression, existing live tab-strip controls, actual failed pending-projection journey and headless-navigation case on new source once. The instrumented unchanged headless case already passed 1 in11.226s XML, all11 actual barriers acknowledged; its hosted timeout remains a separate non-green receipt with cause unqualified. Change no test or production timeout without causal evidence.
 5. Run only affected scoped static/CSS/post-await/task guards, retain unchanged-source and all raw evidence/history, then commit immutable source for focused independent review. Keep parent AC3 unchecked and AC4 checked; close no incoming task or original performance qualification.
 6. After Ready/all activity settled, publish one necessary real repair with the exact observed ec lease and fresh feedback/protection/current qualified refs. Require all four fresh gates/all three UI shards and current review before normal protected head-matched merge; verify actual merged parents/tree/concurrency. No heartbeat, retry, manual dispatch, dummy head or bypass.
+
+October 6 PR2918 UI shard capacity repair (prospective, after the final 2cd CI cycle settled):
+ADR required: no
+ADR path: backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md (existing); existing TASK-34353 policy applies.
+Reason: tune the accepted generic round-robin split without changing required context, triggers, dependencies, census, test workload or timeout.
+1. Preserve actual final UI3 maximum-execution annotation, raw canceled log, 96% progress and failed UI prerequisite. Source50 UI3 581PASS974.13 remains separate; duration variance/stalled-test causes stay unqualified.
+2. Change ONLY derived-artifacts.yml ui-fast-lane matrix shard [1,2,3] to [1,2,3,4]. Keep 20-minute cap, --timeout=180, serial minimal-dependency census order, fail-fast:false and required aggregation unchanged. Preserve all152 census entries and product/test bodies.
+3. Add total4 to the existing real-command census coverage parametrization. Run ONLY its new4 case plus affected lane-shape and required-aggregator controls once on changed workflow; preserve command/raw/XML/exit and targeted static/Backlog/whitespace evidence.
+4. Commit immutable source for focused independent review of exact workflow/test delta, full tree/history and unchanged app/budget/CSS/runtime/test bodies. ParentAC3 stays unchecked/InProgress and AC4checked; new child hosted AC stays unchecked; .1/.2/.3 and incoming34353 states remain untouched.
+5. After Ready/all activity settled, publish one necessary source update with exact observed2cd lease and fresh read-only feedback/protection/refs. Require fresh PRFast, ALL FOUR UI components, latency and Derived artifacts to succeed; close through CLI only after actual hosted qualification. No completed-budget/test replay, retry/dispatch/dummy head, bypass or heartbeat operation.
+6. Require current Qodo or explicit pending human exception, current strict/admin/conversation protection and qualified concurrency before normal protected head-matched merge. Verify actual GitHub MERGED parents/tree/concurrency before completion.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
