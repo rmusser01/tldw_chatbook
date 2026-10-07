@@ -247,6 +247,13 @@
     },
     {
       "call_count": 2,
+      "diagnostic_digest": "91e2ca6aac978fbc68cb",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Backup_Recovery/settings_backup_helpers.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 2,
       "diagnostic_digest": "ef55f76cd014367be7f6",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Canvas/gateway.py",
@@ -3536,13 +3543,6 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 22,
-      "diagnostic_digest": "0c08839911c6ee206dc4",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/Tools_Settings_Window.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
       "call_count": 4,
       "diagnostic_digest": "5c71845147cd18aba5a6",
       "owner": "TASK-494",
@@ -4537,8 +4537,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 136,
-      "diagnostic_digest": "10071ce7ebfd7ea183e7",
+      "call_count": 135,
+      "diagnostic_digest": "3a2e537b4cc79dce2765",
       "owner": "TASK-494",
       "path": "tldw_chatbook/config.py",
       "reason": "remaining Chatbook production diagnostic owner"
