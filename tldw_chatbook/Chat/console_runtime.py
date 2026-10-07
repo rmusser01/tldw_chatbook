@@ -171,6 +171,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Agents.run_hooks import RunHooksEngine
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_received_turn import ConsoleReceivedTurnClaim
     from tldw_chatbook.Chat.console_worktree_recovery import ConsoleWorktreeRecovery
 
 #: The app attribute this module's helpers read and write. Named once so a
@@ -392,6 +393,8 @@ class _ConsoleTurnCustodyRecord:
     inputs: _ConsoleTurnCustodyInputs = field(default_factory=_ConsoleTurnCustodyInputs, repr=False)
     task: asyncio.Task[Any] | None = field(default=None, repr=False)
     archive_conversation_id: str | None = None
+    store: ConsoleChatStore | None = field(default=None, repr=False)
+    received_claim: ConsoleReceivedTurnClaim | None = field(default=None, repr=False)
 
 
 class _ConsoleTurnRefusedError(RuntimeError):
@@ -424,6 +427,7 @@ class ConsoleTurnRecoveryEntry:
     #: TASK-33621.2: why the controller refused this turn, so the unsent-turn
     #: strip can say so; empty when the turn ended for another reason.
     reason: str = field(default="", repr=False)
+    source_claim: ConsoleReceivedTurnClaim | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)
@@ -2385,6 +2389,9 @@ class ConsoleRuntime:
         request: ConsoleTurnCustodyRequest,
         attachments: tuple[Any, ...] = (),
         staged_evidence_revision: int | None = None,
+        *,
+        store: ConsoleChatStore | None = None,
+        received_claim: ConsoleReceivedTurnClaim | None = None,
     ) -> _ConsoleTurnCustodyRecord:
         """Retain one request before its task may begin running."""
         if request.turn_id in self._turn_custody:
@@ -2393,6 +2400,8 @@ class ConsoleRuntime:
             turn_id=request.turn_id,
             session_id=request.session_id,
             request=request,
+            store=store,
+            received_claim=received_claim,
             inputs=_ConsoleTurnCustodyInputs(
                 attachments=attachments,
                 staged_evidence_revision=staged_evidence_revision,
@@ -2439,6 +2448,13 @@ class ConsoleRuntime:
         """Drop the runtime's final references to an accepted turn."""
         record = self._turn_custody.pop(turn_id, None)
         if record is not None:
+            if record.store is not None and record.received_claim is not None:
+                if record.store.release_received_turn(record.received_claim):
+                    self._note_received_admission_changed(
+                        record.store, record.session_id
+                    )
+            record.store = None
+            record.received_claim = None
             if record.archive_conversation_id:
                 reservations = self._app._conversation_send_inflight
                 remaining = reservations.get(record.archive_conversation_id, 1) - 1
@@ -2451,6 +2467,41 @@ class ConsoleRuntime:
             record.inputs.attachments = ()
             record.inputs.staged_evidence_revision = None
             record.task = None
+
+    def _note_received_admission_changed(self, store, session_id: str) -> None:
+        """Publish activity revision without copying the store's admission state."""
+        controller = self._chat_controller
+        changed = getattr(controller, "_note_controller_activity_changed", None)
+        if getattr(controller, "store", None) is store and callable(changed):
+            changed(session_id)
+
+    def _create_custody_task(self, coroutine) -> asyncio.Task[Any]:
+        """Construct one lazy owned driver without consulting a loop task factory."""
+        return asyncio.Task(
+            coroutine,
+            loop=asyncio.get_running_loop(),
+            name="console-turn-custody",
+            eager_start=False,
+        )
+
+    def _require_received_custody_current(self, record, controller) -> None:
+        """Refuse source or admission displacement before initial submit effects."""
+        from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+        self._raise_if_disposed_or_session_fenced(record.session_id)
+        store, claim = record.store, record.received_claim
+        if (
+            store is None
+            or claim is None
+            or self._chat_store is not store
+            or self._chat_controller is not controller
+            or not store.received_turn_is_current(claim)
+            or (
+                isinstance(controller, ConsoleChatController)
+                and controller.store is not store
+            )
+        ):
+            raise RuntimeError("Received turn owner changed.")
 
     def accept_turn(
         self,
@@ -2470,38 +2521,52 @@ class ConsoleRuntime:
         store = self._chat_store
         if store is None:
             raise RuntimeError("Console chat store is unavailable.")
-        attachments = store.transfer_pending_attachments_to_turn(
+        claim = store.claim_received_turn(
             request.session_id,
             request.turn_id,
-            request.attachment_ids,
+            origin=origin,
         )
+        if claim is None:
+            raise RuntimeError(
+                "Console session already has a received or prepared turn."
+            )
+        attachments = ()
+        record = None
+        coroutine = None
         try:
+            self._note_received_admission_changed(store, request.session_id)
+            attachments = store.transfer_pending_attachments_to_turn(
+                request.session_id,
+                request.turn_id,
+                request.attachment_ids,
+            )
             record = self._register_custody(
                 request,
                 attachments,
                 self._staged_evidence_lease_revision(request.staged_evidence_launch),
+                store=store,
+                received_claim=claim,
             )
+            coroutine = self._run_custodied_turn(
+                record,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                queue_authorization=queue_authorization,
+                wake_authorization=wake_authorization,
+                raise_on_refusal=recover_before_acceptance,
+            )
+            record.task = self._create_custody_task(coroutine)
         except BaseException:
-            store.restore_transferred_pending_attachments(
-                request.session_id, attachments
-            )
-            raise
-        coroutine = self._run_custodied_turn(
-            record,
-            origin=origin,
-            queue_entry_id=queue_entry_id,
-            queue_authorization=queue_authorization,
-            wake_authorization=wake_authorization,
-            raise_on_refusal=recover_before_acceptance,
-        )
-        try:
-            record.task = asyncio.create_task(coroutine)
-        except BaseException:
-            coroutine.close()
-            store.restore_transferred_pending_attachments(
-                request.session_id, attachments
-            )
-            self._release_custody(record.turn_id)
+            if coroutine is not None:
+                coroutine.close()
+            if attachments:
+                store.restore_transferred_pending_attachments(
+                    request.session_id, attachments
+                )
+            if record is not None:
+                self._release_custody(record.turn_id)
+            elif store.release_received_turn(claim):
+                self._note_received_admission_changed(store, request.session_id)
             raise
         record.task.add_done_callback(
             functools.partial(
@@ -2578,6 +2643,7 @@ class ConsoleRuntime:
         controller = self._chat_controller
         if request is None or controller is None:
             raise RuntimeError("Console controller is unavailable for runtime custody.")
+        self._require_received_custody_current(record, controller)
 
         if record.archive_conversation_id:
             from tldw_chatbook.Chat.conversation_archive_actions import (
@@ -2602,34 +2668,48 @@ class ConsoleRuntime:
             record.inputs.durable_accepted = True
 
         async def submit() -> Any:
-            controller.prompt_queue_coordinator.bind_turn_request(
-                request, origin=origin
-            )
-            return await controller.submit_draft(
-                request.draft,
-                session_id=request.session_id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-                queue_authorization=queue_authorization,
-                wake_authorization=wake_authorization,
-                configuration=replace(
-                    request.configuration,
-                    skill_context_maximum={
-                        **request.configuration.skill_context_maximum,
-                        "plugin_turn_id": request.turn_id,
-                    },
-                ),
-                accepted_attachments=record.inputs.attachments,
-                captured_one_shot_prefill=request.one_shot_prefill,
-                captured_one_shot_prefill_revision=(request.one_shot_prefill_revision),
-                staged_evidence_launch=request.staged_evidence_launch,
-                staged_evidence_capture=self._capture_frozen_console_staged_rag,
-                staged_evidence_release=functools.partial(
-                    self.release_console_staged_evidence,
-                    revision=record.inputs.staged_evidence_revision,
-                ),
-                custody_acceptance_hook=mark_durable_acceptance,
-            )
+            from .console_received_turn import bind_received_turn_claim
+
+            self._require_received_custody_current(record, controller)
+            store, claim = record.store, record.received_claim
+            with bind_received_turn_claim(store, claim):
+                try:
+                    controller.prompt_queue_coordinator.bind_turn_request(
+                        request, origin=origin
+                    )
+                    return await controller.submit_draft(
+                        request.draft,
+                        session_id=request.session_id,
+                        origin=origin,
+                        queue_entry_id=queue_entry_id,
+                        queue_authorization=queue_authorization,
+                        wake_authorization=wake_authorization,
+                        configuration=replace(
+                            request.configuration,
+                            skill_context_maximum={
+                                **request.configuration.skill_context_maximum,
+                                "plugin_turn_id": request.turn_id,
+                            },
+                        ),
+                        accepted_attachments=record.inputs.attachments,
+                        captured_one_shot_prefill=request.one_shot_prefill,
+                        captured_one_shot_prefill_revision=(
+                            request.one_shot_prefill_revision
+                        ),
+                        staged_evidence_launch=request.staged_evidence_launch,
+                        staged_evidence_capture=self._capture_frozen_console_staged_rag,
+                        staged_evidence_release=functools.partial(
+                            self.release_console_staged_evidence,
+                            revision=record.inputs.staged_evidence_revision,
+                        ),
+                        custody_acceptance_hook=mark_durable_acceptance,
+                    )
+
+                finally:
+                    # Some Capture-Off/machine inputs never construct a full
+                    # preparation. Retire initial admission before chain drain.
+                    if store.release_received_turn(claim):
+                        self._note_received_admission_changed(store, request.session_id)
 
         result = (
             await submit()
@@ -2755,6 +2835,15 @@ class ConsoleRuntime:
             self._turn_recoveries[turn_id]
             for turn_id in self._recovery_turns_by_session.get(session_id, ())
             if turn_id in self._turn_recoveries
+            and (
+                self._turn_recoveries[turn_id].source_claim is None
+                or (
+                    self._chat_store is not None
+                    and self._chat_store.received_turn_matches_session(
+                        self._turn_recoveries[turn_id].source_claim
+                    )
+                )
+            )
         )
 
     def restore_turn_recovery(self, turn_id: str) -> ConsoleTurnRecoveryEntry:
@@ -2765,6 +2854,10 @@ class ConsoleRuntime:
             session.id for session in store.sessions()
         }:
             raise RuntimeError("Recovery session is no longer available.")
+        if entry.source_claim is not None and not store.received_turn_matches_session(
+            entry.source_claim
+        ):
+            raise RuntimeError("Recovery session owner changed.")
         if store.session_draft(entry.session_id):
             raise RuntimeError("Recovery live draft changed; refusing ambiguous merge.")
         store.restore_transferred_pending_attachments(
@@ -2805,6 +2898,7 @@ class ConsoleRuntime:
             attachments=record.inputs.attachments,
             insertion_order=self._recovery_order,
             reason=reason,
+            source_claim=record.received_claim,
         )
         self._turn_recoveries[entry.turn_id] = entry
         self._recovery_turns_by_session.setdefault(entry.session_id, []).append(
@@ -2821,6 +2915,8 @@ class ConsoleRuntime:
     ) -> None:
         """Consume a task result and release its retained sensitive inputs."""
         record = self._turn_custody.get(turn_id)
+        if record is not None and record.task is not task:
+            record = None
         accepted = False
         try:
             result = task.result()
@@ -2830,9 +2926,10 @@ class ConsoleRuntime:
                 record is not None
                 and recover_before_acceptance
                 and not record.inputs.durable_accepted
-                and self._chat_store is not None
+                and (record.store or self._chat_store) is not None
                 and any(
-                    item.id == record.session_id for item in self._chat_store.sessions()
+                    item.id == record.session_id
+                    for item in (record.store or self._chat_store).sessions()
                 )
             ):
                 self._record_turn_recovery(record)

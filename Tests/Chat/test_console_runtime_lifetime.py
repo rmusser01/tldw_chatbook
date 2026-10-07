@@ -569,9 +569,10 @@ async def test_custody_task_creation_failure_releases_registration(monkeypatch):
     def fail_create_task(coroutine):
         raise RuntimeError("scheduler unavailable")
 
+    # The owned driver bypasses configurable loop task factories. Patch only
+    # its constructor seam so unrelated Canvas cleanup can still retire.
     monkeypatch.setattr(
-        "tldw_chatbook.Chat.console_runtime.asyncio.create_task",
-        fail_create_task,
+        runtime, "_create_custody_task", fail_create_task, raising=False
     )
 
     with pytest.raises(RuntimeError, match="scheduler unavailable"):

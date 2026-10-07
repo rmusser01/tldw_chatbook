@@ -4413,6 +4413,11 @@ class ConsoleChatController:
             on_queued_accepted=self._notify_queued_submission_accepted,
             on_chain_terminal=self._publish_queue_chain_terminal,
             on_activity_changed=self._note_controller_activity_changed,
+            received_turn_for_session=lambda session_id: (
+                getattr(
+                    self.store, "received_turn_for_session", lambda _session_id: None
+                )(session_id)
+            ),
         )
         restored_sessions = getattr(self.store, "sessions", lambda: ())
         for restored_session in restored_sessions():
@@ -5181,7 +5186,10 @@ class ConsoleChatController:
         with self._active_submit_tasks_lock:
             if session_id in self._active_submit_tasks.values():
                 return "preparation_active"
-        if self.store.preparation_for_session(session_id) is not None:
+        if (
+            self.store.preparation_for_session(session_id) is not None
+            or self.store.received_turn_for_session(session_id) is not None
+        ):
             return "preparation_active"
         checker = getattr(self._agent_bridge, "has_unsettled_children", None)
         if callable(checker):
@@ -8952,15 +8960,26 @@ class ConsoleChatController:
         task: asyncio.Task | None,
         preparation: ConsoleTurnPreparation,
     ) -> ConsoleTurnPreparation | None:
-        """Begin and bind one preparation without a shutdown ownership gap."""
+        """Promote the exact bound receipt or begin ordinary preparation atomically."""
+        from .console_received_turn import received_turn_claim_for
 
-        if task is None:
-            return self.store.begin_preparation(preparation)
         with self._active_submit_tasks_lock:
-            begun = self.store.begin_preparation(preparation)
+            claim = received_turn_claim_for(self.store, preparation.session_id)
+            begun = (
+                self.store.promote_received_turn(claim, preparation)
+                if claim is not None
+                else self.store.begin_preparation(preparation)
+            )
             if begun is not None and task in self._active_submit_tasks:
                 self._active_submit_preparations[task] = begun.preparation_id
             return begun
+
+    def _owns_received_turn(self, session_id: str) -> bool:
+        """Read exact task admission identity; it supplies no execution authority."""
+        from .console_received_turn import received_turn_claim_for
+
+        claim = received_turn_claim_for(self.store, session_id)
+        return claim is not None and self.store.received_turn_is_current(claim)
 
     def _unregister_submit_task(self, task: asyncio.Task) -> None:
         """Remove only the completing submit task's own registry entry."""
@@ -10190,6 +10209,15 @@ class ConsoleChatController:
         if hook_runtime is not None:
             # Recheck after awaited reference expansion; reserve without an await.
             busy = self._live_busy_session_ids()
+            from .console_received_turn import received_turn_claim_for
+
+            bound_claim = received_turn_claim_for(self.store, session.id)
+            received = self.store.received_turn_for_session(session.id)
+            owns_received = self._owns_received_turn(session.id)
+            if (bound_claim is not None or received is not None) and not owns_received:
+                return ConsoleSubmitResult(False, False, "A turn is already preparing.")
+            if owns_received:
+                busy = [identity for identity in busy if identity != session.id]
             if (
                 origin is ConsoleSubmissionOrigin.QUEUED
                 and self.prompt_queue_coordinator.reuses_claimed_slot(
@@ -11336,6 +11364,25 @@ class ConsoleChatController:
                 origin=origin,
                 queue_entry_id=queue_entry_id,
             )
+        if preparation is None:
+            from .console_received_turn import received_turn_claim_for
+
+            received = received_turn_claim_for(self.store, session.id)
+            current_received = self.store.received_turn_for_session(session.id)
+            if (
+                received is not None
+                and not self.store.received_turn_is_current(received)
+            ) or (current_received is not None and current_received is not received):
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Send changed before acceptance; draft kept.",
+                    session_id=session.id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                )
         continuation_gate = self.prompt_queue_coordinator.continuation_contribution(
             session.id, queue_entry_id
         )
@@ -14885,6 +14932,9 @@ class ConsoleChatController:
         # registration is swept below; a later one observes this fence.
         with self._approval_state_lock:
             self._session_close_generations[session_id] = generation
+        received = self.store.received_turn_for_session(session_id)
+        if received is not None and self.store.seal_received_turn(received):
+            self._note_controller_activity_changed(session_id)
         # Admission fences are the first irreversible close action after the
         # durable stream gate has settled successfully. They must beat every
         # cancellation snapshot and precede queue/file teardown, so a stale
@@ -18614,6 +18664,14 @@ class ConsoleChatController:
             stopped; False (a no-op) when it did not.
         """
         session_id = self.store.active_session_id or ""
+        received = self.store.received_turn_for_session(session_id)
+        if received is not None and self.store.seal_received_turn(received):
+            self._note_controller_activity_changed(session_id)
+            self._signal_stop(session_id=session_id)
+            for task in self._submit_tasks_for_session(session_id):
+                if task is not asyncio.current_task():
+                    self._cancel_task_on_owner_loop(task)
+            return True
         review_stopped = (
             self._interrupt_host.pending_round_count(session_id, kind="hook_review") > 0
         )
@@ -18851,6 +18909,10 @@ class ConsoleChatController:
         self._chat_start.dispose()
         self._fleet_wake.dispose()
         self._shutdown_requested.set()
+        for session in tuple(self.store.sessions()):
+            received = self.store.received_turn_for_session(session.id)
+            if received is not None and self.store.seal_received_turn(received):
+                self._note_controller_activity_changed(session.id)
         self._interrupt_host.cancel_hook_reviews()
         unreachable_preparations = self._detach_closed_submit_tasks()
         for preparation_id in unreachable_preparations:
@@ -30043,6 +30105,18 @@ class ConsoleChatController:
             ``ConsoleSubmitResult`` carrying the refusal copy.
         """
         target_id = session_id if session_id else (self.store.active_session_id or "")
+        from .console_received_turn import received_turn_claim_for
+
+        bound_claim = received_turn_claim_for(self.store, target_id)
+        received_reader = getattr(self.store, "received_turn_for_session", None)
+        received = received_reader(target_id) if callable(received_reader) else None
+        if (
+            bound_claim is not None
+            and not self.store.received_turn_is_current(bound_claim)
+        ) or (received is not None and received is not bound_claim):
+            return ConsoleSubmitResult(
+                False, False, "A turn is already preparing.", session_id=target_id
+            )
         if self.store.interrupted_provider_continuation_message(target_id) is not None:
             visible_copy = PROVIDER_CONTINUATION_RECOVERY_REQUIRED
             if append_row and any(

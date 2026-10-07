@@ -32,6 +32,11 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_received_turn import (
+    ConsoleReceivedTurnAdmissionMixin,
+    ConsoleReceivedTurnClaim,
+)
+
 # None is an explicit plain choice; omission alone permits workspace inheritance.
 UNSPECIFIED_ASSISTANT = object()
 _HYDRATION_NOT_PREPARED = object()
@@ -1652,7 +1657,7 @@ class _ConsoleEphemeralPromotionReservation:
     canvas_settled: bool = False
 
 
-class ConsoleChatStore:
+class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
     """Manage native Console sessions and messages before UI integration."""
 
     DURABLE_TOMBSTONE_CAP = 128
@@ -1901,7 +1906,10 @@ class ConsoleChatStore:
         self._first_identity_reservations: dict[
             str, tuple[str | None, ConsoleStagedConversationIdentity, bool]
         ] = {}
-        self._preparations_by_session: dict[str, ConsoleTurnPreparation] = {}
+        self._received_turn_sequence = 0
+        self._preparations_by_session: dict[
+            str, ConsoleTurnPreparation | ConsoleReceivedTurnClaim
+        ] = {}
         self._preparations_by_id: dict[str, ConsoleTurnPreparation] = {}
         self._durable_identity_by_preparation: dict[
             str, ConsoleStagedConversationIdentity
@@ -5390,7 +5398,12 @@ class ConsoleChatStore:
         self._cleanup_console_settings_lifecycle_if_idle(session_id)
         with self._preparation_lock:
             preparation = self._preparations_by_session.get(session_id)
-            if preparation is not None:
+            if isinstance(preparation, ConsoleReceivedTurnClaim):
+                # A closing callback may recreate this ID before slot cleanup.
+                if preparation._session_ref() is not session:
+                    return
+                object.__setattr__(preparation, "_sealed", True)
+            elif preparation is not None:
                 fingerprint = self._durable_fingerprint_by_preparation.get(
                     preparation.preparation_id
                 )
@@ -5402,9 +5415,14 @@ class ConsoleChatStore:
                     self.discard_uncommitted_durable_preparation(
                         preparation.preparation_id
                     )
-            self._preparations_by_session.pop(session_id, None)
-            if preparation is not None:
-                self._preparations_by_id.pop(preparation.preparation_id, None)
+            if self._preparations_by_session.get(session_id) is preparation:
+                self._preparations_by_session.pop(session_id, None)
+            if (
+                isinstance(preparation, ConsoleTurnPreparation)
+                and self._preparations_by_id.get(preparation.preparation_id)
+                is preparation
+            ):
+                self._preparations_by_id.pop(preparation.preparation_id)
 
     def snapshot_voice_promotion_origin(
         self,
@@ -5506,12 +5524,14 @@ class ConsoleChatStore:
             raise TypeError("preparation must be ConsoleTurnPreparation")
         self._session_or_raise(preparation.session_id)
         with self._preparation_lock:
+            current = self._preparations_by_session.get(preparation.session_id)
+            if isinstance(current, ConsoleReceivedTurnClaim):
+                return None
             existing_owner = self._preparations_by_id.get(preparation.preparation_id)
             if existing_owner is not None:
                 return existing_owner if existing_owner is preparation else None
             if preparation.preparation_id in self._durable_tombstones:
                 return None
-            current = self._preparations_by_session.get(preparation.session_id)
             if current is not None and current.state not in {
                 ConsoleTurnPreparationState.CANCELLED,
                 ConsoleTurnPreparationState.SETTLED,
@@ -5529,7 +5549,8 @@ class ConsoleChatStore:
         if not isinstance(session_id, str) or not session_id:
             return None
         with self._preparation_lock:
-            return self._preparations_by_session.get(session_id)
+            current = self._preparations_by_session.get(session_id)
+            return current if isinstance(current, ConsoleTurnPreparation) else None
 
     def preparation_by_id(self, preparation_id: str) -> ConsoleTurnPreparation | None:
         """Return one exact volatile owner, including during session teardown."""
@@ -5550,7 +5571,7 @@ class ConsoleChatStore:
             raise TypeError("transition must be ConsolePreparationTransition")
         with self._preparation_lock:
             current = self._preparations_by_session.get(session_id)
-            if current is None:
+            if not isinstance(current, ConsoleTurnPreparation):
                 return None
             updated = apply_preparation_transition(current, transition)
             if updated is current:
@@ -5578,7 +5599,10 @@ class ConsoleChatStore:
 
         with self._preparation_lock:
             current = self._preparations_by_id.get(preparation_id)
-            if current is None:
+            if (
+                current is None
+                or self._preparations_by_session.get(current.session_id) is not current
+            ):
                 return None
             session = self._sessions.get(current.session_id)
             if (
@@ -5620,6 +5644,7 @@ class ConsoleChatStore:
             current = self._preparations_by_id.get(preparation_id)
             if (
                 current is None
+                or self._preparations_by_session.get(current.session_id) is not current
                 or current.session_id != admitted.session_id
                 or current.pause_kind
                 is not ConsolePreparationPauseKind.TEMPORARY_CAPTURE
@@ -5657,7 +5682,7 @@ class ConsoleChatStore:
             ):
                 return None
             current = self._preparations_by_session.get(session_id)
-            if current is None:
+            if not isinstance(current, ConsoleTurnPreparation):
                 return None
             updated = apply_preparation_transition(current, transition)
             if updated is current:
@@ -5703,7 +5728,7 @@ class ConsoleChatStore:
                 return None
             current = self._preparations_by_session.get(session_id)
             if (
-                current is None
+                not isinstance(current, ConsoleTurnPreparation)
                 or current.preparation_id != preparation_id
                 or current.state not in expected_states
             ):

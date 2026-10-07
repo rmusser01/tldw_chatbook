@@ -201,6 +201,9 @@ def test_runtime_owned_custody_tracks_only_lifetime_handles():
         "task",
         # TASK-32873: the record carries the archive reservation handle.
         "archive_conversation_id",
+        # TASK-34563.11: exact original admission/lifetime references only.
+        "store",
+        "received_claim",
     }
     assert {field.name for field in fields(type(record.inputs))} == {
         "attachments",
