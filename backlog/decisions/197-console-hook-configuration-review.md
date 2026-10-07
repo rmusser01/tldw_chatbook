@@ -123,3 +123,9 @@ permission owner serializes actual subprocess creation against config/consent
 changes; revocation and changed definitions fence staged effects and queued work.
 Host-injected engines retain their explicit authority resolver and never become
 standalone config grants. Lifecycle session replacement remains idle-only.
+
+The [TASK-33648 bounded disposal policy](163-expanded-console-hook-runtime.md#task-33648-saved-standalone-sessionend-during-host-disposal)
+retains only an authentic host-issued, effect-free SessionEnd command notification
+after ordinary admission closes. Its original grant is re-read and serialized
+with actual process creation by this same permission owner; changed or revoked
+authority still refuses, and no ordinary target or model authority reopens.

@@ -27,6 +27,7 @@ from .validation import handler_phase, parse_event
 _teardown_continuation = contextvars.ContextVar(
     "hook_teardown_continuation", default=None
 )
+_current_delivery = contextvars.ContextVar("hook_current_delivery", default=None)
 
 
 def _envelope(event: HookEvent) -> dict:
@@ -243,6 +244,23 @@ class HookEngine:
         ):
             return state
         return None
+
+    def _delivery_current(self, execution, source_event, event) -> bool:
+        """Authenticate this delivery's trusted projection of an exact host event."""
+        current = _current_delivery.get()
+        state = self._execution_state(execution)
+        if not isinstance(current, tuple) or len(current) != 5 or state is None:
+            return False
+        with self._lock:
+            return bool(
+                current[0] is self
+                and current[1] in self._deliveries
+                and not current[1].cancel.is_set()
+                and current[2] is state
+                and current[3] is source_event
+                and current[4] is event
+                and self._current_continuation() is state
+            )
 
     @contextlib.contextmanager
     def _continuation_scope(self, execution):
@@ -587,9 +605,17 @@ class HookEngine:
             state.busy = False
 
     async def _deliver(self, delivery, handler, event, execution, value):
+        with self._continuation_scope(execution):
+            return await self._deliver_current(
+                delivery, handler, event, execution, value
+            )
+
+    async def _deliver_current(self, delivery, handler, event, execution, value):
         ticket = delivery.ticket
         failure = None
         job = None
+        source_event = event
+        token = _current_delivery.set(None)
         try:
             acquire = asyncio.create_task(ticket.acquire())
             cancelled = asyncio.create_task(delivery.cancel.wait())
@@ -617,6 +643,7 @@ class HookEngine:
                 except (ValueError, PermissionError):
                     failure = "owner_projection_refused"
             if failure is None:
+                _current_delivery.set((self, delivery, execution, source_event, event))
                 authorized, callback_failure = await self._authority_status(
                     handler, event, "admission"
                 )
@@ -722,6 +749,7 @@ class HookEngine:
                 )
             return HookEventOutcome(accepted=((handler.id, result.result),))
         finally:
+            _current_delivery.reset(token)
             if job is None:
                 ticket.release()
             with self._lock:
@@ -760,15 +788,30 @@ class HookEngine:
     def notify(self, event: HookEvent) -> bool:
         return self._notify(event, teardown=False)
 
-    def notify_teardown(self, event: HookEvent) -> bool:
-        return self._notify(event, teardown=True)
+    def notify_teardown(
+        self, event: HookEvent, *, _execution: HookEventExecution | None = None
+    ) -> bool:
+        return self._notify(event, teardown=True, execution=_execution)
 
-    def _notify(self, event, *, teardown, planned=None):
+    def _notify(self, event, *, teardown, planned=None, execution=None):
         # Reserve every matching handler synchronously so queue capacity bounds
         # submissions even when called faster than the owner loop can dispatch.
         try:
-            execution = self.begin_event(event, teardown=teardown)
+            if execution is None:
+                execution = self.begin_event(event, teardown=teardown)
             value = _envelope(event)
+            parse_event(value)
+            state = self._execution_state(execution)
+            if (
+                state is None
+                or state.closed
+                or state.busy
+                or teardown
+                and not state.teardown
+                or state.identity
+                != tuple((k, v) for k, v in value.items() if k != "data")
+            ):
+                return False
             if planned is not None:
                 previous = self._execution_state(planned)
                 if previous is None or previous.closed:
@@ -792,7 +835,9 @@ class HookEngine:
         with self._lock:
             continuation = self._execution_state(execution).continuation_of
             if (
-                (self._teardown_closed and continuation is None)
+                state.closed
+                or state.busy
+                or (self._teardown_closed and continuation is None)
                 or (self._sealed_at is not None and not execution.teardown)
                 or self.invalid_admissions
                 or not self.enabled
@@ -800,6 +845,8 @@ class HookEngine:
                 return False
             if time.monotonic() >= execution.deadline:
                 return False
+            # One host-issued notification scope cannot mint a second delivery.
+            state.busy = True
             for handler in self.definitions:
                 try:
                     if not matches_handler(handler, event):

@@ -1,11 +1,11 @@
 ---
 id: TASK-33640
 title: Live-capture every engine preset against its real API
-status: In Progress
+status: Done
 assignee:
   - '@Robert'
 created_date: '2026-09-30 04:00'
-updated_date: '2026-10-04 18:49'
+updated_date: '2026-10-07 01:16'
 labels:
   - providers
   - live
@@ -26,7 +26,7 @@ About 35 engine presets ship with allowances derived from public documentation, 
 - [x] #2 Keys come only from the environment or a user-owned keys file and never reach a fixture, log or printed line
 - [x] #3 Per-account presets (Azure, Cloudflare, Databricks) take their URL and model from the environment
 - [x] #4 Each capture replays through the engine's real parser offline, and a report names every preset that parses and every unknown field that does not
-- [ ] #5 Allowance changes made from captures cite the fixture that proves them
+- [x] #5 Allowance changes made from captures cite the fixture that proves them
 - [x] #6 Without keys, each preset's shipped URL is probed: its chat route exists, a bad key reaches the user as an authentication failure, public listings parse through discovery, and seeded models are still listed
 <!-- AC:END -->
 
@@ -37,6 +37,14 @@ About 35 engine presets ship with allowances derived from public documentation, 
 2. Registry-wide offline replay test under each preset's real record; failures name the uncovered keys.
 3. Retire the three-provider capture_cloud.py and its fixture flip.
 4. Capture every preset with a key, amend allowances citing the fixture, re-replay.
+
+Completion qualification (2026-10-06):
+ADR required: no (existing implementation and evidence closure only)
+ADR path: N/A; existing engine/discovery boundaries remain unchanged.
+Reason: no new allowance, provider, transport or credential authority is introduced.
+5. Inventory currently available credentials with capture.py --list without printing keys; authenticate the already successful live captures for every available preset and verify that their registry allowance changes cite their exact fixtures.
+6. Replay the existing captured plain/tool/stream/tool-stream/discovery rounds through the actual parser, scan the fixture bytes for available credential fragments without exposing values, and record the uncaptured presets as provisional.
+7. Append evidence and scoped limits to the task and capture README; check AC5 only after current qualification and review. Missing-key providers remain skipped under AC1, not live-qualified.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -57,4 +65,8 @@ Qodo round (9 findings, all fixed): (1) a capture with no successful round is no
 2026-10-04: Together captured with a real key (Tests/fixtures/cloud_live/together.json). It surfaced three bugs, fixed in the same PR: discovery rejected Together's bare-array listing and its 16 KB chat-template metadata (TASK-34361), and every streamed reply failed on logprobs and missing usage (TASK-34362). The record changes cite the fixture (AC #5 holds for Together). The other 15 key-only listings are still unseen.
 
 2026-10-04: Fireworks captured (Tests/fixtures/cloud_live/fireworks.json). Plain and stream rounds were clean, and streamed usage arrives without asking. Tool calls failed both ways (TASK-34364, fixed in the same PR): extra index/name on non-streamed calls, and "id": null on streamed continuations. A real-format wrong key maps to 'authentication failed', closing the no-key probe's open Fireworks question.
+
+2026-10-06 completion qualification: capture.py --list found 32 engine presets, with credentials available only for Together and Fireworks. Both already have successful live plain/tool/plain-stream/tool-stream captures (every round HTTP 200, both streams finish with [DONE]), and their model-listing captures remain present. No new requests or allowance changes were necessary. together: Tests/fixtures/cloud_live/together.json SHA256 4b793ba032f544a8a7f34cf671bb09d014dd4e3ead059c94337dbcc9995c7da8; fireworks: Tests/fixtures/cloud_live/fireworks.json SHA256 d44eb69bf9c5f399e8225171e0639f2e3fae9ce4af31764ad34621809e466084. Together's logprobs allowance and usage request cite together.json (TASK-34362); Fireworks' index/name tool-call allowances cite fireworks.json (TASK-34364). Each capture has zero uncovered top/choice/message/tool-call/stream-tool-call keys. The serialized fixture bytes contain no available credential or first-eight-character fragment. Fresh targeted offline replay: 19 passed, 0 failed/errors/skips, 0.653 seconds XML, exit 0, through the actual engine wrappers and discovery parser. Receipt /private/tmp/final-followups-live-replay-h7iz_kws/receipt.json; raw SHA256 4855ddb5debe97880c205ce703d877338f0f23207d52be74b07275a5f25f6597; XML SHA256 39dae9e1a81c539d004c3e49ad00ca1e23272dbe9f637931111a9c0ca2f8c246. The raw log retains 27 late pytest rm_rf warnings involving pre-existing foreign garbage directories; no cleanup was attempted. Qualification receipt SHA256 cd216175dd0b78b1f94eeff1fa99a6867edcf2bcb40ba9c1faea145853fee9ac. Thirty presets without credentials remain skipped/provisional under AC1; no-key evidence does not qualify their key-only listings, reasoning options or live replies. Existing allowances and future key-arrival work are not claimed verified. No new ADR required because this is evidence closure of existing engine/discovery behavior.
+
+Scoped independent evidence review: spec Ready and quality Ready on 2026-10-06. The sole P3 README typo was corrected before closure; no application/test code or captured fixture changed.
 <!-- SECTION:NOTES:END -->
