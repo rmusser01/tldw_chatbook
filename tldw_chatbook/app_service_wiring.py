@@ -1275,34 +1275,17 @@ class ServiceWiringMixin:
             return self._local_skill_trust_service
         async with self._local_skill_trust_service_build_lock:
             if self._local_skill_trust_service is None:
-                # The lock belongs to the physical callback, not its waiter.
-                preparation_call = asyncio.to_thread(
-                    self._build_local_skill_trust_service
+                from .Chat.console_preparation_reads import run_preparation_read
+
+                # Hold singleflight ownership until the original executor
+                # callback physically returns, even through repeated cancel.
+                service = await run_preparation_read(
+                    self._build_local_skill_trust_service,
+                    creator=self,
+                    session_id=None,
+                    reads=set(),
+                    require_current=lambda: None,
                 )
-                try:
-                    preparation = asyncio.Task(
-                        preparation_call, loop=asyncio.get_running_loop()
-                    )
-                except BaseException:
-                    preparation_call.close()
-                    raise
-                try:
-                    service = await asyncio.shield(preparation)
-                except asyncio.CancelledError:
-                    while not preparation.done():
-                        try:
-                            await asyncio.shield(preparation)
-                        except asyncio.CancelledError:
-                            continue
-                        except BaseException:
-                            break
-                    # Consume a callback failure without replacing the original
-                    # cancellation or leaving an unobserved Task exception.
-                    try:
-                        preparation.result()
-                    except BaseException:
-                        pass
-                    raise
                 # Preserve a ready/injected winner installed during the build.
                 if self._local_skill_trust_service is None:
                     self._local_skill_trust_service = service

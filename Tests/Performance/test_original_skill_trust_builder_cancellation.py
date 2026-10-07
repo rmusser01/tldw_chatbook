@@ -25,7 +25,7 @@ real_profile_guard.install()
 from loguru import logger
 logger.remove()
 route, outcome = sys.argv[1:]
-assert route == 'skill_trust_builder' and outcome in ('normal', 'cancel', 'recancel')
+assert route == 'skill_trust_builder' and outcome in ('normal', 'cancel', 'recancel', 'inner_cancel', 'winner')
 
 def control():
     selected = Path(os.environ['TLDW_CONFIG_PATH']).absolute()
@@ -52,6 +52,7 @@ def control():
     physical_return = threading.Event()
     invalid = []
     captured = []
+    task = None
     main = threading.current_thread()
     owner = ServiceWiringMixin()
     owner._local_skill_trust_service = None
@@ -83,6 +84,22 @@ def control():
             worker = threading.current_thread()
             assert worker is not main
             parent = frame.f_back
+            if parent is not None and parent.f_code is not work_code:
+                # The shared finite reader adds one original invocation frame.
+                # Prove its handle owns this exact callback and private Future.
+                from tldw_chatbook.Chat import console_preparation_reads as reads_source
+                invoke_code = next(code for code in reads_source.run_preparation_read.__code__.co_consts
+                                   if isinstance(code, type(work_code)) and code.co_name == 'invoke')
+                assert parent.f_code is invoke_code
+                assert parent.f_globals is vars(reads_source)
+                read = parent.f_locals['read']
+                assert type(read) is reads_source.ConsolePreparationRead
+                assert read.creator is owner and read.callback.__self__ is owner
+                assert read.callback.__func__ is builder
+                assert read.task is task and not read.retired.done()
+                assert type(read._producer) is asyncio.Future and not read._producer.done()
+                facts['private_physical_producer'] = True
+                parent = parent.f_back
             assert parent is not None and parent.f_code is work_code
             assert parent.f_globals is work_run.__globals__
             item = parent.f_locals['self']
@@ -114,8 +131,8 @@ def control():
             await asyncio.sleep(.005)
 
     async def run():
+        nonlocal task
         loop = asyncio.get_running_loop()
-        task = None
         observer = None
         try:
             for tool in range(5, 0, -1):
@@ -143,14 +160,31 @@ def control():
             worker, future = captured[0]
             assert worker.is_alive() and future.running() and not future.done()
             assert owner._local_skill_trust_service_build_lock.locked()
-            if outcome != 'normal':
-                task.cancel()
+            if outcome == 'winner':
+                winner = object()
+                owner._local_skill_trust_service = winner
+            if outcome not in {'normal', 'winner'}:
+                if outcome == 'inner_cancel':
+                    inner = task.get_coro().cr_frame.f_locals.get('preparation')
+                    if type(inner) is asyncio.Task:
+                        assert inner.get_coro().cr_code is asyncio.to_thread.__code__
+                        assert not inner.done()
+                        facts['cancelled_original_detachable_inner_Task'] = True
+                        inner.cancel()
+                    else:
+                        assert facts.get('private_physical_producer') is True
+                        facts['no_detachable_inner_Task'] = True
+                        task.cancel()
+                else:
+                    task.cancel()
                 await asyncio.sleep(0)
                 await asyncio.sleep(0)
                 if outcome == 'recancel':
                     task.cancel()
                     await asyncio.sleep(0)
                     await asyncio.sleep(0)
+                # Observe cancellation propagation while the actual callback remains held.
+                await asyncio.wait({task}, timeout=0.1)
                 facts['cancelled_waiter_done_before_callback_release'] = task.done()
                 facts['singleflight_lock_held_before_callback_release'] = owner._local_skill_trust_service_build_lock.locked()
                 facts['actual_executor_future_running_before_release'] = future.running() and not future.done()
@@ -161,7 +195,10 @@ def control():
             # not evidence that the preceding waiter retained custody.
             result = await asyncio.wait_for(asyncio.wrap_future(future, loop=loop), timeout=10)
             assert future.done() and not future.cancelled() and physical_return.is_set()
-            if outcome == 'normal':
+            if outcome in {'normal', 'winner'}:
+                if outcome == 'winner':
+                    assert result is not winner
+                    result = winner
                 assert await asyncio.wait_for(asyncio.shield(task), timeout=10) is result
                 assert owner._local_skill_trust_service is result
                 assert await ensure(owner) is result
@@ -211,7 +248,7 @@ def control():
         assert facts['final_counts'] == baseline
         assert facts['original_global_drain']
         assert facts['network_refusals'] == facts['profile_refusals'] == 0
-        if outcome != 'normal':
+        if outcome not in {'normal', 'winner'}:
             # Sole causal oracles after original source/native/callback cleanup.
             assert facts['actual_executor_future_running_before_release']
             assert not facts['cancelled_waiter_done_before_callback_release'], facts
@@ -225,6 +262,8 @@ with user_fixture_default_owner():
 """
 
 
-@pytest.mark.parametrize("outcome", ("normal", "cancel", "recancel"))
+@pytest.mark.parametrize(
+    "outcome", ("normal", "cancel", "recancel", "inner_cancel", "winner")
+)
 def test_original_skill_trust_builder_retains_native_callback(tmp_path, outcome):
     _run(tmp_path, "skill_trust_builder", outcome, script=_SCRIPT)
