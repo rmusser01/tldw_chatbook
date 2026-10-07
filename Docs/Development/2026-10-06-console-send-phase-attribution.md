@@ -801,3 +801,33 @@ qualification remain. Existing ADR-222/ADR-126 apply. Task22 stays In Progress
 under the broader DoD, and the next latency diagnostic adds bounded original
 context/version caller purposes and requested-ID counts to the existing opt-in
 observer, while preserving live revalidation across awaits and durable commit.
+
+
+### Next context-read purpose attribution (source prepared; run pending)
+
+Read-only review found no unconditional duplicate version query within one
+ordinary synchronous compaction preflight: its captured snapshot tuple is already
+reused downstream. Preaccept assessment, conditional transformed-request
+assessment, postcommit dispatch and presentation workers have different freshness
+boundaries. The existing version API already deduplicates/chunks IDs; empty input
+performs no SELECT. The observed Linux5/4/5 helper starts therefore need caller
+attribution before another consolidation is selected.
+
+The existing opt-in SendSpanObserver now adds only the original
+ChatPersistenceService.get_message_versions event target. Exact original-code
+ancestry anchors distinguish early/changed-request assessment, dispatch,
+presentation, manual/micro operations and preview/revalidation; they add no event
+targets. Bounded records link version calls to their parent snapshot and retain
+only requested exact-list/tuple lengths, caller names/lines and event indices,
+not IDs, content, arguments or frames. Default60targets,4096events and existing
+native deadlines remain. Detail limits are512records/128active/64ancestors with
+explicit overflow, unmatched and unfinished counters. Counts are requested IDs,
+not SQL rows/operations, and span times overlap.
+
+Observer SHA25622cd31a3d9f35ae733ca35183ad3fe6e402f199ccff2a91422f660804b8dfc5f.
+Ruff, formatting, AST/default-target comparison and root source review pass.
+Runtime verification is pending. The next contained diagnostic should use the
+integrated CLEAN snapshot after task22 and the independent live-config-lock
+repair, avoiding duplicate diagnosis of the earlier UI path. The third-Send
+receipt branch is already covered by the same observer. No production callbacks,
+persistence gates or permissions were changed by this extension.

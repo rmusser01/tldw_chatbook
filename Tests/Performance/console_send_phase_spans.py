@@ -69,6 +69,12 @@ class SendSpanObserver(CompositionCounter):
         self.ancestor_overflow = 0
         self.receive_returns = []
         self.sensitive_bundle_returns = []
+        self.context_snapshot_code = self.context_versions_code = None
+        self.context_purpose_codes = {}
+        self.context_reads = []
+        self.context_active = {}
+        self.context_overflow = self.context_unmatched = 0
+        self.context_ancestor_overflow = 0
         targets = (
             (
                 AgentService,
@@ -150,6 +156,17 @@ class SendSpanObserver(CompositionCounter):
                 config_participants,
                 raw_participants,
             )
+            from tldw_chatbook.Chat import (
+                console_configuration_capture,
+                console_configuration_preparation,
+            )
+            from tldw_chatbook.Chat.chat_persistence_service import (
+                ChatPersistenceService,
+            )
+            from tldw_chatbook.Chat.console_context_compaction import (
+                ConsoleCompactionPreflight,
+            )
+            from tldw_chatbook.MCP import console_snapshot
             from tldw_chatbook.UI.Console_Modules import wiring
             from tldw_chatbook.Utils import sensitive_paths
 
@@ -161,6 +178,21 @@ class SendSpanObserver(CompositionCounter):
                 (raw_participants, ("_check",)),
                 (wiring, ("receive_console_visible_intent",)),
                 (sensitive_paths, ("_stock_sensitive_config_bundle",)),
+                (private_paths, ("create_private_text",)),
+                (ChatPersistenceService, ("get_message_versions",)),
+                (
+                    console_configuration_preparation,
+                    ("capture_console_turn_configuration_owned",),
+                ),
+                (
+                    console_snapshot,
+                    ("capture_console_definition_maximum", "_checked_read"),
+                ),
+                (console_snapshot._CapturedSources, ("permission_call",)),
+                (
+                    console_configuration_capture,
+                    ("capture_console_turn_configuration",),
+                ),
             )
             self.hook_current_code = inspect.unwrap(
                 hook_permissions.HookPermissions._current
@@ -172,6 +204,85 @@ class SendSpanObserver(CompositionCounter):
             self.sensitive_bundle_code = inspect.unwrap(
                 sensitive_paths._stock_sensitive_config_bundle
             ).__code__
+            self.context_snapshot_code = inspect.unwrap(
+                ConsoleChatController._durable_context_snapshots
+            ).__code__
+            self.context_versions_code = inspect.unwrap(
+                ChatPersistenceService.get_message_versions
+            ).__code__
+            # These are original-code ancestry anchors, not extra event targets.
+            purpose_sources = (
+                (
+                    ConsoleChatController,
+                    "context_control_presentation_inputs",
+                    "read",
+                    "presentation",
+                ),
+                (
+                    ConsoleChatController,
+                    "_compaction_admission_check",
+                    None,
+                    "preaccept_assessment",
+                ),
+                (
+                    ConsoleChatController,
+                    "_stream_assistant_response_inner",
+                    None,
+                    "dispatch_preflight",
+                ),
+                (
+                    ConsoleCompactionPreflight,
+                    "compact_context_now",
+                    None,
+                    "manual_or_micro_compaction",
+                ),
+                (ConsoleChatController, "build_context_snapshot", None, "preview"),
+                (
+                    ConsoleChatController,
+                    "_manual_summary_planning",
+                    None,
+                    "manual_summary",
+                ),
+                (
+                    ConsoleChatController,
+                    "_compaction_admission",
+                    None,
+                    "compaction_revalidation",
+                ),
+                (
+                    ConsoleChatController,
+                    "_hooks_for_compaction",
+                    "memory_current",
+                    "compaction_memory_revalidation",
+                ),
+                (
+                    ConsoleChatController,
+                    "_summarize_manual",
+                    "current_admission",
+                    "manual_summary_revalidation",
+                ),
+            )
+            for owner, name, child_name, purpose in purpose_sources:
+                descriptor = inspect.getattr_static(owner, name)
+                function = inspect.unwrap(descriptor)
+                module = sys.modules[function.__module__]
+                path = Path(module.__file__).resolve()
+                assert function.__globals__ is vars(module)
+                assert Path(function.__code__.co_filename).resolve() == path
+                self.bindings.append(
+                    (owner, name, descriptor, function, function.__code__, module)
+                )
+                self.files[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+                code = function.__code__
+                if child_name is not None:
+                    children = [
+                        child
+                        for child in code.co_consts
+                        if type(child) is CodeType and child.co_name == child_name
+                    ]
+                    assert len(children) == 1
+                    code = children[0]
+                self.context_purpose_codes[code] = purpose
         effect_names = {
             "publish_identity_and_settings",
             "publish_owners",
@@ -284,6 +395,70 @@ class SendSpanObserver(CompositionCounter):
         )
         return filename, caller.f_code.co_qualname, caller.f_lineno
 
+    def _context_ancestry(self, frame):
+        for _ in range(64):
+            frame = frame.f_back
+            if frame is None:
+                return "other", None
+            if frame.f_code is self.context_snapshot_code:
+                parent = self.context_active.get((id(frame), threading.get_ident()))
+                if parent is not None:
+                    return self.context_reads[parent]["purpose"], parent
+            purpose = self.context_purpose_codes.get(frame.f_code)
+            if purpose is not None:
+                if purpose == "preaccept_assessment":
+                    purpose = (
+                        "preaccept_changed_request"
+                        if frame.f_locals.get("after_side_effects") is True
+                        else "preaccept_early"
+                    )
+                elif purpose == "manual_or_micro_compaction":
+                    purpose = (
+                        "micro_compaction"
+                        if frame.f_locals.get("micro") is True
+                        else "manual_compaction"
+                    )
+                return purpose, None
+        self.context_ancestor_overflow += 1
+        return "other", None
+
+    def _context_start(self, frame, index):
+        key = id(frame), threading.get_ident()
+        if key in self.context_active:
+            self.context_unmatched += 1
+            self.context_active.pop(key)
+        if len(self.context_active) >= 128 or len(self.context_reads) >= 512:
+            self.context_overflow += 1
+            return
+        purpose, parent = self._context_ancestry(frame)
+        count = None
+        if frame.f_code is self.context_versions_code:
+            ids = frame.f_locals.get("message_ids")
+            # Do not invoke arbitrary __len__, consume iterators or copy IDs.
+            if type(ids) in (list, tuple):
+                count = len(ids)
+            if parent is not None:
+                self.context_reads[parent]["requested_id_count"] = count
+        filename, caller, line = self._raw_caller(frame)
+        self.context_active[key] = len(self.context_reads)
+        self.context_reads.append(
+            dict(
+                frame_id=key[0],
+                start_event_index=index,
+                return_event_index=None,
+                purpose=purpose,
+                source_file=filename,
+                caller_qualname=caller,
+                source_line=line,
+                snapshot_start_event_index=(
+                    self.context_reads[parent]["start_event_index"]
+                    if parent is not None
+                    else None
+                ),
+                requested_id_count=count,
+            )
+        )
+
     def on_start(self, code, offset):
         if code is self.raw_check_code:
             frame = sys._getframe(1)
@@ -314,6 +489,13 @@ class SendSpanObserver(CompositionCounter):
             summary["raw_started"] += 1
             return
         index = self._record("start", code)
+        if (
+            code in (self.context_snapshot_code, self.context_versions_code)
+            and index is not None
+        ):
+            frame = sys._getframe(1)
+            assert frame.f_code is code
+            self._context_start(frame, index)
         if code is self.hook_current_code and index is not None:
             frame = sys._getframe(1)
             assert frame.f_code is code
@@ -363,6 +545,14 @@ class SendSpanObserver(CompositionCounter):
                     self.raw_unmatched += 1
             return
         index = self._record("return", code)
+        if code in (self.context_snapshot_code, self.context_versions_code):
+            frame = sys._getframe(1)
+            assert frame.f_code is code
+            entry = self.context_active.pop((id(frame), threading.get_ident()), None)
+            if entry is not None:
+                self.context_reads[entry]["return_event_index"] = index
+            else:
+                self.context_unmatched += 1
         if code is self.hook_current_code:
             frame = sys._getframe(1)
             assert frame.f_code is code
@@ -427,6 +617,34 @@ class SendSpanObserver(CompositionCounter):
         if self.preparation_detail:
             result["preparation_detail"] = dict(
                 enabled=True,
+                context_reads=self.context_reads,
+                context_read_limit=512,
+                context_active_slot_limit=128,
+                context_ancestor_walk_limit=64,
+                context_overflow=self.context_overflow,
+                context_ancestor_overflow=self.context_ancestor_overflow,
+                unmatched_context_starts=self.context_unmatched,
+                unfinished_context_reads=len(self.context_active),
+                context_requested_count_is_list_or_tuple_length_not_sql_count=True,
+                context_snapshot_count_copied_from_original_version_reader=True,
+                context_event_times_are_inclusive_not_additive=True,
+                generator_entry_pairs={
+                    self.selected[code]: pairs
+                    for code, pairs in self.entry_pairs.items()
+                    if code is not self.admission_code
+                },
+                unfinished_generator_entries={
+                    self.selected[code]: len(starts)
+                    for code, starts in self.entry_starts.items()
+                    if code is not self.admission_code
+                },
+                generator_entry_pair_fields=(
+                    "start_event_index",
+                    "first_yield_event_index",
+                    "entry_seconds",
+                ),
+                generator_start_return_spans_are_full_context_lifetimes=True,
+                private_text_span_is_unwrapped_body_elapsed=True,
                 raw_checks_scoped_to_original_hook_current=True,
                 raw_checks_are_aggregated_not_event_rows=True,
                 hook_entries=[
