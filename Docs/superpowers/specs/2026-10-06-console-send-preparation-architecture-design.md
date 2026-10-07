@@ -137,6 +137,18 @@ At an authority-dependent operation, represent a failed required observation exp
 | Best-effort audit/capture/presentation failure | Preserve execution policy and committed state; expose the existing content-free degradation. Do not make an audit write a new required permission transaction. Required trace provenance/call admission remains separate from best-effort capture. |
 | Cancelled/late result | Drain its actual issued work, preserve evidence of already completed durable effects, and reject stale publication. Do not replace the original error with cleanup bookkeeping failure. |
 
+### Durability terminology and the minimal dispatch barrier
+
+The user reaffirmed the latency/ownership focus and selected the existing saved-turn failure policy: a failed acceptance save stops Send and keeps the draft; existing temporary chats remain available. Do not add an unsaved fallback, new persistence mode, stronger synchronization setting or storage redesign to this effort.
+
+For the normal chat database, committed acceptance means a completed atomic SQLite transaction under the existing WAL/synchronous=NORMAL policy. It supports application-crash recovery; it is not a guarantee that the latest transaction survives operating-system failure or power loss. Automatic-work execution fences and native file owners retain their own stronger policies. No PRAGMA or file durability primitive changes as part of this clarification.
+
+The saved-turn barrier covers the canonical user/assistant identities, accepted checkpoint, required destination/Library compatibility and transaction contributions needed to reconstruct or authorize the request. Required dispatch-start/trace admission, consent reconciliation and hook/provider-message handoff also remain ordered before their dependent effect. UI repaint and best-effort audit/index projections are not permission or acceptance authorities. Workspace projection is not presumed optional: current bindings may depend on it.
+
+Prompt-history persistence is auxiliary to conversation recovery and remains an evidence-led optimization candidate, but its current awaited ordering is retained until a concrete owned queue/drain/failure contract is reviewed. This prevents an untracked background write from replacing a measured delay with a shutdown bug. Consolidation targets duplicate reads, admissions, worker handoffs and serialization inside these existing boundaries before altering the boundary itself.
+
+Always measure acceptance commit separately from preparation and postcommit work. The earlier instrumented 0.527-0.812 s commit samples do not account for the much longer subsequent intervals and do not justify attributing six-second module delays to fsync. Current saved-turn acceptance already avoids forcing a WAL sync on every ordinary commit.
+
 ### Retry and effect order
 
 Precommit Retry creates a new attempt and re-enters the necessary captures. Existing held-preparation actions determine which selected inputs are preserved or deliberately recaptured; retry does not automatically replay old hook side effects, consume another staged input or widen the frozen maximum.

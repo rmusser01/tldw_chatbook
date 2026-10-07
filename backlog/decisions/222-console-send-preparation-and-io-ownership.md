@@ -60,3 +60,10 @@ Cross-module contracts and received-intent promotion require phased migration an
 Acceptance requires actual rendered/input feedback within 100 ms and ordinary application overhead under one second to adapter entry, unchanged required durability, and positive native retirement. Observe original I/O counts and minimally instrumented cold/warm comparisons. Qualify supported hosts separately; full sweeps remain opt-in. Moved code, a faster empty path or a successful reply does not establish acceptance.
 
 The linked spec defines lifecycle, freshness, errors, compatibility and verification. Written review precedes implementation planning and plan review precedes product changes. TASK-34563 records the completed design review; product work remains gated on implementation-plan review.
+
+
+## Durability terminology clarification
+
+The user selected the existing saved-turn failure policy: failed acceptance keeps the draft and refuses dispatch; existing temporary chats remain available. The current normal chat commit uses SQLite WAL/synchronous=NORMAL, providing application-crash recovery without promising power-loss survival of the latest commit. Preserve separate execution-fence/native-file policies. No new persistence mode, unsaved fallback, PRAGMA change or storage redesign is introduced.
+
+Keep the minimum canonical acceptance/checkpoint and required consent/trace/context facts before their dependent dispatch/effect. Classify auxiliary projections without treating every postcommit callback as optional; history remains awaited pending an explicit owned deferral contract. The implementation focus stays duplicate native reads/admission, fragmented ownership, serial handoffs and real input/render responsiveness.
