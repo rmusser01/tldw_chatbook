@@ -139,7 +139,7 @@ Known boundary taps (plan phase re-verifies with a
 | `LLM_API_Calls.py` ×9 non-streaming blocks | exact, else estimate | Consolidate each duplicated log block into one shared `record_response_usage(...)` helper (logs existing histograms + records). Estimate via prompt/response texts already in scope. |
 | `LLM_API_Calls.py` Anthropic SSE accumulator (≈1834–1994) | exact | Usage already accumulated at stream end. |
 | `LLM_API_Calls.py` OpenAI Responses stream (`completed_usage` ≈331) | exact | Injected into final chunk; tap where consumed. |
-| Other streaming loops in `LLM_API_Calls.py` | estimate | Most discard usage today (no `include_usage` requested). The shared helper's estimate fallback records them from prompt/response texts. Adding `stream_options.include_usage` + final-chunk capture is an optional plan-time exactness win. |
+| Other streaming loops in `LLM_API_Calls.py` | estimate, at the consumer | The generators yield raw SSE lines and hold no full texts (verified in `chat_with_openai`'s `stream_generator`, ≈844–920), so the estimate fallback lives in the **consumer** that assembles the streamed response (legacy `Chat/Chat_Functions.py` path; exact site enumerated at plan time). Optional exactness win: request `stream_options.include_usage` and capture the final usage chunk with a cheap `'"usage"' in line` guard inside the generator. |
 | `Chat/console_provider_gateway.py` `record_usage_payload` (≈6997) | exact | Console + its streams. |
 | `Agents/agent_service.py` (≈1594) | exact | Sub-agent fleets do their own HTTP — parsed from their own `resp`, not gateway data (verified: no double count). |
 | `Library/library_rag_answer_service.py` (≈654) | exact | Own HTTP response. |
@@ -150,6 +150,14 @@ Known boundary taps (plan phase re-verifies with a
 scopes wrap calls that go through the provider functions above, so its
 estimates would double-count. It keeps serving the research budget ledger
 unchanged.
+
+Verified no gateway/provider double-count: the Console gateway performs
+its own HTTP and never invokes the `chat_with_*` provider functions (only
+comment references, `console_provider_gateway.py:4118` — which also
+confirms that summarization and eval calls route through
+`chat_with_anthropic`). Evals themselves handle no usage (`Evals/*.py` has
+no usage parsing), so they are covered by the provider-function taps; the
+plan-time audit confirms no eval path bypasses them.
 
 Embeddings (`get_openai_embeddings`) are not tapped (non-goal).
 
@@ -184,14 +192,19 @@ Embeddings (`get_openai_embeddings`) are not tapped (non-goal).
   issue's Enter/Esc/q). No `BINDINGS` are added; `ctrl+q` is not rebound
   (ADR-031: it is app-global). No `SafeModalDismissMixin` — there is no
   cancel semantics; dismissal always proceeds to exit.
-- Styling: `DEFAULT_CSS` with design tokens (`$ds-*` per ADR-150),
-  consistent with other small dialogs; no new stylesheet file, no hex
-  literals.
+- Styling: `DEFAULT_CSS` with the legacy semantic variables (`$panel`,
+  `$secondary`, `$accent`), exactly as `ConfirmationDialog` and
+  `Widgets/base_components.py` do. `$ds-*` tokens do not resolve in
+  Python-side `DEFAULT_CSS` — only inside the bundled tcss (see the
+  `Widgets/emoji_picker.py` TASK-16811 note); any styling that needs
+  `$ds-*` goes into the `css/` bundle. No hex literals either way.
 
 ## Quit-Flow Integration
 
-Slot: inside `_run_approved_quit_cleanup` (`app.py:19214–19232`), **after**
-`_run_blocking_quit_persistence` completes, **before** `self.exit()`:
+Slot: inside `_run_approved_quit_cleanup` (`app.py:19214–19232`), in the
+`try:` body **after** `await asyncio.to_thread(self._run_blocking_quit_persistence)`
+completes, while `self.exit()` stays in the `finally:` (a persistence
+failure degrades to exit-without-summary; exit reliability wins):
 
 ```python
 if summary_enabled:
@@ -243,6 +256,9 @@ duration_seconds = 3     # auto-dismiss delay, clamped to 1..30
   `[model_catalog]` group pattern (`settings_screen.py:16155–16169`,
   persist worker via `save_settings_to_cli_config`). Placement in an
   existing appearance/behavior category at plan time.
+- User documentation: describe the toggle, duration, default (off), and
+  the exact/estimate semantics in the relevant `Docs/User_Guide/settings`
+  page — the settings guide is the canonical user-facing reference.
 
 ## Error Handling / Degradation Ladder
 
@@ -261,7 +277,8 @@ duration_seconds = 3     # auto-dismiss delay, clamped to 1..30
   concurrent `record` from threads, `reset_for_tests` isolation.
 - **Shared helper tests:** the nine consolidated sites produce identical
   histograms as before plus a ledger record; estimate path when usage
-  absent.
+  absent; the streaming-consumer estimate tap records when a stream
+  completes without usage.
 - **Config defaults** (`tomllib.loads(CONFIG_TOML_CONTENT)` pattern,
   `Tests/test_config_model_catalog_defaults.py`): section present, values,
   clamp behavior.
@@ -298,6 +315,14 @@ recorded in this spec's Tap Points section and will be cited in the task.
   — rejected: provider calls run in threads/workers; every site would need
   `call_from_thread` plumbing for data a plain thread-safe object carries
   fine.
+
+## Deferred Ideas
+
+- Emit session totals in the `app_stopping` diagnostics event
+  (`persist_event`, `app.py:18323`) for post-hoc visibility even when the
+  summary is disabled. Touches the diagnostics inventory
+  (`Docs/security/production-diagnostic-inventory.json`), so it deserves
+  its own small change rather than riding along here.
 
 ## References
 
