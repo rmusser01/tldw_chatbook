@@ -1,8 +1,9 @@
 ---
 id: TASK-34430
 title: Batch Chroma document deletes on reindex
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:43
+updated_date: 2026-10-07 20:58
 ---
 
 ## Description
