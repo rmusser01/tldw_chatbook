@@ -2996,6 +2996,27 @@ class AgentRunsDB(BaseDB):
             rows = conn.execute(query, params).fetchall()
             return self._rows_to_dicts(conn, rows)
 
+    def list_change_review_run_anchors(self, conversation_id: str) -> list[dict]:
+        """Read primary run anchors without loading unrelated history payloads.
+
+        Args:
+            conversation_id: Console conversation whose markers are projected.
+
+        Returns:
+            Non-superseded primary IDs and assistant anchors, oldest first.
+        """
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, assistant_message_id FROM agent_runs
+                WHERE conversation_id = ? AND agent_kind = 'primary'
+                    AND status != 'superseded'
+                ORDER BY created_at ASC, id ASC
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_subagent_run_headers(
         self,
         conversation_id: str,
@@ -3533,6 +3554,14 @@ class AgentRunsDB(BaseDB):
                 ),
             )
             return cursor.rowcount
+
+
+# Preserve custom list readers when marker projection selects the narrower query.
+_CHANGE_REVIEW_LIST_RUNS_SOURCE = (
+    AgentRunsDB.list_runs,
+    AgentRunsDB.list_runs.__code__,
+    AgentRunsDB.list_runs.__defaults__,
+)
 
 
 # Defining callbacks for the optional finite legacy run-log probe only.

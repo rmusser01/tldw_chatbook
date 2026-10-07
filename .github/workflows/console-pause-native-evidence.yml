@@ -24,6 +24,8 @@ on:
       - 'Tests/Agents/test_stock_nested_agent_admission.py'
       - 'Tests/Chat/test_console_hook_workspace_lifetime.py'
       - 'Tests/Chat/test_console_trace_maintenance_lifetime.py'
+      - 'Tests/Chat/test_console_change_review_marker_reads.py'
+      - 'Tests/Chat/test_change_turn_tracking.py'
       - 'Tests/Chat/test_console_trace_maintenance_parking.py'
       - 'Tests/Chat/test_console_initial_hook_review.py'
       - 'Tests/Chat/test_workspace_cold_composite_work_count.py'
@@ -193,6 +195,16 @@ jobs:
           name: trace-maintenance-${{ matrix.os }}
           path: ${{ runner.temp }}/trace-maintenance-lifetimes.xml
           if-no-files-found: error
+      - name: Verify Change Review marker query scope and unchanged rendering
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Chat/test_console_change_review_marker_reads.py Tests/Chat/test_change_turn_tracking.py::test_resume_re_derives_the_summary_row_byte_identical -q --timeout=180 --junitxml=${{ runner.temp }}/change-review-marker-reads.xml
+      - name: Retain focused marker query evidence before longer controls
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: change-review-marker-reads-${{ matrix.os }}
+          path: ${{ runner.temp }}/change-review-marker-reads.xml
+          if-no-files-found: error
       - name: Verify original browser and annotation native callback lifetimes
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_browser_worker_native_lifetime.py Tests/UI/test_console_annotation_preview_native_lifetime.py -q --timeout=300 --junitxml=${{ runner.temp }}/query-lifetimes.xml
@@ -228,6 +240,7 @@ jobs:
             ${{ runner.temp }}/finite-callback-controls.xml
             ${{ runner.temp }}/query-lifetimes.xml
             ${{ runner.temp }}/trace-maintenance-lifetimes.xml
+            ${{ runner.temp }}/change-review-marker-reads.xml
             ${{ runner.temp }}/workspace-query-lifetimes.xml
             ${{ runner.temp }}/workspace-provisioning.xml
             ${{ runner.temp }}/mounted-restores.xml

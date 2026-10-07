@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-07 17:04'
+updated_date: '2026-10-07 17:31'
 labels: []
 dependencies: []
 ---
@@ -59,6 +59,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #39 Supported host shutdown retains the exact issued stock persisted-browser Worker through its real two-scope native callback and positive worker-handle retirement; same-worker borrowed handles, declared custom and memory routes, original errors/source fences and original deadlines preserve their lifetimes and behavior.
 - [x] #40 Finite stock run-log availability probes retire only newly acquired installed file-backed Workspace connections after their original synchronous work completes or fails; borrowed, custom, memory, transaction and active operation owners retain their original lifetimes, publication remains current, and the original controller-then-maintenance drain passes without changing its limits.
 - [x] #41 Scheduled trace maintenance retains each issued database callback through cancellation; runtime shutdown waits for its actual callback and newly owned native resources to retire before creator close.
+- [x] #42 Change Review transcript marker reads preserve primary-run order, assistant anchors and durable snapshot contents without fetching or decoding unrelated legacy/child step logs; existing custom database callbacks retain their preceding contract.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -387,6 +388,12 @@ Original Hook-review fixture cleanup: CI37650785035 reproduces two unchanged fai
 Linux maintenance parking prerequisite: CI37654560531 passes all3 native lifetime cases and original Hook ownership cases, but the original transaction-count case assumes 0.3s without a run_batch entry proves parking. Native GC/compaction or a queued callback can satisfy that silence while the scheduler remains unparked. Before the deliberate wake, observe the actual original scheduler parked latch within the same existing10-second prerequisite bound; keep the exact writer, transaction-count assertion and all production code unchanged. Verify this original strict case and declined-review compatibility. ADR required:no; test-only observation of an existing state, with no widened deadlines.
 
 CI evidence follow-up: publish the focused maintenance JUnit artifact immediately after that step, and keep the already-declared independent shared controls running after another group fails. Preserve test selections and job/test timeouts; no new sweep.
+
+Bound Change Review marker reads: current Linux native Send samples include synchronous transcript -> change_review_marker_messages -> list_runs. That call loads and decodes full step histories for every run, although the marker renderer only consumes run ID and assistant anchor. First record original SQLite column/table reads with real seeded legacy and child steps and assert marker equivalence and no payload reads. After RED, add a narrow ordered primary-run anchor read on AgentRunsDB and use it only for marker projection, retaining the existing list_runs fallback for custom DB adapters. No storage guard, snapshot query, whole-performance budget or thread-lifetime contract changes. ADR required:amend existing ADR-084 to document the minimal durable marker read contract before product edits. ADR path:backlog/decisions/084-change-review-consent-and-asynchronous-finalization.md. This reduces unused history processing; moving the remaining native projection off the UI loop remains separate work.
+
+The6 new real-query/custom-adapter controls pass. The selected original real-Git equivalence case refuses earlier in compose_agent_system_prompt with raw_source_selection_changed, before either changed marker method executes: the generic per-test sandbox redirects config after collection-time participant binding. Apply the repository existing bootstrap_profile marker only to that exact original case, preserving its body and live config/source guard. Rerun the original case with all6 focused controls. ADR required:no; fixture profile selection, not a product authorization change.
+
+Marker-read completion: add the six direct SQL/custom-reader controls and the original byte-identical real-Git resume control to the existing three-platform CI matrix, with an early evidence artifact and unchanged timeouts. Review the scoped diff, record actual seven-case results and the observer lookup races, then save and push this atomic correction to PR 3023. ADR: existing 084 amendment; no new boundary. AC20 and whole-startup/Send performance acceptance remain open.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -529,6 +536,8 @@ The exact original pending-close follow-up now reports only its pending-round ar
 The two original failed-open Hook-review cleanup cases pass23.19s after routing only _release through the real safe-cancel action. Runtime-backed review dismissal intentionally releases a disposable view, so the prior bare dismiss(None) left resident custody live and caused remount; no production behavior or acceptance timing was changed. Source/HEAD remain unchanged during the test, cleanup is normal with zero forced retirement/overflow/races, and Ruff passes. New CI37654560531 confirms the maintenance/Hook step succeeds on Windows and macOS and remote-bundle controls now pass; the Linux maintenance/Hook group reports a failure whose detailed artifact is pending.
 
 The original strict parked-wake count and all6 original declined-review routes pass62.09s, preserving exact behavior assertions and original bounds. Driver69.156s, sources and HEAD unchanged, normal process retirement with zero forced cleanup/overflow/races. Linux CI verifies all3 maintenance lifetime cases and original Hook ownership controls; its single remaining focused-group failure is the quiet-period parking prerequisite now corrected. Broader Send timing and whole-platform acceptance remain open.
+
+Change Review marker payload repair: the actual SQLite authorizer observed unused agent_runs task/result/budget/steps and agent_run_steps payload reads on the preceding projection (two causal failures, legacy adapter passed). The stock projection now fetches only primary non-superseded run IDs and assistant anchors, ordered exactly as before, plus the original snapshots. Original custom readers retain their route. All seven targeted cases pass in 16.37s: real memory/file SQL, legacy/subclass/instance/class readers, and original real-Git byte-identical resume. The existing resume test now declares its required bootstrap profile; its body is unchanged. HEAD and all managed Python sources stayed unchanged during the run; process tree was empty at parent exit with no forced retirement or overflow, but the observer recorded two identity lookup races, so no zero-race cleanup claim is made. New regression lint/format and diff checks pass; the two existing product modules have zero new lint findings. Existing ADR084 documents the narrow query contract. Targeted seven-case CI and early evidence artifacts are added on Linux, macOS and Windows with unchanged timeouts. Separately, all 29 focused trace-maintenance/optional-Hook-host controls pass on all three actual OS runners at a84f7d58. AC20, whole performance budgets, remaining cleanup issues and final combined real three-message UAT remain open; status stays In Progress.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up

@@ -239,7 +239,7 @@ from tldw_chatbook.config import (
 )
 
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
-from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB, _CHANGE_REVIEW_LIST_RUNS_SOURCE
 from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 from tldw_chatbook.Workspaces.change_review_finalization import (
@@ -10590,12 +10590,24 @@ class ConsoleAgentBridge:
         self, conversation_id: str
     ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
         """Return anchored blocks containing only durable Change Review rows."""
-        records = [
-            record
-            for record in self._db.list_runs(conversation_id, include_superseded=False)
-            if record["agent_kind"] == AGENT_KIND_PRIMARY
-        ]
-        records.reverse()
+        database = self._db
+        original, code, defaults = _CHANGE_REVIEW_LIST_RUNS_SOURCE
+        reader = database.list_runs
+        if (
+            type(database) is AgentRunsDB
+            and getattr(reader, "__func__", None) is original
+            and original.__code__ is code
+            and original.__defaults__ is defaults
+        ):
+            records = database.list_change_review_run_anchors(conversation_id)
+        else:
+            # Preserve the existing callback contract for custom DB adapters.
+            records = [
+                record
+                for record in reader(conversation_id, include_superseded=False)
+                if record["agent_kind"] == AGENT_KIND_PRIMARY
+            ]
+            records.reverse()
         snapshots: dict[str, list[dict]] = {}
         try:
             for row in self._db.change_snapshots_for_conversation(conversation_id):
