@@ -70,6 +70,7 @@ def run_finite_local_worker(function, /, *args, **kwargs):
             "db.library_collections": "close",
             "db.evals": "close",
             "db.subscriptions": "close",
+            "db.workspaces": "close",
             "notifications.client": "close",
         }
         with storage._lock:

@@ -23,6 +23,7 @@ from collections.abc import Awaitable
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from collections.abc import Collection, Mapping, Set as AbstractSet
 from dataclasses import dataclass, field, replace as dataclass_replace
+from inspect import getattr_static as _badge_count_getattr_static
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Literal, Sequence, cast
@@ -11444,3 +11445,88 @@ _SUBAGENT_BADGE_LIVE_CALLBACKS = (
         )
     ),
 )
+
+
+# Defining callbacks for the optional finite legacy run-log probe only.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "ConsoleAgentBridge", ConsoleAgentBridge),
+        *(
+            (ConsoleAgentBridge, name, vars(ConsoleAgentBridge)[name])
+            for name in (
+                "resolve_run_log_target",
+                "latest_primary_run_id",
+                "_owning_run_id_for_log",
+                "run_log_available",
+                "_run_log_authority_for",
+                "_read_run_log_page",
+            )
+        ),
+        (globals(), "AgentRunsDB", AgentRunsDB),
+        (globals(), "operation_owned_connection", operation_owned_connection),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "ConsoleAgentBridge", ConsoleAgentBridge),
+            *(
+                (ConsoleAgentBridge, name, vars(ConsoleAgentBridge)[name])
+                for name in (
+                    "resolve_run_log_target",
+                    "latest_primary_run_id",
+                    "_owning_run_id_for_log",
+                    "run_log_available",
+                    "_run_log_authority_for",
+                    "_read_run_log_page",
+                )
+            ),
+            (globals(), "AgentRunsDB", AgentRunsDB),
+            (globals(), "operation_owned_connection", operation_owned_connection),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+# Exact defining-module count callback; independent of the run-log probe capsule.
+
+_SUBAGENT_BADGE_COUNT_CALLBACK = (
+    ConsoleAgentBridge,
+    "subagent_counts",
+    ConsoleAgentBridge.subagent_counts,
+    ConsoleAgentBridge.subagent_counts.__code__,
+    ConsoleAgentBridge.subagent_counts.__globals__,
+    ConsoleAgentBridge.__getattribute__,
+    _badge_count_getattr_static(ConsoleAgentBridge, "__dict__"),
+)
+del _badge_count_getattr_static

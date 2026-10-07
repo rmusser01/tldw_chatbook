@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
 from datetime import datetime, timezone
+from inspect import getattr_static as _badge_count_getattr_static
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterator, Mapping, Sequence, Union, overload
 
@@ -3441,3 +3442,86 @@ class AgentRunsDB(BaseDB):
                 ),
             )
             return cursor.rowcount
+
+
+# Defining callbacks for the optional finite legacy run-log probe only.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "AgentRunsDB", AgentRunsDB),
+        *(
+            (AgentRunsDB, name, vars(AgentRunsDB)[name])
+            for name in (
+                "get_run_metadata",
+                "latest_primary_run_metadata",
+                "_metadata_row_to_dict",
+                "connection",
+                "_held_connection",
+                "_get_connection",
+                "close",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "AgentRunsDB", AgentRunsDB),
+            *(
+                (AgentRunsDB, name, vars(AgentRunsDB)[name])
+                for name in (
+                    "get_run_metadata",
+                    "latest_primary_run_metadata",
+                    "_metadata_row_to_dict",
+                    "connection",
+                    "_held_connection",
+                    "_get_connection",
+                    "close",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)
+
+
+# Defining DB source records this before an optional Bridge consumer can import.
+
+_CONVERSATION_SUBAGENT_COUNT_CALLBACK = (
+    AgentRunsDB,
+    "count_subagents_by_conversation",
+    AgentRunsDB.count_subagents_by_conversation,
+    AgentRunsDB.count_subagents_by_conversation.__code__,
+    AgentRunsDB.count_subagents_by_conversation.__globals__,
+    AgentRunsDB.__getattribute__,
+    _badge_count_getattr_static(AgentRunsDB, "__dict__"),
+)
+del _badge_count_getattr_static

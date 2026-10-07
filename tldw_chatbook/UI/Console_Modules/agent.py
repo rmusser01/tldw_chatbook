@@ -1501,14 +1501,22 @@ class ConsoleAgentController:
         worker = get_current_worker()
         run_id = None
         try:
-            run_id = bridge.resolve_run_log_target(selection[0], selection[1])
-            available = bool(
-                run_id
-                and not worker.is_cancelled
-                and bridge.run_log_available(
-                    run_id, cancelled=lambda: worker.is_cancelled
-                )
+            from tldw_chatbook.UI.Console_Modules.run_log_probe_scope import (
+                finite_stock_probe,
             )
+
+            def read():
+                nonlocal run_id
+                run_id = bridge.resolve_run_log_target(selection[0], selection[1])
+                return bool(
+                    run_id
+                    and not worker.is_cancelled
+                    and bridge.run_log_available(
+                        run_id, cancelled=lambda: worker.is_cancelled
+                    )
+                )
+
+            available = finite_stock_probe(bridge, read)
         except Exception as error:  # noqa: BLE001 - optional log reads fail closed.
             logger.error("Run-log availability failed ({})", type(error).__name__)
             available = False
@@ -2507,17 +2515,22 @@ class ConsoleAgentController:
         row_ids = frozenset(
             cid for row in rows if (cid := getattr(row, "conversation_id", None))
         )
-        from ...Chat.console_agent_bridge import ConsoleAgentBridge
         from ...DB.AgentRuns_DB import AgentRunsDB
 
         database = getattr(bridge, "_db", None)
         if type(database) is AgentRunsDB and not database.is_memory_db:
             authority = getattr(self.app_instance, "chachanotes_db", None)
+            query, query_definition, query_key, stock_query = (
+                self._subagent_count_query(bridge, database)
+            )
             key = (
                 bridge,
                 row_ids,
-                self._subagent_count_live_token(bridge, row_ids),
+                self._subagent_count_live_token(
+                    bridge, row_ids, stock_query=stock_query
+                ),
                 authority,
+                query_key,
                 database,
             )
             owner = self._console_subagent_counts_read_owner
@@ -2532,11 +2545,10 @@ class ConsoleAgentController:
                     "pending": False,
                     "at": 0.0,
                     "database": authority,
-                    "query": (
-                        database.count_subagents_by_conversation
-                        if type(bridge) is ConsoleAgentBridge
-                        else bridge.subagent_counts
-                    ),
+                    "query": query,
+                    # Keep the original function/Code/namespace alive while its
+                    # identity IDs participate in the pending input key.
+                    "query_definition": query_definition,
                 }
                 self._console_subagent_counts_read[row_ids] = state
                 # Browser and workspace projections may alternate subsets.
@@ -2577,7 +2589,66 @@ class ConsoleAgentController:
         return self._console_subagent_counts_cache
 
     @staticmethod
-    def _subagent_count_live_token(bridge: Any, row_ids: frozenset[str]) -> tuple:
+    def _subagent_count_query(bridge: Any, database: Any) -> tuple:
+        """Capture one selected callable and its disposable semantic identity."""
+        import inspect
+        from types import FunctionType, MethodType
+
+        from ...Chat.console_agent_bridge import _SUBAGENT_BADGE_COUNT_CALLBACK
+        from ...DB.AgentRuns_DB import _CONVERSATION_SUBAGENT_COUNT_CALLBACK
+
+        def definition_current(receiver, record):
+            owner, name, function, code, namespace, lookup, dictionary = record
+            return (
+                type(receiver) is owner
+                and inspect.getattr_static(owner, "__getattribute__") is lookup
+                and inspect.getattr_static(owner, "__dict__") is dictionary
+                and inspect.getattr_static(owner, "__getattr__", None) is None
+                and inspect.getattr_static(receiver, name, None) is function
+                and function.__code__ is code
+                and function.__globals__ is namespace
+            )
+
+        def bound_current(method, receiver, record):
+            return (
+                type(method) is MethodType
+                and method.__self__ is receiver
+                and method.__func__ is record[2]
+            )
+
+        bridge_record = _SUBAGENT_BADGE_COUNT_CALLBACK
+        database_record = _CONVERSATION_SUBAGENT_COUNT_CALLBACK
+        bridge_stock = definition_current(bridge, bridge_record)
+        bridge_query = bridge.subagent_counts
+        bridge_stock = bridge_stock and bound_current(
+            bridge_query, bridge, bridge_record
+        )
+        database_stock = definition_current(database, database_record)
+        query = (
+            database.count_subagents_by_conversation if bridge_stock else bridge_query
+        )
+        stock = (
+            bridge_stock
+            and database_stock
+            and bound_current(query, database, database_record)
+        )
+        if type(query) is MethodType:
+            receiver, function = query.__self__, query.__func__
+        elif type(query) is FunctionType:
+            receiver, function = None, query
+        else:
+            # Preserve arbitrary callable ABI without probing its properties.
+            receiver = query
+            function = inspect.getattr_static(type(query), "__call__", None)
+        code = function.__code__ if type(function) is FunctionType else None
+        namespace = function.__globals__ if type(function) is FunctionType else None
+        definition = receiver, function, code, namespace
+        return query, definition, tuple(id(item) for item in definition), stock
+
+    @staticmethod
+    def _subagent_count_live_token(
+        bridge: Any, row_ids: frozenset[str], *, stock_query: bool = False
+    ) -> tuple:
         """Read process-local run/child identities without database work."""
         import inspect
         from types import MethodType
@@ -2610,7 +2681,7 @@ class ConsoleAgentController:
         )
         # Primary turn/run publication cannot change the sub-agent-only count.
         # Custom callbacks keep their preceding primary-token contract.
-        if stock:
+        if stock and stock_query:
             target = None
         return tuple(
             (
@@ -2652,11 +2723,20 @@ class ConsoleAgentController:
             is not state["database"]
         ):
             return
+        try:
+            _query, _definition, query_key, stock_query = self._subagent_count_query(
+                bridge, database
+            )
+        except Exception:  # noqa: BLE001 - changed custom getter remains retryable.
+            return
         if state["key"] != (
             bridge,
             state["key"][1],
-            self._subagent_count_live_token(bridge, state["key"][1]),
+            self._subagent_count_live_token(
+                bridge, state["key"][1], stock_query=stock_query
+            ),
             getattr(self.app_instance, "chachanotes_db", None),
+            query_key,
             database,
         ):
             return

@@ -18722,3 +18722,8 @@ On 2026-10-06, TASK-34406 AC35's E-only Composer V3 fixture formatter used `Path
 V4 decodes explicitly as UTF-8, parses the actual before/after bytes for its complete AST check, and positively retains the original UTF-8 caret bytes. Applying the authored patch to an E-only byte-exact original copy must also produce the exact frozen candidate bytes: in this incident the formatting-only patch looked correct while V3's separate after-file bytes were corrupt. Preserve rejected evidence, and do not treat comparisons of two identically decoded strings as proof that the real source bytes or applied candidate are unchanged.
 
 Evidence: `audit-composer-v3-body-leaves.py`, rejected `composer-history-private-profile-prerequisite-v3`, and corrected `composer-history-private-profile-prerequisite-v4/manifest.json` plus its `applied-patch-audit` byte comparison. No production source or test body was changed by the rejected candidate.
+
+
+### Record stock callbacks in their defining module (Console count query, 2026-10-06)
+
+The Console count fix first captured the DB callback when the Bridge imported it. A DB override installed before that import was therefore recorded as stock. The same draft indexed `AgentRunsDB.__dict__["__dict__"]`, although the instance dictionary descriptor belongs to `BaseDB`. Actual source-header controls exposed both errors before installation. Record the callback at its own definition, and use static MRO lookup for inherited descriptors. The corrected fix passed seven real-SQLite regressions and the existing 39 cadence, TTL, ownership and cancellation controls. Custom callbacks must remain the callable selected for the pending read; recheck that semantic identity before publishing.

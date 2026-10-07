@@ -941,3 +941,70 @@ _WORKSPACE_COMPOSITE_CLOSING_SOURCE = (
         for function in (_core_closing, _core_closing.__wrapped__)
     ),
 )
+
+
+# Defining callbacks for the optional finite legacy run-log probe only.
+_RUN_LOG_PROBE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    (
+        (globals(), "WorkspaceDB", WorkspaceDB),
+        *(
+            (WorkspaceDB, name, vars(WorkspaceDB)[name])
+            for name in (
+                "__init__",
+                "_initialize_schema",
+                "_get_connection",
+                "_held_connection",
+                "connection",
+                "close",
+            )
+        ),
+    ),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for _owner, _name, descriptor in (
+            (globals(), "WorkspaceDB", WorkspaceDB),
+            *(
+                (WorkspaceDB, name, vars(WorkspaceDB)[name])
+                for name in (
+                    "__init__",
+                    "_initialize_schema",
+                    "_get_connection",
+                    "_held_connection",
+                    "connection",
+                    "close",
+                )
+            ),
+        )
+        if callable(descriptor) or isinstance(descriptor, (staticmethod, classmethod))
+        for outer in (
+            descriptor.__func__
+            if isinstance(descriptor, (staticmethod, classmethod))
+            else descriptor,
+        )
+        if hasattr(outer, "__code__")
+        for function in (
+            outer,
+            *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+            *(
+                (outer.__wrapped__.__wrapped__,)
+                if hasattr(outer, "__wrapped__")
+                and hasattr(outer.__wrapped__, "__wrapped__")
+                else ()
+            ),
+        )
+    ),
+)

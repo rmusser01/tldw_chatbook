@@ -501,7 +501,7 @@ async def test_pending_counts_capture_receiver_and_refuse_changed_owner(
                 assert release.wait(10)
 
     try:
-        with _actual_calls(barrier=barrier):
+        with _actual_calls(barrier=barrier) as calls:
             agent._console_subagent_counts_for_rows(bridge, rows)
             state = agent._console_subagent_counts_read[frozenset({"conv"})]
             assert await asyncio.to_thread(entered.wait, 10)
@@ -528,10 +528,20 @@ async def test_pending_counts_capture_receiver_and_refuse_changed_owner(
                 agent.app_instance.chachanotes_db = object()
             release.set()
             await _finish(tasks)
+            if mutation == "run":
+                # The stock query counts conversation subagent rows, so a
+                # primary-only run change preserves this exact count input.
+                assert state["values"] == {"conv": 1} and state["at"] > 0
+                assert agent._console_subagent_counts_for_rows(bridge, rows) == {
+                    "conv": 1
+                }
+                await _finish(tasks)
+        assert calls["counts"] == 1
         assert receivers == [
             first
         ], "pending query redirected to a replacement receiver"
-        assert state["values"] == {} and state["at"] == 0
+        if mutation != "run":
+            assert state["values"] == {} and state["at"] == 0
         assert not worker_leases(first) and not worker_leases(second)
     finally:
         release.set()
