@@ -3744,6 +3744,231 @@ async def test_all_qwencloud_kwargs_paths_forward_pinned_mode_and_base() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_key", "display_name"),
+    [
+        ("google", "Google"),
+        ("huggingface", "HuggingFace"),
+    ],
+)
+async def test_console_send_pins_configured_api_settings_base_url(
+    provider_key: str, display_name: str
+) -> None:
+    """TASK-2117: a configured Console endpoint reaches the primary send.
+
+    ``[api_settings.<provider>].api_base_url`` is Console's canonical endpoint
+    setting, but the google/huggingface adapters only read legacy config
+    sections, so before the central pin a configured value was silently
+    ignored while requests went to the default endpoint.
+    """
+
+    configured_base = f"https://{provider_key}-proxy.example.test/v1"
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                provider_key: {
+                    "api_key": f"{provider_key}-test-key",
+                    "api_base_url": configured_base,
+                    "model": f"{provider_key}-model",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=display_name, streaming=False)
+    )
+    assert resolution.ready, resolution.visible_copy
+    assert resolution.base_url == configured_base
+
+    assert [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "Hello."}]
+        )
+    ] == ["ok"]
+
+    assert calls[0]["api_base_url"] == configured_base
+    assert calls[0]["api_key"] == f"{provider_key}-test-key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_key",
+    ["openai", "cohere", "deepseek", "google", "groq", "huggingface", "openrouter"],
+)
+async def test_console_send_pins_configured_base_url_for_every_affected_provider(
+    provider_key: str,
+) -> None:
+    """TASK-2117 AC#2: the previously-masked providers carry the fix too.
+
+    openai/cohere/deepseek/groq/openrouter adapters self-serve the canonical
+    table, but the gateway pin must also carry a session-resolved endpoint so
+    primary sends cannot drift from what resolution computed.
+    """
+
+    configured_base = f"https://{provider_key}-proxy.example.test/v1"
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                provider_key: {
+                    "api_key": f"{provider_key}-test-key",
+                    "api_base_url": configured_base,
+                    "model": f"{provider_key}-model",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider_key, streaming=False)
+    )
+    assert resolution.ready, resolution.visible_copy
+
+    assert [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "Hello."}]
+        )
+    ] == ["ok"]
+
+    assert calls[0]["api_base_url"] == configured_base
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_key",
+    ["openai", "cohere", "deepseek", "google", "groq", "huggingface", "openrouter"],
+)
+async def test_console_send_leaves_base_url_unpinned_in_default_case(
+    provider_key: str,
+) -> None:
+    """TASK-2117 AC#3: with no api_base_url configured, nothing is pinned.
+
+    The kwarg stays absent so each adapter keeps resolving its own default
+    (including any legacy-section endpoint) exactly as before the fix.
+    """
+
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                provider_key: {
+                    "api_key": f"{provider_key}-test-key",
+                    "model": f"{provider_key}-model",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider=provider_key, streaming=False)
+    )
+    assert resolution.ready, resolution.visible_copy
+    # The resolution still carries the builtin fallback for display purposes;
+    # only the adapter kwarg must stay unset.
+    assert resolution.base_url
+
+    assert [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "Hello."}]
+        )
+    ] == ["ok"]
+
+    assert "api_base_url" not in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_console_send_pins_session_selected_endpoint_for_affected_provider() -> (
+    None
+):
+    """TASK-2117 (TASK-2114 shape): a session endpoint is honored, not dropped."""
+
+    selected_base = "https://google-proxy.example.test/v1"
+    calls: list[dict[str, object]] = []
+
+    def fake_chat_api_call(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {
+            "api_settings": {
+                "google": {
+                    "api_key": "google-test-key",
+                    "model": "gemini-test",
+                }
+            }
+        },
+        environ={},
+        chat_api_call_fn=fake_chat_api_call,
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(
+            provider="Google",
+            base_url=selected_base,
+            base_url_is_pinned=True,
+            streaming=False,
+        )
+    )
+    assert resolution.ready, resolution.visible_copy
+    assert resolution.base_url == selected_base
+
+    assert [
+        chunk
+        async for chunk in gateway.stream_chat(
+            resolution, [{"role": "user", "content": "Hello."}]
+        )
+    ] == ["ok"]
+
+    assert calls[0]["api_base_url"] == selected_base
+
+
+@pytest.mark.asyncio
+async def test_console_send_base_url_pin_leaves_llamacpp_paths_untouched() -> None:
+    """TASK-2117 AC#6: llama.cpp keeps its separate direct-base_url path."""
+
+    messages = [{"role": "user", "content": "Hello."}]
+    gateway = ConsoleProviderGateway(environ={})
+    resolution = ConsoleProviderResolution(
+        provider="llama_cpp",
+        base_url="http://127.0.0.1:9099",
+        model="local-model",
+        ready=True,
+        execution_key="llama_cpp",
+        streaming=False,
+    )
+    prepared = gateway.prepare_chat_request(resolution, messages)
+    prepared_kwargs = gateway._chat_api_kwargs_from_prepared(resolution, prepared)
+    assert prepared_kwargs["api_base_url"] == "http://127.0.0.1:9099"
+    assert prepared_kwargs["api_key_resolved"] is True
+    # The plain builder never carried the llama.cpp pin (its sends take the
+    # direct base_url path); the TASK-2117 branch must not change that.
+    assert "api_base_url" not in gateway._chat_api_kwargs(resolution, messages)
+
+
+@pytest.mark.asyncio
 async def test_qwencloud_run_ignores_midrun_config_mutation() -> None:
     base_a = "https://workspace-a.example.test/compatible-mode/v1"
     config: dict[str, object] = {
@@ -7442,9 +7667,15 @@ def test_all_primary_custom_kwargs_paths_preserve_explicit_keyless_decision(
         assert kwargs["api_key_resolved"] is True
 
 
-def test_chat_api_kwargs_omits_api_base_url_for_unpinned_provider() -> None:
-    """Providers without an established pin keep their existing kwargs."""
-    resolution = ConsoleProviderResolution(
+def test_chat_api_kwargs_pins_only_meaningful_provider_base_urls() -> None:
+    """TASK-2117: a differing endpoint pins; the builtin default does not.
+
+    Before TASK-2117 a session-resolved proxy endpoint was silently dropped
+    for these providers; forwarding the builtin default, conversely, would
+    shadow each adapter's own fallback resolution, so only a value that
+    differs from the shipped default is pinned.
+    """
+    proxy_resolution = ConsoleProviderResolution(
         provider="openai",
         base_url="https://proxy.example.test/v1",
         model="gpt-4.1",
@@ -7453,12 +7684,20 @@ def test_chat_api_kwargs_omits_api_base_url_for_unpinned_provider() -> None:
         api_key="k",
         streaming=False,
     )
-
     kwargs = ConsoleProviderGateway._chat_api_kwargs(
-        resolution, [{"role": "user", "content": "hi"}]
+        proxy_resolution, [{"role": "user", "content": "hi"}]
     )
+    assert kwargs["api_base_url"] == "https://proxy.example.test/v1"
 
-    assert "api_base_url" not in kwargs
+    builtin_resolution = dataclasses.replace(
+        proxy_resolution, base_url="https://api.openai.com/v1"
+    )
+    assert (
+        "api_base_url"
+        not in ConsoleProviderGateway._chat_api_kwargs(
+            builtin_resolution, [{"role": "user", "content": "hi"}]
+        )
+    )
 
 
 def test_chat_api_kwargs_omits_prompt_caching_for_non_anthropic() -> None:
