@@ -1,8 +1,9 @@
 ---
 id: TASK-34419
 title: Bound get_conversation_tree reads to the root page
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:41
+updated_date: 2026-10-07 07:38
 ---
 
 ## Description

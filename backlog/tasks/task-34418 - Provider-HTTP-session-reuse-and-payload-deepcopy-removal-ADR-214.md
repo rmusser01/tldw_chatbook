@@ -1,11 +1,11 @@
 ---
 id: TASK-34418
 title: Provider HTTP session reuse and payload deepcopy removal ADR-214
-status: In Progress
+status: Done
 created_date: 2026-10-07 02:41
 dependencies:
 - TASK-34417
-updated_date: 2026-10-07 07:33
+updated_date: 2026-10-07 07:38
 ---
 
 ## Description
