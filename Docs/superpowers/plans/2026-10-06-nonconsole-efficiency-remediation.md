@@ -172,7 +172,7 @@ with the uncorrelated shape already proven on the Console seam (`_conversation_s
 "WHERE m.deleted = 0 AND m.content LIKE ? ESCAPE '\\')"
 ```
 
-Keep parameter order and `message_hit_indexes` identical (branch index 2 unchanged). The COUNT, page query, and per-row `hit_2` projection all inherit the fix from the shared `branches` list. Add a header comment: one bounded pass over `messages` per search instead of a per-conversation correlated scan; reference task-249's rule ("never a leading-wildcard LIKE inside a correlated EXISTS").
+Keep parameter order and `message_hit_indexes` identical (branch index 2 unchanged). The COUNT, page query, and per-row `hit_2` projection all inherit the fix from the shared `branches` list. Add a header comment: one bounded pass over `messages` per search instead of a per-conversation correlated scan; state the rule ("never a leading-wildcard LIKE inside a correlated EXISTS") and cite TASK-34414 plus the sibling precedent task-33261/PERF-02 (whose ~70 s/150k measurement was on the correlated FTS-MATCH EXISTS variant — attribute it as such or use this branch's own measured numbers).
 - [ ] **Step 4: Run tests** — equivalence suite must produce the golden baseline exactly. `pytest Tests/ChaChaNotesDB/test_library_conversation_search.py -v`.
 - [ ] **Step 5: Evidence + commit.** Count statements/scans: run the search once against a seeded 100k-message fixture with `sqlite3` `set_trace_callback` and record the query text (no correlated EXISTS present). `git commit -m "perf(db): uncorrelate library conversation content search"`.
 
