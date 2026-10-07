@@ -40,6 +40,7 @@ def _split_keywords(value: Any) -> list[str] | None:
 class NoteCreateRequest(BaseModel):
     """Request body for creating a server-backed note."""
 
+    content_language: str | None = Field(None, min_length=1, max_length=100)
     title: Optional[str] = None
     content: str
     id: Optional[str] = None
@@ -83,6 +84,7 @@ class NoteCreateRequest(BaseModel):
 class NoteUpdateRequest(BaseModel):
     """Request body for updating a server-backed note."""
 
+    content_language: str | None = Field(None, min_length=1, max_length=100)
     title: Optional[str] = None
     content: Optional[str] = None
     conversation_id: Optional[str] = None
@@ -122,6 +124,7 @@ class NoteResponse(BaseModel):
     """Minimal server note response."""
 
     id: str
+    content_language: str | None = Field(None, min_length=1, max_length=100)
     title: str
     content: str
     version: int

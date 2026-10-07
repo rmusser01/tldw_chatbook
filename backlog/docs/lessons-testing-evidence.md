@@ -15694,6 +15694,14 @@ that test asserts against the scaffold and would pass with the migration's DDL
 deleted. The tell that you need this: your new code writes to the table from a
 method a fixture calls, not only from the migration.
 
+**Follow-up, TASK-34571 (2026-10-06).** The new nullable language column
+needed the same scaffold. Migration rollback/replay calls the scaffold twice,
+so an unconditional ALTER failed with duplicate-column errors; inspect existing
+columns before adding it. Two older tests also compared a *fully upgraded* notes
+table against its historical column set. Update that current-schema census,
+while keeping declaring migration/old-backup fixtures genuinely column-absent.
+The corrected bootstrap/atomicity/v73 selection passed96 tests.
+
 ## `cursor.execute()` returns the cursor, so a follow-up write rewrites the `rowcount` you were about to check (TASK-32186, 2026-09-11)
 
 **What happened.** Adding note-link maintenance to

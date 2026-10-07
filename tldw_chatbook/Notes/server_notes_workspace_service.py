@@ -172,6 +172,7 @@ class ServerNotesWorkspaceService:
             "id": note.get("id"),
             "title": note.get("title") or "",
             "content": note.get("content") or "",
+            "content_language": note.get("content_language"),
             "keywords": self._normalize_keywords(note.get("keywords")),
             "version": int(note.get("version") or 1),
         }
@@ -232,12 +233,14 @@ class ServerNotesWorkspaceService:
         title: str,
         content: str,
         note_id: Optional[str] = None,
+        content_language: Any = _UNSET,
         keywords: Optional[Sequence[str]] = None,
     ) -> NoteCreateRequest:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import NoteCreateRequest
 
         return NoteCreateRequest(
+            **self._with_optional_update_fields(content_language=content_language),
             id=note_id,
             title=title,
             content=content,
@@ -249,12 +252,15 @@ class ServerNotesWorkspaceService:
         *,
         title: Any = _UNSET,
         content: Any = _UNSET,
+        content_language: Any = _UNSET,
         keywords: Any = _UNSET,
     ) -> NoteUpdateRequest:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from ..tldw_api import NoteUpdateRequest
 
-        payload = self._with_optional_update_fields(title=title, content=content)
+        payload = self._with_optional_update_fields(
+            title=title, content=content, content_language=content_language
+        )
         if keywords is not _UNSET and keywords is not None:
             payload["keywords"] = self._normalize_keywords(keywords)
         return NoteUpdateRequest(**payload)
@@ -492,6 +498,7 @@ class ServerNotesWorkspaceService:
         title: Any = _UNSET,
         content: Any = _UNSET,
         note_id: Optional[str] = None,
+        content_language: Any = _UNSET,
         keywords: Any = _UNSET,
         version: Optional[int] = None,
     ) -> dict[str, Any]:
@@ -507,6 +514,7 @@ class ServerNotesWorkspaceService:
                 raise ValueError("Version is required when updating a server note.")
             request = self.build_server_note_update_payload(
                 title=title,
+                content_language=content_language,
                 content=content,
                 keywords=keywords,
             )
@@ -520,6 +528,7 @@ class ServerNotesWorkspaceService:
                 title=self._require_value(title, "title"),
                 content=self._require_value(content, "content"),
                 note_id=note_id,
+                content_language=content_language,
                 keywords=None if keywords is _UNSET else keywords,
             )
             response = await client.create_server_note(request)

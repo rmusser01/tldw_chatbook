@@ -269,7 +269,13 @@ class NotesInteropService:
         )
 
     def add_note(
-        self, user_id: str, title: str, content: str, note_id: Optional[str] = None
+        self,
+        user_id: str,
+        title: str,
+        content: str,
+        note_id: Optional[str] = None,
+        *,
+        content_language: str | None = None,
     ) -> str:
         """
         Adds a new note for the specified user. The user_id will be used as the client_id.
@@ -282,7 +288,12 @@ class NotesInteropService:
 
         try:
             db = self._get_db(user_id)
-            created_note_id = db.add_note(title=title, content=content, note_id=note_id)
+            created_note_id = db.add_note(
+                title=title,
+                content=content,
+                note_id=note_id,
+                content_language=content_language,
+            )
             if created_note_id is None:
                 # Keep correlation without persisting caller-supplied identifiers
                 # or resolved Note payloads. A missing ID was DB-generated.
@@ -331,7 +342,9 @@ class NotesInteropService:
             )
             raise
 
-    def get_note_by_id(self, user_id: str, note_id: str) -> Optional[Dict[str, Any]]:
+    def get_note_by_id(
+        self, user_id: str, note_id: str, *, include_deleted: bool = False
+    ) -> Optional[Dict[str, Any]]:
         start_time = time.time()
         log_counter("notes_library_get_note_attempt")
 
@@ -339,7 +352,7 @@ class NotesInteropService:
             user_id
         )  # user_id here is mainly for consistency or if _get_db has other uses
         result = db.get_note_by_id(
-            note_id=note_id
+            note_id=note_id, **({"include_deleted": True} if include_deleted else {})
         )  # The actual filtering by user would be in SQL if notes were user-specific
 
         # Log metrics

@@ -89,7 +89,7 @@ class FakeLocalNotes:
         )
         return [{"id": "local-1", "title": "Local"}]
 
-    def get_note_by_id(self, user_id, note_id):
+    def get_note_by_id(self, user_id, note_id, *, include_deleted=False):
         if note_id == "local-1":
             return {
                 "id": "local-1",

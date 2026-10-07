@@ -1745,12 +1745,15 @@ class TLDWAPIClient:
     async def create_server_note(
         self, request_data: NoteCreateRequest
     ) -> Dict[str, Any]:
+        payload = request_data.model_dump(
+            exclude_none=True, exclude_defaults=True, mode="json"
+        )
+        if "content_language" in request_data.model_fields_set:
+            payload["content_language"] = request_data.content_language
         return await self._request(
             "POST",
             "/api/v1/notes/",
-            json_data=request_data.model_dump(
-                exclude_none=True, exclude_defaults=True, mode="json"
-            ),
+            json_data=payload,
         )
 
     async def update_server_note(
@@ -1762,7 +1765,7 @@ class TLDWAPIClient:
         return await self._request(
             "PUT",
             f"/api/v1/notes/{note_id}",
-            json_data=request_data.model_dump(exclude_none=True, mode="json"),
+            json_data=request_data.model_dump(exclude_unset=True, mode="json"),
             headers={"expected-version": str(expected_version)},
         )
 

@@ -29,6 +29,8 @@ from tldw_chatbook.Notes.note_folder_models import (
 )
 from tldw_chatbook.Utils.input_validation import sanitize_string, validate_text_input
 
+_LANGUAGE_UNSET = object()
+
 
 class ScopeType(str, Enum):
     LOCAL_NOTE = "local_note"
@@ -1340,6 +1342,7 @@ class NotesScopeService:
         scope: ScopeType | str,
         title: str,
         content: str,
+        content_language: Any = _LANGUAGE_UNSET,
         note_id: Any = None,
         version: Optional[int] = None,
         user_id: Optional[str] = None,
@@ -1350,6 +1353,13 @@ class NotesScopeService:
         internal_research_owner_proof: Optional[str] = None,
     ) -> Any:
         normalized_scope = self._normalize_scope(scope)
+        language_fields = (
+            {}
+            if content_language is _LANGUAGE_UNSET
+            else {"content_language": content_language}
+        )
+        if normalized_scope == ScopeType.WORKSPACE and language_fields:
+            raise ValueError("Workspace note source language is not supported.")
         if create_note_id is not None:
             if normalized_scope != ScopeType.LOCAL_NOTE or note_id is not None:
                 raise ValueError(
@@ -1382,13 +1392,29 @@ class NotesScopeService:
                 if callable(transaction_factory)
                 else nullcontext()
             )
+            if (
+                self.sync_v2_notes_producer is not None
+                and self._sync_v2_profile_scope(sync_v2_profile) is not None
+            ):
+                current = (
+                    self.local_notes_service.get_note_by_id(local_user_id, note_id)
+                    if note_id
+                    else None
+                )
+                if language_fields or (
+                    isinstance(current, Mapping)
+                    and current.get("content_language") is not None
+                ):
+                    raise ValueError(
+                        "Note source language cannot be published by active Sync yet."
+                    )
             if note_id:
                 keyword_result: list[str] | None = None
                 with owner_transaction as owner_cursor:
                     updated = self.local_notes_service.update_note(
                         local_user_id,
                         note_id,
-                        {"title": title, "content": content},
+                        {"title": title, "content": content, **language_fields},
                         version,
                     )
                     if updated and keywords is not None:
@@ -1428,6 +1454,7 @@ class NotesScopeService:
                     title,
                     content,
                     note_id=create_note_id,
+                    **language_fields,
                 )
                 if created_note_id and keywords is not None:
                     keyword_result = self._sync_local_note_keywords(
@@ -1479,6 +1506,7 @@ class NotesScopeService:
 
         if normalized_scope == ScopeType.SERVER_NOTE:
             return await self.server_service.save_server_note(
+                **language_fields,
                 note_id=note_id,
                 title=title,
                 content=content,
@@ -1726,6 +1754,17 @@ class NotesScopeService:
             )
         self._enforce_policy(self._note_action_id(normalized_scope, "update"))
         local_user_id = self._require_user_id(user_id)
+        if (
+            self.sync_v2_notes_producer is not None
+            and self._sync_v2_profile_scope(sync_v2_profile) is not None
+        ):
+            row = self.local_notes_service.get_note_by_id(
+                local_user_id, note_id, include_deleted=True
+            )
+            if row is not None and row.get("content_language") is not None:
+                raise ValueError(
+                    "Note source language cannot be published by active Sync yet."
+                )
         restored = self.local_notes_service.restore_note(
             local_user_id,
             note_id,
