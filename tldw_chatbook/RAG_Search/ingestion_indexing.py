@@ -816,18 +816,27 @@ async def index_entries(
 
     # Best-effort removal of stale chunks: ChromaDB `add` keeps existing IDs,
     # so re-indexed documents would otherwise retain chunks from their
-    # previous version.
-    delete_document = getattr(
-        getattr(service, "vector_store", None), "delete_document", None
-    )
-    if callable(delete_document):
-        for entry in to_index:
-            try:
-                delete_document(entry.document["id"])
-            except Exception as e:
-                logger.debug(
-                    f"Stale-chunk delete failed for {entry.document['id']}: {e}"
-                )
+    # previous version. One batched delete per ingestion batch (task 18):
+    # ChromaVectorStore.delete_documents chunks the ids into $in where-
+    # deletes itself; stores without the batch API (e.g. the in-memory
+    # store) keep the per-document loop.
+    vector_store = getattr(service, "vector_store", None)
+    delete_documents = getattr(vector_store, "delete_documents", None)
+    if callable(delete_documents):
+        try:
+            delete_documents([entry.document["id"] for entry in to_index])
+        except Exception as e:
+            logger.debug(f"Batched stale-chunk delete failed: {e}")
+    else:
+        delete_document = getattr(vector_store, "delete_document", None)
+        if callable(delete_document):
+            for entry in to_index:
+                try:
+                    delete_document(entry.document["id"])
+                except Exception as e:
+                    logger.debug(
+                        f"Stale-chunk delete failed for {entry.document['id']}: {e}"
+                    )
 
     try:
         results = await service.index_batch_optimized(
