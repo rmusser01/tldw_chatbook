@@ -28,5 +28,20 @@ GitHub's native merge queue needs an organization-owned repository, and this one
 - Fork PRs stay manual, and so do PRs opened by a bot or app: a queue dispatch runs as `github-actions[bot]` and would
   skip GitHub's actor-based gates (Dependabot's read-only token, agent-push approval). Spec section 9.
 
+## Amendment 2026-10-06: approve, never dispatch
+
+- **Why:** the queue's dispatched CI never counted. A `workflow_dispatch` run's checks are absent from the PR's status
+  rollup, so every queue-rebased PR stayed `BLOCKED` with all checks green until the stuck eviction (#2874, #3026). The
+  queue was set `MERGE_QUEUE=off` that day.
+- **Change:** after its rebase, the queue approves the PR's `pull_request` runs that GitHub holds because its token caused
+  them; those count. Verified live on probe PR #3033: the queue's `GITHUB_TOKEN` approved the held run, and its required
+  check then appeared in the rollup (spec V4). The queue no longer dispatches the required check.
+- A retry re-runs the failed run in its own check suite (spec V3). When the deciding queue-tick is inside the failed run,
+  it wakes a `merge-queue.yml` run (input `wait_run`) that waits for the run to complete.
+- Eviction causes: "branch refuses the CI dispatch" is replaced by a refused re-run (`evict-rerun`) and "no CI run the
+  queue can start" (`evict-no-run`).
+- The dispatch-safe rule above no longer serves the queue. It still keeps manual dispatches safe.
+- The bot and fork rule is unchanged: approving a bot PR's held runs would skip the same actor-based gates.
+
 Spec: `Docs/superpowers/specs/2026-10-03-merge-queue-design.md`. Plan: `Docs/superpowers/plans/2026-10-03-merge-queue.md`.
 Extends: ADR-103.

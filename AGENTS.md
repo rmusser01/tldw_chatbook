@@ -186,7 +186,10 @@ variable is unset, which means off.
   queue may have rebased your branch, and push with `--force-with-lease`. Never use a plain force push.
 - A conflict-free queue rebase needs no fresh Qodo review, because CI tests the combined result. New Qodo threads on the
   rebased head block the merge, and the queue evicts the PR with the reason.
-- Never click "Approve and run" on a queue-rebased PR. Those runs are the token rebase's empty duplicates.
+- After a queue rebase, GitHub holds the PR's `pull_request` runs for approval, and the queue approves them itself. Those
+  are the runs whose required check counts toward mergeability. Approving one by hand is harmless. Never dispatch the
+  required check by hand to unblock a PR: a `workflow_dispatch` run's check is not in the PR's status rollup, so the PR
+  stays BLOCKED (verified 2026-10-06; spec V4).
 - An evicted PR has auto-merge off and a comment saying why. Fix the cause and re-arm; it rejoins at the back.
 
 **Queue `off` or `dry`:**

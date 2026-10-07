@@ -76,7 +76,8 @@ class FakeGh:
 
     def __init__(self, nodes, *, checks=None, runs=None, comments=None, rebase_error=False,
                  reread=None, dispatch_refused=(), rebase_lag=1, disarm_error=False,
-                 line_page_size=None, late_runs=None, dispatch_status=422):
+                 line_page_size=None, late_runs=None, dispatch_status=422, approve_error=None, rerun_error=None,
+                 run_status=None):
         self.nodes = {n["number"]: n for n in nodes}
         self.checks = checks or {}
         self.runs = runs or {}
@@ -89,6 +90,11 @@ class FakeGh:
         self.line_page_size = line_page_size
         self.late_runs = late_runs or {}
         self.dispatch_status = dispatch_status
+        self.approve_error = approve_error
+        self.rerun_error = rerun_error
+        # run_status[run_id]: successive statuses a single-run read walks (the last one sticks).
+        self.run_status = run_status or {}
+        self.run_reads = {}
         self.runs_reads = {}
         self.reread_counts = {}
         self.rereads_since_rebase = None
@@ -96,6 +102,12 @@ class FakeGh:
         self.events = []
         self.reads = 0
         self.line_cursors = []
+
+    def _set_run(self, rid, **fields):
+        for runs in self.runs.values():
+            for run in runs:
+                if run.get("id") == rid:
+                    run.update(fields)
 
     def _record(self, call):
         self.calls.append(call)
@@ -169,6 +181,29 @@ class FakeGh:
             if workflow in self.dispatch_refused:
                 raise mq.GhError(DISPATCH_ERRORS[self.dispatch_status])
             return None
+        if method == "POST" and path.endswith("/approve"):
+            rid = path.split("/runs/")[1].split("/")[0]
+            self._record(("approve", rid))
+            if self.approve_error:
+                raise mq.GhError(self.approve_error)
+            self._set_run(int(rid), status="queued", conclusion=None)  # GitHub starts it
+            return None
+        if method == "POST" and path.endswith(("/rerun", "/rerun-failed-jobs")):
+            rid = path.split("/runs/")[1].split("/")[0]
+            self._record(("rerun", rid, "failed" if path.endswith("-failed-jobs") else "all"))
+            if self.rerun_error:
+                raise mq.GhError(self.rerun_error)
+            self._set_run(int(rid), status="queued", conclusion=None)
+            return None
+        if method == "GET" and re.search(r"/actions/runs/\d+$", path):
+            rid = int(path.rsplit("/", 1)[1])
+            seen = self.run_reads.get(rid, 0)
+            self.run_reads[rid] = seen + 1
+            if rid in self.run_status:
+                statuses = self.run_status[rid]
+                return {"id": rid, "status": statuses[min(seen, len(statuses) - 1)]}
+            run = next((r for runs in self.runs.values() for r in runs if r.get("id") == rid), {"status": "completed"})
+            return dict(run)
         if method == "POST" and path.endswith("/cancel"):
             self._record(("cancel", path.split("/runs/")[1].split("/")[0]))
             return None
@@ -179,6 +214,19 @@ class FakeGh:
             self._record(("comment", int(path.split("/issues/")[1].split("/")[0]), fields["body"]))
             return None
         raise AssertionError(f"unexpected rest call {method} {path}")
+
+
+def _held(rid, workflow="derived-artifacts.yml", actor="github-actions[bot]", event="pull_request"):
+    """A run GitHub holds for approval because the queue's token caused its event (spec F4)."""
+    return {"id": rid, "path": f".github/workflows/{workflow}", "event": event, "status": "completed",
+            "conclusion": "action_required", "triggering_actor": {"login": actor}, "html_url": f"https://run/{rid}"}
+
+
+def _pr_run(rid, suite, conclusion="failure", status="completed"):
+    """A required-workflow pull_request run whose check suite is `suite`."""
+    return {"id": rid, "path": ".github/workflows/derived-artifacts.yml", "event": "pull_request",
+            "status": status, "conclusion": conclusion, "check_suite_id": suite,
+            "created_at": "2026-10-03T11:00:00Z", "updated_at": "2026-10-03T11:58:00Z", "html_url": f"https://run/{rid}"}
 
 
 def _run(gh, mode="on"):
@@ -205,20 +253,17 @@ def test_on_mode_rebases_front_only():
     runs = {OLD: [
         {"id": 11, "path": ".github/workflows/derived-artifacts.yml", "event": "pull_request", "status": "in_progress", "conclusion": None},
         {"id": 12, "path": ".github/workflows/perf-guard.yml", "event": "pull_request", "status": "completed", "conclusion": "success"},
-        {"id": 13, "path": ".github/workflows/task-598-platform-evidence.yml", "event": "pull_request", "status": "completed", "conclusion": "skipped"},
         {"id": 14, "path": ".github/workflows/merge-queue.yml", "event": "pull_request", "status": "completed", "conclusion": "success"},
-    ]}
+    ], NEW: [_held(31), _held(32, "perf-guard.yml")]}
     gh = FakeGh([_node(1), _node(2, armed="2026-10-03T11:00:00Z")], runs=runs)
     _run(gh)
     kinds = [c[0] for c in gh.calls]
     assert ("rebase", "PR_1", OLD) in gh.calls
     assert ("cancel", "11") in gh.calls
-    assert ("dispatch", "derived-artifacts.yml", {"ref": "feat/1", "inputs[pr]": "1"}) in gh.calls
-    assert ("dispatch", "perf-guard.yml", {"ref": "feat/1"}) in gh.calls
-    dispatched = [c[1] for c in gh.calls if c[0] == "dispatch"]
-    assert "task-598-platform-evidence.yml" not in dispatched and "merge-queue.yml" not in dispatched
+    assert ("approve", "31") in gh.calls and ("approve", "32") in gh.calls
+    assert "dispatch" not in kinds, "a dispatched check never counts toward mergeability (spec V4)"
     comment = next(c for c in gh.calls if c[0] == "comment")
-    assert comment[1] == 1 and f"<!-- merge-queue:rebased:{NEW} -->" in comment[2]
+    assert comment[1] == 1 and f"<!-- merge-queue:rebased:{NEW} -->" in comment[2] and "approved its CI" in comment[2]
     assert all(c[1] != "PR_2" for c in gh.calls if c[0] in ("rebase", "disarm")) and kinds.count("rebase") == 1
 
 
@@ -242,13 +287,14 @@ def test_evicted_front_hands_over_in_the_same_run():
     assert ("rebase", "PR_2", OLD) in gh.calls
 
 
-def test_dispatch_refused_is_named_in_the_comment():
-    runs = {OLD: [{"id": 12, "path": ".github/workflows/task-19642-smoke-clock-matrix.yml",
-                   "event": "pull_request", "status": "completed", "conclusion": "success"}]}
-    gh = FakeGh([_node(1)], runs=runs, dispatch_refused={"task-19642-smoke-clock-matrix.yml"})
-    _run(gh)
+def test_rebase_whose_held_runs_never_appear_says_so_and_dispatches_nothing():
+    sleeps = []
+    gh = FakeGh([_node(1)])
+    mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
+    assert sleeps[-mq.HELD_RUN_POLLS:] == [mq.HELD_RUN_POLL_S] * mq.HELD_RUN_POLLS
     comment = next(c for c in gh.calls if c[0] == "comment")
-    assert "task-19642-smoke-clock-matrix.yml" in comment[2]
+    assert "not approved yet; a later tick approves it" in comment[2]
+    assert not any(c[0] in ("approve", "dispatch") for c in gh.calls)
 
 
 def test_comments_are_deduplicated_by_marker():
@@ -275,11 +321,15 @@ def test_disarm_failure_still_comments():
     assert any(c[0] == "comment" and "conflicts with dev" in c[2] for c in gh.calls)
 
 
-def test_first_failure_dispatches_a_retry():
-    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure")]})
+def test_first_failure_reruns_the_failed_run_in_its_own_check_suite():
+    """A re-run lands in the same check suite, replacing the failure for branch protection
+    (spec V3); a dispatched run would not count at all (V4)."""
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_pr_run(70, 700)]})
     _run(gh)
-    assert ("dispatch", "derived-artifacts.yml", {"ref": "feat/1", "inputs[pr]": "1"}) in gh.calls
-    assert any(c[0] == "comment" and f"merge-queue:retry:{OLD}" in c[2] for c in gh.calls)
+    assert ("rerun", "70", "failed") in gh.calls
+    assert not any(c[0] == "dispatch" for c in gh.calls)
+    assert any(c[0] == "comment" and f"merge-queue:retry:{OLD}" in c[2] and "re-running it" in c[2] for c in gh.calls)
 
 
 def test_queue_tick_failure_is_not_a_ci_failure():
@@ -314,14 +364,13 @@ def test_run_that_failed_without_reporting_the_check_counts_as_a_failure():
     assert ("disarm", "PR_1") in twice.calls
 
 
-def test_cleanup_deletes_only_bot_approval_runs():
-    runs = {OLD: [
-        {"id": 21, "conclusion": "action_required", "triggering_actor": {"login": "github-actions[bot]"}},
-        {"id": 22, "conclusion": "action_required", "triggering_actor": {"login": "someone"}},
-    ]}
+def test_only_the_queues_own_held_pull_request_runs_are_approved():
+    """A held run another actor caused, or a held non-pull_request run, is not the queue's to approve."""
+    runs = {OLD: [_held(21), _held(22, actor="someone"), _held(23, event="workflow_dispatch")]}
     gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check()]}, runs=runs)
     _run(gh)
-    assert ("delete", "21") in gh.calls and ("delete", "22") not in gh.calls
+    assert [c[1] for c in gh.calls if c[0] == "approve"] == ["21"]
+    assert not any(c[0] == "delete" for c in gh.calls), "held runs are approved, never deleted (spec V4)"
 
 
 def test_armed_fork_gets_one_comment_and_is_never_queued():
@@ -380,11 +429,11 @@ def test_own_run_is_not_counted_as_live(monkeypatch):
     runs = {OLD: [{"id": 55, "path": ".github/workflows/derived-artifacts.yml",
                    "status": "in_progress", "html_url": "https://run/55"}]}
     gh = FakeGh([_node(1, state="BLOCKED")], runs=runs)
-    decisions = _run(gh)
-    assert decisions[0][1].kind == "dispatch"
+    decisions = _run(gh, "dry")
+    assert decisions[0][1].kind == "start"
 
 
-def test_rebase_dispatches_before_cancelling_and_spares_the_queue(monkeypatch):
+def test_rebase_approves_before_cancelling_and_spares_the_queue(monkeypatch):
     """queue-tick runs inside its own derived-artifacts run (id 11), and a merge-queue.yml run
     (id 99) shares the old head too -- cancelling either would kill the run doing the cancelling.
     Only the unrelated perf-guard run (id 12) is fair game."""
@@ -393,11 +442,11 @@ def test_rebase_dispatches_before_cancelling_and_spares_the_queue(monkeypatch):
         {"id": 99, "path": ".github/workflows/merge-queue.yml", "event": "pull_request", "status": "in_progress"},
         {"id": 11, "path": ".github/workflows/derived-artifacts.yml", "event": "pull_request", "status": "in_progress"},
         {"id": 12, "path": ".github/workflows/perf-guard.yml", "event": "pull_request", "status": "in_progress"},
-    ]}
+    ], NEW: [_held(31)]}
     gh = FakeGh([_node(1)], runs=runs)
     _run(gh)
     rebase_idx = next(i for i, c in enumerate(gh.calls) if c[0] == "rebase")
-    assert gh.calls[rebase_idx + 1] == ("dispatch", "derived-artifacts.yml", {"ref": "feat/1", "inputs[pr]": "1"})
+    assert gh.calls[rebase_idx + 1] == ("approve", "31")
     assert ("cancel", "99") not in gh.calls
     assert ("cancel", "11") not in gh.calls
     assert ("cancel", "12") in gh.calls
@@ -439,15 +488,14 @@ def test_repeated_rebase_failure_evicts():
     assert "rebase onto dev keeps failing: rebase refused" in comment[2]
 
 
-def test_rebase_dispatches_only_after_the_new_head_appears():
+def test_rebase_approves_only_after_the_new_head_appears():
     """updatePullRequestBranch returns the PRE-rebase head and the branch moves about 1 s later
-    (spike). The queue polls until a reread shows the new head, and only then dispatches CI and
-    comments with the NEW sha."""
+    (spike). The queue polls until a reread shows the new head, and only then approves its held
+    CI and comments with the NEW sha."""
     sleeps = []
-    gh = FakeGh([_node(1)], rebase_lag=2)
+    gh = FakeGh([_node(1)], rebase_lag=2, runs={NEW: [_held(31)]})
     mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
-    required = ("dispatch", "derived-artifacts.yml", {"ref": "feat/1", "inputs[pr]": "1"})
-    assert gh.events.index(("read_pr", NEW)) < gh.events.index(required)
+    assert gh.events.index(("read_pr", NEW)) < gh.events.index(("approve", "31"))
     assert sleeps == [mq.REBASE_POLL_S] * 3
     comment = next(c for c in gh.calls if c[0] == "comment")
     assert f"<!-- merge-queue:rebased:{NEW} -->" in comment[2] and f"`{NEW[:10]}`" in comment[2]
@@ -477,11 +525,12 @@ def test_gh_argument_typing():
     seen = []
     gh = mq.Gh(runner=lambda args: (seen.append(args), "{}")[1])
     gh.graphql("query { x }", number=5, id="X")
-    mq.dispatch(gh, "w.yml", "feat/1", 7)
-    graphql_args, dispatch_args = seen
+    mq.wake_after(gh, 7)
+    graphql_args, wake_args = seen
     assert graphql_args[graphql_args.index("-F") + 1] == "number=5"
     assert "id=X" in graphql_args
-    assert "ref=feat/1" in dispatch_args and "inputs[pr]=7" in dispatch_args
+    assert f"repos/{mq.REPO}/actions/workflows/merge-queue.yml/dispatches" in wake_args
+    assert "ref=dev" in wake_args and "inputs[wait_run]=7" in wake_args
 
 
 def _required_run(rid, status="in_progress", conclusion=None):
@@ -524,52 +573,74 @@ def test_a_live_required_run_on_the_second_page_of_workflow_runs_is_seen():
     assert not any(c[0] == "dispatch" for c in gh.calls)
 
 
-@pytest.mark.parametrize("status", [422, 404])
-@pytest.mark.parametrize(("checks", "decided"), [([_check("failure")], "retry"), ([], "dispatch")])
-def test_refused_ci_dispatch_evicts_and_the_line_moves_on(checks, decided, status):
-    """Qodo #3: a branch that refuses the dispatch (422: its derived-artifacts.yml is broken or
-    lacks the trigger; 404: its ref is gone) must not stall the line: evict it with the error,
-    then decide for the next PR in the same run."""
+@pytest.mark.parametrize("status", [403, 409, 422])
+def test_a_refused_rerun_evicts_and_the_line_moves_on(status):
+    """GitHub will not re-run the failed run (too old, not re-runnable): evict with the reason,
+    then decide for the next PR in the same run. A dispatch is no fallback: it never counts (V4).
+
+    Args:
+        status: The refusal's HTTP status.
+    """
     gh = FakeGh([_node(1, state="BLOCKED"), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")],
-                checks={OLD: checks}, dispatch_refused={"derived-artifacts.yml"}, dispatch_status=status)
+                checks={OLD: [_check("failure", suite=700)]}, runs={OLD: [_pr_run(70, 700)]},
+                rerun_error=f"gh: This workflow run cannot be rerun (HTTP {status})")
     decisions = _run(gh)
-    assert [(n, a.kind) for n, a in decisions] == [(1, decided), (2, "evict")]
+    assert [(n, a.kind) for n, a in decisions] == [(1, "retry"), (2, "evict")]
     assert ("disarm", "PR_1") in gh.calls and ("disarm", "PR_2") in gh.calls
     comment = next(c for c in gh.calls if c[0] == "comment" and c[1] == 1)
-    assert f"<!-- merge-queue:evict-dispatch:{OLD} -->" in comment[2]
-    assert f"CI dispatch failed: {DISPATCH_ERRORS[status]}" in comment[2]
-    assert not any(c[0] == "comment" and "merge-queue:retry:" in c[2] for c in gh.calls)
+    assert f"<!-- merge-queue:evict-rerun:{OLD} -->" in comment[2] and "refused to re-run" in comment[2]
+    assert not any(c[0] == "dispatch" for c in gh.calls)
 
 
-@pytest.mark.parametrize("status", [422, 404])
-def test_refused_ci_dispatch_after_a_rebase_evicts_on_the_new_head(status):
-    runs = {OLD: [{"id": 12, "path": ".github/workflows/perf-guard.yml", "event": "pull_request",
-                   "status": "in_progress", "conclusion": None}]}
-    gh = FakeGh([_node(1), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")], runs=runs,
-                dispatch_refused={"derived-artifacts.yml"}, dispatch_status=status)
+def test_start_with_nothing_to_approve_or_rerun_evicts_and_the_line_moves_on():
+    """No held run and no cancelled run on an up-to-date head: nothing the queue can start counts,
+    so evict with how to start CI, and move on."""
+    gh = FakeGh([_node(1, state="BLOCKED"), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")])
     decisions = _run(gh)
-    assert [(n, a.kind) for n, a in decisions] == [(1, "rebase"), (2, "evict")]
+    assert [(n, a.kind) for n, a in decisions] == [(1, "start"), (2, "evict")]
     comment = next(c for c in gh.calls if c[0] == "comment" and c[1] == 1)
-    assert f"<!-- merge-queue:evict-dispatch:{NEW} -->" in comment[2]
-    assert f"CI dispatch failed: {DISPATCH_ERRORS[status]}" in comment[2]
-    assert not any(c[0] == "cancel" for c in gh.calls), "an evicted PR's old runs are left alone"
-    assert not any(c[0] == "comment" and "merge-queue:rebased:" in c[2] for c in gh.calls)
+    assert f"<!-- merge-queue:evict-no-run:{OLD} -->" in comment[2] and "close and reopen" in comment[2]
+    assert not any(c[0] == "dispatch" for c in gh.calls)
 
 
-@pytest.mark.parametrize("status", [502, 403])
-@pytest.mark.parametrize(("state", "checks"), [("BLOCKED", []), ("BLOCKED", [_check("failure")]), ("BEHIND", [])],
-                         ids=["dispatch", "retry", "after-rebase"])
-def test_a_github_side_dispatch_error_fails_the_run_and_disarms_nobody(state, checks, status):
-    """Spec section 8: a 5xx, rate limit or 403 is GitHub's error, not the branch's. Evicting on
-    it, with the same-run hand-over, would disarm every front one outage touches. The run must
-    fail instead, before any disarm, so the next event retries."""
-    nodes = [_node(1, state=state)] + [_node(i, armed=f"2026-10-03T1{i}:00:00Z", state="BLOCKED") for i in range(2, 6)]
-    gh = FakeGh(nodes, checks={OLD: checks}, dispatch_refused={"derived-artifacts.yml"}, dispatch_status=status)
+def test_start_reruns_a_cancelled_run_in_full():
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("cancelled", suite=800)]},
+                runs={OLD: [_pr_run(80, 800, conclusion="cancelled")]})
+    decisions = _run(gh)
+    assert decisions[0][1].kind == "start"
+    assert ("rerun", "80", "all") in gh.calls and not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_start_approves_a_held_run_strictly():
+    """Reached when the tick's best-effort approval pass did not get there first."""
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_held(31)]})
+    pr = mq.read_prs(gh)[0]
+    assert mq._start(gh, pr, lambda m: None, lambda s: None) is False
+    assert ("approve", "31") in gh.calls and not any(c[0] == "disarm" for c in gh.calls)
+
+
+@pytest.mark.parametrize("status", [502, 500])
+@pytest.mark.parametrize("path", ["start", "retry"])
+def test_a_github_side_error_fails_the_run_and_disarms_nobody(path, status):
+    """Spec section 8: a 5xx is GitHub's error, not the branch's. Evicting on it, with the
+    same-run hand-over, would disarm every front one outage touches. The run must fail instead,
+    before any disarm, so the next event retries.
+
+    Args:
+        path: Which action meets the error: approving a held run, or re-running a failed one.
+        status: The HTTP status GitHub returns.
+    """
+    nodes = [_node(1, state="BLOCKED")] + [_node(i, armed=f"2026-10-03T1{i}:00:00Z", state="BLOCKED") for i in range(2, 6)]
+    error = f"gh: Server Error (HTTP {status})"
+    if path == "start":
+        gh = FakeGh(nodes, runs={OLD: [_held(31)]}, approve_error=error)
+    else:
+        gh = FakeGh(nodes, checks={OLD: [_check("failure", suite=700)]}, runs={OLD: [_pr_run(70, 700)]},
+                    rerun_error=error)
     with pytest.raises(mq.GhError, match=rf"\(HTTP {status}\)"):
         _run(gh)
     assert not any(c[0] == "disarm" for c in gh.calls)
     assert not any(c[0] == "comment" for c in gh.calls)
-    assert [c[2]["ref"] for c in gh.calls if c[0] == "dispatch"] == ["feat/1"], "nothing behind the front was touched"
 
 
 def test_rest_pages_stop_at_total_count_without_a_false_cap_error():
@@ -580,13 +651,17 @@ def test_rest_pages_stop_at_total_count_without_a_false_cap_error():
         mq.read_checks(FakeGh([], checks={OLD: full + [_check()]}), OLD)
 
 
-@pytest.mark.parametrize("checks", [[], [_check("failure")]], ids=["dispatch", "retry"])
-def test_a_required_run_that_appeared_since_the_decision_stops_the_dispatch(checks):
-    """Qodo #4: merge-queue.yml and a queue-tick can decide the same dispatch for one head. The
-    one that dispatches second re-reads the live runs first and stands down."""
+@pytest.mark.parametrize("checks", [[], [_check("failure")]], ids=["start", "retry"])
+def test_a_required_run_that_appeared_since_the_decision_stops_the_action(checks):
+    """Qodo #4: merge-queue.yml and a queue-tick can decide the same action for one head. The one
+    that acts second re-reads the live runs first and stands down.
+
+    Args:
+        checks: The required check's runs on the head.
+    """
     gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, late_runs={OLD: [_required_run(88)]})
     decisions = _run(gh)
-    assert decisions[0][1].kind in ("dispatch", "retry")
+    assert decisions[0][1].kind in ("start", "retry")
     assert gh.calls == []
 
 
@@ -617,8 +692,8 @@ def test_bot_authored_prs_are_never_queued():
 
 def test_main_drives_the_real_gh_argv_end_to_end(monkeypatch, tmp_path):
     """Qodo #7: main() through the real Gh and _run_gh down to the subprocess argv, with canned
-    JSON for a BEHIND front PR: line query, pinned-head rebase, poll reread, CI dispatch with the
-    PR input, comment."""
+    JSON for a BEHIND front PR: line query, approval pass, pinned-head rebase, poll reread, the
+    bounded wait for the new head's held runs (none appear here), comment. No dispatch."""
     owner, name = mq.REPO.split("/")
     node = _node(7, ref="feat/queue-me")
     seen = []
@@ -647,6 +722,7 @@ def test_main_drives_the_real_gh_argv_end_to_end(monkeypatch, tmp_path):
 
     monkeypatch.setattr(mq.subprocess, "run", fake_subprocess_run)
     monkeypatch.setattr(mq, "REBASE_POLL_S", 0)
+    monkeypatch.setattr(mq, "HELD_RUN_POLL_S", 0)
     monkeypatch.setenv("MERGE_QUEUE", "on")
     summary = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
@@ -655,20 +731,104 @@ def test_main_drives_the_real_gh_argv_end_to_end(monkeypatch, tmp_path):
 
     repo = f"repos/{owner}/{name}"
     runs_old = f"{repo}/actions/runs?head_sha={OLD}&per_page=100&page=1"
+    held_old = f"{repo}/actions/runs?head_sha={OLD}&status=action_required&per_page=100&page=1"
+    held_new = f"{repo}/actions/runs?head_sha={NEW}&status=action_required&per_page=100&page=1"
     who = ["-f", f"owner={owner}", "-f", f"name={name}"]
     assert seen[:-1] == [
         ["gh", "api", "graphql", "-f", f"query={mq.LINE_QUERY}", *who],
+        ["gh", "api", "-X", "GET", held_old],
         ["gh", "api", "-X", "GET", f"{repo}/commits/{OLD}/check-runs"
          "?check_name=Derived%20artifacts%20reproduce%20from%20their%20sources&filter=all&per_page=100&page=1"],
         ["gh", "api", "-X", "GET", runs_old],
-        ["gh", "api", "-X", "GET", f"{repo}/actions/runs?head_sha={OLD}&status=action_required&per_page=100&page=1"],
         ["gh", "api", "graphql", "-f", f"query={mq.REBASE_MUTATION}", "-f", "id=PR_7", "-f", f"oid={OLD}"],
         ["gh", "api", "graphql", "-f", f"query={mq.PR_QUERY}", *who, "-F", "number=7"],
         ["gh", "api", "-X", "GET", runs_old],
-        ["gh", "api", "-X", "POST", f"{repo}/actions/workflows/derived-artifacts.yml/dispatches",
-         "-f", "ref=feat/queue-me", "-f", "inputs[pr]=7"],
+        *[["gh", "api", "-X", "GET", held_new]] * mq.HELD_RUN_POLLS,
         ["gh", "api", "graphql", "-f", f"query={mq.COMMENTS_QUERY}", *who, "-F", "number=7"],
     ]
+    assert not any("/dispatches" in " ".join(argv) for argv in seen)
     assert seen[-1][:6] == ["gh", "api", "-X", "POST", f"{repo}/issues/7/comments", "-f"]
     assert seen[-1][6].startswith(f"body=<!-- merge-queue:rebased:{NEW} -->\nMerge queue: this PR is next.")
     assert "| #7 | rebase | behind dev |" in summary.read_text(encoding="utf-8")
+
+
+def test_the_failed_runs_own_tick_wakes_a_queue_run(monkeypatch):
+    """The retry is usually decided by the failed run's own queue-tick while that run is still in
+    progress, and GitHub only re-runs a completed run. The tick wakes a queue run that waits for it."""
+    monkeypatch.setenv("GITHUB_RUN_ID", "70")
+    own = _pr_run(70, 700, conclusion=None, status="in_progress")
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]}, runs={OLD: [own]})
+    assert _run(gh)[0][1].kind == "retry"
+    assert ("dispatch", "merge-queue.yml", {"ref": "dev", "inputs[wait_run]": "70"}) in gh.calls
+    assert not any(c[0] in ("rerun", "comment") for c in gh.calls)
+
+
+def test_a_run_that_is_live_again_is_left_to_finish():
+    """A racing queue run re-ran it first; a second re-run would be refused. Stand down."""
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_pr_run(70, 700, conclusion=None, status="queued")]})
+    pr = mq.read_prs(gh)[0]
+    action = mq.Action("retry", "required check failed once; retrying", ("https://run/70",), suite_id=700)
+    assert mq._retry(gh, pr, action, lambda m: None, lambda s: None) is False
+    assert not any(c[0] in ("rerun", "dispatch", "comment", "disarm") for c in gh.calls)
+
+
+def test_a_broken_runs_stand_in_is_rerun_in_full():
+    """A run that failed without reporting the check (e.g. a startup failure) has no suite on the
+    retry; the queue re-runs that run in full."""
+    broken = dict(_pr_run(31, 531, conclusion="startup_failure"))
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [broken]})
+    assert _run(gh)[0][1].kind == "retry"
+    assert ("rerun", "31", "all") in gh.calls
+
+
+def test_a_rerun_held_for_approval_is_approved():
+    """The re-run's actor is the queue's token, so GitHub may hold it again; the queue approves it."""
+    run = _pr_run(70, 700)
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]}, runs={OLD: [run]})
+    original = gh.rest
+
+    def rest(method, path, fields=None):
+        out = original(method, path, fields)
+        if path.endswith("/rerun-failed-jobs"):
+            gh._set_run(70, status="completed", conclusion="action_required",
+                        event="pull_request", triggering_actor={"login": "github-actions[bot]"})
+        return out
+
+    gh.rest = rest
+    _run(gh)
+    assert gh.calls.index(("rerun", "70", "failed")) < gh.calls.index(("approve", "70"))
+
+
+def test_a_woken_run_waits_for_the_failed_run_then_reruns_it():
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_pr_run(70, 700)]}, run_status={70: ["in_progress", "in_progress", "completed", "queued"]})
+    slept = []
+    mq.run(gh, "on", now=lambda: NOW, sleep=slept.append, log=lambda m: None, wait_run=70)
+    assert gh.run_reads[70] >= 3 and slept[:2] == [mq.WAIT_RUN_DELAY_S] * 2
+    assert ("rerun", "70", "failed") in gh.calls
+
+
+def test_the_wait_is_bounded():
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check()]}, run_status={70: ["in_progress"]})
+    lines = []
+    mq.run(gh, "on", now=lambda: NOW, sleep=lambda s: None, log=lines.append, wait_run=70)
+    assert gh.run_reads[70] == mq.WAIT_RUN_TRIES
+    assert any("still live after" in line for line in lines)
+
+
+def test_dry_mode_never_approves_reruns_or_wakes(monkeypatch):
+    monkeypatch.setenv("GITHUB_RUN_ID", "70")
+    runs = {OLD: [_pr_run(70, 700, conclusion=None, status="in_progress"), _held(31)]}
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]}, runs=runs)
+    assert _run(gh, "dry")[0][1].kind == "retry"
+    assert gh.calls == []
+
+
+def test_a_failed_rerun_still_counts_as_the_second_failure():
+    """After a re-run the old attempt's failed check stays listed (filter=all, verified live on
+    #3019's head 6a11342309), so a re-run that fails again evicts instead of re-running forever."""
+    checks = [_check("failure", completed="2026-10-03T11:00:00Z", url="https://run/a", suite=700),
+              _check("failure", completed="2026-10-03T11:40:00Z", url="https://run/b", suite=700)]
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [_pr_run(70, 700)]})
+    assert _run(gh)[0][1].kind == "evict"
+    assert not any(c[0] == "rerun" for c in gh.calls)

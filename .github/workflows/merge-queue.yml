@@ -4,7 +4,9 @@ name: Merge Queue
 # Spec: Docs/superpowers/specs/2026-10-03-merge-queue-design.md
 #
 # Wakes on a PR being armed, disarmed or closed, and on pushes to dev. derived-artifacts.yml's
-# queue-tick job runs the same script after CI. It uses no schedule, workflow_run or
+# queue-tick job runs the same script after CI. When that tick finds its own run failed the
+# required check, it dispatches this workflow with `wait_run` (GitHub only re-runs a completed
+# run), and the woken run waits for it, then re-runs it. It uses no schedule, workflow_run or
 # pull_request_target trigger, because those read main's copy and nothing here may depend on main. No concurrency
 # group: racing runs are made safe in scripts/merge_queue.py (pinned-head rebase, idempotent
 # evictions).
@@ -17,6 +19,12 @@ on:
     branches: [dev]
   push:
     branches: [dev]
+  workflow_dispatch:
+    inputs:
+      wait_run:
+        description: A run to wait for before deciding (set by the queue itself).
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -26,7 +34,7 @@ jobs:
     name: Merge queue
     if: >-
       (vars.MERGE_QUEUE == 'dry' || vars.MERGE_QUEUE == 'on') &&
-      (github.event_name == 'push' ||
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -43,4 +51,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           MERGE_QUEUE: ${{ vars.MERGE_QUEUE }}
+          WAIT_RUN: ${{ inputs.wait_run }}
         run: python3 scripts/merge_queue.py
