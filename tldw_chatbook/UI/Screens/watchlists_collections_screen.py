@@ -11887,6 +11887,23 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         self._items_page_loading = True
         self._push_items_pager_state()
 
+    @staticmethod
+    def _published_page_rows(
+        page: tuple[Mapping[str, Any], ...]
+    ) -> list[dict[str, Any]]:
+        """Detach one cached page into the mutable dicts the reader shares.
+
+        Snapshot rows are frozen mappings shared structurally across page
+        turns (task 13), but the reader surfaces -- `ItemsPane.items`,
+        `_loaded_items`, `_selected_content_item`, `ContentPane.item` --
+        all deliberately share ONE mutable dict per row so the in-place
+        patches (TASK-15464 content backfill, `_mark_item_read_on_open`,
+        `_patch_item_queued_flag`) reach every surface at once. This is the
+        single boundary where a cached page enters that world: O(page)
+        shallow copies per page VIEW, never per page TURN.
+        """
+        return [dict(row) for row in page]
+
     async def _publish_items_rows(
         self,
         rows: list[dict[str, Any]],
@@ -12005,7 +12022,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             candidate = ReaderItemSnapshot.start(query, page)
             if displaced_rows:
                 candidate = candidate.with_pending_items(tuple(displaced_rows))
-            rows = list(candidate.page(0))
+            rows = self._published_page_rows(candidate.page(0))
 
             def commit() -> None:
                 had_retry_state = self._items_retry_message is not None
@@ -12102,7 +12119,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if snapshot is None or index < 0 or index >= snapshot.page_count:
             return False
         generation = self._items_snapshot_generation
-        rows = list(snapshot.page(index))
+        rows = self._published_page_rows(snapshot.page(index))
 
         def current() -> bool:
             return (
@@ -12187,7 +12204,9 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                         self._push_items_pager_state()
                     result = True
                     return True
-                rows = list(candidate.page(candidate.page_count - 1))
+                rows = self._published_page_rows(
+                    candidate.page(candidate.page_count - 1)
+                )
 
                 def commit() -> None:
                     self._items_snapshot = candidate
@@ -13258,7 +13277,18 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         `update_item_queued_cell` use -- resolved below from whichever
         matching dict is found first, exactly as `_repaint_item_status_cell`
         already has to for the status column.
+
+        Task 13: cached snapshot rows are frozen mappings now, so the
+        flag also has to be mirrored into the reader cache via
+        `patch_cached_rows` (on the same snapshot object) or a later page
+        revisit would repaint the queued glyph from the stale cached row.
         """
+        snapshot = self._items_snapshot
+        if snapshot is not None:
+            snapshot.patch_cached_rows(
+                lambda row: row.get("item_id") == raw_item_id,
+                {"queued_for_briefing": queued},
+            )
         row_key: Any = None
         for item in self._loaded_items:
             if item.get("item_id") == raw_item_id:
@@ -13294,17 +13324,26 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     def _patch_committed_items_after_mutation(
         self, item_id: Any, **changes: Any
     ) -> None:
-        """Patch one item across every committed Reader projection in place."""
-        visited: set[int] = set()
+        """Patch one item across every committed Reader projection in place.
+
+        Cached snapshot rows are frozen mappings (task 13), so they are
+        rebuilt through `ReaderItemSnapshot.patch_cached_rows` — which swaps
+        the pages tuple on the SAME snapshot object — while the mutable
+        published projections (`_loaded_items`, `_selected_content_item`,
+        `selected_entity`) keep their in-place `update`, preserving the
+        shared-dict design every repaint path relies on.
+        """
         snapshot = self._items_snapshot
-        candidates: list[dict[str, Any]] = []
+        row_key: Any = None
         if snapshot is not None:
-            candidates.extend(row for page in snapshot.pages for row in page)
-        candidates.extend(self._loaded_items)
+            row_key = snapshot.patch_cached_rows(
+                lambda row: self._item_identity_matches(row, item_id), changes
+            )
+        visited: set[int] = set()
+        candidates: list[dict[str, Any]] = list(self._loaded_items)
         for entity in (self._selected_content_item, self.selected_entity):
             if isinstance(entity, dict):
                 candidates.append(entity)
-        row_key: Any = None
         for item in candidates:
             identity = id(item)
             if identity in visited or not self._item_identity_matches(item, item_id):
@@ -13328,7 +13367,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 pass
 
     @staticmethod
-    def _item_identity_matches(item: dict[str, Any], item_id: Any) -> bool:
+    def _item_identity_matches(item: Mapping[str, Any], item_id: Any) -> bool:
         """Return whether a normalized or raw item identity matches a row."""
         target = str(item_id)
         return target in {str(item.get("id")), str(item.get("item_id"))}

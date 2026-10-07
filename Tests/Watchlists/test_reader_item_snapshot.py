@@ -63,7 +63,7 @@ def test_start_captures_first_page_and_keeps_empty_page():
     assert snapshot.pending_arrivals == 0
 
 
-def test_page_and_snapshot_detach_source_rows_but_keep_cached_rows_mutable():
+def test_page_and_snapshot_detach_source_rows_and_freeze_cached_rows():
     row = {"item_id": 1, "title": "before"}
     first = page([row])
     row["title"] = "after"
@@ -71,6 +71,9 @@ def test_page_and_snapshot_detach_source_rows_but_keep_cached_rows_mutable():
     snapshot = ReaderItemSnapshot.start(ReaderItemQuery.freeze(("local",), {}), first)
     first.items[0]["title"] = "page mutation"
     assert snapshot.pages[0][0]["title"] == "before"
+    # Task 13: cached rows are frozen at construction, not copy-isolated.
+    with pytest.raises(TypeError):
+        snapshot.pages[0][0]["title"] = "rejected"
 
 
 def test_start_requires_first_page_count_and_seeds_seen_ids():
@@ -84,7 +87,7 @@ def test_start_requires_first_page_count_and_seeds_seen_ids():
     assert snapshot.cursor == WatchlistItemCursor(None, 1)
 
 
-def test_continuation_stages_copy_and_deduplicates_items():
+def test_continuation_shares_cached_pages_and_deduplicates_items():
     query = ReaderItemQuery.freeze(("local", "all", "all", ""), {})
     original = ReaderItemSnapshot.start(
         query,
@@ -102,7 +105,11 @@ def test_continuation_stages_copy_and_deduplicates_items():
     assert candidate.pages == (({"item_id": 2}, {"item_id": 1}), ({"id": "0"},))
     assert candidate.seen_ids == frozenset({0, 1, 2})
     assert not candidate.has_more
-    candidate.pages[0][0]["changed"] = True
+    # Task 13: cached pages are shared verbatim and frozen; isolation now
+    # comes from immutability instead of copying.
+    assert candidate.pages[0] is original.pages[0]
+    with pytest.raises(TypeError):
+        candidate.pages[0][0]["changed"] = True
     assert "changed" not in original.pages[0][0]
     assert original.cursor == WatchlistItemCursor(None, 1)
     assert original.has_more
