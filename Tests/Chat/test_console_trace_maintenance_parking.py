@@ -379,7 +379,14 @@ async def test_a_signal_woken_real_pass_opens_only_its_write_transaction(
     runtime._schedule_legacy_trace_maintenance(db, lambda: LegacyTraceNormalizer(db))
     try:
         await _until(lambda: LegacyTraceNormalizer(db).read_calls(first))
-        await _until_parked(passes)
+        # Silence can mean a queued batch or unfinished GC, not parking.
+        # Observe the actual scheduler latch before billing its next wake.
+        await _until(
+            lambda: runtime._legacy_trace_maintenance_task.get_coro()
+            .cr_frame.f_locals.get("parked")
+            is True,
+            timeout=10.0,
+        )
         woken_at = len(passes)
         second = _message(db, conversation_id, "answer-1")
         _append_exchange(db, second, 1)

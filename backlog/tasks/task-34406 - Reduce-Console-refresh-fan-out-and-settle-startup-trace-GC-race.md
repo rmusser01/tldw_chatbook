@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-07 16:56'
+updated_date: '2026-10-07 17:04'
 labels: []
 dependencies: []
 ---
@@ -383,6 +383,10 @@ The coordinating implementation owner confirmed injected controllers without a H
 Integration build and platform follow-up: regenerate remote_worker_bundle.py only through its unchanged deterministic builder after CI run37650785035 reproduces stale source output. Add the new trace-maintenance lifetime and original parking/Hook-host controls as a separate targeted step in the existing three-platform workflow, preserving all existing budgets. ADR required:no; ADR path:N/A; routine generated-artifact synchronization and regression coverage.
 
 Original Hook-review fixture cleanup: CI37650785035 reproduces two unchanged failure-cleanup assertions. The helper uses bare modal.dismiss(None), which now removes only a disposable presentation while its resident review request stays live and remounts. Route only that helper cleanup through the existing request_safe_cancel action, as the real Not now/Escape actions do, retaining every assertion, delay, callback fallback and production remount behavior. Re-run both original cleanup failures and original declined-send routes. ADR required:no; existing ADR-222 applies; test-helper alignment with the existing resident review contract.
+
+Linux maintenance parking prerequisite: CI37654560531 passes all3 native lifetime cases and original Hook ownership cases, but the original transaction-count case assumes 0.3s without a run_batch entry proves parking. Native GC/compaction or a queued callback can satisfy that silence while the scheduler remains unparked. Before the deliberate wake, observe the actual original scheduler parked latch within the same existing10-second prerequisite bound; keep the exact writer, transaction-count assertion and all production code unchanged. Verify this original strict case and declined-review compatibility. ADR required:no; test-only observation of an existing state, with no widened deadlines.
+
+CI evidence follow-up: publish the focused maintenance JUnit artifact immediately after that step, and keep the already-declared independent shared controls running after another group fails. Preserve test selections and job/test timeouts; no new sweep.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -523,6 +527,8 @@ Trace-maintenance cancellation now retains each of its four finite database call
 The exact original pending-close follow-up now reports only its pending-round arming assertion; the preceding active Characters-database cleanup error did not recur. This is one observed secondary cleanup result, not acceptance of the still-failing primary journey. The official remote-worker builder regenerated two source-provenance constants and its checksum; a fresh --check passes. Runtime and new proof have zero Ruff findings, the proof formatting passes, and the original parking test is byte-identical to HEAD. The existing Windows/macOS/Linux workflow now includes the29 focused maintenance/Hook controls with unchanged budgets; remote execution qualification awaits that CI.
 
 The two original failed-open Hook-review cleanup cases pass23.19s after routing only _release through the real safe-cancel action. Runtime-backed review dismissal intentionally releases a disposable view, so the prior bare dismiss(None) left resident custody live and caused remount; no production behavior or acceptance timing was changed. Source/HEAD remain unchanged during the test, cleanup is normal with zero forced retirement/overflow/races, and Ruff passes. New CI37654560531 confirms the maintenance/Hook step succeeds on Windows and macOS and remote-bundle controls now pass; the Linux maintenance/Hook group reports a failure whose detailed artifact is pending.
+
+The original strict parked-wake count and all6 original declined-review routes pass62.09s, preserving exact behavior assertions and original bounds. Driver69.156s, sources and HEAD unchanged, normal process retirement with zero forced cleanup/overflow/races. Linux CI verifies all3 maintenance lifetime cases and original Hook ownership controls; its single remaining focused-group failure is the quiet-period parking prerequisite now corrected. Broader Send timing and whole-platform acceptance remain open.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up
