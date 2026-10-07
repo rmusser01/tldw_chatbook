@@ -132,7 +132,7 @@ def test_apply_notes_upsert_rejects_missing_required_payload_fields():
     assert mirror.get("ds_1", "n1") is None
 
 
-def test_apply_notes_upsert_sanitizes_payload_before_store():
+def test_apply_notes_upsert_rejects_forbidden_content_without_rewriting():
     from tldw_chatbook.tldw_api import SyncV2Envelope
 
     store = InMemoryNotesStore()
@@ -155,11 +155,12 @@ def test_apply_notes_upsert_sanitizes_payload_before_store():
 
     result = applier.apply(env)
 
-    assert result["status"] == "applied"
-    assert store.get("n1") == {
-        "title": "T",
-        "content": "&lt;script&gt;alert(1)&lt;/script&gt;safe",
-        "deleted": False,
+    assert result["status"] == "conflict"
+    assert store.get("n1") is None
+    assert mirror.get("ds_1", "n1") is None
+    assert env.payload == {
+        "title": "T\x00",
+        "content": "<script>alert(1)</script>\x00safe",
     }
 
 
@@ -244,3 +245,58 @@ def test_apply_tombstone_reapply_is_noop():
     before = store.delete_calls
     applier.apply(env)  # re-apply
     assert store.delete_calls == before  # no second soft-delete
+
+
+@pytest.mark.parametrize(
+    "body", ['{"value":"a&b <tag>"}\n', "x" * 100_001], ids=["markup", "large"]
+)
+def test_m1_payload_keeps_source(body):
+    from tldw_chatbook.Sync_Interop.domain_adapters.notes_m1 import NotesM1SyncAdapter
+
+    payload = NotesM1SyncAdapter._validated_note_payload(
+        {"title": "T", "content": body}
+    )
+    assert payload is not None
+    assert payload["content"] == body
+
+
+@pytest.mark.parametrize(
+    "title, content",
+    [("  T & <tag>  ", " "), ("T" * 255, "x" * 5_000_000)],
+    ids=["whitespace", "limits"],
+)
+def test_m1_payload_preserves_contract_boundaries(title, content):
+    from tldw_chatbook.Sync_Interop.domain_adapters.notes_m1 import NotesM1SyncAdapter
+
+    assert NotesM1SyncAdapter._validated_note_payload(
+        {"title": title, "content": content}
+    ) == {"title": title, "content": content}
+
+
+@pytest.mark.parametrize(
+    "title, content",
+    [
+        ("T" * 256, "B"),
+        ("T", "x" * 5_000_001),
+        (" ", "B"),
+        ("T", ""),
+        (None, "B"),
+        ("T", 1),
+        ("T", "a\x01b"),
+    ],
+    ids=[
+        "long-title",
+        "long-content",
+        "blank-title",
+        "empty-content",
+        "title-type",
+        "content-type",
+        "control",
+    ],
+)
+def test_m1_payload_rejects_invalid_source(title, content):
+    from tldw_chatbook.Sync_Interop.domain_adapters.notes_m1 import NotesM1SyncAdapter
+
+    original = {"title": title, "content": content}
+    assert NotesM1SyncAdapter._validated_note_payload(original) is None
+    assert original == {"title": title, "content": content}

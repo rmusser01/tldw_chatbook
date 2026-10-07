@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from html import escape as html_escape
 from typing import Any, Callable, TYPE_CHECKING
 
-from tldw_chatbook.Utils.input_validation import sanitize_string
+NOTES_NOTE_TITLE_MAX_CHARS = 255
+NOTES_NOTE_CONTENT_MAX_CHARS = 5_000_000
 
 if TYPE_CHECKING:
     from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -73,11 +73,14 @@ class NotesM1SyncAdapter:
         content = payload.get("content", payload.get("body"))
         if not isinstance(title, str) or not isinstance(content, str):
             return None
-        title = sanitize_string(title, max_length=500).strip()
-        content = sanitize_string(content, max_length=100_000)
-        if not title or not content.strip():
+        if (
+            not title.strip()
+            or not content
+            or len(title) > NOTES_NOTE_TITLE_MAX_CHARS
+            or len(content) > NOTES_NOTE_CONTENT_MAX_CHARS
+        ):
             return None
-        return {
-            "title": html_escape(title, quote=False),
-            "content": html_escape(content, quote=False),
-        }
+        # Reject unsafe controls rather than silently deleting source characters.
+        if any(ord(char) < 32 and char not in "\t\n\r" for char in title + content):
+            return None
+        return {"title": title, "content": content}

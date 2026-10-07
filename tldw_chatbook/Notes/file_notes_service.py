@@ -43,7 +43,9 @@ MAX_FILE_CHARS = 2_000_000
 INTERACTIVE_FILE_CHARS = 200_000
 LARGE_FILE_EXCERPT_CHARS = 100_000
 EXACT_EXPORT_CHUNK_BYTES = 64 * 1024
-SUPPORTED_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".text"})
+SUPPORTED_EXTENSIONS = frozenset(
+    {".md", ".markdown", ".txt", ".text", ".yaml", ".yml", ".json", ".jsonl"}
+)
 #: How many revisions one bounded history read returns, newest first. The
 #: default and its ceiling are defined once beside the replica's listing
 #: API so the two layers cannot drift (PR #3016 review finding 5).
@@ -2377,7 +2379,11 @@ def _parse_opened(
 ) -> OpenedFileNote:
     prefix = UTF8_BOM if raw_bytes.startswith(UTF8_BOM) else b""
     content = raw_bytes[len(prefix) :]
-    frontmatter_end = _frontmatter_end(content)
+    frontmatter_end = (
+        _frontmatter_end(content)
+        if Path(relative_path).suffix.lower() in {".md", ".markdown", ".txt", ".text"}
+        else None
+    )
     if frontmatter_end is not None:
         prefix += content[:frontmatter_end]
         body_bytes = content[frontmatter_end:]

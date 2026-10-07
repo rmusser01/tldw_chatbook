@@ -1974,3 +1974,49 @@ def test_revision_export_reports_durability_warning_after_publishing(
     )
     assert retry.status == "exists"
     assert (root / "unconfirmed.md").read_bytes() == checkpoint_bytes
+
+
+@pytest.mark.parametrize(
+    "suffix, raw",
+    [
+        (".yaml", b"---\na: 1\n...\n---\nb: 2\n"),
+        (".yml", b"---\r\na: 1\r\n...\r\n---\r\nb: 2\r\n"),
+        (".JSON", b'\xef\xbb\xbf{"value":"a&b <tag>"}\r\n'),
+        (".jsonl", b'{"a":1}\n{"b":2}'),
+    ],
+)
+def test_structured_file_round_trip_preserves_whole_source(tmp_path, suffix, raw):
+    path = tmp_path / ("note" + suffix)
+    path.write_bytes(raw)
+    service = FileNotesService(tmp_path, None)
+    assert path.name in {entry.relative_path for entry in service.scan().entries}
+    opened = service.open_file(path.name)
+    assert opened.body == raw.decode("utf-8-sig").replace("\r\n", "\n")
+    assert opened.raw_bytes == raw
+    assert opened.frontmatter_lines == 0
+    assert opened.has_final_newline == raw.endswith(b"\n")
+    assert opened.newline == ("\r\n" if b"\r\n" in raw else "\n")
+    assert service.save_file(opened, opened.body, session_key="test").status == "ok"
+    assert path.read_bytes() == raw
+    path.write_bytes(raw + b"external")
+    assert (
+        service.save_file(opened, "replacement", session_key="test").status
+        == "conflict"
+    )
+    assert path.read_bytes() == raw + b"external"
+
+
+@pytest.mark.parametrize("suffix", [".yaml", ".yml", ".json", ".jsonl"])
+def test_structured_file_excerpt_remains_read_only(tmp_path, suffix):
+    path = tmp_path / ("large" + suffix)
+    raw = ("x" * (INTERACTIVE_FILE_CHARS + 1)).encode()
+    path.write_bytes(raw)
+    service = FileNotesService(tmp_path, None)
+    opened = service.open_file(path.name)
+    assert opened.is_excerpt
+    assert len(opened.body) == LARGE_FILE_EXCERPT_CHARS
+    assert opened.read_only_reason == "interactive-limit"
+    assert (
+        service.save_file(opened, opened.body, session_key="test").status == "readonly"
+    )
+    assert path.read_bytes() == raw
