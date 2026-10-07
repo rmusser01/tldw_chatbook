@@ -744,9 +744,17 @@ async def _verify_legacy_tool_approval_counts_in_the_mounted_view(request, tmp_p
             assert console._task_resume_state.pending_approval["round_id"] == round_id
             assert console._console_pending_approval_count() == 1
             console._sync_console_rail_and_controls()
-            await pilot.pause()
             inspector = console.query_one(
                 "#console-run-inspector-state", ConsoleRunInspector
+            )
+            # A busy config lock defers refresh; observe its actual publication.
+            await _wait(
+                pilot,
+                lambda: (
+                    inspector.state.pending_approval_count == 1
+                    and "Approvals: 1 pending"
+                    in "\n".join(str(row.render()) for row in inspector.query(Static))
+                ),
             )
             assert inspector.state.pending_approval_count == 1
             rendered = "\n".join(str(row.render()) for row in inspector.query(Static))
@@ -761,7 +769,7 @@ async def _verify_legacy_tool_approval_counts_in_the_mounted_view(request, tmp_p
             assert result["decisions"] == {"builtin__write_file": "deny"}
             assert console._console_pending_approval_count() == 0
             console._sync_console_rail_and_controls()
-            await pilot.pause()
+            await _wait(pilot, lambda: inspector.state.pending_approval_count == 0)
             assert inspector.state.pending_approval_count == 0
             assert (
                 console._workspace._workspace_files_attention_snapshot().pending_approval_count

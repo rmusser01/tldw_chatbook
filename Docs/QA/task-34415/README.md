@@ -192,6 +192,61 @@ class DelayedRailReplacement:
 raise SystemExit(pytest.main(sys.argv[1:], plugins=[DelayedRailReplacement()]))
 ```
 
+Fresh read-only scoped review subsequently confirmed the rebased
+`bc33d012bca665b3176dfc322821ef4131bd9ddc` correction with no
+Critical/Important/Minor findings. Its production, test and artifact inputs
+matched the reviewed pre-rebase tree; focused lock/size replay passed eight
+tests in 14.28s without pytest warnings, with both Backlog guards passing.
+
+## Exact-head CI pending-approval publication correction
+
+On that head, Derived run 37565637296's UI4 lane failed the unchanged legacy
+approval journey at Inspector count zero versus one: **240 passed/one failed/two
+warnings in 568.83s**. PR and UI1/2/3 lanes and Perf passed; the failed lane is not
+passing CI evidence. The live worker, round and approval card remained valid,
+and the incumbent count builder returned one. A refresh may defer on a busy
+native config lock; a single idle pause is not a publication receipt.
+CI did not record lock contention attribution; the real-lock probe below
+establishes that supported deferral path, not which lock the CI run encountered.
+
+The original journey passed alone (parent one in 95.29s; private child one in
+82.75s with an FD warning). A diagnostic separate thread then held the actual
+native REBUILD RLock through the original idle pause. It reached the valid
+unpublished frame, proved that the original sync returned False with the
+installed retry scheduled, released and joined the holder, and reproduced the
+exact zero-versus-one assertion. No count, sink, source/profile or recovery
+state was substituted; the finite watchdog did not expire.
+
+The test-only correction reuses the existing bounded settle helper to observe
+the Inspector's actual count and original rendered approval text, then its
+cleared count. All original worker, session, round, Files, decision and count
+assertions remain; production, CI and qualification limits are unchanged. The
+same real-lock probe passed (parent one in 76.70s; child one in 68.29s). The
+ordinary affected module passed **13 tests in 71.62s**, including its original
+six-journey private child (one in 61.32s). The changed test is Ruff and format
+clean; production/scripts/package/workflows match the reviewed head.
+All eleven existing artifact guards pass in `ci-pending-preflight.log`.
+
+Resource warnings are retained, not fixed or waived: CI child FD growth 202
+(14 to 216), ordinary baseline growth 205 (14 to 219), controlled RED and GREEN
+growth 208 (14 to 222), final ordinary child growth 202 (14 to 216), against the
+unchanged limit 200. A passing parent does not report its child's warning and
+does not justify a warning-free whole-application qualification claim.
+
+Receipts: `ci-pending-ui4-failed.log`, `ci-pending-baseline-child.log`,
+`ci-pending-lock-red-child.log`, `ci-pending-lock-green-child.log`,
+`ci-pending-final-parent.log`, `ci-pending-final-child.log` and the exact
+diagnostic source `ci-pending-native-lock-probe.txt`. Only trailing whitespace
+was normalized; full retained copies compare equal to normalized originals.
+Raw originals remain in `/private/tmp/pr3034-pending-*` and
+`/private/tmp/pr3034-ui4-failed-37565637296.log`. The probe runs the original
+private-profile wrapper using `PYTEST_PLUGINS=pr3034_pending_lock_probe` and
+`PYTHONPATH=/private/tmp/pr3034-pending-lock-probe-S7Aeia:<checkout>`; it changes
+no test body, profile selection or config getter. Fresh independent read-only
+review of the twelve staged files found no Critical/Important/Minor findings;
+the original production and MCP reviews remain applicable by byte identity.
+New exact-head CI remains required before protected merge.
+
 ## Still open
 
 Busy-lock responsiveness is not full unchanged 50ms activation qualification.
@@ -200,5 +255,5 @@ participants, whole-app retirement, aggregate FD warnings and the separate
 baseline closed-cursor finding remain follow-up. TASK31966/TASK31245 remain
 In Progress; their missing criteria are neither checked nor waived. No semantic
 implementation, global cache/GC/lifetime expansion or Terminal control workaround.
-The original production review is complete. This test-only correction needs its
-fresh scoped review and new exact-head CI before protected merge.
+The original production, MCP and pending-approval correction reviews are
+complete. New exact-head CI remains required before protected merge.

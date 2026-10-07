@@ -18651,6 +18651,16 @@ The held Stop fixture separately expired its 5s first-chunk precondition during 
 
 **What to do.** Wait for the actual asynchronous state a test needs, and distinguish preparation from the action being measured. A negative control must reach valid admission and streaming before its intended publication assertion fails; an earlier setup failure is not evidence that the oracle catches the bug. Keep production deadlines, profile admission, caps and authority unchanged.
 
+**PR #3034 / TASK-34415, 2026-10-07.** UI4's legacy approval journey saw a live
+worker/card and count builder one, but Inspector zero after one idle pause.
+Holding the real native REBUILD RLock on a separate thread reproduced that
+exact assertion: refresh returned False and scheduled its incumbent replay.
+The same probe passed after the test used its existing bounded settle helper
+for the actual Inspector count and rendered approval text. Production and all
+ownership/Files assertions stayed unchanged. Private-child FD warnings remained
+in RED, GREEN and ordinary runs; a green wrapper parent hides those warnings
+and is not warning-free child evidence.
+
 
 ## Immutable recovery candidates must be staged from a live WAL source
 
