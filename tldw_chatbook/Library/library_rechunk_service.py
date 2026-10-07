@@ -16,8 +16,9 @@ Per item (§10.2):
    because these are DERIVED rows regenerated from an intact source (and
    therefore outside ADR-055's destructive patterns);
 3. force the item's re-index (§10.2.1) -- NOT ``index_entries``, whose
-   ``needs_reindexing`` gate skips everything because re-chunking never
-   touches ``Media.last_modified``.
+   unchanged-``last_modified`` skip check (``needs_reindexing``
+   semantics, batched since ADR-223) skips everything because
+   re-chunking never touches ``Media.last_modified``.
 
 Failures are per-item: one bad item never aborts the batch, and the
 summary reports ``N re-chunked, M skipped, K failed`` -- never a bare
@@ -346,7 +347,8 @@ async def forced_reindex_media_item(
 ) -> Dict[str, Any]:
     """Force one item's re-index (spec §10.2.1 -- NOT ``index_entries``).
 
-    ``index_entries`` opens with ``needs_reindexing``, and re-chunking does
+    ``index_entries`` opens with its unchanged-``last_modified`` skip
+    check (``needs_reindexing`` semantics), and re-chunking does
     not touch ``Media.last_modified`` -- every item would SKIP, the summary
     would honestly report "N re-chunked", and the vector store would never
     move. Instead, per item:
