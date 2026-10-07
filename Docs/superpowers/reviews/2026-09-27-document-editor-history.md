@@ -119,3 +119,26 @@ Further experiments stopped under the one-experiment instruction. Temporary
 product wiring removed and owned server processes33547/32968 stopped. The earlier
 native focus-boundary hypothesis has now been tested and failed in this concrete
 form. Monaco remains unimplemented; the smallest proposal still awaits approval.
+
+
+## 2026-10-07 — Installed Monaco candidate (I1 qualification only)
+
+Following the human's option-1 selection, the installed Monaco candidate was
+qualified in the real Next Notes page with its actual React change handler.
+Chromium145/Firefox146/WebKit26 passed 36 controls including exact LF/CRLF native
+A/B/C/D undo/redo history, source/key/editability/conflict checks, selection and
+model disposal; strengthened nonzero viewport checks passed all three engines.
+BOM, mixed newlines and lone CR retain exact source in a read-only refusal.
+Installed local distribution/worker assets loaded in Next and an actual WXT MV3
+asset/CSP smoke. Temporary product wiring/public assets were removed.
+
+Full commands, traces, RED/GREEN failures, static comparisons and self-review live
+in S `Docs/superpowers/reviews/2026-09-27-document-editor-history.md`, dated Monaco
+section, and the private task-11-report. The controlled textarea is still
+unqualified. C's already reviewed Textual bridge/code/tests are unchanged and
+were not rerun. This is an experiment under ADR194 and extended S ADR065, not I3
+adoption. Actual OS IME, extension Notes/history, prior-consumer singleton loader
+ordering and Next standalone packaging remain unqualified. Whole W typecheck
+passed after product wiring removal with a disclosed 12GB heap; initial default
+heap OOM is recorded as an observed failure, without inherited-debt attribution.
+Tasks34570/13512 remain In Progress/no AC closure for controller review.
