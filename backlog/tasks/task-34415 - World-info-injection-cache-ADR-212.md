@@ -3,8 +3,8 @@ id: TASK-34415
 title: World-info injection cache ADR-212
 status: Done
 assignee: []
-created_date: '2026-10-07 02:40'
-updated_date: '2026-10-07 04:23'
+created_date: 2026-10-07 02:40
+updated_date: 2026-10-07 04:32
 labels: []
 dependencies: []
 ---
