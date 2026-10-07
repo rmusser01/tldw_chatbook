@@ -9638,9 +9638,14 @@ class ChatScreen(BaseAppScreen):
         # same context an explicit resume holds), exactly as the
         # ``resume_pending`` branch already does.
         workspace = getattr(self, "_workspace", None)
+        # Established sessions already own their workspace. Resolving registry
+        # context here is unused and repeats guarded filesystem reads on every
+        # control refresh and printable keystroke (Windows UAT TASK-34369).
         workspace_context = (
             workspace._current_console_workspace_context()
             if workspace is not None
+            and not resume_pending
+            and (store is None or store.active_session_id is None)
             else None
         )
         if store is None:

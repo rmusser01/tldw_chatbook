@@ -627,3 +627,31 @@ The receipt is local control metadata, not provider content or delivery evidence
 Nonempty provider, engine, model, media, unknown fields and malformed receipts
 remain ineligible. All parent, revision, sidecar, checkpoint and final-binding
 revalidation requirements above remain unchanged.
+
+### Integration recorded 2026-10-04: failed intermediate model calls
+
+A provider-call failure with no captured response is settled as a trace-owned
+terminal ERROR before the agent can retry. It cannot await the overall assistant
+message's terminal save: that message also owns the later successful retry.
+Successful and partial response handoffs retain canonical message linking.
+
+If sealing the failed attempt cannot complete, the sanitized handoff remains
+owned through cancellation and enters the existing store settlement custody.
+Its canonical assistant ID remains absent even when the overall assistant is
+later saved: changing that ID would change the pending settlement fingerprint
+and would incorrectly attach the successful retry's answer to the failed call.
+
+The existing TOOL_LOOP route includes subsequent model attempts within a run.
+After a durable ERROR it admits only an unchanged request surface, under the
+same attached owner, actor/chain, turn, source pin, frozen policy and latest
+call-boundary proof. The failed call must be settled and provider-inactive.
+Compare rendered system content against the immediately preceding call in
+both distinct-role and single-preamble wire formats. The final header comparison
+runs in the dispatch-binding transaction before capability promotion; changed
+system content cannot bypass unchanged-message checks. Provider, model, endpoint,
+generation parameters, response format, reasoning controls, tool schemas and
+literal provider envelope must also match the preceding failed attempt. The
+AGENT_FIRST to TOOL_LOOP route transition is allowed; it grants no target change.
+An appended or replaced surface, unknown/open dispatch, stale or foreign chain,
+or unsaved settlement remains ineligible. Each retry reserves a distinct ordered
+call; it never rewrites the failed call or relabels it as a tool response.

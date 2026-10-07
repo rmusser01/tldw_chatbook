@@ -143,6 +143,14 @@ class ConsoleTraceSettlementHandoff:
     def settle(self, canonical_message_id: str | None) -> bool:
         """Submit after canonical save, or trace-own when no save exists."""
 
+        if (
+            self._prepared.outcome is TraceCallState.ERROR
+            and self._prepared.response_bytes is None
+            and self._prepared.response_omission is None
+        ):
+            # No-response attempts have no assistant answer to link, even when
+            # their failed seal is retried after the live owner finishes.
+            canonical_message_id = None
         return self._coordinator._submit_prepared(
             self._database,
             replace(

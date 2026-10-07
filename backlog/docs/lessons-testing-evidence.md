@@ -18786,3 +18786,31 @@ timeout, whose cause is still unqualified. Serialized UI work still needs attach
 checks after awaits, and real config consumers must retain their admitted profile.
 Receipts: /private/tmp/pr2918-oct06-tabs-local-proof.json; no original budgets or
 completed passing cases were replayed.
+
+## Captured model retries need the real controller and the actual provider parser
+
+**TASK-34367 / TASK-34368, 2026-10-04.** Live DeepSeek setup received HTTP 200,
+but the strict parser rejected the documented choice-level `logprobs: null`.
+The adapter wrapped that as a retryable provider failure. The agent bridge
+classified the next attempt as TOOL_LOOP while the first trace remained
+DISPATCH_STARTED: the store deferred its ERROR handoff until the one assistant
+owning both attempts became terminal. The next call therefore refused with
+`trace_tool_chain_unavailable`. Isolated ownership fixes and gateway tests did
+not exercise this ordering.
+
+Use a real controller, gateway, store and SQLite trace ledger for a typed
+429/500 -> successful retry, both before and after a real tool response. Also
+feed documented complete/SSE envelopes through the actual provider adapter;
+mocking parsed reply strings misses the trigger. Assert ordered durable call
+states and the mounted recovery/composer surfaces. Fault sealing, cancel its
+await and later save a real assistant owner to test custody and settlement
+fingerprints. Retry negatives must include changed system content in both
+single-preamble and distinct-role formats, because unchanged message rows alone
+do not prove unchanged provider input.
+
+
+## A static tool schema can be only the gated base
+
+PR2995 Qodo finding4182699992 claimed that agents could never request provider/model/preset because NEW_CHAT_TOOL_SCHEMA listed only five fields. An independent review traced the actual Console first-request plan: build_chat_create_schema adds routed presets and opted-in overrides, and native/text serializers retain those dynamic properties. Unconditionally adding the fields would violate ADR147/219 disclosure gates.
+
+For a tool-discovery claim, inspect the runtime schema builder, its live call-site inputs and the provider serializer before editing a static constant. The false-positive disposition and source links are recorded in https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4183161209 and the final Task27 review. No executed provider matrix or new test run was claimed.

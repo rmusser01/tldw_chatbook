@@ -2380,6 +2380,31 @@ async def _settle_trace_response(
         try:
             handoff = preparer(envelope, outcome, usage)
             if handoff is not None:
+                if outcome is TraceCallState.ERROR and envelope is None:
+                    # An intermediate failed attempt has no canonical response
+                    # to link. Its assistant owner remains live across retries;
+                    # waiting for that owner's final save deadlocks admission.
+                    async def settle_failed_attempt() -> bool:
+                        if await asyncio.to_thread(handoff.settle, None):
+                            return True
+                        # Retain failed writes in the run's settlement custody
+                        # so terminal persistence and teardown can retry them.
+                        return (
+                            signals is not None
+                            and await signals.publish_trace_settlement(handoff)
+                        )
+
+                    completion = asyncio.create_task(settle_failed_attempt())
+                    owned = signals is not None and signals.register_provider_work(
+                        completion, lambda: None
+                    )
+                    try:
+                        settled_or_retained = await asyncio.shield(completion)
+                    finally:
+                        if not owned and not completion.done():
+                            await asyncio.shield(completion)
+                    if settled_or_retained:
+                        return
                 if signals is not None and await signals.publish_trace_settlement(
                     handoff
                 ):
