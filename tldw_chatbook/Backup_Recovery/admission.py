@@ -787,13 +787,28 @@ class Admission:
                 fcntl.flock(registry_fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
                 return False
-            registry = self._read(parent)
-            group = self._groups(registry, names)
-            if any(registry.entries[name].pending for name in group):
-                raise AdmissionError("remap_recovery_required")
+            from . import storage_admission as storage
+
+            hold = storage._ordinary_hold(self)
+            key = ("pause", names, str(bootstrap.effective_config_path()))
+            before = storage._derived_before(hold, key)
+            reused, group = storage._derived_reuse(hold, key, before)
+            if not reused:
+                registry = self._read(parent)
+                group = self._groups(registry, names)
+                if any(registry.entries[name].pending for name in group):
+                    raise AdmissionError("remap_recovery_required")
             previous = self._observed_groups.setdefault(names, group)
             if previous != group:
                 raise AdmissionError("admission_scope_changed")
+            if not reused:
+                evidence = storage._metadata_evidence(
+                    hold,
+                    registry={
+                        name: row.model_dump() for name, row in registry.entries.items()
+                    },
+                )
+                storage._note_derived(hold, key, evidence, group, before)
             contended = False
             for name in group:
                 fd = self._open(parent, self._key(name, "gate"), os.O_RDWR)

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 18:48'
-updated_date: '2026-10-07 01:51'
+updated_date: '2026-10-07 02:06'
 labels:
   - console
   - hooks
@@ -52,4 +52,6 @@ Implemented the shared bounded SessionEnd fix in hook lifecycle/engine, HookPerm
 Final affected selection: 62 PASS, F/E/S0, XML62.277s (wall64.635s), including exact close/both disposal paths, actual native activation/startup, changed/revoked/reapproved/missing store refusal, public same/copied replay and real cancellation/reaping/ticket settlement. Independent corrected immutable review Ready/no actionable findings; prior projection P2 Changes-required package preserved. Portable raw/XML/receipts/static/reviews and source hashes: Docs/superpowers/qa/2026-10-06-task33648-session-end/{report.md,manifest.json,evidence.tar.gz}.
 
 Limits: related selection remains NON-GREEN (179 passed bodies + one mounted executor teardown error), reproduced on complete exact6feb base with the same300s timeout. No unique cause/broad suite/aggregate FD/non-macOS certificate. Sandbox-only root-identity setup failure, earlier RED/setup/skip/cache/temp warnings retained; no cleanup/cap workaround. Runtime retains30 inherited lint signatures/format debt, zeroNEW; other5 changed files lint/format clean. Replay tests dynamically supply the existing continuation context; replacing inherited new delivery tuple is verified by source trace. No permission owner, plugin/MCP/model/effect authority or cleanup allowance is widened.
+
+Generalizable mixed-projector incident and required real-owner regression pattern recorded in backlog/docs/lessons-hook-teardown.md; corrected-source hashes remain unchanged.
 <!-- SECTION:NOTES:END -->

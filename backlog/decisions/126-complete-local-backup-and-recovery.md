@@ -1148,9 +1148,11 @@ archives through a typed owner adapter. Under decision 9, isolated restore remap
 persisted `credential_scope_id`, so a restored profile never reads or overwrites
 another profile's keys.
 
-### TASK-33560 proposed amendment — ordinary raw and witness evidence reuse (2026-10-06)
+### TASK-33560 amendment — ordinary raw and witness evidence reuse (2026-10-06)
 
-Status: **Proposed; independent preflight precedes production changes.** This
+Status: **Accepted implementation direction; targeted qualification recorded, independent implementation review pending.**
+Independent preflight, meaningful warm-path RED, and a retained-owner actual-app
+idle baseline preceded production changes. This
 extends the owner-approved PERF-07/PERF-08 stamp model above. The already approved
 one-second maintenance probe interval remains unchanged; no new polling or
 pause-latency tradeoff is proposed.
@@ -1197,7 +1199,10 @@ The permitted derivations are:
 
 Fresh history temporary children may reuse only confirmed directory containment
 within the same ordinary group, while their own complete chain/leaf state is
-observed on the current call. `read_recent` can migrate legacy content, so its
+observed on the current call and after its independent lease is counted. The
+directory itself must receive two full positive containment derivations under
+the complete selector/group evidence; an admitted file never proves its parent.
+`read_recent` can migrate legacy content, so its
 temporary creation and publication authority is never omitted on a warm read.
 
 **Recording and fallback.** Two full positive derivations must bracket identical
@@ -1224,3 +1229,21 @@ A task-owned paired real-app boot/settled-idle probe must bill unchanged work at
 the existing cadence and demonstrate at least a further 50% idle-open reduction.
 Original completed PR performance budgets are retained, not replayed as this
 task's measurement. New verification is targeted to the changed paths.
+
+
+**TASK-33560 qualification checkpoint (2026-10-06).** The retained-owner actual
+app pair uses the same frozen script and unchanged real timers: 884 to 286
+native opens in ten seconds (67.65% lower rate), ten native maintenance probes
+and forty credential polls in both runs. The intermediate 574-open result failed
+the further-50% requirement and is preserved. The earlier unbound probes are
+setup evidence only. A near-worst-phase real native pause was noticed in 0.976 s,
+began actual local pause in 1.070 s and entered exclusive maintenance in 1.109 s
+at the already owner-approved one-second interval. Fifty-two new safety controls
+passed; two additional exact permission parse-pause controls preserve the
+original `storage_locally_paused` refusal and unchanged bytes with reuse enabled
+and disabled. A related selection remains non-green (six passed, one default-
+False setup failure), and nested permission RMW completion across pause is not
+claimed. The [portable report and manifest](../../Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/report.md)
+bind raw setup/failure history, exact source snapshots, measurement scope and
+unchanged baseline static diagnostics. These targeted checks do not renew the
+original completed PR budgets or certify broader platform/capture coverage.

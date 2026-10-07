@@ -3,11 +3,11 @@ id: TASK-33560
 title: >-
   PERF-08 part 2: event-driven maintenance probe, warm MCP store reads,
   raw-participant stamp caches
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 20:29'
-updated_date: '2026-10-07 01:25'
+updated_date: '2026-10-07 02:06'
 labels:
   - performance
   - backup-recovery
@@ -25,10 +25,10 @@ Split out of PERF-08 (TASK-33267). Part 1 reuses confirmed admission evidence in
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 The maintenance monitor no longer probes at 10 Hz, and the change to backup pause latency is measured and approved by the owner
-- [ ] #2 Warm guarded MCP store reads skip the admission handshake, with the same oracle and completeness tests as acquire_storage
-- [ ] #3 raw_participants' pause probe, pin walk and companion_guard scope reuse stamp-validated evidence, and the reuse-vs-derivation oracle still matches under every mutation
-- [ ] #4 Idle open() calls per second fall by at least a further 50% on the boot/idle probe
+- [x] #1 The maintenance monitor no longer probes at 10 Hz, and the change to backup pause latency is measured and approved by the owner
+- [x] #2 Warm guarded MCP store reads skip the admission handshake, with the same oracle and completeness tests as acquire_storage
+- [x] #3 raw_participants' pause probe, pin walk and companion_guard scope reuse stamp-validated evidence, and the reuse-vs-derivation oracle still matches under every mutation
+- [x] #4 Idle open() calls per second fall by at least a further 50% on the boot/idle probe
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,6 +51,18 @@ Reviewed concrete reuse design (2026-10-06): independent preflight Ready after e
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+Extended existing bounded hold-owned _Evidence reuse to complete positive MCP generation witnesses, parsed native pause groups, config companion metadata and raw parent ancestry. Two independently bracketed positive derivations, complete current/foreign/historical/control/activation stamps, one-second settle, epoch/PID/names and defensive copies are required. Every per-call lease context, actual registry lock/gate/flock, member identity and separately owned parent descriptor stays fresh. Fresh children borrow only a separately proven admitted directory and still validate their complete chain/leaf after counting; file-only roots cannot prove parents. Mismatch, uncertainty, aliases, pending/absent controls and excluded platform paths take the original derivation/reason. Filesystem work stays outside the coordinator lock. ADR required: yes; prospective/measured amendment in backlog/decisions/126-complete-local-backup-and-recovery.md. No new cache framework or dependency.
+
+AC1: preserved the existing Sep29 owner-approved1.0s monitor (runtime_maintenance.py's original owner-decision comment). Actual native intent at near-worst scheduling phase: notice0.976281s, real localpause1.069559s, exclusive maintenance1.108681s, no app refusal, normal resume. This stimulated checkpoint is separate from idle and precedes final memory-lock-placement/concurrent-publication corrections; interval/native protocol unchanged.
+AC2/3: final targeted safety52PASS/F/E/S0/XML12.642s, exact warm-reader/full-derivation/omitted-dependency mutation oracles, native contention, activation/historical retarget, foreign alias/file-only/fresh-child collision, physical FD retirement/uncertain close, publication/concurrency/settle and no-FS-under-lock controls. Separate persisted permission parse-pause controls2PASS/XML1.390s conserve exact original storage_locally_paused refusal and stored bytes; selections NEVER SUM.
+AC4: exact frozen probe da5ba790b5d59549bab2345f2418a98dc47a24fa6c77ab58e251039c4d94539f, real TldwCli/ChatScreen and drained boot fleet, eight actual profile leases at both edges; same10nativeprobes/40credentialpolls/timers/work/privateprofile. Baseline884nativeopens/10.001132s (88.390/s) -> final286/10.000684s (28.598/s),67.64561%lower rate. Boot41034->16571opens; single UI3.51457->3.64624s does NOT certify startup speed. No original completed budgets/suites replayed.
+
+Portable source/evidence/scripts/static/failed-history: Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/{report.md,manifest.json,raw-evidence.zip,boot_idle_probe.py,paired_probe_source.txt}. Manifest06a1a9ab2533bc8d4e3b81d5ad5f1427292b57893e70c941a5ef5f3b836d8bfd and archivea3769948918a501c4a1f008dad379f9ef570c78bfb5be0d8bd50ae849b9b695a; parent authenticated all11currentfiles and87archivedentries. Independent immutable source review recorded below before closure.
+
+Limits/history: first35.06%after failedAC4; unbound/alias/collection/setup attempts, abandoned extra root optimization RED, earlier FD fixture failures, all raw/XML/cache/foreign temporary cleanup warnings retained. Related selection stays NON-GREEN6PASS1defaultFalse-seedFAIL; attempted real persisted RMW finish exposes unchanged post-pause nested binding refusal. No nested permission-RMW finish/cause/bypass/resource certificate or unrelated source fix. Static exactly22inherited signatures, noNEW; new test/probe and changed production ranges lint/format clean, whitespacePASS. No broad clean-suite/native non-macOS/full capture/restore/provider/transport qualification. Native root, SQLite parent and activation authority stay fresh. Task scope stops at the measured target.
+
+Independent source Ready/no actionable findings: QA independent-review.json (SHA c444b42070663677855ce7167d8736b35568e21b38b3b192901a725102a07a87). Separate combined composition/doc review Ready/no extra targeted check: composition-review.json (SHA e75c2c2114d5b3bb8e2cab410b7c9871b30ad677928ffd4da364c3cc3e89b6ba). All source/evidence activity settled before CLI closure; no source edit after approval.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

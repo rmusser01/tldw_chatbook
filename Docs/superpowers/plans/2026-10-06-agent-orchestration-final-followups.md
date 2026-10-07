@@ -58,9 +58,9 @@
 - [x] Finish the whole positive recovery-witness trace and record the minimum concrete cache design in the governing ADR before source edits.
 - [x] Review the design. Prefer existing hold-owned `_Evidence`, complete posture/content stamps, PID/epoch/names and one-second settle. Every gate/lock, pause, active-operation/source-selection and physical-resource check remains per-call. A mismatch runs the exact original derivation and reason codes.
 - [x] Add meaningful RED controls for skipped warm handshakes and pause/raw/companion reuse, with full-derivation mutation oracles and dependency-completeness traces. Eight initial cases reproduce seven warm/completeness failures and retain one defensive-copy pass; no errors or skips. History migration/sanitization retains write admission and collision-safe fresh temporary members.
-- [ ] Implement only proven shared positive derivation reuse. Do not cache a pause verdict, replace a live FD owner, follow unchecked path components or infer authority from absence/pending state.
-- [ ] Compare paired actual boot/idle workloads under unchanged production cadence and work; require a further >=50% reduction in open calls. Measure actual backup pause latency against the existing owner-approved cadence.
-- [ ] Run targeted oracle/completeness/cancellation checks and independent source review. Preserve exact platform and resource limits; close all four criteria only when evidenced.
+- [x] Implement only proven shared positive derivation reuse. Do not cache a pause verdict, replace a live FD owner, follow unchecked path components or infer authority from absence/pending state.
+- [x] Compare paired actual boot/idle workloads under unchanged production cadence and work; require a further >=50% reduction in open calls. Measure actual backup pause latency against the existing owner-approved cadence.
+- [x] Run targeted oracle/completeness/cancellation checks and independent source review. Preserve exact platform and resource limits; close all four criteria only when evidenced.
 
 ## Task 4: TASK-33640 — captured allowance provenance
 
@@ -74,12 +74,14 @@
 
 ## Delivery
 
-- [ ] Complete both source fixes and review the combined branch for composition regressions.
-- [ ] Validate only modified functionality, task/ADR hygiene, whitespace and scoped static analysis; distinguish inherited debt from new findings.
-- [ ] Create a reviewable PR with current evidence and practical limits. Follow protected head-matched integration only when authorized and all fresh gates qualify; do not claim a merge while only queued/armed.
+- [x] Complete both source fixes and review the combined branch for composition regressions.
+- [x] Validate only modified functionality, task/ADR hygiene, whitespace and scoped static analysis; distinguish inherited debt from new findings.
+- [x] Prepare a reviewable PR with current evidence and practical limits; publish only the clean reviewed commit and verify its actual head/URL. Follow protected head-matched integration only when authorized and all fresh gates qualify; do not claim a merge while only queued/armed.
 
 Preflight record: TASK-33648 design Ready with original execution-state authenticity and ordinary closed-owner refusal retained. TASK-33560 design Ready after adding all consulted historical path chains and fresh fallback for unqualifiable historical/alias dependencies; omitted-history dependency qualification is mandatory. Microbenchmark counts remain separate from the forthcoming actual-app idle measurement.
 
 Measurement checkpoint: the fresh native bound-profile actual app baseline retained its real profile hold (count 8) at both idle edges, drained the boot fleet and reached ChatScreen. At unchanged cadence/work it measured 884 native opens over 10.001132 seconds (88.390/s), 40 credential polls and 10 native probes. The earlier unbound app result is setup evidence only. Exact probe SHA da5ba790b5d59549bab2345f2418a98dc47a24fa6c77ab58e251039c4d94539f is frozen for the before/after comparison; no original PR budget was replayed. Performance production implementation was authorized only after this baseline and meaningful RED.
 
 Independent hook source review found a blocking supported mixed-native-plugin projection path: trusted projection copies a standalone event before its authority check. Before correction, qualify a real installed/activated native plugin plus saved/granted standalone disposal RED. Retain original host event/execution authenticity through a minimal private per-delivery projected-event witness, with exact callback identity, active/non-cancelled membership, fixed deadline, fresh binding/finally reset and brief memory locking. Public same/copied/ambient-context deliveries must still refuse. The earlier frozen package is Changes required, not Ready; preserve it and all evidence. A new frozen review is required after correction. The mounted executor teardown timeout separately reproduced on complete exact6feb base (one body pass plus teardown error); both selections remain non-green.
+
+Final implementation checkpoint: all four task criteria are checked through CLI and Done. Hook and performance independent source reviews, the combined boundary/doc review and portable evidence authenticate the unchanged approved source. Performance final actual idle rate falls67.64561%; the original1Hz cadence produces actual localpause1.069559s. The related mounted timeout and permission ordering/RMW refusals remain separate non-green limitations. Whitespace and Backlog ID/readability guards pass; no original completed PR budget or broad suite is renewed. The PR body is prepared; publication and its actual URL are recorded after this commit, without fabricating a merged/CI-green result. Incident-backed hook lesson: backlog/docs/lessons-hook-teardown.md.

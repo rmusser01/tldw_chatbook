@@ -8,11 +8,22 @@ from .activation import ActivationStore, _private, _source_scope_admitted
 
 def _witnesses(path, lease):
     """Check paired local generations against this actual admitted storage group."""
+    from . import storage_admission as storage
+
     root, names = lease.execution_context(path)
+    selected = bootstrap.effective_config_path()
+    hold = storage._ordinary_hold(lease=lease)
+    key = ("witness", str(selected), str(path))
+    before = storage._derived_before(hold, key)
+    reused, value = storage._derived_reuse(hold, key, before)
+    if reused:
+        return value
     if path is not None and not _source_scope_admitted(root, names or (), path):
         raise ValueError("projection_source_scope_unavailable")
-    selected = bootstrap.effective_config_path()
-    return _paired_witnesses(path, root, names, selected)
+    result = _paired_witnesses(path, root, names, selected)
+    evidence = storage._metadata_evidence(hold, (() if path is None else (path,)))
+    storage._note_derived(hold, key, evidence, result, before)
+    return result
 
 
 def _paired_witnesses(path, root, names, selected):
