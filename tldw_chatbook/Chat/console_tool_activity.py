@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
 
-_PENDING = frozenset({"queued", "awaiting_approval", "running"})
+_PENDING = frozenset({"queued", "awaiting_approval", "starting", "running"})
 _ARGUMENT_TRUNCATION_SUFFIX = "\n… arguments truncated"
 
 
@@ -75,7 +75,7 @@ class ConsoleToolActivity:
                 self._proposal_indices[step.call_id] = step.index
             elif step.kind == "tool_output" and (
                 prior is not None
-                and prior[1].status == "running"
+                and prior[1].status in {"starting", "running"}
                 and step.source_step_index == self._proposal_indices.get(step.call_id)
             ):
                 from tldw_chatbook.Agents.tool_output import MAX_TOOL_OUTPUT_CHARS
@@ -87,7 +87,7 @@ class ConsoleToolActivity:
                 )
             elif step.kind == "tool_execution_started":
                 self._update(
-                    step.call_id, "running", started_at_monotonic=time.monotonic()
+                    step.call_id, "starting", started_at_monotonic=time.monotonic()
                 )
 
     def _update(self, call_id: str, status: ConsoleActivityStatus, **fields) -> None:
@@ -113,6 +113,37 @@ class ConsoleToolActivity:
                 row = self._rows.get(call_id)
                 if row is not None and row[1].status in {"queued", "awaiting_approval"}:
                     self._update(call_id, "awaiting_approval" if pending else "queued")
+
+    def feedback(self, facts, *, call_keys=None) -> None:
+        """Transfer reduced facts to existing session-only rows, including terminals."""
+        with self._lock:
+            for fact in facts:
+                if fact.identity.session_id != self.session_id:
+                    continue
+                keys = (
+                    call_keys(fact.identity)
+                    if call_keys is not None
+                    else (fact.identity.call_key,)
+                )
+                for call_key in keys:
+                    row = self._rows.get(call_key)
+                    if row is None:
+                        continue
+                    marker_id, old = row
+                    previous = old.approval_feedback
+                    if previous is not None and previous.sequence >= fact.sequence:
+                        continue
+                    presentation = replace(old, approval_feedback=fact)
+                    try:
+                        self.store.update_tool_marker(
+                            self.session_id,
+                            marker_id,
+                            activity_presentation=presentation,
+                            record_trajectory=False,
+                        )
+                    except KeyError:
+                        continue
+                    self._rows[call_key] = (marker_id, presentation)
 
     def take(self, call_id: str) -> tuple[str, ConsoleActivityPresentation] | None:
         """Transfer a shell marker to its existing process-lifecycle owner."""

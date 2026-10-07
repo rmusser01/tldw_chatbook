@@ -1,5 +1,7 @@
 """Chat screen implementation with comprehensive state management."""
 
+from tldw_chatbook.UI.Console_Modules.approval_feedback import ApprovalFeedbackChanged
+
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from collections.abc import Set as AbstractSet
@@ -9853,6 +9855,10 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 
+    @on(ApprovalFeedbackChanged)
+    def _on_approval_feedback_changed(self, event: ApprovalFeedbackChanged) -> None:
+        self._approval_feedback.refresh(event.session_id, event.run_id)
+
     def console_view_hooks(self) -> dict[str, Any]:
         """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
 
@@ -9875,6 +9881,7 @@ class ChatScreen(BaseAppScreen):
             "set_pending_decision": self._set_console_pending_decision,
             "follow_watchlists_operations": self._follow_console_watchlists_operations,
             "set_pending_approval": self._set_console_pending_approval,
+            "approval_feedback_changed": lambda session_id, run_id: self.post_message(ApprovalFeedbackChanged(session_id, run_id)),
             # ADR-090: UI-thread bridge to patch a mounted approval card's
             # advisory summary line in place (never re-runs set_batch).
             "update_pending_approval_summary": self._update_console_approval_summary,

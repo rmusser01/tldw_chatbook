@@ -1,0 +1,17 @@
+{
+  "component": "details_first_page_preparation",
+  "boundary": "iterator_request_to_first_page_return",
+  "clock": "python_perf_counter",
+  "source_sha256": "6c689db3c83d34153a5bb1ec8b84e54d178eb74673605d9f8f8f3bfa4e8713c6",
+  "python": "3.12.10",
+  "platform": "Windows",
+  "warm_samples": 40,
+  "first_use_ms": 142.6162,
+  "median_ms": 141.567,
+  "p95_ms": 153.7175,
+  "max_ms": 154.6071,
+  "first_page_peak_allocation_bytes": 1071546,
+  "native_presented_samples": 0,
+  "browser_presented_samples": 0,
+  "latency_targets_qualified": false
+}

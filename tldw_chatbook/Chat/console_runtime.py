@@ -896,6 +896,7 @@ class _CanvasNativeViewBinding:
 #: `None` is right there only by accident of one `callable()` check, and
 #: its sibling probe uses the opposite unwired convention.
 CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
+    ConsoleViewHookSlot("approval_feedback_changed", "controller", why="Optional thread-safe display wakeup; owner feedback survives view detachment."),
     # Only disposable screen projections belong here. Domain dependencies
     # are frozen into custody or resolved through app-owned services before
     # a turn task starts.

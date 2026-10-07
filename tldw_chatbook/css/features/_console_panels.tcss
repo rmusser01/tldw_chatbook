@@ -2569,3 +2569,12 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 /* TASK-33004.5: the value row's one-row controls and Source-word column. */
 .console-popover-value { width: $ds-size-8; height: $ds-control-height-compact; }
 .console-popover-source { width: $ds-size-18; }
+
+/* Approval facts remain readable after the decision card clears. */
+.console-approval-feedback {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    min-width: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-primary;
+}

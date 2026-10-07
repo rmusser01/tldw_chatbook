@@ -5419,6 +5419,7 @@ class ConsoleAgentBridge:
         self._live_usage_closed = False
         self._raw_shell_marker_lock = threading.Lock()
         self._tool_activity_runs = {}
+        self.approval_feedback_store = None
         self._raw_shell_markers: dict[tuple[str, str], _RawShellMarkerState] = {}
         self._skills_service = skills_service
         self._native_tools_enabled = native_tools_enabled
@@ -6921,6 +6922,7 @@ class ConsoleAgentBridge:
                         activity_round_ordinal=planning.activity_round_ordinal,
                     )
             tool_activity.observe(step, planning_deriver.active_round_ordinal)
+            self._observe_approval_step(session_id, run_id, step)
 
         def on_resolved_target(run_id: str, provider: str, model: str) -> None:
             for index, summary in enumerate(subagents):
@@ -6940,6 +6942,7 @@ class ConsoleAgentBridge:
                 break
 
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
+            self._observe_approval_step(session_id, run_id, step)
             if agent_kind == AGENT_KIND_PRIMARY and run_id:
                 self._live_primary_runs[conversation_id] = run_id
             # PR 2a (task-3): AgentService now attributes every step to its
@@ -7765,7 +7768,14 @@ class ConsoleAgentBridge:
             on_tool_terminal=on_tool_terminal,
             on_tool_result_terminal=on_tool_result_terminal,
             on_run_terminal=lambda run_id: self._on_live_run_terminal(
-                run_id, plugin_run_terminal if plugin_entries else on_run_terminal
+                run_id,
+                plugin_run_terminal if plugin_entries else on_run_terminal,
+                observation_owners=(
+                    mcp_provider,
+                    local_provider,
+                    virtual_cli_provider,
+                    raw_shell_provider,
+                ),
             ),
             run_model_scope=functools.partial(
                 self._live_usage_run_scope,
@@ -7949,6 +7959,8 @@ class ConsoleAgentBridge:
             if callable(unbind_promotion_context):
                 unbind_promotion_context()
             run_cancelled = "outcome" in locals() and outcome.status == RUN_CANCELLED
+            for activity_run_id in tool_activity_run_ids | raw_shell_progress_run_ids:
+                self.project_approval_feedback(session_id, activity_run_id)
             self._clear_raw_shell_progress(
                 raw_shell_progress_run_ids, cancelled=run_cancelled
             )
@@ -7959,8 +7971,14 @@ class ConsoleAgentBridge:
                     "Console tool activity display could not be settled ({})",
                     type(exc).__name__,
                 )
-            for activity_run_id in tool_activity_run_ids:
+            from tldw_chatbook.Agents.approval_observation import forget_approval_contexts
+
+            for activity_run_id in tool_activity_run_ids | raw_shell_progress_run_ids:
                 self._tool_activity_runs.pop(activity_run_id, None)
+                if self.approval_feedback_store is not None:
+                    self.approval_feedback_store.retire_run(activity_run_id)
+                for provider in (mcp_provider, local_provider, virtual_cli_provider, raw_shell_provider):
+                    forget_approval_contexts(provider, activity_run_id)
             if self._buddy_sink is not None:
                 for buddy_run_id in primary_buddy_run_ids:
                     self._buddy_sink.release_run(buddy_run_id)
@@ -9737,10 +9755,24 @@ class ConsoleAgentBridge:
         self,
         run_id: str,
         callback: Callable[[str], object] | None,
+        *,
+        observation_owners: tuple[object, ...] = (),
     ) -> None:
         with self._live_usage_lock:
             self._live_usage_owners.pop(run_id, None)
             self._live_turn_usage.pop(run_id, None)
+        # Primary rows transfer their final facts in run_reply's existing finally.
+        # Children have no primary tool projection and retire at THEIR terminal.
+        if run_id not in self._tool_activity_runs:
+            try:
+                from tldw_chatbook.Agents.approval_observation import forget_approval_contexts
+
+                if self.approval_feedback_store is not None:
+                    self.approval_feedback_store.retire_run(run_id)
+                for owner in observation_owners:
+                    forget_approval_contexts(owner, run_id)
+            except Exception:
+                pass  # Display cleanup cannot suppress the terminal callback.
         if callback is not None:
             callback(run_id)
 
@@ -11205,6 +11237,14 @@ class ConsoleAgentBridge:
                 truncated=state.truncated,
             )
             self._update_raw_shell_marker(state)
+        # A real child stream is backend evidence; early dispatch is not.
+        # This local projection step is never appended to a runtime trace.
+        self._observe_approval_step(
+            state.session_id,
+            run_id,
+            AgentStep(index=0, kind="tool_output", tool_name="shell_exec", call_id=call_id),
+        )
+
 
     def _clear_raw_shell_progress(
         self, run_ids: AbstractSet[str], *, cancelled: bool = False
@@ -11231,6 +11271,79 @@ class ConsoleAgentBridge:
                     "Console shell activity display could not be settled ({})",
                     type(exc).__name__,
                 )
+
+    def project_approval_feedback(self, session_id: str, run_id: str) -> None:
+        """Keep the latest facts on the owning tool before its run maps retire."""
+        try:
+            feedback = getattr(self, "approval_feedback_store", None)
+            if feedback is None:
+                return
+            facts = feedback.snapshot(session_id, run_id)
+            activity = self._tool_activity_runs.get(run_id)
+            if activity is not None and activity.session_id == session_id:
+                try:
+                    activity.feedback(facts, call_keys=feedback.projection_call_keys)
+                except Exception:
+                    pass  # Optional projection cannot change tool or teardown behavior.
+            raw_updates = []
+            with self._raw_shell_marker_lock:
+                for fact in facts:
+                    for call_key in feedback.projection_call_keys(fact.identity):
+                        state = self._raw_shell_markers.get((run_id, call_key))
+                        if (
+                            state is not None
+                            and state.session_id == session_id
+                            and state.tool_presentation is not None
+                        ):
+                            state.tool_presentation = dataclass_replace(
+                                state.tool_presentation, approval_feedback=fact
+                            )
+                            raw_updates.append(state)
+            for state in raw_updates:
+                try:
+                    self._update_raw_shell_marker(state)
+                except Exception:
+                    pass  # A missing display consumer cannot affect execution.
+        except Exception:
+            pass  # Optional observations never interrupt execution or retirement.
+
+    def _observe_approval_step(self, session_id: str, run_id: str, step: AgentStep) -> None:
+        try:
+            from tldw_chatbook.Agents.approval_observation import ApprovalObservation
+
+            feedback = getattr(self, "approval_feedback_store", None)
+            if feedback is None:
+                return
+            identity = feedback.context_for_call(
+                run_id, step.call_id, fallback_tool_name=step.tool_name
+            )
+            if identity is not None and identity.session_id == session_id:
+                kind = {
+                    "tool_execution_started": "dispatch_started",
+                    "tool_output": "backend_started",
+                    "tool_result": "tool_completed",
+                }.get(step.kind)
+                if kind:
+                    outcome = {
+                        "dispatch_started": "starting",
+                        "backend_started": "running",
+                    }.get(
+                        kind,
+                        step.tool_outcome
+                        if step.tool_outcome
+                        in {"success", "failure", "blocked", "timeout", "cancelled"}
+                        else "unknown",
+                    )
+                    feedback.publish(ApprovalObservation(identity, kind, outcome))
+            elif step.kind == "model_request_started":
+                for fact in feedback.snapshot(session_id, run_id):
+                    if fact.execution_state == "tool_completed":
+                        feedback.publish(
+                            ApprovalObservation(fact.identity, "model_wait", "waiting")
+                        )
+            self.project_approval_feedback(session_id, run_id)
+        except Exception:
+            pass  # Optional observations never interrupt execution or retirement.
 
     def set_tool_approval_pending(
         self,

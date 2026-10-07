@@ -91,6 +91,7 @@ from .session_todo_store import (
 )
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.approval_presentation import ApprovalAuthority
     from .agent_lesson_promotion import (
         PromotionEvidence,
         RepositoryInstructionProposal,
@@ -799,7 +800,9 @@ class LocalToolProvider:
         ]
         | None = None,
         admitted_roots: Sequence[RunAdmittedWorkspaceRoot] | None = None,
+        presentation_authority: ApprovalAuthority | None = None,
     ) -> None:
+        self._presentation_authority = presentation_authority
         self._root = workspace_root
         ordered_roots = (
             None
@@ -1657,6 +1660,9 @@ class LocalToolProvider:
             run_id: The run whose turn these decisions belong to.
             decisions: ``{tool_name: verdict}`` for this turn.
         """
+        from .approval_observation import remember_approval_contexts
+
+        remember_approval_contexts(self, run_id, decisions)
         with self._stamps_lock:
             self._stamps = {
                 key: value for key, value in self._stamps.items() if key[0] != run_id
@@ -1694,23 +1700,26 @@ class LocalToolProvider:
         Args:
             run_id: The run whose slice is cleared, then restored.
         """
-        with self._stamps_lock:
-            saved = {
-                key: value for key, value in self._stamps.items() if key[0] == run_id
-            }
-            self._stamps = {
-                key: value for key, value in self._stamps.items() if key[0] != run_id
-            }
-        try:
-            yield
-        finally:
+        from .approval_observation import provider_observation_scope
+
+        with provider_observation_scope(self, run_id, clear=True):
             with self._stamps_lock:
-                self._stamps = {
-                    key: value
-                    for key, value in self._stamps.items()
-                    if key[0] != run_id
+                saved = {
+                    key: value for key, value in self._stamps.items() if key[0] == run_id
                 }
-                self._stamps.update(saved)
+                self._stamps = {
+                    key: value for key, value in self._stamps.items() if key[0] != run_id
+                }
+            try:
+                yield
+            finally:
+                with self._stamps_lock:
+                    self._stamps = {
+                        key: value
+                        for key, value in self._stamps.items()
+                        if key[0] != run_id
+                    }
+                    self._stamps.update(saved)
 
     def pending_gate_for(
         self,
@@ -1789,6 +1798,9 @@ class LocalToolProvider:
         gate, _resolve_failed = self._resolve_pending_gate(
             name, args, self.hub_tool_for(name), call_id=call_id, rationale=rationale
         )
+        if gate is not None and gate.presentation_authority is not None and authority is not None:
+            gate = replace(gate, presentation_authority=replace(
+                gate.presentation_authority, location_label=authority.alias))
         return gate
 
     def _pending_promotion_gate(
@@ -1855,7 +1867,12 @@ class LocalToolProvider:
                 "evidence_note_ids": evidence.lesson_note_ids,
                 "rationale": evidence.rationale,
             }
+        from tldw_chatbook.Chat.approval_presentation import ApprovalAuthority
+
         return MCPPendingCall(
+            captured_arguments=copy.deepcopy(dict(args)),
+            presentation_authority=ApprovalAuthority("runtime", None, "Agent lesson promotion",
+                selected_root_alias or "Captured binding", "none", "call", "This call only"),
             llm_name=name.split(":", 1)[-1],
             server_key=LOCAL_SERVER_KEY,
             tool_name="fs_write",
@@ -2007,6 +2024,7 @@ class LocalToolProvider:
         # `pending_gate_for()` already verified the spec exists; None here
         # (impossible for its calls) still degrades to "" via the getattr.
         spec = self._specs.get(name)
+        captured_arguments = copy.deepcopy(dict(args))
         approval_arguments: Mapping[str, Any] = args
         if self._specs[name].approval_arguments is not None:
             try:
@@ -2017,6 +2035,8 @@ class LocalToolProvider:
                 logger.warning("Local tool approval summary failed")
                 approval_arguments = {"summary": "unavailable"}
         gate = MCPPendingCall(
+            presentation_authority=self._presentation_authority,
+            captured_arguments=captured_arguments,
             llm_name=name,
             server_key=LOCAL_SERVER_KEY,
             tool_name=name,
@@ -3430,6 +3450,9 @@ class LocalToolProvider:
                     approval_consumed=False,
                     refusal_reason=LocalToolInvocationReason.APPROVAL_TIMEOUT,
                 )
+            from .approval_observation import remember_approval_contexts
+
+            remember_approval_contexts(self, run_id, decisions or {})
             decision = _every_call_decision(hub, (decisions or {}).get(name, "timeout"))
             if decision in ("approve_session", "always_allow"):
                 self._persist_approval_safe(hub, decision)
@@ -3483,15 +3506,24 @@ class LocalToolProvider:
             return False
 
     def _persist_approval_safe(self, hub: HubTool, decision: str) -> None:
-        """Never-raise persistence side effect; a failure must not block execution."""
-        if self._persist_approval is None:
-            return
-        try:
-            self._persist_approval(hub, decision)
-        except Exception as exc:  # noqa: BLE001 — persistence failure must not block execution
-            logger.warning(
-                f"LocalToolProvider: persist_approval ({decision}) failed for {hub.name}: {exc}"
-            )
+        """Observe a real writer while preserving best-effort current-call execution."""
+        from .approval_observation import (
+            approval_contexts_scope,
+            provider_approval_contexts,
+            publish_grant_application,
+        )
+
+        with approval_contexts_scope(provider_approval_contexts(self, hub.name)):
+            if self._persist_approval is None:
+                publish_grant_application("not_applied", error_code="writer_unavailable")
+                return
+            try:
+                self._persist_approval(hub, decision)
+            except Exception as exc:
+                publish_grant_application("failed", error_code="writer_failed")
+                logger.warning(
+                    f"LocalToolProvider: persist_approval ({decision}) failed for {hub.name}: {exc}"
+                )
 
     def _record_decision_safe(self, hub: HubTool, decision: str) -> None:
         """Never-raise audit side effect; a failure must not break invoke()."""

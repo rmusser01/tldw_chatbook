@@ -243,6 +243,9 @@ class InterruptRoundHost:
         read_controller__announce_hidden_decision: Callable[[], Any],
         read_controller__announced_pending_decision_ids: Callable[[], Any],
         read_controller__answerable_decision_by_session: Callable[[], Any],
+        read_controller_approval_feedback: Callable[[], Any],
+        read_controller__publish_approval_observation: Callable[[], Any],
+        read_controller__notify_approval_feedback: Callable[[], Any],
         read_controller__approval_view_is_detached: Callable[[], Any],
         read_controller__bind_round_cancel_signal: Callable[[], Any],
         read_controller__bind_visit_cancel_signal: Callable[[], Any],
@@ -376,6 +379,13 @@ class InterruptRoundHost:
         )
         self.read_controller__answerable_decision_by_session = (
             read_controller__answerable_decision_by_session
+        )
+        self.read_controller_approval_feedback = read_controller_approval_feedback
+        self.read_controller__publish_approval_observation = (
+            read_controller__publish_approval_observation
+        )
+        self.read_controller__notify_approval_feedback = (
+            read_controller__notify_approval_feedback
         )
         self.read_controller__approval_view_is_detached = (
             read_controller__approval_view_is_detached
@@ -3075,6 +3085,8 @@ class InterruptRoundHost:
                 affected_session = str(payload.get("session_id") or "") or None
                 if calls:
                     payload["calls"] = calls
+                    payload.pop("view", None)
+                    payload.pop("presentation_revision", None)
                 else:
                     self.payloads["approval"].pop(round_id, None)
                 break
@@ -3993,6 +4005,35 @@ class InterruptRoundHost:
             timeout_seconds,
             deadline,
         )
+        from tldw_chatbook.Agents.approval_observation import ApprovalObservationContext
+
+        aliases = {}
+        legacy_keys = frozenset()
+        observation_contexts = {}
+        try:
+            legacy_keys = frozenset(
+                call.call_id or call.llm_name
+                for call in pending
+                if not call.call_id or getattr(call, "legacy_observation_key", False)
+            )
+            feedback = self.read_controller_approval_feedback()
+            feedback.bind_round(payload["view"])
+            aliases: dict[str, tuple[str, ...]] = {}
+            for call in pending:
+                key = call.call_id or call.llm_name
+                for name in (call.llm_name, call.tool_name):
+                    aliases[name] = tuple(dict.fromkeys((*aliases.get(name, ()), key)))
+            feedback.register_aliases(owning_run_id, aliases, legacy_keys=legacy_keys)
+            observation_contexts = {
+                row.verdict_key: ApprovalObservationContext(
+                    feedback.context_for_call(owning_run_id, row.verdict_key),
+                    self.read_controller__publish_approval_observation(),
+                )
+                for row in payload["view"].rows
+            }
+        except Exception:
+            observation_contexts = {}  # Optional display binding cannot stop review.
+        round_state["observation_contexts"] = observation_contexts
         is_parked = session_id is not None and session_id != (
             self.read_controller_store().active_session_id or ""
         )
@@ -4058,6 +4099,25 @@ class InterruptRoundHost:
                     list(unique_keys), call_by_key
                 )
 
+            from tldw_chatbook.Agents.approval_observation import ApprovalObservation
+
+            settled = (
+                "revoked"
+                if revoked
+                else "accepted"
+                if outcome == "decided"
+                else outcome
+            )
+            try:
+                feedback = self.read_controller_approval_feedback()
+                feedback.select_decisions(round_id, result["map"])
+                for context in observation_contexts.values():
+                    feedback.publish(
+                        ApprovalObservation(context.identity, "settled", settled)
+                    )
+            except Exception:
+                pass  # Final authority is already settled; feedback is optional.
+
         def _announce_if_detached() -> bool:
             # Sampled after the park, at the same moment the pre-host body
             # did, so an attach landing meanwhile mounts the card instead.
@@ -4099,6 +4159,9 @@ class InterruptRoundHost:
                 if retained is not None:
                     retained["phase"] = "finishing"
                     retained["calls"] = finishing_calls
+                    # Settled status uses the legacy changed-call guard.
+                    retained.pop("view", None)
+                    retained.pop("presentation_revision", None)
                     retained["timeout_seconds"] = 0.0
                     retained["deadline_monotonic"] = None
             return True
@@ -4149,6 +4212,12 @@ class InterruptRoundHost:
             result.get("map") or {key: "deny" for key in unique_keys}
         )
         verdicts_out.unresolved_keys = frozenset(unresolved_keys)
+        verdicts_out.observation_contexts = observation_contexts
+        verdicts_out.observation_aliases = aliases
+        verdicts_out.observation_legacy_keys = legacy_keys
+        self.read_controller__notify_approval_feedback()(
+            owning_session_id, owning_run_id
+        )
         verdicts_out.denial_reasons = {
             key: reason
             for key, reason in decisions.denial_reasons.items()
@@ -4747,6 +4816,21 @@ class InterruptRoundHost:
                 }
             approval_event = round_state["event"]
         approval_event.set()
+        from tldw_chatbook.Agents.approval_observation import ApprovalObservation
+
+        feedback = self.read_controller_approval_feedback()
+        try:
+            if feedback is not None:
+                feedback.select_decisions(round_id, decisions or {})
+                for context in round_state.get("observation_contexts", {}).values():
+                    feedback.publish(
+                        ApprovalObservation(context.identity, "received", "received")
+                    )
+                self.read_controller__notify_approval_feedback()(
+                    round_state.get("session_id", ""), round_state.get("run_id", "")
+                )
+        except Exception:
+            pass  # The worker Event is already released; never fail the receipt.
 
     def resolve_pending_chat_create(
         self, allow: bool, remember: bool, request_id: str | None
@@ -5165,6 +5249,7 @@ def _build_approval_payload(
     deadline: float | None,
     *,
     read_global_ToolExecutionPolicy: Callable[[], Any],
+    revision: int = 1,
 ) -> dict[str, Any]:
     """Marshal one approval round's card payload.
 
@@ -5173,8 +5258,21 @@ def _build_approval_payload(
     summarizer); the payload carries a ``summary`` slot that starts ``None``
     and is filled by the advisory summarizer -- payload-carried so any
     remount re-renders it rather than depending on a live patch surviving.
+    ``revision`` changes only when the owner replaces the captured pending
+    snapshot; advisory summary patches retain both the snapshot and revision.
     """
+    from tldw_chatbook.Chat.approval_presentation import capture_approval_view
+
+    view = capture_approval_view(
+        pending,
+        round_id=round_id,
+        session_id=session_id,
+        run_id=run_id,
+        revision=revision,
+    )
     return {
+        "view": view,
+        "presentation_revision": revision,
         "round_id": round_id,
         "session_id": session_id,
         "run_id": run_id,
@@ -5335,6 +5433,11 @@ def _stamp_answer_provenance(
 ) -> ApprovalDecisions:
     """Keep unresolved denies attached to the selected name-scoped stamp."""
     result = read_global_ApprovalDecisions()(stamps)
+    result.observation_contexts = dict(getattr(decisions, "observation_contexts", {}))
+    result.observation_aliases = dict(getattr(decisions, "observation_aliases", {}))
+    result.observation_legacy_keys = frozenset(
+        getattr(decisions, "observation_legacy_keys", ())
+    )
     result.unresolved_keys = frozenset(
         row.llm_name
         for row in rows
@@ -6105,7 +6208,18 @@ def build_tool_review_hook(
                         read_global_AGENT_LESSON_FOREGROUND_REQUIRED()
                     )
                     continue
+                from tldw_chatbook.Chat.approval_presentation import ApprovalAuthority
+
                 row = read_global_MCPPendingCall()(
+                    presentation_authority=ApprovalAuthority(
+                        "runtime",
+                        None,
+                        "Agent Lessons",
+                        "Agent library",
+                        "none",
+                        "call",
+                        "This call only",
+                    ),
                     llm_name=call.name,
                     server_key="agent:library",
                     tool_name=call.name,
@@ -6156,8 +6270,16 @@ def build_tool_review_hook(
                 # exactly as undecided-but-not-needed-this-turn MCP calls
                 # already work (see this function's own docstring).
                 continue
+            from tldw_chatbook.Chat.approval_presentation import profile_authority
+
             builtin_pending.append(
                 read_global_MCPPendingCall()(
+                    presentation_authority=profile_authority(
+                        "builtin",
+                        getattr(builtin_gate, "_profile_id", None),
+                        "Built-in",
+                        "tool_name",
+                    ),
                     llm_name=call.name,
                     server_key=read_global_BUILTIN_TOOL_SERVER_KEY(),
                     tool_name=call.name,
@@ -6285,11 +6407,22 @@ def build_tool_review_hook(
                 ),
             )
         builtin_stamps = _stamps_for(builtin_pending)
+        from tldw_chatbook.Agents.approval_observation import (
+            approval_contexts_scope,
+            decision_approval_contexts,
+        )
+
         for name, decision in builtin_stamps.items():
-            if read_global_approval_key_unanswered()(builtin_stamps, name):
-                builtin_gate.stamp(run_id, name, decision, unanswered=True)
-            else:
-                builtin_gate.stamp(run_id, name, decision)
+            keys = tuple(
+                row.call_id or row.llm_name
+                for row in builtin_pending
+                if row.llm_name == name and _decision_for(row) != "deny"
+            )
+            with approval_contexts_scope(decision_approval_contexts(decisions, keys)):
+                if read_global_approval_key_unanswered()(builtin_stamps, name):
+                    builtin_gate.stamp(run_id, name, decision, unanswered=True)
+                else:
+                    builtin_gate.stamp(run_id, name, decision)
 
         # task-32280: because the runtime turns the refusal below into the
         # call's result and never dispatches it, `MCPToolProvider.invoke` --

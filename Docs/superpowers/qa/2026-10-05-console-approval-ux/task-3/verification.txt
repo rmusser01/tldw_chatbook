@@ -1,0 +1,85 @@
+Task3 focused verification excerpts (full private logs retained locally, untracked).
+Python3.12.10 primary venv; guarded private_control.py MODULE [-k selection].
+Guard: origins verified; original home protected before HOME redirect; startup_allowed.
+No native presented-frame timestamps or real-profile launches.
+
+task3_fix1_ui_red.log
+FAILED Tests/UI/test_approval_interaction.py::test_captured_warning_survives_reused_row_and_is_painted
+FAILED Tests/UI/test_approval_interaction.py::test_captured_header_redacts_secrets_and_preserves_long_targets
+FAILED Tests/UI/test_approval_interaction.py::test_single_commit_names_selected_scope_and_escape_returns_to_opener
+FAILED Tests/UI/test_approval_interaction.py::test_mixed_commit_paints_complete_count_and_scope_summary
+FAILED Tests/UI/test_approval_interaction.py::test_narrow_counted_bulk_actions_remain_distinct_and_exact[approve-approve_once]
+FAILED Tests/UI/test_approval_interaction.py::test_narrow_counted_bulk_actions_remain_distinct_and_exact[deny-deny]
+6 failed, 13 deselected, 1 warning in 5.34s
+
+task3_fix1_capture_red.log
+FAILED Tests/Chat/test_approval_presentation.py::test_display_targets_redact_keys_and_secret_shapes_without_changing_originals
+1 failed, 1 passed, 14 deselected, 1 warning in 0.89s
+
+task3_fix1_summary_scope_red.log
+FAILED Tests/UI/test_approval_interaction.py::test_draft_summary_binds_each_tool_to_its_selected_scope
+1 failed, 19 deselected, 1 warning in 3.79s
+
+task3_fix1_interaction_final.log
+20 passed, 1 warning in 15.44s
+
+task3_fix1_presentation_final.log
+18 passed, 1 warning in 5.22s
+
+task3_fix1_card_final.log
+32 passed, 1 deselected, 1 warning in 9.24s
+
+task3_fix1_console_inspected.log
+1 passed, 1 deselected, 2 warnings in 68.10s (0:01:08)
+
+task3_fix1_ownership.log
+25 passed, 1 warning in 11.43s
+
+task3_fix1_bundle.log
+5 passed, 1 warning in 38.66s
+
+task3_fix1_tokens.log
+1 passed, 7 deselected, 1 warning in 7.33s
+
+task3_fix1_token_hex_spacing.log
+2 passed, 6 deselected, 1 warning in 14.06s
+
+task3_fix1_static.log
+All checks passed!
+6 files already formatted
+
+task3_tokens_base_exact.log
+E           1 failed, 1 warning in 3.07s
+FAILED Tests/UI/test_design_token_governance.py::test_active_css_extension_is_in_hex_floor
+1 failed, 7 deselected, 1 warning in 8.30s
+
+task3_component_base_exact.log
+E           1 failed, 1 warning in 44.55s
+E           1 failed, 1 warning in 2.75s
+E           1 failed, 3 warnings in 53.07s
+E           1 failed, 1 warning in 4.21s
+E           1 failed, 1 warning in 3.13s
+FAILED Tests/UI/test_component_pattern_governance.py::test_canonical_classes_defined_only_in_owning_sheet
+FAILED Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet
+FAILED Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet
+FAILED Tests/UI/test_component_pattern_governance.py::test_active_css_extension_is_in_dimension_floor
+FAILED Tests/UI/test_component_pattern_governance.py::test_pin_rejects_active_css_extension_without_writing_baseline
+5 failed, 13 deselected, 1 warning in 131.83s (0:02:11)
+
+task3_first_open_base_exact.log
+FAILED Tests/UI/test_console_approval_first_open_render.py::test_first_open_paints_an_answerable_card_nav_away_path
+FAILED Tests/UI/test_console_approval_first_open_render.py::test_first_ever_open_paints_an_answerable_card_launch_path
+2 failed, 4 passed, 4 warnings in 57.78s
+
+task3_card_base_exact.log
+E           1 failed, 2 warnings in 49.32s
+FAILED Tests/UI/test_chat_approval_card.py::test_action_bar_is_actually_visible_at_80x24_in_the_production_console
+1 failed, 32 deselected, 1 warning in 57.36s
+
+Final ownership after all source fixes: task3_fix1_ownership_final.log
+25 passed, 1 warning in 10.16s
+Final owned Ruff check: All checks passed!
+Final owned Ruff formatcheck:6files already formatted
+Final git diff --check:exit0
+
+Round2 RED: 1 failed; Apply y42 outside80x24. GREEN focused5; fullinteraction21; ownership25; Ruff/format3 files passed. Existing warnings retained. Inline author verification; agent thread limit blocks independent re-review.

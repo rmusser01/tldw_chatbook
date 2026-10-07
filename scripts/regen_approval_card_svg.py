@@ -2,7 +2,7 @@
 """Regenerate Docs/User_Guide/images/console/approval-card.svg (task-32290).
 
 Mounts the real ``ChatApprovalCard`` with the real app stylesheets and one
-pending MCP row, then exports the screenshot Rich/Textual produces.
+captured local file row, then exports the screenshot Rich/Textual produces.
 
 Run it against the worktree holding the card you want pictured::
 
@@ -20,6 +20,12 @@ from textual.app import ComposeResult
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Utils.path_validation import validate_path
+from tldw_chatbook.css.Themes.themes import ThemeVariableDefaultsMixin
+from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Chat.approval_presentation import (
+    capture_approval_view,
+    profile_authority,
+)
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
 
 #: This script's own location fixes the allowed root regardless of cwd --
@@ -27,23 +33,23 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCa
 _DOCS_ROOT = Path(__file__).resolve().parent.parent / "Docs"
 
 CALL = {
-    "llm_name": "search_notes",
-    "tool_name": "search_notes",
-    "server_key": "mcp:tldw_chatbook",
-    "server_label": "tldw_chatbook",
-    "arguments": {"query": "demo"},
+    "llm_name": "fs_read",
+    "tool_name": "fs_read",
+    "server_key": "local:__local__",
+    "server_label": "Local tools",
+    "arguments": {"path": "notes/release.md"},
     "call_id": "call_1",
     "reason": "ask",
+    "options": ("approve_once", "approve_session", "always_allow", "deny"),
 }
 
 
-class _CardApp(ConsolidatedCSSApp):
+class _CardApp(ThemeVariableDefaultsMixin, ConsolidatedCSSApp):
     TITLE = "tldw chatbook"
     CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def compose(self) -> ComposeResult:
         yield ChatApprovalCard(id="chat-approval-card")
-
 
 
 def main() -> int:
@@ -69,7 +75,26 @@ def main() -> int:
         async with app.run_test(size=(120, 20)) as pilot:
             card = app.query_one(ChatApprovalCard)
             card.display = True
-            card.set_batch([CALL], timeout_seconds=120, round_id="round-1")
+            pending = MCPPendingCall(
+                **CALL,
+                presentation_authority=profile_authority(
+                    "local", "Writer", "Chat scratch", "tool_name"
+                ),
+            )
+            view = capture_approval_view(
+                [pending],
+                round_id="round-1",
+                session_id="demo-chat",
+                run_id="demo-run",
+                revision=1,
+            )
+            card.set_batch(
+                [CALL],
+                timeout_seconds=0,
+                round_id=view.round_id,
+                view=view,
+                presentation_revision=view.revision,
+            )
             await pilot.pause()
             await pilot.pause()
             app.save_screenshot(str(out))

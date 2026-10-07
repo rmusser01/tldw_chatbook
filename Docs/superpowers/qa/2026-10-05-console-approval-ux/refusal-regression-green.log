@@ -1,0 +1,17 @@
+{"interpreter": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe", "python": "3.12.10", "private_root": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-approval-ux\\tldw_tui\\.superpowers\\approval-control-private-cq58jqm0", "module_origins_verified": true, "original_home_protected_before_redirection": true}
+{"startup_permission": [true, "startup_allowed"]}
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+.                                                                        [100%]
+============================== warnings summary ===============================
+Tests/Benchmarks/test_console_approval_private_control.py::test_denied_startup_stops_before_importing_pytest
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+
+(3 durations < 1s hidden.  Use -vv to show these durations.)
+1 passed, 1 warning in 1.00s

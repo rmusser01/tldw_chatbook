@@ -145,6 +145,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 
 | [ADR-211](211-ephemeral-provider-failure-presentation.md) | Accepted | Keep sanitized provider failure presentation transient across the gateway, agent outcome and Console while preserving typed fallback semantics and diagnostic persistence. |
 
+| [ADR-221](221-console-approval-interaction-and-feedback.md) | Accepted | Simplify single-call and batch approvals, name grant scopes explicitly, and distinguish click feedback from authoritative decision acceptance while retaining existing permission enforcement and lifetimes. |
+
 ## Historical Decision Material
 
 Some older decision material exists outside this directory. See [historical-index.md](historical-index.md). Historical entries are context, not canonical ADRs under the current immutability rules.

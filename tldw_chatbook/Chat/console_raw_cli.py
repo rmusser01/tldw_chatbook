@@ -579,14 +579,20 @@ class RawCliRuntime:
         """Grant model raw-shell authority for one Console session in memory."""
         if not isinstance(console_session_id, str) or not console_session_id.strip():
             raise ValueError("console_session_id must be a nonblank string")
+        from tldw_chatbook.Agents.approval_observation import publish_grant_application
+
         with self._lock:
-            if (
+            applied = not (
                 self._shutdown_started
                 or not self._armed
                 or not self._latest_permitted_locked()
-            ):
-                return
-            self._model_session_grants.add(console_session_id)
+            )
+            if applied:
+                self._model_session_grants.add(console_session_id)
+        publish_grant_application(
+            "applied" if applied else "not_applied",
+            actual_scope="raw_shell_session" if applied else None,
+        )
 
     def model_session_granted(self, console_session_id: str) -> bool:
         """Return whether this process currently holds the session grant."""

@@ -79,7 +79,7 @@
     },
     {
       "call_count": 10,
-      "diagnostic_digest": "c97650f616c1c31f8b61",
+      "diagnostic_digest": "870964ad587afafa68f3",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/local_tool_provider.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -142,7 +142,7 @@
     },
     {
       "call_count": 4,
-      "diagnostic_digest": "4bcd1383751e636050cf",
+      "diagnostic_digest": "8b2d6f50fe653f059407",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Agents/virtual_cli_provider.py",
       "reason": "remaining Chatbook production diagnostic owner"

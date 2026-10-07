@@ -1,0 +1,41 @@
+Task3 paths added in 3ba1706c5f..2b2a0322c6; removed from INDEX only.
+Local private files preserved; no sibling plans or prior tracked artifacts changed.
+Count: 37
+
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/120x40-inspect-False-textual-dark.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/120x40-inspect-False-textual-light.png
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/120x40-inspect-False-textual-light.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/120x40-inspect-True-textual-dark.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/120x40-inspect-True-textual-light.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/170x48-inspect-False-textual-dark.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/170x48-inspect-False-textual-light.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/170x48-inspect-True-textual-dark.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/170x48-inspect-True-textual-light.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/80x24-inspect-False-textual-dark.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/80x24-inspect-False-textual-light.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/80x24-inspect-True-textual-dark.png
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/80x24-inspect-True-textual-dark.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/80x24-inspect-True-textual-light.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/captured-120x40-inspect-False-textual-light.png
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/captured-120x40-inspect-False-textual-light.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/captured-80x24-inspect-True-textual-dark.png
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-frames/captured-80x24-inspect-True-textual-dark.svg
+.superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/task-3-report.md
+.superpowers/task3_captured_painted_final.log
+.superpowers/task3_captured_red.log
+.superpowers/task3_card_base_exact.log
+.superpowers/task3_compact_frames.log
+.superpowers/task3_component_base_exact.log
+.superpowers/task3_final_token_refs.log
+.superpowers/task3_first_open_base_exact.log
+.superpowers/task3_focus_sentinel.log
+.superpowers/task3_interaction_final.log
+.superpowers/task3_ownership_final.log
+.superpowers/task3_test_approval_batch_geometry.log
+.superpowers/task3_test_chat_approval_card_last.log
+.superpowers/task3_test_component_pattern_governance_utf8.log
+.superpowers/task3_test_console_approval_compact_layout_qualified.log
+.superpowers/task3_test_console_approval_first_open_render_utf8.log
+.superpowers/task3_test_css_bundle_sync_guard_last.log
+.superpowers/task3_test_design_token_governance_utf8.log
+.superpowers/task3_tokens_base_exact.log

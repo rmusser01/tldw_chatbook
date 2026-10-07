@@ -1,0 +1,79 @@
+{"interpreter": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe", "python": "3.12.10", "private_root": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-approval-ux\\tldw_tui\\.superpowers\\approval-control-private-j1gbwoqz", "module_origins_verified": true, "original_home_protected_before_redirection": true}
+{"startup_permission": [true, "startup_allowed"]}
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+FFFFFF                                                                   [100%]
+================================== FAILURES ===================================
+______________ test_nearest_rank_p95_uses_complete_sample_count _______________
+
+    def test_nearest_rank_p95_uses_complete_sample_count():
+>       report = measurement.summarize_approval_timings(samples())
+E       AttributeError: module 'Tests.Benchmarks.console_approval_latency' has no attribute 'summarize_approval_timings'
+
+Tests\Benchmarks\test_console_approval_latency_measurement.py:14: AttributeError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-06 07:51:24.294 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-06 07:51:24.404 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-06 07:51:24.405 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-06 07:51:24.405 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+______________________ test_missing_paint_cannot_qualify ______________________
+
+    def test_missing_paint_cannot_qualify():
+        values = samples()
+        values[0]['feedback_ms'] = None
+>       report = measurement.summarize_approval_timings(values)
+E       AttributeError: module 'Tests.Benchmarks.console_approval_latency' has no attribute 'summarize_approval_timings'
+
+Tests\Benchmarks\test_console_approval_latency_measurement.py:27: AttributeError
+_________________ test_uncalibrated_clock_pair_is_unverified __________________
+
+    def test_uncalibrated_clock_pair_is_unverified():
+        values = samples()
+        values[0]['clock_qualified'] = False
+>       assert measurement.summarize_approval_timings(values)['qualified'] is False
+E       AttributeError: module 'Tests.Benchmarks.console_approval_latency' has no attribute 'summarize_approval_timings'
+
+Tests\Benchmarks\test_console_approval_latency_measurement.py:37: AttributeError
+_____________________ test_disallowed_content_is_rejected _____________________
+
+    def test_disallowed_content_is_rejected():
+>       recorder = measurement.ApprovalTimingRecorder()
+E       AttributeError: module 'Tests.Benchmarks.console_approval_latency' has no attribute 'ApprovalTimingRecorder'
+
+Tests\Benchmarks\test_console_approval_latency_measurement.py:41: AttributeError
+_________ test_compositor_only_receipt_cannot_claim_native_transport __________
+
+    def test_compositor_only_receipt_cannot_claim_native_transport():
+        values = samples()
+        for value in values:
+            value['transport'] = 'compositor'
+>       assert measurement.summarize_approval_timings(values)['qualified'] is False
+E       AttributeError: module 'Tests.Benchmarks.console_approval_latency' has no attribute 'summarize_approval_timings'
+
+Tests\Benchmarks\test_console_approval_latency_measurement.py:61: AttributeError
+__________ test_first_use_is_separate_and_does_not_fill_warm_minimum __________
+
+    def test_first_use_is_separate_and_does_not_fill_warm_minimum():
+        values = samples(39)
+        values.append(dict(transport='native', clock_qualified=True, first_use=True,
+                           feedback_ms=999.0, actionable_ms=999.0))
+>       report = measurement.summarize_approval_timings(values)
+E       AttributeError: module 'Tests.Benchmarks.console_approval_latency' has no attribute 'summarize_approval_timings'
+
+Tests\Benchmarks\test_console_approval_latency_measurement.py:68: AttributeError
+============================== warnings summary ===============================
+Tests/Benchmarks/test_console_approval_latency_measurement.py::test_nearest_rank_p95_uses_complete_sample_count
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+
+(18 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Benchmarks/test_console_approval_latency_measurement.py::test_nearest_rank_p95_uses_complete_sample_count
+FAILED Tests/Benchmarks/test_console_approval_latency_measurement.py::test_missing_paint_cannot_qualify
+FAILED Tests/Benchmarks/test_console_approval_latency_measurement.py::test_uncalibrated_clock_pair_is_unverified
+FAILED Tests/Benchmarks/test_console_approval_latency_measurement.py::test_disallowed_content_is_rejected
+FAILED Tests/Benchmarks/test_console_approval_latency_measurement.py::test_compositor_only_receipt_cannot_claim_native_transport
+FAILED Tests/Benchmarks/test_console_approval_latency_measurement.py::test_first_use_is_separate_and_does_not_fill_warm_minimum
+6 failed, 1 warning in 1.02s

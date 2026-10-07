@@ -1,0 +1,15 @@
+{
+  "tldw_chatbook/app.py": "b53ff4f967709bc59df094487ec04fa7b05ce7f454f669b31e0bc61854d1daf5",
+  "tldw_chatbook/Chat/console_chat_controller.py": "df9e3038c945537035d2cfffc62a666de99664346688da686c5d6cb63154d7af",
+  "tldw_chatbook/UI/Screens/chat_screen.py": "8c2ddfc2a26e0fd6f948258f5209792dfd8f7dbc8994fba0d2e117e553f60736",
+  "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "124eb11b97d962a39fe146c83ac84e5d85b33583a4b580d0cdb549d178339e02",
+  "tldw_chatbook/css/tldw_cli_modular.tcss": "03d0bb58420d8fd65b7cbcceab836e2a7ae774370a67d2bbab9581612e7c8d11",
+  "Tests/conftest.py": "a50f7ae019e2acb2248f4ad37145079beedd609fdd271c7ecc3026e89da9359f",
+  "Tests/UI/conftest.py": "cd471f31304137ddc7f8a45b2a7c513fd87e57f2e1cdfd8154f5cf316dfdee3c",
+  "Tests/real_profile_guard.py": "bdda5c1fc4da2485afb19cf6dd76a687f768dffe606ad67a0436a36234ff6eb4",
+  "tldw_chatbook/Backup_Recovery/raw_participants.py": "486e3773f80a88e0e155008433610a38ab9a005d4939e50ddf7eebae12bd8aa4",
+  "Tests/Benchmarks/console_approval_latency.py": "6f22d5ba06baff840971b7aa74e50c013682e1dcb3904de2c586a1300f6cb7ed",
+  "Tests/Benchmarks/test_console_approval_latency_measurement.py": "f6b113de6a71b7a222d1fa5485e08f70289ce38df0f84f8b14f35405eb5818fa",
+  "Docs/superpowers/qa/2026-10-05-console-approval-ux/private_control.py": "815df28e2668e96804926830fb1720946f64faaadfb9cca1987f439e69b26829",
+  "Tests/Benchmarks/test_console_approval_private_control.py": "d40a9fdadc2e1a4692fb5501a0fe32c393bece0f20d5d38e8abe8a4356090483"
+}

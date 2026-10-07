@@ -515,7 +515,7 @@ dangerous tool, not to override a decision you made about one tool.
 One exception: `character_save` asks on **every** call, even when its own row
 is set to Allow — the row then shows **Ask ⚑** and the inspector says "Asks on
 every call, even when set to Allow." Its Console approval card offers only
-**Approve once** and **Deny**, and a session grant is never honoured for it,
+**Allow once** and **Deny**, and a session grant is never honoured for it,
 so every character save stays an approval card; the two character read tools
 take an explicit Allow normally.
 
@@ -668,23 +668,30 @@ separate, and waiting never grants permission to run a tool.
 
 ### Session approvals
 
-The approval card's **This session** decision ("Every call to this tool until
-Chatbook exits") lasts until Chatbook exits or you revoke it — it is never
-written to disk, and it is not a permission change (the tool's Allow/Ask/Off
-setting is untouched). A tool holding one gets a `(session)` suffix on its
-State cell in the Permissions matrix, and selecting any tool row lists every
-live grant in the inspector with a **Revoke** button next to each. Revoking
-takes effect immediately: the next call to that tool asks again.
+Under **More options**, **Until Chatbook exits** grants calls to this tool across
+chats using the exact displayed permission profile until exit or revocation.
+The grant stays in memory; it does not change the stored Allow/Ask/Off setting.
+A tool holding one gets a `(session)` suffix in Permissions. The inspector lists
+live grants for the profile under review, with a **Revoke** button. The next
+call must satisfy current policy after revocation.
+
+Raw-shell grants have a different scope: future commands in this Console chat,
+cleared by Disarm or exit. Persistent rules written to Default may be inherited
+by named profiles; temporary cache grants use the exact profile key.
 
 ### Exact-input allow rules
 
-Alongside **Once** / **This session** / **Always** / **Deny**, an MCP tool's
-approval card offers a fifth choice: **Always · these args**. Unlike
+Under **More options**, a supported MCP tool can offer **Always · these args**
+(remember these inputs), alongside Until Chatbook exits and Always. Unlike
 **Always** — which sets the whole tool to Allow — this remembers only the
-*exact arguments shown on that card*: the same tool called again with
+*original captured arguments reviewed on that card*: the same tool called again with
 different arguments still asks. It's scoped per tool, tied to that tool's
 current definition the same way **Always** is (a server that changes the
 tool's definition invalidates the rule, same rug-pull guard).
+
+Repeated-tool batches also withhold independent exact-input choices when shared
+stamps cannot preserve them. They do not replace that choice with a broader
+grant. Display redaction and schema defaults do not change the matching inputs.
 
 The card does **not** offer **Always · these args** for a high-risk tool
 (one tagged `mutates` or `process`): the risk floor beats an argument rule,

@@ -1,0 +1,67 @@
+{
+  "sample_count": 0,
+  "first_use_sample_count": 0,
+  "first_use_samples": [],
+  "feedback_budget_ms": 100.0,
+  "actionable_budget_ms": 200.0,
+  "missing_boundaries": {
+    "feedback_ms": 0,
+    "actionable_ms": 0
+  },
+  "qualified": false,
+  "feedback_median_ms": null,
+  "feedback_max_ms": null,
+  "feedback_p95_ms": null,
+  "actionable_median_ms": null,
+  "actionable_max_ms": null,
+  "actionable_p95_ms": null,
+  "revision": "b0ac6672231e29fb7efa2e9236d2f123c2e0a163",
+  "transport": "native",
+  "status": "unqualified_not_captured",
+  "cause": "native_presented_frame_observer_unavailable",
+  "observed_boundaries": [],
+  "missing_observations": [
+    "request_complete",
+    "local_checks_complete",
+    "input_arrived",
+    "handler_committing",
+    "presented_feedback_paint",
+    "actionable_paint",
+    "resolver_entered",
+    "host_outcome",
+    "worker_released",
+    "dispatch",
+    "backend_started",
+    "grant_applied",
+    "result",
+    "next_model_output"
+  ],
+  "conditions": {
+    "system": "Windows",
+    "python": "3.12.10",
+    "machine": "AMD64",
+    "capture_run": false,
+    "private_control_passed": true,
+    "offline_profile": true,
+    "qualification_sizes_pending": [
+      "80x24",
+      "120x40",
+      "170x48"
+    ],
+    "inspect_states_pending": [
+      "closed",
+      "open"
+    ],
+    "themes_pending": [
+      "dark",
+      "light"
+    ],
+    "scenarios_pending": [
+      "single",
+      "batch",
+      "raw-deny",
+      "large"
+    ],
+    "cold_warm_captures_pending": true
+  }
+}

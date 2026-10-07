@@ -282,12 +282,11 @@ was saved. Chatbook does not delete or adopt an unrecorded checkout automaticall
 
 ### Approval controls in small terminals
 
-When the chat column is narrow or Console uses its short-height layout, the
-existing decision Select sits above the **Approve once** and **Deny** pair.
-The bulk bar puts **Deny all** first, followed by **Approve all** and **Submit**.
-Review details scroll inside the card so those actions stay visible. Tab brings
-the optional denial-reason field into view. Resizing preserves the current
-choice and focus; taller, wider layouts restore the original arrangement.
+The common **Allow once**, **Deny** and **More options** actions reflow to
+fit the chat column. Request rows and **Details** scroll inside a bounded
+review area while committing actions stay outside it. Broader choices appear
+under **More options** and require their explicit Apply action. Resizing keeps
+staged choices, focus, disclosure state and scroll position.
 
 ### Consecutive tool denials
 
@@ -316,84 +315,84 @@ refused while that worker is retiring.
 
 ### Approvals — tools ask before they run
 
-Nothing is ever auto-approved, and built-in tools always ask first. When the
-agent wants to run a tool, the run pauses and an **"Approval required"** card
-appears above the transcript:
+When current policy requires approval, the affected run waits and an
+**Approval required** card appears above the transcript. Other chats and
+navigation remain available.
 
-![The "Approval required" card with a pending tool call](../images/console/approval-card.svg)
+![The approval card with a captured file request](../images/console/approval-card.svg)
 
-*(The card above shows a countdown because the screenshot generator
-(`scripts/regen_approval_card_svg.py`) hardcodes a 120-second deadline
-directly on the card, the same way a positive `[mcp] approval_timeout_seconds`
-would; the setting itself defaults to `0`, which waits indefinitely and shows
-no countdown — see below.)*
+The card shows the captured action and targets, permission profile and location.
+A grouped row covers every captured call sharing that verdict; its count is not
+limited to the calls currently visible. **Details** opens complete redacted
+captured inputs in read-only pages. **Previous** and **Next** expose the rest,
+with an explicit continuation label. It uses the captured data without new file
+reads or network calls. Raw shell retains its separate complete-command viewport
+and danger warnings.
 
-Each pending tool call gets its own row, one full-width line at a time: the
-`server · tool` header, the arguments the call wants to run with, the decision
-controls, and — under the controls — a line spelling out what the decision
-you have highlighted actually commits you to.
+For one call, **Allow once** and **Deny** answer immediately. **More options**
+reveals supported broader choices and their scope; the selected broader choice
+requires an explicit Apply. The available choices depend on the provider and
+current policy:
 
-While a call runs, supported skill scripts show stdout/stderr and native MCP stdio tools show their progress messages. The existing three-line preview and expandable **Live output** details refresh without replacing the row. MCP progress is status information, not a partial result. Other tools continue to show their result when they finish.
-
-Live text is bounded and kept only in the current session. The final result replaces it; Stop or timeout keeps captured partial text in the expanded details with the interruption outcome. A stopped Console wait does not claim that an abandoned worker was killed.
-
-Expand **Reason if denied (optional)** on a row to add a reason. Enter up to 1,000 characters
-before using the row's fast **Deny** button, or select **Deny** and **Submit**.
-**Deny all** keeps each row's own reason; review the rows and then **Submit**.
-The model receives the reason as quoted, explicitly user-authored text in that
-call's refusal. Leaving it empty keeps the existing refusal. A reason does not
-change permissions, apply to an approved sibling, or create a new audit log.
-
-The five decisions, with the scope line each one shows:
-
-| Decision | Scope line |
+| Choice | What it covers |
 |---|---|
-| **Once** | This call only. |
-| **This session** | Every call to this tool until Chatbook exits. |
-| **Always · these args** | Remembered for exactly these arguments. Remove it under MCP ▸ Tools ▸ this tool. |
-| **Always** | Remembered for this tool. Change it under MCP ▸ Permissions. |
-| **Deny** | This call only; the model is told not to retry. |
+| **Once** / **Allow once** | The captured call only, or all calls sharing this verdict. |
+| **Until Chatbook exits** | Ordinary MCP-backed, local and built-in grants cover this tool across chats using the exact displayed permission profile, until exit or revocation. Raw-shell grants cover future commands in this Console chat until Disarm or exit. |
+| **Always · these args** (remember these inputs) | A supported exact-input rule in the displayed profile. Matching uses original captured arguments, not redacted previews or normalized inputs. Remove it under MCP ▸ Tools ▸ this tool. |
+| **Always** (always allow this tool) | A persistent tool-level rule in the displayed profile. Change it under MCP ▸ Permissions. Default rules may affect named profiles inheriting that policy. |
+| **Deny** | Deny this captured call or group, retaining the model-facing refusal. |
 
-- Not every row offers all five. MCP tool rows do, except a high-risk tool
-  (tagged `mutates` or `process`), whose row does **not** offer **Always ·
-  these args** — the risk floor would make a stored exact-argument rule
-  inert, so the card never offers it; see [Exact-input allow
-  rules](../mcp.md#exact-input-allow-rules). A **local workspace tool**
-  offers **Once**, **This session**, **Always** and **Deny** — no
-  exact-argument rule, since nothing stores one for local tools. A
-  **built-in** tool offers **Once**, **This session** and **Deny** only:
-  **Always** is the one decision that writes a permission to disk, and a
-  built-in never does that from this card. The model's raw shell capability
-  is its own shape again — **Run once**, **All shell · session**, **Deny** —
-  and it starts on **Deny** rather than on the usual Once.
-- Bulk controls: **Approve all** sets every row to **Once**, **Submit**
-- Each pending tool call gets a row with a decision select: **Approve once**
-  (the default), **Approve for session**, **Always allow**, or **Deny**.
-  Built-in tools don't offer "Always allow" — decisions for them last at most
-  the session.
-- Bulk controls: **Approve all** sets every row to Approve once, **Submit**
-  applies each row's selected decision and resumes the run, **Deny all** sets
-  every row to Deny.
-- When exactly one tool call is pending, the row also gets fast **Approve
-  once** and **Deny** buttons that resume immediately, skipping Submit.
-- Watch the badges on a row's header: **(definition changed)** means the
-  tool's definition differs from what you previously approved; **(high risk)**
-  flags a tool the permission store floors to Ask; and a path warning —
-  "path outside allowed folders; will fail even if approved" — means the
-  file path will be rejected regardless of your decision.
-- Each badge also gets a visible line under the header saying what it means,
-  rather than a hover-only tooltip: "Definition changed since you last
-  allowed it; review the arguments.", "High risk: this tool reads local data
-  and always asks first.", or — for a tool whose declared effects include a
-  local mutation — "High risk: this tool changes local data and always asks
-  first."
-- A row you left undecided when you pressed Submit is marked in text, not
-  just in colour: its header gains a `needs decision · ` prefix.
-- Some local-tool rows also state their code-owned effects: they may read
-  private local data, modify local data, access the network, or incur LLM
-  usage costs. These labels come from the registered tool descriptor, never
-  from model-supplied arguments. They explain what approval covers; they do
-  not grant authorization or replace the permission decision.
+Existing mandatory checks still apply after approval. Not every row offers all
+choices: built-ins do not persist an Always rule from this card; ordinary local
+tools do not store exact-input rules; raw shell offers once, until-exit and denial.
+High-risk tools cannot use exact-input rules to silence their risk floor.
+Repeated-tool requests also withhold independent remembered-input choices when
+shared stamps cannot honor them. The card explains this and keeps one-time
+approval available.
+
+For an eligible ordinary batch, counted **Allow all N once** and **Deny all N**
+answer the complete captured batch immediately. **More options** opens staged row
+choices; **Review individually** opens that same area for an ineligible batch
+without deciding. Closing it preserves selections. Bulk approval never substitutes
+a broader scope and cannot cover raw-shell or explicit-review rows. Mixed
+choices stay staged until **Apply**; its summary includes the complete allowed
+and denied counts and any broader scopes. Ordinary rows start on Once. A raw
+row starts on Deny but still needs a deliberate choice, including reselecting
+Deny; **Deny all** is an explicit negative choice when every row supports it.
+
+Expand **Reason if denied (optional)** to add up to 1,000 characters before
+answering. Immediate Deny and counted Deny all keep each denied row's own reason;
+staged decisions send it when you press Apply. The model receives quoted,
+explicitly user-authored text for that refusal. A blank reason preserves the
+existing refusal and never adds a required step or changes permission scope.
+
+Watch the visible warnings. **Definition changed** asks you to review the current
+definition and arguments. **High risk** means current policy requires approval
+for this call. A path warning saying **will fail even if approved** means that
+approval cannot overcome the file boundary. Registered effect labels may explain
+local reads, writes, network access or LLM costs; those labels never authorize a
+call.
+
+**Applying** acknowledges a committing gesture locally. **Decision received**
+confirms controller admission; **Decision accepted** follows the host's final
+cancellation and deadline arbitration. Remembering is confirmed separately by
+its actual writer. **Starting** does not claim a backend has begun; **Running**
+requires owner evidence. A fast later state can replace Applying before it is
+painted, without delaying the worker or the next queued decision.
+
+If the call is permitted but remembering fails, feedback says **Allowed this
+call; permission was not remembered**. Review the displayed permission profile
+in MCP; raw-shell authority is managed by Console's Disarm control. A future
+call may ask again. The failure does not automatically retry or re-prompt the
+current call. Late feedback stays with its owning chat/tool after the card
+clears and cannot update a replacement request.
+
+While a call runs, supported skill scripts show stdout/stderr and native MCP
+stdio tools show progress messages. The existing preview and expandable
+**Live output** refresh without replacing the row. MCP progress is status
+information rather than a partial result. Live text is bounded and session-only;
+the final result replaces it. Stop or timeout retains captured partial text with
+the interruption outcome without claiming an abandoned worker was killed.
 
 A tool's catalog exposure, authorization, risk tags, and approval effects are
 separate. Exposure controls whether the descriptor is available in Console
@@ -401,10 +400,6 @@ only or may also be published to external MCP. Authorization is still the
 per-tool permission state, definition-hash guard, and master kill switch. Risk
 tags enforce permission-store floors; approval effects are human-facing call
 explanations only.
-  flags reads that could exfiltrate file contents; and a path warning —
-  "path outside allowed folders; will fail even if approved" — means the file
-  path will be rejected regardless of your decision.
-
 An armed approval card does not expire — the run waits for your decision
 however long you take. Stopping the run or closing the session withdraws a
 pending card; nothing else does. If you'd rather have undecided calls
@@ -420,7 +415,10 @@ Buddy interaction card can keep its own decision answerable.
 #### Reaching a card from the keyboard
 
 **Alt+A** jumps to the pending approval from anywhere in Console — the
-composer included, where Tab alone never reached it. The footer advertises it
+composer included, where Tab alone never reached it. It lands on neutral
+Details or the request summary. Enter opens Details or stays neutral; it does
+not approve or send a composer draft. Escape closes Details or More options
+and restores its eligible opener without deciding or resetting the deadline. The footer advertises it
 as **Approval**, and F1's Navigation list carries it as "Review pending
 approval"; the inspector's **Review approval** button is the same route. A
 session tab wearing the **◆** marker (the status legend reads "● running · ◆

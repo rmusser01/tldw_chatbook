@@ -239,6 +239,8 @@ class ChatTaskCards(Container):
             # slot starts None and is filled by the advisory summarizer;
             # payload carriage means any remount re-renders it.
             summary=approval.get("summary"),
+            view=approval.get("view"),
+            presentation_revision=approval.get("presentation_revision"),
         )
 
     @staticmethod

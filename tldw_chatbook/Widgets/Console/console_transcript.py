@@ -7485,8 +7485,13 @@ class ConsoleTranscript(VerticalScroll):
                 metadata = (
                     format_raw_cli_metadata(activity.raw_cli_presentation) + "\n\n"
                 )
+            feedback_text = ""
+            if presentation.approval_feedback is not None:
+                from tldw_chatbook.Chat.console_approval_feedback import format_approval_feedback
+
+                feedback_text = format_approval_feedback(presentation.approval_feedback) + "\n\n"
             detail = (
-                f"Arguments\n{presentation.arguments or 'Not retained'}\n\n"
+                feedback_text + f"Arguments\n{presentation.arguments or 'Not retained'}\n\n"
                 + metadata
                 + (
                     "Live output\n"

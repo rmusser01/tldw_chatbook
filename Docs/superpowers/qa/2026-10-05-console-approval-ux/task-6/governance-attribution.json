@@ -1,0 +1,9 @@
+{
+  "base_revision": "3ba1706c5f21567159fe51805234f75583614f0f",
+  "base_log_sha256": "e68f599375f50b2524e1de2ab8cc871d9aebc2f045a5b510124f319b3ad340a0",
+  "head_log_sha256": "291fe4c1852a33199d695d3e558148f0ff742d4174b8cf44c92c5683ee47c822",
+  "failure_messages_match": true,
+  "python_style_diagnostic_added": [],
+  "python_style_diagnostic_removed": [],
+  "central_token_count_difference": "New governed token definitions are included by the existing Windows path exemption error; no new source-sheet raw dimensions."
+}

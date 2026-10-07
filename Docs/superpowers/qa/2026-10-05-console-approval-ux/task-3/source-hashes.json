@@ -1,0 +1,8 @@
+{
+  "Tests/Chat/test_approval_presentation.py": "ce57bf2f5d243799fdaecf2d4d213130b9dea39cbc16a834bd60b665fc7528a8",
+  "Tests/UI/test_approval_interaction.py": "0c7652b9c567d59844254c280337340bc1f7731cc7706f914b760f01c98c71d3",
+  "Tests/UI/test_console_approval_compact_layout.py": "71acb9363900500615989b98f3c72c27e81f7991c877d4d839804b21c0c218bc",
+  "tldw_chatbook/Chat/approval_presentation.py": "eecc9c73b0abf36565c59ff1ecdbff938cc3fbec50e5941a8ffd020aa14af8d8",
+  "tldw_chatbook/UI/Console_Modules/approval_controls.py": "3c721b9db38c4bd9dc3e2ee22d5fca0783efaedd940a078e4a5746ade4947ae3",
+  "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "b5ca06c5a2ddae2370eacd9e6f509f043e37a303879e8ebe88e7a75cf67b8179"
+}

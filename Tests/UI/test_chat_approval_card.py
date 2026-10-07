@@ -40,18 +40,19 @@ def test_fast_decision_control_copy_has_one_named_source():
     from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card as mod
 
     expected = {
-        "_APPROVE_ONCE_LABEL": "Approve once",
+        "_APPROVE_ONCE_LABEL": "Allow once",
         "_DENY_LABEL": "Deny",
-        "_RAW_APPROVE_ONCE_LABEL": "Run once",
+        "_RAW_APPROVE_ONCE_LABEL": "Allow once",
         "_FAST_APPROVE_CLASS": "approval-row-fast-approve",
         "_FAST_DENY_CLASS": "approval-row-fast-deny",
-        "_FAST_APPROVE_TOOLTIP": (
-            "Approve once and resume immediately (skips Select + Submit)."
-        ),
-        "_FAST_DENY_TOOLTIP": "Deny and resume immediately (skips Select + Submit).",
+        "_FAST_APPROVE_TOOLTIP": ("Allow this call once and resume the run."),
+        "_FAST_DENY_TOOLTIP": "Deny this call and resume the run.",
     }
     method_literals = set()
-    for method in (mod.ChatApprovalCard.set_batch, mod.ChatApprovalCard._update_mounted_single_row):
+    for method in (
+        mod.ChatApprovalCard.set_batch,
+        mod.ChatApprovalCard._update_mounted_single_row,
+    ):
         tree = ast.parse(textwrap.dedent(inspect.getsource(method)))
         method_literals.update(
             node.value
@@ -196,7 +197,7 @@ def test_no_caller_focuses_the_submit_button_directly():
         "tldw_chatbook/Widgets/Console/console_status_chips.py",
         "tldw_chatbook/UI/Screens/chat_screen.py",
     ):
-        src = Path(rel).read_text()
+        src = Path(rel).read_text(encoding="utf-8")
         if '"#approval-submit"' in src:
             offenders.append(rel)
     assert not offenders, f"these focus the commit control directly: {offenders}"
@@ -251,10 +252,18 @@ def test_grouped_rows_take_the_first_non_empty_rationale():
     )
 
     calls = [
-        {"llm_name": "read_file", "rationale": "", "description": "",
-         "arguments": {"path": "a.md"}},
-        {"llm_name": "read_file", "rationale": "checking references",
-         "description": "Reads a file", "arguments": {"path": "b.md"}},
+        {
+            "llm_name": "read_file",
+            "rationale": "",
+            "description": "",
+            "arguments": {"path": "a.md"},
+        },
+        {
+            "llm_name": "read_file",
+            "rationale": "checking references",
+            "description": "Reads a file",
+            "arguments": {"path": "b.md"},
+        },
     ]
     collapsed = _collapse_pending_calls(calls)
     assert len(collapsed) == 1
@@ -321,9 +330,9 @@ def test_a_timed_out_approval_produces_its_own_marker():
     assert "write_file" in marker
     low = marker.lower()
     assert "timed out" in low or "timeout" in low
-    assert "not run" in low or "auto-denied" in low, (
-        f"the marker must say the call did NOT run: {marker!r}"
-    )
+    assert (
+        "not run" in low or "auto-denied" in low
+    ), f"the marker must say the call did NOT run: {marker!r}"
 
 
 @pytest.mark.unit
@@ -341,9 +350,9 @@ def test_the_approval_card_carries_its_design_system_treatment():
     from tldw_chatbook.Widgets.Chat_Widgets import chat_approval_card as mod
 
     src = inspect.getsource(mod.ChatApprovalCard)
-    assert "ds-approval-card" in src, (
-        "the card does not apply the design system's approval treatment"
-    )
+    assert (
+        "ds-approval-card" in src
+    ), "the card does not apply the design system's approval treatment"
 
 
 @pytest.mark.unit
@@ -356,15 +365,15 @@ def test_tool_trace_is_not_the_faintest_text_on_screen():
     """
     from pathlib import Path
 
-    css = Path("tldw_chatbook/css/features/_console.tcss").read_text()
+    css = Path("tldw_chatbook/css/features/_console.tcss").read_text(encoding="utf-8")
     import re
 
     m = re.search(r"\.console-transcript-message-tool\s*\{([^}]*)\}", css, re.S)
     assert m, "tool-row rule is missing"
     body = m.group(1)
-    assert "dim" not in body, (
-        f"the tool trace is still dimmed below every other row: {body.strip()!r}"
-    )
+    assert (
+        "dim" not in body
+    ), f"the tool trace is still dimmed below every other row: {body.strip()!r}"
 
 
 @pytest.mark.unit
@@ -389,9 +398,9 @@ def test_distinct_calls_get_their_own_row_and_verdict():
         {"llm_name": "read_file", "call_id": "b", "arguments": {"path": "secrets.md"}},
     ]
     rows = _collapse_pending_calls(distinct)
-    assert len(rows) == 2, (
-        f"two distinct calls must be two decisions, got {len(rows)} row(s)"
-    )
+    assert (
+        len(rows) == 2
+    ), f"two distinct calls must be two decisions, got {len(rows)} row(s)"
     assert {r["call_id"] for r in rows} == {"a", "b"}
 
     # No call_id -> the runtime can only apply a name-keyed verdict, so one row.
@@ -442,9 +451,9 @@ def _decision_select_width() -> int:
         Path(__file__).resolve().parents[2]
         / "tldw_chatbook"
         / "css"
-        / "components"
-        / "_agentic_terminal.tcss"
-    ).read_text()
+        / "features"
+        / "_console_approvals.tcss"
+    ).read_text(encoding="utf-8")
     # Only the unscoped wide rule defines this budget; compact and Buddy
     # overrides do not. Resolve its shipped token rather than a retired literal.
     match = re.search(
@@ -453,7 +462,9 @@ def _decision_select_width() -> int:
         re.S,
     )
     assert match, "`.approval-row-decision` no longer sets a token-backed width"
-    tokens = (Path(__file__).resolve().parents[2] / "tldw_chatbook/css/core/_variables.tcss").read_text()
+    tokens = (
+        Path(__file__).resolve().parents[2] / "tldw_chatbook/css/core/_variables.tcss"
+    ).read_text(encoding="utf-8")
     value = re.search(r"^" + re.escape(match.group(1)) + r":\s*(\d+);", tokens, re.M)
     assert value, "The Select width token must resolve to a cell count"
     return int(value.group(1))
@@ -512,8 +523,8 @@ def test_persistent_decisions_name_where_to_undo_them():
 
 
 @pytest.mark.unit
-def test_the_high_risk_explanation_differs_for_reads_and_mutations():
-    """AC#3: the reads-only sentence was also shown for `write_file`."""
+def test_the_high_risk_explanation_describes_current_policy():
+    """Effects do not change the reason or promise a permanent review floor."""
     from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
         format_approval_reason,
     )
@@ -522,8 +533,8 @@ def test_the_high_risk_explanation_differs_for_reads_and_mutations():
     mutate = format_approval_reason(
         {"reason": "risk_floored", "effects": ["mutates_local"]}
     )
-    assert read == "High risk: this tool reads local data and always asks first."
-    assert mutate == "High risk: this tool changes local data and always asks first."
+    assert read == "High risk: current policy requires approval for this call."
+    assert mutate == "High risk: current policy requires approval for this call."
 
 
 @pytest.mark.unit
@@ -698,9 +709,9 @@ async def test_three_row_approval_card_stays_bounded():
         )
         # Three 7-line rows exceed `#approval-batch-rows`' `max-height: 15`,
         # so the rows scroll and the bar sits directly under that cap.
-        assert actions.region.y >= batch_rows.region.bottom, (
-            "the action bar must stay below the rows it commits"
-        )
+        assert (
+            actions.region.y >= batch_rows.region.bottom
+        ), "the action bar must stay below the rows it commits"
         assert card.region.bottom - actions.region.bottom <= 2, (
             f"{card.region.bottom - actions.region.bottom} rows sit between "
             "the action bar and the card's bottom border"
@@ -754,12 +765,13 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
         session_id = controller.store.active_session_id
         worker, _ = _arm(controller, session_id, call=_risk_row())
         try:
-
             deadline = time.monotonic() + 8.0
             while time.monotonic() < deadline:
                 cards = screen.query("#chat-approval-card")
-                if cards and cards.first().display and cards.first().query(
-                    ".approval-row"
+                if (
+                    cards
+                    and cards.first().display
+                    and cards.first().query(".approval-row")
                 ):
                     break
                 await pilot.pause(0.05)
@@ -768,13 +780,13 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
             assert not screen.query_one("#console-setup-modal").display
             await pilot.pause()
 
-            submit = screen.query_one("#approval-submit")
+            submit = screen.query_one(".approval-row-fast-approve")
             x, y = submit.region.center
-            assert submit.region in app.screen.region, (
-                f"Submit at {submit.region} is off an 80x24 screen"
-            )
+            assert (
+                submit.region in app.screen.region
+            ), f"Submit at {submit.region} is off an 80x24 screen"
             hit, _region = app.screen.get_widget_at(int(x), int(y))
-            assert hit.id == "approval-submit", (
+            assert hit.has_class("approval-row-fast-approve"), (
                 "the Submit button's own coordinates render "
                 f"{hit.id or type(hit).__name__} instead -- the approval card "
                 "is clipped by its task surface at 80x24"
