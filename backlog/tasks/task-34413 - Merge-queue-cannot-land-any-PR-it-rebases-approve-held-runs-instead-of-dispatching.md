@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-07 02:30'
-updated_date: '2026-10-07 02:36'
+updated_date: '2026-10-07 03:04'
 labels:
   - ci
   - merge-queue
@@ -49,4 +49,13 @@ Tests: Tests/CI/test_merge_queue_actions.py rewritten from dispatch to approve, 
 Docs: CLAUDE.md and AGENTS.md (the 'never click Approve and run' rule reversed), spec (revision note, F2/F4 corrected, V3/V4 added, decision table and sections 7-8), ADR-218 amendment.
 
 AC 6, the end-to-end live test, waits for this PR to merge: merge-queue.yml runs dev's script, so the new code can only be exercised from dev. Then ask the owner before re-enabling.
+
+Independent review round 1 (Qodo out of credits). Fixed:
+1. A 403 rate limit or permission error was read as a refused re-run and evicted. Refusals are now 409/422, or a 403 that says the run is over a month old; everything else re-raises.
+2. The self-wake dispatched merge-queue.yml, which is not on main, so GitHub can never dispatch it (0 dispatch runs ever). The wake is now a queue kick: derived-artifacts.yml (on main) dispatched on dev without pr, with a new wait_run input passed to queue-tick as WAIT_RUN. merge-queue.yml is back to dev's version.
+3. A broken run (no check reported) keeps its run id when re-run, so it could be retried forever. A retry marker on the head now caps it at one retry (evict-failed-twice).
+4. Dispatched required checks counted as green, and a live dispatched run counted as in flight. counted() drops checks from non-pull_request suites, and stand-ins consider only pull_request runs.
+5. When the post-rebase approval wait ended with nothing approved, nothing woke the queue. It now sends a kick.
+Nits fixed: Args sections; stale comments in merge_queue.py and derived-artifacts.yml; the spec's V1 row, sections 9-11 and its 'Approve and run' rule; the pre-decide approval pass skips BEHIND/DIRTY fronts; approval also requires head_repository == this repo.
+New tests: 403 rate limit (primary, secondary) and permission errors raise; a month-old 403 refuses; a broken run retried twice evicts; a refused wake fails without a disarm; dispatched checks never count; a live dispatched run is not waited on; a bot PR's and a foreign repo's held runs are never approved; a BEHIND front is not pre-approved; the post-rebase timeout wakes a tick. Tests/CI 475 passed; seven new guards mutation-checked; no new lint versus dev.
 <!-- SECTION:NOTES:END -->

@@ -31,7 +31,7 @@ REPO = os.environ.get("GITHUB_REPOSITORY", "rmusser01/tldw_chatbook")
 BASE = "dev"
 REQUIRED_CHECK = "Derived artifacts reproduce from their sources"
 REQUIRED_WORKFLOW = "derived-artifacts.yml"
-QUEUE_WORKFLOW = "merge-queue.yml"
+QUEUE_WORKFLOW = "merge-queue.yml"  # never cancelled by a rebase; never dispatched (not on main)
 YOUNG_HEAD = timedelta(minutes=3)
 STUCK_GREEN = timedelta(minutes=15)
 MAX_FRONTS_PER_RUN = 10
@@ -47,8 +47,7 @@ MAX_PAGES = 10
 PASSING = frozenset({"success", "neutral", "skipped"})
 LIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
 BROKEN_RUN_CONCLUSIONS = frozenset({"failure", "startup_failure", "timed_out"})
-# gh reports API errors as `gh: <message> (HTTP NNN)` (verified live). These two mean the branch
-# itself refuses the required-check dispatch; every other error is GitHub's and is retried.
+# gh reports API errors as `gh: <message> (HTTP NNN)` (verified live).
 # A queue rebase (GITHUB_TOKEN) makes GitHub create the PR's pull_request runs held for approval
 # (spec F4). Those are the runs whose checks count toward mergeability; a workflow_dispatch run's
 # check does not appear in the PR's status rollup at all (spec V4, 2026-10-06). So the queue
@@ -56,9 +55,12 @@ BROKEN_RUN_CONCLUSIONS = frozenset({"failure", "startup_failure", "timed_out"})
 QUEUE_ACTOR = "github-actions[bot]"
 HELD_RUN_POLLS = 10
 HELD_RUN_POLL_S = 3
-# A re-run GitHub refuses (403: e.g. too old to re-run; 409/422: not re-runnable). Other errors
-# (5xx, rate limits, network) re-raise, so the run fails and the next event retries.
-RERUN_REFUSALS = ("(HTTP 403)", "(HTTP 409)", "(HTTP 422)")
+# A re-run GitHub will never take: 409/422 (not re-runnable), or a 403 saying the run is over a
+# month old. Every other error re-raises, so the run fails and the next event retries -- including
+# a 403 rate limit (primary and secondary limits both answer 403) and a 403 permission error,
+# either of which would otherwise evict every front it touched (spec section 8).
+RERUN_REFUSALS = ("(HTTP 409)", "(HTTP 422)")
+RERUN_REFUSAL_403_TEXT = "month"
 # How long a woken queue run waits for a run to complete before deciding.
 WAIT_RUN_TRIES = 40
 WAIT_RUN_DELAY_S = 6.0
@@ -437,7 +439,26 @@ def _workflow_name(run: dict) -> str:
     return str(run.get("path", "")).split("/")[-1].split("@")[0]
 
 
-def required_run_stand_ins(gh: GhApi, sha: str, checks: tuple[CheckRun, ...]) -> tuple[CheckRun, ...]:
+def counted(checks: tuple[CheckRun, ...], runs: list[dict]) -> tuple[CheckRun, ...]:
+    """Drop required-check runs that came from a non-pull_request run (e.g. workflow_dispatch).
+
+    Those never satisfy the required check, being absent from the PR's status rollup (spec V4).
+    A check whose run is not listed is kept.
+
+    Args:
+        checks: The required check's runs on the head, from `read_checks`.
+        runs: Every workflow run on the head, from `runs_on`.
+
+    Returns:
+        The checks that count.
+    """
+    not_counted = {r.get("check_suite_id") for r in runs
+                   if _workflow_name(r) == REQUIRED_WORKFLOW and r.get("event") != "pull_request"}
+    return tuple(c for c in checks if c.suite_id is None or c.suite_id not in not_counted)
+
+
+def required_run_stand_ins(gh: GhApi, sha: str, checks: tuple[CheckRun, ...],
+                           runs: list[dict] | None = None) -> tuple[CheckRun, ...]:
     """Required-workflow runs on this head that have not reported the required check, as stand-ins.
 
     - A LIVE run stands in as an in-flight check: the required check is a needs-gated aggregate
@@ -453,10 +474,14 @@ def required_run_stand_ins(gh: GhApi, sha: str, checks: tuple[CheckRun, ...]) ->
     A workflow-run conclusion is only ever read as a failure here, never as a merge signal
     (spec section 6). The queue's own run (GITHUB_RUN_ID) is never counted.
 
+    Only pull_request runs stand in: a workflow_dispatch run can never satisfy the required
+    check (spec V4), so waiting on one would only stall the line.
+
     Args:
         gh: The GitHub client.
         sha: The head commit.
         checks: The required check's runs on that head, from `read_checks`.
+        runs: The head's workflow runs, if already read; read here otherwise.
 
     Returns:
         One stand-in per live run and per failed run that reported no required check.
@@ -467,8 +492,9 @@ def required_run_stand_ins(gh: GhApi, sha: str, checks: tuple[CheckRun, ...]) ->
     own_run_id = int(os.environ.get("GITHUB_RUN_ID", "0") or 0)
     reported_suites = {c.suite_id for c in checks if c.suite_id is not None}
     stand_ins = []
-    for run in runs_on(gh, sha):
-        if _workflow_name(run) != REQUIRED_WORKFLOW or run.get("id") == own_run_id:
+    for run in runs_on(gh, sha) if runs is None else runs:
+        if (_workflow_name(run) != REQUIRED_WORKFLOW or run.get("id") == own_run_id
+                or run.get("event") != "pull_request"):
             continue
         url = run.get("html_url", "")
         if run.get("status") in LIVE_RUN_STATUSES:
@@ -484,6 +510,28 @@ def _best_effort(log: Callable[[str], None], what: str, fn: Callable[[], object]
         fn()
     except GhError as exc:
         log(f"  best-effort {what} failed: {exc}")
+
+
+def has_comment(gh: GhApi, number: int, kind: str, sha: str) -> bool:
+    """Whether the queue already posted a comment of this kind for this head.
+
+    Args:
+        gh: The GitHub client.
+        number: The PR number.
+        kind: The comment's kind, part of its hidden marker.
+        sha: The head, part of its hidden marker.
+
+    Returns:
+        True if the marker is there.
+
+    Raises:
+        GhError: The read failed.
+    """
+    marker = f"<!-- merge-queue:{kind}:{sha} -->"
+    owner, name = _owner_name()
+    data = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
+    nodes = data["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+    return any(marker in (n.get("body") or "") for n in nodes)
 
 
 def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool:
@@ -538,7 +586,8 @@ def approve_held_runs(gh: GhApi, sha: str, log: Callable[[str], None]) -> set[st
         return set()
     approved: set[str] = set()
     for run in held:
-        if run.get("event") != "pull_request" or (run.get("triggering_actor") or {}).get("login") != QUEUE_ACTOR:
+        if (run.get("event") != "pull_request" or (run.get("triggering_actor") or {}).get("login") != QUEUE_ACTOR
+                or (run.get("head_repository") or {}).get("full_name") != REPO):
             continue
         try:
             gh.rest("POST", f"repos/{REPO}/actions/runs/{run['id']}/approve")
@@ -553,6 +602,12 @@ def approve_held_runs(gh: GhApi, sha: str, log: Callable[[str], None]) -> set[st
 def _approve_until_required(gh: GhApi, sha: str, log: Callable[[str], None], sleep: Callable[[float], None]) -> bool:
     """Approve held runs on a fresh head, waiting (bounded) for the required workflow's to appear.
 
+    Args:
+        gh: The GitHub client.
+        sha: The new head.
+        log: Receives one line per approval.
+        sleep: Waits between polls (injected by tests).
+
     Returns:
         True once the required workflow's held run was approved; False if it never appeared.
     """
@@ -565,18 +620,26 @@ def _approve_until_required(gh: GhApi, sha: str, log: Callable[[str], None], sle
     return False
 
 
-def wake_after(gh: GhApi, run_id: int) -> None:
-    """Start a queue run on dev that first waits for `run_id` to complete.
+def wake(gh: GhApi, wait_run: int | None = None) -> None:
+    """Start a queue tick on dev: a `derived-artifacts.yml` dispatch without `pr` (a queue kick).
+
+    `derived-artifacts.yml` is dispatched, not `merge-queue.yml`, because GitHub only starts a
+    workflow_dispatch run when the workflow file exists on the default branch (`main`), and of the
+    two only `derived-artifacts.yml` does. On dev with no `pr` its lanes skip and only queue-tick
+    runs. Ceiling: GitHub keeps one pending run per concurrency group, so a newer kick replaces a
+    pending older one; the queue only ever acts on its single front PR, so one wait is in play.
 
     Args:
         gh: The GitHub client.
-        run_id: The run the woken queue run waits for.
+        wait_run: A run the woken tick waits for (bounded) before deciding, if any.
 
     Raises:
         GhError: The dispatch failed.
     """
-    gh.rest("POST", f"repos/{REPO}/actions/workflows/{QUEUE_WORKFLOW}/dispatches",
-            {"ref": BASE, "inputs[wait_run]": str(run_id)})
+    fields = {"ref": BASE}
+    if wait_run is not None:
+        fields["inputs[wait_run]"] = str(wait_run)
+    gh.rest("POST", f"repos/{REPO}/actions/workflows/{REQUIRED_WORKFLOW}/dispatches", fields)
 
 
 def wait_for_run(gh: GhApi, run_id: int, sleep: Callable[[float], None], log: Callable[[str], None]) -> None:
@@ -601,12 +664,36 @@ def _required_runs(gh: GhApi, sha: str) -> list[dict]:
     return sorted(runs, key=lambda r: r.get("created_at") or "", reverse=True)
 
 
+def _is_rerun_refusal(exc: GhError) -> bool:
+    """Whether GitHub refused a re-run for good (see RERUN_REFUSALS), not an outage or rate limit.
+
+    Args:
+        exc: The error the re-run call raised.
+
+    Returns:
+        True only for a lasting refusal.
+    """
+    text = str(exc)
+    if any(code in text for code in RERUN_REFUSALS):
+        return True
+    lowered = text.lower()
+    return "(HTTP 403)" in text and RERUN_REFUSAL_403_TEXT in lowered and "rate limit" not in lowered
+
+
 def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[str], None],
            sleep: Callable[[float], None]) -> str:
     """Re-run a required-workflow run in place, then approve the re-run if GitHub holds it.
 
     A re-run adds a new attempt to the same check suite, so it replaces the old result for branch
     protection while `read_checks` (filter=all) still lists the old one (spec V3).
+
+    Args:
+        gh: The GitHub client.
+        pr: The front PR.
+        run: The workflow run to re-run.
+        failed_only: Re-run only the failed jobs (`rerun-failed-jobs`) instead of the whole run.
+        log: Receives one line per notable step.
+        sleep: Waits between polls (injected by tests).
 
     Returns:
         `started`, or `refused` (GitHub will not re-run it).
@@ -618,7 +705,7 @@ def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[
     try:
         gh.rest("POST", path)
     except GhError as exc:
-        if not any(code in str(exc) for code in RERUN_REFUSALS):
+        if not _is_rerun_refusal(exc):
             raise
         log(f"  #{pr.number}: re-run of run {run['id']} refused: {exc}")
         return "refused"
@@ -671,7 +758,7 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             return False
         return _evict(gh, fresh, Action("evict", f"rebase onto dev keeps failing: {error}", slug="rebase"), log)
     # The mutation returns the PRE-rebase headRefOid and the branch moves about 1 s later, so
-    # wait for the new head to appear before dispatching CI on it.
+    # wait for the new head to appear before approving its CI.
     new_head = None
     for _ in range(REBASE_POLLS):
         sleep(REBASE_POLL_S)
@@ -697,7 +784,10 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             continue
         _best_effort(log, f"cancel run {run['id']}",
                      lambda rid=run["id"]: gh.rest("POST", f"repos/{REPO}/actions/runs/{rid}/cancel"))
-    started = "approved its CI" if approved else "its CI is not approved yet; a later tick approves it"
+    if not approved:
+        # The PR's own runs stay held, so no queue-tick will run for it: wake one.
+        _best_effort(log, "wake a queue tick", lambda: wake(gh))
+    started = "approved its CI" if approved else "its CI is not approved yet; a woken tick approves it"
     comment_once(
         gh, pr.number, "rebased", new_head,
         f"Merge queue: this PR is next. Rebased onto `{BASE}` (head `{new_head[:10]}`); {started}.",
@@ -712,12 +802,22 @@ def _start(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[
     Approve a held run, else re-run a cancelled one. A dispatched run would not count (spec V4),
     so with neither the PR is evicted: a push, or closing and reopening it, starts its CI.
 
+    Args:
+        gh: The GitHub client.
+        pr: The front PR.
+        log: Receives one line per notable step.
+        sleep: Waits between polls (injected by tests).
+
     Returns:
         True if the PR was evicted.
+
+    Raises:
+        GhError: An approval or re-run failed for a reason other than a refusal.
     """
     held = [r for r in runs_on(gh, pr.head_sha, status="action_required")
             if _workflow_name(r) == REQUIRED_WORKFLOW and r.get("event") == "pull_request"
-            and (r.get("triggering_actor") or {}).get("login") == QUEUE_ACTOR]
+            and (r.get("triggering_actor") or {}).get("login") == QUEUE_ACTOR
+            and (r.get("head_repository") or {}).get("full_name") == REPO]
     if held:
         # Not best-effort here: on a GitHub outage the run must fail (the next event retries),
         # never fall through to the eviction below and disarm the PR (spec section 8).
@@ -738,10 +838,22 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
 
     The retry is usually decided by the failed run's own queue-tick while that run is still in
     progress, and GitHub only re-runs a completed run, so that case wakes a queue run that waits
-    for it (`wake_after`). A run that is live again (re-run by a racing queue run) is left alone.
+    for it (`wake`). A run that is live again (re-run by a racing queue run) is left alone. One
+    retry per head: a run that failed without reporting the check keeps its run id when re-run,
+    so its failures never add up to two; the retry comment marker caps it instead.
+
+    Args:
+        gh: The GitHub client.
+        pr: The front PR.
+        action: The retry decision, carrying the failed check's suite and run URL.
+        log: Receives one line per notable step.
+        sleep: Waits between polls (injected by tests).
 
     Returns:
         True if the PR was evicted.
+
+    Raises:
+        GhError: A re-run or the wake failed for a reason other than a refusal.
     """
     runs = _required_runs(gh, pr.head_sha)
     run = next((r for r in runs if action.suite_id is not None and r.get("check_suite_id") == action.suite_id), None)
@@ -751,12 +863,15 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
         return _evict(gh, pr, Action("evict", "required check failed and its run cannot be found to re-run",
                                      action.links, "rerun"), log)
     if run.get("id") == int(os.environ.get("GITHUB_RUN_ID", "0") or 0):
-        wake_after(gh, run["id"])
+        wake(gh, run["id"])
         log(f"  #{pr.number}: the failed run is this run ({run['id']}); woke a queue run to re-run it once it completes")
         return False
     if run.get("status") in LIVE_RUN_STATUSES:
         log(f"  #{pr.number}: run {run['id']} is live again; standing down")
         return False
+    if has_comment(gh, pr.number, "retry", pr.head_sha):
+        return _evict(gh, pr, Action("evict", "required check failed again after its retry", action.links,
+                                     "failed-twice"), log)
     if _rerun(gh, pr, run, action.suite_id is not None, log, sleep) == "refused":
         return _evict(gh, pr, Action("evict", "required check failed once and GitHub refused to re-run it",
                                      action.links, "rerun"), log)
@@ -804,7 +919,7 @@ def apply(
 UNQUEUED_NOTES = {
     "fork": "Merge queue: fork PRs are not queued, because GitHub cannot dispatch workflows on a fork's branch. "
             "A maintainer merges this one by hand.",
-    "bot": "Merge queue: PRs opened by a bot or app are not queued, because a queue dispatch would run this "
+    "bot": "Merge queue: PRs opened by a bot or app are not queued, because a queue-approved run would run this "
            "branch's workflows without the token limits and approval gates GitHub applies to bot-authored "
            "runs. A maintainer merges this one by hand.",
 }
@@ -872,7 +987,7 @@ def run(
         sleep: Waits between rereads (injected by tests).
         log: Receives the run's log lines.
         wait_run: A run to wait for (bounded) before deciding, set when a queue-tick woke this
-            run because its own run failed the required check (`wake_after`).
+            run because its own run failed the required check (`wake`).
 
     Returns:
         The (PR number, action) decisions taken or, in dry mode, proposed.
@@ -893,12 +1008,15 @@ def run(
         pr = settle_unknown(gh, pr, sleep)
         if pr.armed_at is None:
             continue
-        if mode == "on":
+        if mode == "on" and pr.merge_state not in ("BEHIND", "DIRTY"):
             # Held runs left by an earlier rebase or re-run: approving them first lets the
-            # decision below see them as the live runs they become.
+            # decision below see them as the live runs they become. A BEHIND front is about to
+            # be rebased (its old head's runs cancelled) and a DIRTY one evicted.
             approve_held_runs(gh, pr.head_sha, log)
         checks = read_checks(gh, pr.head_sha)
-        pr = replace(pr, checks=checks + required_run_stand_ins(gh, pr.head_sha, checks))
+        runs = runs_on(gh, pr.head_sha)
+        checks = counted(checks, runs)
+        pr = replace(pr, checks=checks + required_run_stand_ins(gh, pr.head_sha, checks, runs))
         action = decide_front(pr, now())
         decisions.append((pr.number, action))
         log(f"#{pr.number}: {action.kind} - {action.reason}")

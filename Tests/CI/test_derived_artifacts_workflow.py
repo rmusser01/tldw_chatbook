@@ -289,11 +289,16 @@ def test_required_check_name_is_stable():
     assert _job()["name"] == "Derived artifacts reproduce from their sources"
 
 
-def test_dispatch_input_lets_the_queue_name_the_pr():
-    """A queue dispatch names its PR; a manual kick names none, so the lanes skip."""
+def test_dispatch_inputs_name_the_pr_or_the_run_to_wait_for():
+    """A manual full-gate dispatch names its PR. A queue kick names none, so the lanes skip; the
+    queue's own kick names the run its tick waits for (spec V4: the queue wakes through this file,
+    the only queue file on main, so the only one GitHub will dispatch)."""
     dispatch = _workflow()[True]["workflow_dispatch"]
-    assert dispatch["inputs"]["pr"] == {"description": "PR number (set by the merge queue)", "required": False,
+    assert dispatch["inputs"]["pr"] == {"description": "PR number (manual full-gate dispatch)", "required": False,
                                         "type": "string", "default": ""}
+    assert dispatch["inputs"]["wait_run"] == {
+        "description": "A run the queue tick waits for before deciding (set by the merge queue)",
+        "required": False, "type": "string", "default": ""}
 
 
 def test_queue_tick_runs_after_ci_and_is_never_required():
@@ -318,7 +323,8 @@ def test_queue_tick_runs_after_ci_and_is_never_required():
         "persist-credentials": False,
     }
     assert tick["steps"][1]["run"] == "python3 scripts/merge_queue.py"
-    assert tick["steps"][1]["env"] == {"GH_TOKEN": "${{ github.token }}", "MERGE_QUEUE": "${{ vars.MERGE_QUEUE }}"}
+    assert tick["steps"][1]["env"] == {"GH_TOKEN": "${{ github.token }}", "MERGE_QUEUE": "${{ vars.MERGE_QUEUE }}",
+                                       "WAIT_RUN": "${{ inputs.wait_run }}"}
 
 
 def test_branch_dispatch_without_pr_runs_the_gate():
