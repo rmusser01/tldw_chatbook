@@ -2092,6 +2092,15 @@ class LifecycleMixin:
                 severity="warning",
             )
 
+    def _session_summary_duration_seconds(self) -> int:
+        """Configured quit-summary duration, clamped to 1..30 (default 3)."""
+        raw = get_cli_setting("session_summary", "duration_seconds", 3)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return 3
+        return max(1, min(30, value))
+
     async def _run_approved_quit_cleanup(self) -> None:
         """Preserve quit ordering without blocking the Textual event loop."""
 
