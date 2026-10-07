@@ -1653,9 +1653,9 @@ class LibraryFileNotesWorkspace(Vertical):
         self._path_task_opener_id = ""
         self._path_task_editor_lease: _EditorReadOnlyLease | None = None
         self._git_observed_changes: tuple[SequencedSessionChange, ...] | None = None
-        # task-11: the owner's change-log version as of the last session
+        # task-11: the owner's session revision as of the last session
         # refresh. None forces the first refresh after every binding reset.
-        self._git_observed_change_version: int | None = None
+        self._git_observed_change_version: tuple[int, int] | None = None
         self._git_refresh_timer: Timer | None = None
         self._git_refresh_after_mutation = False
         self._git_last_action: _GitLastAction | None = None
@@ -3887,16 +3887,18 @@ class LibraryFileNotesWorkspace(Vertical):
         binding = self._session_binding
         changes: tuple[SequencedSessionChange, ...] = ()
         if binding is not None:
-            # task-11: one integer compare decides whether anything was
-            # appended, merged, retired, or cleared since the last refresh.
-            # Equal means the snapshot below would be bit-identical, so the
-            # coalesce, the tuple compare, and the push-state rehydrate are
-            # all provably no-ops -- skip them. (Push operations have their
-            # own observer tasks; they do not ride this refresh.)
-            version = self._session_owner.change_log_version()
-            if version == self._git_observed_change_version:
+            # task-11: one tuple compare decides whether anything was
+            # appended, merged, retired, cleared, or re-trusted since the
+            # last refresh. Equal means the snapshot below would be
+            # bit-identical for everything this method reads, so the
+            # coalesce, the tuple compare, the label validation, and the
+            # push-state rehydrate are all provably no-ops -- skip them.
+            # (Push operations have their own observer tasks; they do not
+            # ride this refresh.)
+            revision = self._session_owner.session_revision()
+            if revision == self._git_observed_change_version:
                 return
-            self._git_observed_change_version = version
+            self._git_observed_change_version = revision
             snapshot = self._session_owner.snapshot(binding)
             changes = snapshot.changes
             service = self._session_git_service()

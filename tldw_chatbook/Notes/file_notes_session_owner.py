@@ -1190,9 +1190,7 @@ class FileNotesSessionOwner:
         if len(self._changes) > SESSION_CHANGE_RECORD_LIMIT:
             self._compact_session_changes_locked()
             if len(self._changes) > SESSION_CHANGE_RECORD_LIMIT:
-                del self._changes[
-                    : len(self._changes) - SESSION_CHANGE_RECORD_LIMIT
-                ]
+                del self._changes[: len(self._changes) - SESSION_CHANGE_RECORD_LIMIT]
                 if not self._change_limit_logged:
                     self._change_limit_logged = True
                     logger.warning(
@@ -1235,6 +1233,18 @@ class FileNotesSessionOwner:
         """
         with self._lock:
             return self._change_log_version
+
+    def session_revision(self) -> tuple[int, int]:
+        """Return the poller-relevant owner revision (task-11).
+
+        ``(change-log version, git authority generation)`` read under one
+        lock. Trust publication and status-authority moves bump the
+        authority generation without touching the change log, so a poller
+        that skips refresh work while BOTH hold still also skips work that
+        could not have observed anything new.
+        """
+        with self._lock:
+            return self._change_log_version, self._git_authority_generation
 
     def snapshot(self, binding: SessionBinding) -> FileNotesSessionSnapshot:
         """Return an immutable snapshot without exposing another generation."""

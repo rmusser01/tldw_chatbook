@@ -53,9 +53,7 @@ def _service(root: Path, replica: FileNotesReplica) -> FileNotesService:
 
 def _seed_vault(root: Path, count: int) -> None:
     for index in range(count):
-        (root / f"note-{index:04d}.md").write_text(
-            f"body {index}\n", encoding="utf-8"
-        )
+        (root / f"note-{index:04d}.md").write_text(f"body {index}\n", encoding="utf-8")
 
 
 class _ReplicaSpy:
@@ -105,9 +103,7 @@ def test_unchanged_vault_skips_replica_reads_across_ticks(
     assert first.status == "ok"
     assert first.vault_unchanged is False
     assert len(first.entries) == 12
-    assert first.created == tuple(
-        f"note-{index:04d}.md" for index in range(12)
-    )
+    assert first.created == tuple(f"note-{index:04d}.md" for index in range(12))
     assert spy.active_reads == 1
 
     for _ in range(3):
@@ -500,9 +496,7 @@ def test_refresh_session_changes_skips_when_no_new_changes_were_appended(
         "is_mounted",
         property(lambda self: True),
     )
-    monkeypatch.setattr(
-        workspace, "_render_session_git_label", lambda *a, **k: None
-    )
+    monkeypatch.setattr(workspace, "_render_session_git_label", lambda *a, **k: None)
     monkeypatch.setattr(workspace, "_sync_git_last_action", lambda: False)
     monkeypatch.setattr(workspace, "_rehydrate_push_state", lambda *a, **k: False)
     monkeypatch.setattr(
