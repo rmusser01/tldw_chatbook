@@ -55,7 +55,11 @@ class NotesM1SyncAdapter:
                 return record_conflict(
                     envelope,
                     conflict_type="invalid_notes_payload",
-                    message="notes.note upsert payload requires non-empty title and content strings.",
+                    message=(
+                        "notes.note requires a nonblank title of at most 255 characters "
+                        "and nonempty content of at most 5,000,000 characters; "
+                        "both must be strings without control characters other than tab, CR, or LF."
+                    ),
                 )
             local_store.upsert_note(object_id, payload, object_revision=revision)
         notes_mirror.record(
