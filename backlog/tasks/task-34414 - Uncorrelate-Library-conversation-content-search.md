@@ -1,8 +1,9 @@
 ---
 id: TASK-34414
 title: Uncorrelate Library conversation content search
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:40
+updated_date: 2026-10-07 03:17
 ---
 
 ## Description
