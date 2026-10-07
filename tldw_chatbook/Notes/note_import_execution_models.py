@@ -22,6 +22,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportPreviewItem,
     ImportSource,
     NoteImportPlan,
+    OmittedNoteLanguage,
     ParsedNotePayload,
     RootCollisionState,
 )
@@ -114,6 +115,11 @@ def _private_payload_fingerprint(payloads: tuple[ParsedNotePayload, ...]) -> str
                     "keywords": list(payload.keywords),
                     "template_name": payload.template_name,
                     "title": payload.title,
+                    **(
+                        {"content_language": payload.content_language}
+                        if payload.content_language is not OmittedNoteLanguage.UNSET
+                        else {}
+                    ),
                     "type": "parsed_note_payload",
                 }
                 for payload in payloads

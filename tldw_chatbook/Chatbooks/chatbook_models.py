@@ -51,13 +51,20 @@ class ChatbookVersion(Enum):
     V1 = "1.0"
     V2 = "2.0"
     V3 = "3.0"
+    V4 = "4.0"
 
 
-def select_chatbook_version(*, has_canvas_records: bool) -> ChatbookVersion:
-    """Select 3.0 only when the export actually contains Canvas records."""
+def select_chatbook_version(
+    *, has_canvas_records: bool, has_note_records: bool = False
+) -> ChatbookVersion:
+    """Select the newest contract required by the exported records."""
 
     if type(has_canvas_records) is not bool:
         raise TypeError("has_canvas_records must be a bool")
+    if type(has_note_records) is not bool:
+        raise TypeError("has_note_records must be a bool")
+    if has_note_records:
+        return ChatbookVersion.V4
     return ChatbookVersion.V3 if has_canvas_records else ChatbookVersion.V2
 
 
@@ -565,7 +572,7 @@ class ChatbookManifest:
         if self.version is ChatbookVersion.V3:
             if self.canvas_archive is None:
                 raise ValueError("Chatbook 3.0 requires Canvas records")
-        elif self.canvas_archive is not None:
+        elif self.canvas_archive is not None and self.version is not ChatbookVersion.V4:
             raise ValueError("Canvas records require Chatbook 3.0")
 
     def to_dict(self) -> dict:
@@ -596,8 +603,7 @@ class ChatbookManifest:
             "language": self.language,
             "license": self.license,
         }
-        if self.version is ChatbookVersion.V3:
-            assert self.canvas_archive is not None
+        if self.canvas_archive is not None:
             result["canvas"] = self.canvas_archive.to_dict()
         return result
 
@@ -611,10 +617,11 @@ class ChatbookManifest:
             version_value = ChatbookVersion.V1.value
         version = ChatbookVersion(version_value)
         canvas_archive = None
-        if version is ChatbookVersion.V3:
-            if "canvas" not in data:
+        if version in {ChatbookVersion.V3, ChatbookVersion.V4}:
+            if version is ChatbookVersion.V3 and "canvas" not in data:
                 raise ValueError("Chatbook 3.0 requires Canvas records")
-            canvas_archive = CanvasArchiveManifest.from_dict(data["canvas"])
+            if "canvas" in data:
+                canvas_archive = CanvasArchiveManifest.from_dict(data["canvas"])
         manifest = cls(
             version=version,
             name=data["name"],
@@ -711,3 +718,43 @@ class Chatbook:
 
         # Return the actual content items
         return [item for item in self.manifest.content_items if item.id in related_ids]
+
+
+PORTABLE_NOTE_FORMAT_VERSION = "tldw.note.v1"
+
+
+def validate_portable_note_record(record: object) -> dict[str, Any]:
+    """Validate a complete source envelope without interpreting its content.
+
+    Args:
+        record: Decoded portable note container.
+
+    Returns:
+        The original record after validation.
+
+    Raises:
+        TypeError: The record or content has an invalid type.
+        ValueError: The contract version or required source fields are invalid.
+    """
+    if not isinstance(record, dict):
+        raise TypeError("Invalid portable note record.")
+    if record.get("format_version") != PORTABLE_NOTE_FORMAT_VERSION:
+        raise ValueError("Unsupported portable note format version.")
+    title = record.get("title")
+    if not isinstance(title, str) or not title.strip() or len(title) > 255:
+        raise ValueError("Invalid portable note title.")
+    if not isinstance(record.get("content"), str):
+        raise TypeError("Portable note content must be a string.")
+    if "content_language" not in record:
+        raise ValueError("Portable note language is required.")
+    language = record["content_language"]
+    if language is not None and (
+        not isinstance(language, str) or not 1 <= len(language) <= 100
+    ):
+        raise ValueError("Invalid portable note language.")
+    keywords = record.get("keywords", [])
+    if not isinstance(keywords, list) or any(
+        not isinstance(keyword, str) or not keyword.strip() for keyword in keywords
+    ):
+        raise ValueError("Invalid portable note keywords.")
+    return record

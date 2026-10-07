@@ -16,6 +16,10 @@ from unicodedata import normalize
 
 import yaml
 
+from tldw_chatbook.Chatbooks.chatbook_models import (
+    PORTABLE_NOTE_FORMAT_VERSION,
+    validate_portable_note_record,
+)
 from tldw_chatbook.Notes.note_folder_models import (
     FolderValidationError,
     normalize_folder_name,
@@ -38,14 +42,38 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     ImportBounds,
     ImportClassification,
     ImportSourceKind,
+    OmittedNoteLanguage,
     ParsedNotePayload,
     ProposedFolderMembership,
     wikilink_target,
 )
 
 SUPPORTED_NOTE_EXTENSIONS = frozenset(
-    {".txt", ".text", ".md", ".markdown", ".rst", ".json", ".yaml", ".yml", ".csv"}
+    {
+        ".txt",
+        ".text",
+        ".md",
+        ".markdown",
+        ".rst",
+        ".json",
+        ".jsonl",
+        ".yaml",
+        ".yml",
+        ".csv",
+    }
 )
+
+SOURCE_EXTENSION_LANGUAGES = {
+    ".txt": "text",
+    ".text": "text",
+    ".rst": "text",
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".json": "json",
+    ".jsonl": "jsonl",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+}
 
 _TITLE_ALIASES = ("title", "name")
 _CONTENT_ALIASES = ("content", "body")
@@ -86,6 +114,7 @@ _MESSAGES = {
     "max_total_bytes_exceeded": "The selected sources are too large in total.",
     "invalid_utf8": "This source is not valid UTF-8 text.",
     "invalid_content": "This source could not be parsed as notes.",
+    "unsupported_portable_version": "Unsupported portable note format version.",
     "empty_source": "Empty file — nothing to import.",
     "not_a_note": "Not a note file (app configuration).",
     "empty_structured_source": "This source does not contain any notes.",
@@ -310,6 +339,7 @@ def parse_import_sources(
     *,
     destination_folder_segments: Iterable[str] | None = None,
     obsidian_mode: bool = False,
+    source_mode: bool = False,
 ) -> ParsedImportBatch:
     """Parse a discovered selection without writes or durable side effects.
 
@@ -336,6 +366,8 @@ def parse_import_sources(
         raise TypeError("bounds must be an ImportBounds.")
     if type(obsidian_mode) is not bool:
         raise TypeError("obsidian_mode must be a boolean.")
+    if type(source_mode) is not bool:
+        raise TypeError("source_mode must be a boolean.")
     obsidian = obsidian_mode and discovery.vault_detected
 
     destination = _validate_destination(
@@ -386,13 +418,16 @@ def parse_import_sources(
             bytes_read += len(raw_content)
             if bytes_read > bounds.max_total_bytes:
                 raise _ParseFailure("max_total_bytes_exceeded")
-            text = raw_content.decode("utf-8-sig")
+            text = raw_content.decode(
+                "utf-8" if source_mode or extension == ".jsonl" else "utf-8-sig"
+            )
             payloads = _parse_text(
                 candidate,
                 extension,
                 text,
                 bounds,
                 obsidian_mode=obsidian,
+                source_mode=source_mode or extension == ".jsonl",
             )
             folder_segments = _folder_segments(candidate, destination)
             memberships = tuple(
@@ -420,6 +455,8 @@ def parse_import_sources(
                 )
             )
         except _ParseFailure as error:
+            if error.reason_code == "unsupported_portable_version":
+                _reject_selection(bounds, error.reason_code)
             issues.append(
                 _issue(
                     candidate,
@@ -489,10 +526,22 @@ def _parse_text(
     bounds: ImportBounds,
     *,
     obsidian_mode: bool = False,
+    source_mode: bool = False,
 ) -> tuple[ParsedNotePayload, ...]:
     # task-32130: an empty source is empty whatever its extension.
     if not text.strip():
         raise _ParseFailure("empty_source")
+    if source_mode:
+        language = SOURCE_EXTENSION_LANGUAGES.get(extension)
+        if language is None:
+            raise _ParseFailure("unsupported_extension")
+        return (
+            ParsedNotePayload(
+                title=PurePosixPath(candidate.source.display_path).stem,
+                content=text,
+                content_language=language,
+            ),
+        )
     if extension in {".txt", ".text", ".rst", ".md", ".markdown"}:
         markdown = extension in _MARKDOWN_EXTENSIONS
         metadata: Mapping[Any, Any] | None = None
@@ -697,6 +746,13 @@ def _structured_payloads(
         raise _ParseFailure("empty_structured_source")
     if len(records) > bounds.max_notes_per_file:
         raise _ParseFailure("too_many_notes")
+    if any(
+        isinstance(record, Mapping)
+        and "format_version" in record
+        and record["format_version"] != PORTABLE_NOTE_FORMAT_VERSION
+        for record in records
+    ):
+        raise _ParseFailure("unsupported_portable_version")
     note_shaped = tuple(_is_note_record(record) for record in records)
     if not any(note_shaped):
         # A well-formed document that holds no note record is configuration.
@@ -747,6 +803,13 @@ def _payload_from_mapping(
     # Whether a record is note-shaped at all is decided for the whole document
     # in _structured_payloads; a body-less record only reaches here from CSV,
     # which always supplies one.
+    if "format_version" in record:
+        if record["format_version"] != PORTABLE_NOTE_FORMAT_VERSION:
+            raise _ParseFailure("unsupported_portable_version")
+        try:
+            validate_portable_note_record(dict(record))
+        except (TypeError, ValueError) as error:
+            raise _ParseFailure("invalid_content") from error
     content_value = record.get("content", record.get("body"))
     if not isinstance(content_value, str) or not content_value.strip():
         raise _ParseFailure("invalid_content", "content")
@@ -769,6 +832,7 @@ def _payload_from_mapping(
         content=content_value,
         keywords=keywords,
         template_name=template,
+        content_language=record.get("content_language", OmittedNoteLanguage.UNSET),
     )
 
 

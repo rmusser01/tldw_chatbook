@@ -90,3 +90,24 @@ The local Library port scopes drafts to its captured canonical database path
 identity, local principal and explicit global (null) workspace, never the selected
 remote profile. Moving that database requires explicit future recovery mapping.
 Facade construction does no I/O and neither starts watchers nor creates sync roots.
+
+### Portable source and note import contracts (F6, Rulings 35/36)
+
+The complete portable note marker is `format_version: "tldw.note.v1"`; title and
+content are strings and `content_language` is required, including explicit null.
+Unknown baseline language cannot be exported as portable metadata. Source remains
+a string; document values are never parsed to manufacture a note body.
+The existing server import discriminator adds `portable_note` and `source`, so
+older import schemas refuse declared contracts before mutation. Versioned batches
+are validated before any writes. Legacy JSON/YAML note containers retain their
+existing reader paths. C raw import is explicit `source_mode=False` by default;
+JSONL, which has no legacy container reader, is source-only. Filename extensions
+supply mode; filename-less source uses a safe title and makes no mode promise.
+Empty or storage-rejected bodies fail explicitly without title substitution.
+
+New Notes Chatbooks use verified archive 4.0 and identity-based JSON carriers,
+including null-language Notes. Combined archives retain the Canvas extension;
+conversation-only Canvas remains 3.0. Readers 1.0–3.0 remain available, without
+claiming their Markdown carriers retain recoverable original boundary whitespace.
+Approval/effects fingerprints include supplied mode, preserving the historical
+fingerprint for legacy omission. No new transport, store or import service.

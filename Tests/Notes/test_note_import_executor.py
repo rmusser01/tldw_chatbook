@@ -4337,6 +4337,7 @@ def test_target_sql_matches_service_metadata_fts_and_sync_conventions(
             "id",
             "title",
             "content",
+            "content_language",
             "created_at",
             "last_modified",
             "deleted",

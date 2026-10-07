@@ -39,6 +39,7 @@ from tldw_chatbook.Notes.note_import_plan_models import (
     MAX_IMPORT_KEYWORDS_PER_NOTE,
     ImportAction,
     ImportPreviewItem,
+    OmittedNoteLanguage,
     ParsedNotePayload,
     ProposedFolderMembership,
     RootCollisionChoice,
@@ -146,6 +147,7 @@ class LocalTargetNote:
     content: str
     version: int
     keywords: tuple[str, ...]
+    content_language: str | None = None
 
     def __repr__(self) -> str:
         return "LocalTargetNote(<private>)"
@@ -404,7 +406,7 @@ class LocalNoteImportTarget:
         self, cursor: sqlite3.Cursor, note_id: str
     ) -> LocalTargetNote | None:
         row = cursor.execute(
-            "SELECT id, title, content, version "
+            "SELECT id, title, content, version, content_language "
             "FROM notes WHERE id = ? AND deleted = 0",
             (note_id,),
         ).fetchone()
@@ -436,6 +438,7 @@ class LocalNoteImportTarget:
             content=content,
             version=version,
             keywords=keyword_values,
+            content_language=row["content_language"],
         )
 
     @staticmethod
@@ -484,17 +487,26 @@ class LocalNoteImportTarget:
             """
             INSERT INTO notes (
                 id, title, content, created_at, last_modified,
-                deleted, client_id, version
+                deleted, client_id, version, content_language
             )
-            VALUES (?, ?, ?, ?, ?, 0, ?, 1)
+            VALUES (?, ?, ?, ?, ?, 0, ?, 1, ?)
             """,
             (
                 note_id,
-                payload.title.strip(),
+                (
+                    payload.title.strip()
+                    if payload.content_language is OmittedNoteLanguage.UNSET
+                    else payload.title
+                ),
                 payload.content,
                 timestamp,
                 timestamp,
                 self._user_id,
+                (
+                    None
+                    if payload.content_language is OmittedNoteLanguage.UNSET
+                    else payload.content_language
+                ),
             ),
         )
         # task-32186: backlinks are answered from `note_links`, not from a
@@ -515,15 +527,26 @@ class LocalNoteImportTarget:
         result = cursor.execute(
             """
             UPDATE notes
-            SET title = ?, content = ?, last_modified = ?, version = ?, client_id = ?
+            SET title = ?, content = ?, last_modified = ?, version = ?, client_id = ?,
+                content_language = CASE WHEN ? THEN content_language ELSE ? END
             WHERE id = ? AND version = ? AND deleted = 0
             """,
             (
-                payload.title.strip(),
+                (
+                    payload.title.strip()
+                    if payload.content_language is OmittedNoteLanguage.UNSET
+                    else payload.title
+                ),
                 payload.content,
                 _utc_timestamp(),
                 expected_version + 1,
                 self._user_id,
+                payload.content_language is OmittedNoteLanguage.UNSET,
+                (
+                    None
+                    if payload.content_language is OmittedNoteLanguage.UNSET
+                    else payload.content_language
+                ),
                 note_id,
                 expected_version,
             ),
@@ -830,8 +853,17 @@ def _note_matches(note: LocalTargetNote, payload: ParsedNotePayload) -> bool:
     desired_keywords = set(_normalize_keywords(payload.keywords))
     actual_keywords = {_sqlite_nocase_key(keyword) for keyword in note.keywords}
     return (
-        note.title == payload.title.strip()
+        note.title
+        == (
+            payload.title.strip()
+            if payload.content_language is OmittedNoteLanguage.UNSET
+            else payload.title
+        )
         and note.content == payload.content
+        and (
+            payload.content_language is OmittedNoteLanguage.UNSET
+            or note.content_language == payload.content_language
+        )
         and actual_keywords == desired_keywords
     )
 
