@@ -331,6 +331,7 @@ jobs:
       - name: Verify source, codec, display and finite worker regressions
         env:
           TLDW_HIDDEN_READINESS_RESULT: ${{ runner.temp }}/hidden-readiness.json
+          TLDW_TEST_TAB_SYNC_LIFETIME: ${{ runner.os == 'Windows' && '1' || '0' }}
         run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_sensitive_input_config_bundle.py Tests/Backup_Recovery/test_sensitive_input_body_bindings.py Tests/Backup_Recovery/test_sensitive_input_tuple_bindings.py Tests/Backup_Recovery/test_sensitive_input_guarded_body_bindings.py Tests/Agents/test_console_scoped_run_log_admission.py Tests/Agents/test_scoped_run_log_body_bindings.py Tests/Config/test_windows_argv_roundtrip.py Tests/Utils/test_toml_serialization.py Tests/UI/test_provider_context_display.py Tests/UI/test_provider_context_display_controls.py Tests/UI/test_console_session_sync_lifetime.py Tests/UI/test_console_session_pruning_replacement.py Tests/UI/test_console_session_tab_strip.py Tests/UI/test_console_session_tab_close.py Tests/Backup_Recovery/test_prepared_close_runtime_owner.py Tests/UI/test_manual_unread_worker_lifetime.py Tests/UI/test_manual_unread_source_provenance.py Tests/UI/test_console_hidden_readiness_native.py Tests/UI/test_console_readiness_scheduling.py Tests/Performance/test_trace_settlement_diagnostic.py -q --timeout=180 --junitxml=${{ runner.temp }}/supplemental-controls.xml
       - uses: actions/upload-artifact@v4
         if: always()
@@ -339,6 +340,14 @@ jobs:
           path: |
             ${{ runner.temp }}/supplemental-controls.xml
             ${{ runner.temp }}/hidden-readiness.json
+          if-no-files-found: error
+      - name: Retain original Windows Close callback timelines
+        if: ${{ always() && runner.os == 'Windows' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-tab-sync-${{ matrix.os }}
+          path: ${{ env.TEMP }}/**/*.tab-sync-lifetime.json
+          include-hidden-files: true
           if-no-files-found: error
   remote-bundle-controls:
     runs-on: ubuntu-24.04
