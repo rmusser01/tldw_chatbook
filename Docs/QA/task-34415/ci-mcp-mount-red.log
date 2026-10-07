@@ -1,0 +1,83 @@
+PR3034 probe: second source Select compose held for 0.2s
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____ test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers ______
+Tests/UI/test_mcp_workbench.py:297: in test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers
+    async with app.run_test() as pilot:
+               ^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:217: in __aexit__
+    await anext(self.gen)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py:2218: in run_test
+    raise self._exception
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:604: in _pre_process
+    await self._dispatch_message(events.Mount())
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:727: in _dispatch_message
+    await self.on_event(message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:808: in on_event
+    await self._on_message(event)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/message_pump.py:829: in _on_message
+    await invoke(method, message)
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:96: in invoke
+    return await _invoke(callback, *params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/_callback.py:56: in _invoke
+    result = callback(*params[:parameter_count])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:628: in _on_mount
+    self._setup_options_renderables()
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/widgets/_select.py:549: in _setup_options_renderables
+    option_list = self.query_one(SelectOverlay)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/dom.py:1533: in query_one
+    raise NoMatches(f"No nodes match {query_selector!r} on {base_node!r}")
+E   textual.css.query.NoMatches: No nodes match 'SelectOverlay' on Select(id='mcp-rail-source')
+---------------------------- Captured stderr setup -----------------------------
+2026-10-06 19:58:37.074 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-06 19:58:37.144 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-06 19:58:37.235 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-06 19:58:37.237 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-10-06 19:58:37.455 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.
+2026-10-06 19:58:38.099 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets
+----------------------------- Captured stderr call -----------------------------
+2026-10-06 19:58:39.021 | WARNING  | tldw_chatbook.UI.MCP_Modules.mcp_workbench:_sync_audit_log_entries:1666 - MCP execution log access failed: 'FakeHubService' object has no attribute 'execution_log'
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site- │
+│ packages/textual/widgets/_select.py:628 in _on_mount                         │
+│                                                                              │
+│   625 │                                                                      │
+│   626 │   def _on_mount(self, _event: events.Mount) -> None:                 │
+│   627 │   │   """Set initial values."""                                      │
+│ ❱ 628 │   │   self._setup_options_renderables()                              │
+│   629 │   │   self._init_selected_option(self._value)                        │
+│   630 │                                                                      │
+│   631 │   def _watch_expanded(self, expanded: bool) -> None:                 │
+│                                                                              │
+│ ╭─────────────── locals ────────────────╮                                    │
+│ │ _event = Mount()                      │                                    │
+│ │   self = Select(id='mcp-rail-source') │                                    │
+│ ╰───────────────────────────────────────╯                                    │
+│                                                                              │
+│ /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site- │
+│ packages/textual/widgets/_select.py:549 in _setup_options_renderables        │
+│                                                                              │
+│   546 │   │   │   for prompt, value in self._options                         │
+│   547 │   │   ]                                                              │
+│   548 │   │                                                                  │
+│ ❱ 549 │   │   option_list = self.query_one(SelectOverlay)                    │
+│   550 │   │   option_list.clear_options()                                    │
+│   551 │   │   option_list.add_options(options)                               │
+│   552                                                                        │
+│                                                                              │
+│ ╭─────────────────── locals ────────────────────╮                            │
+│ │ options = [Option('Local'), Option('Server')] │                            │
+│ │    self = Select(id='mcp-rail-source')        │                            │
+│ ╰───────────────────────────────────────────────╯                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+NoMatches: No nodes match 'SelectOverlay' on Select(id='mcp-rail-source')
+============================= slowest 25 durations =============================
+1.77s setup    Tests/UI/test_mcp_workbench.py::test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_mcp_workbench.py::test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers
+1 failed in 4.29s

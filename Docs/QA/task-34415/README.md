@@ -129,6 +129,69 @@ class SelectedBootstrapProfile:
 raise SystemExit(pytest.main(sys.argv[1:], plugins=[SelectedBootstrapProfile()]))
 ```
 
+## Exact-head CI mount-readiness correction
+
+On head `abb9df541c4b8d375cc725994d33744b33e2055c`, Derived run
+37562090298's PR lane failed only
+`test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers`:
+1485 passed/one failed/one skipped. The rail had zero rows and test shutdown
+pruned a replacement Select before its overlay composed. All four UI lanes and
+Perf passed. The admission-sensitive step passed 335 tests/two expected failures
+with six warnings, including aggregate FD growth; those warnings remain open.
+
+The affected MCP source/test/workflow inputs were byte-identical to current dev.
+The original test passed alone (one in 3.68s); its receipt retains unrelated
+shared-temp housekeeping warnings. Holding the second source Select composition
+for 0.2s reproduced the exact `SelectOverlay` exception once. The readiness fix
+waits for the rail's asynchronous replacement and its three expected rows, under
+the unchanged ten-second bound. All mode/server/canvas assertions remain intact;
+no production code, profile selection, recovery guard, timeout or CI lane changed.
+
+The same delayed-mount probe then passed once in 3.86s, with no pytest warnings.
+The three unchanged real mount/compact-viewport cases passed in 7.35s, with no
+pytest warnings. The changed file is formatted; its five inherited Ruff findings
+are unchanged after accounting for shifted F811 line references. This is not a
+clean whole-file lint claim. Production/scripts/package/workflow inputs remain
+byte-identical to the reviewed head; the earlier 61 tests were not duplicated.
+All eleven artifact guards pass in `ci-mcp-mount-preflight.log`; the complete
+five-to-five Ruff comparison is in `ci-mcp-mount-lint-comparison.json`.
+
+Receipts: `ci-pr-fast-lane-failed.log`, `ci-mcp-mount-alone.log`,
+`ci-mcp-mount-red.log`, `ci-mcp-mount-green.log`, `ci-mcp-mount-targeted.log`.
+Raw originals remain under `/private/tmp/pr3034-mcp-*` and
+`/private/tmp/pr3034-pr-fast-lane-37562090298.log`. The fault probe runs the
+original node with its ordinary fixtures, not an alternate profile or test body:
+
+```python
+import asyncio
+import inspect
+import sys
+import pytest
+
+
+class DelayedRailReplacement:
+    @pytest.fixture(autouse=True)
+    def delay_replacement_mount(self, monkeypatch):
+        from textual.widgets import Select
+        original = Select._on_compose
+        source_compositions = 0
+
+        async def delayed(select, event):
+            nonlocal source_compositions
+            if select.id == "mcp-rail-source":
+                source_compositions += 1
+                if source_compositions == 2:
+                    print("PR3034 probe: second source Select compose held for 0.2s")
+                    await asyncio.sleep(0.2)
+            result = original(select, event)
+            if inspect.isawaitable(result):
+                await result
+        monkeypatch.setattr(Select, "_on_compose", delayed)
+
+
+raise SystemExit(pytest.main(sys.argv[1:], plugins=[DelayedRailReplacement()]))
+```
+
 ## Still open
 
 Busy-lock responsiveness is not full unchanged 50ms activation qualification.
@@ -137,4 +200,5 @@ participants, whole-app retirement, aggregate FD warnings and the separate
 baseline closed-cursor finding remain follow-up. TASK31966/TASK31245 remain
 In Progress; their missing criteria are neither checked nor waived. No semantic
 implementation, global cache/GC/lifetime expansion or Terminal control workaround.
-Exact-head PR checks and the newly approved independent review remain pending.
+The original production review is complete. This test-only correction needs its
+fresh scoped review and new exact-head CI before protected merge.

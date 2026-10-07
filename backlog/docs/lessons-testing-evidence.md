@@ -15998,6 +15998,13 @@ focus-and-paint predicate observes the eventual UI without forcing a scroll or
 weakening the content assertion. The gated mount case and all eight continuity
 cases pass with these readiness changes.
 
+PR3034 (TASK-34415, 2026-10-07) exposed the same shutdown race in the unchanged
+MCP mount smoke: loading flags cleared before the rail's queued replacement
+finished. A 200ms hold on the second source Select composition reproduced the
+CI `SelectOverlay` exception; waiting for the rail replacement and expected rows
+passed the identical hold, with the original ten-second bound and assertions.
+A cleared service-loading flag is not a settled descendant subtree.
+
 ## Returned focus can stay outside the viewport (TASK-32632, 2026-09-15)
 
 The Prompt Collections journey returned from its manager with Manage collections
