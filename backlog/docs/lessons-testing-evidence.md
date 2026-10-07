@@ -18731,3 +18731,8 @@ The Console count fix first captured the DB callback when the Bridge imported it
 ## Private dispatch tests can be skipped by a parameter named live (TASK-34563.3, 2026-10-06)
 
 During shared Console preparation verification, a private inspector-count test used the parameter ID `live`. `Tests/conftest.py` checks `"live" in item.keywords` when `--run-live` is absent; pytest includes parameter IDs there, so this local test was skipped as though it required a paid API. Renaming that ID to `dispatch` preserves the external-API opt-in gate and allows the actual local assertion to run. Review skip reasons and collected parameter IDs before treating a successful process exit as passing evidence. The first runner attempt also loaded the `pytest_asyncio` package rather than `pytest_asyncio.plugin` with plugin autoload disabled; coroutine tests were skipped. Explicit plugin arguments and an observed async case are required before launching a larger targeted batch. Neither skipped run counts as acceptance.
+
+
+## Explicit shared inputs can bypass a custom callback's default behavior
+
+TASK-34563.6, 2026-10-06: the first run-log consolidation qualified the containment function and body but supplied a context despite changed function defaults. Review also found that a custom sensitive predicate or resolver could depend on the original context-absent call. Three actual refusal controls failed because the writer became active. Qualifying the directly consumed functions, bodies and defaults restored the ordinary route for custom callbacks; all three controls then passed in the 89-case integrated scope. When adding a supplied-data path, test which defaults and downstream readers it bypasses, not only whether the outer function has been replaced.

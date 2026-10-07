@@ -106,6 +106,11 @@ def is_within(
     return resolved == root_resolved or root_resolved in resolved.parents
 
 
+# Call-shape qualification for optional per-invocation context reuse.
+# This retains neither sensitive-path data nor execution authority.
+_IS_WITHIN_ORIGINAL = (is_within, is_within.__code__, is_within.__defaults__)
+
+
 def _tool_sandbox_root() -> Path:
     """Resolve + create the file-tool sandbox root.
 

@@ -1167,6 +1167,14 @@ def resolve_sensitive_context() -> SensitivePathContext:
     )
 
 
+# Direct callback inputs for finite context reuse; no denylist data is retained.
+_RESOLVE_SENSITIVE_CONTEXT_ORIGINAL = (
+    resolve_sensitive_context,
+    resolve_sensitive_context.__code__,
+    resolve_sensitive_context.__defaults__,
+)
+
+
 def merge_sensitive_context(
     base: SensitivePathContext,
     *,
@@ -1402,6 +1410,13 @@ def is_sensitive_path(
             return True
 
     return False
+
+
+_IS_SENSITIVE_PATH_ORIGINAL = (
+    is_sensitive_path,
+    is_sensitive_path.__code__,
+    is_sensitive_path.__defaults__,
+)
 
 
 class SensitiveExclusion(NamedTuple):

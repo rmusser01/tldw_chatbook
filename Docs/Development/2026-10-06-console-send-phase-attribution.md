@@ -1,8 +1,8 @@
 # Console Send phase attribution
 
-Status: original-body attribution; no new product optimization or performance acceptance claim.
+Status: original-body attribution and bounded run-log consolidation; overall performance acceptance remains open.
 
-Candidate product source: `f70cacae3b225378573e9e0903422fe0e607553f` on `codex/console-send-preparation-plan`. The prior [shared preparation qualification](2026-10-06-console-shared-preparation-verification.md) retains matched observer-free samples and the failing original native regression.
+Attribution product source: `f70cacae3b225378573e9e0903422fe0e607553f` on `codex/console-send-preparation-plan`. The prior [shared preparation qualification](2026-10-06-console-shared-preparation-verification.md) retains matched observer-free samples and the failing original native regression.
 
 ## Method
 
@@ -70,7 +70,7 @@ Source inspection identifies one already-supported finite-operation reuse opport
 
 ## Evidence custody and limits
 
-Pass 1 has 262 scalar events/131 paired spans; pass 2 has 368/184. There are no malformed rows, unmatched starts/returns, timestamp reversals or observer overflows. Both 7,741-file before/after source manifests match. Selected production sources still match their retained hashes.
+Pass 1 has 262 scalar events/131 paired spans; pass 2 has 368/184. There are no malformed rows, unmatched starts/returns, timestamp reversals or observer overflows. Both 7,741-file before/after source manifests match. Selected production sources matched their retained hashes at audit, before the follow-up change below.
 
 Both passes prove containment Job emptiness at parent exit, release of the Job identity, pipe/identity-monitor task retirement, unchanged containment source, no forced retirement, private-profile removal and local monitoring retirement. The receipt explicitly leaves `ordinary_app_native_cleanup_proven=false`; diagnostic containment is not a general proof of every production resource lifetime.
 
@@ -80,6 +80,20 @@ Evidence is retained under `.superpowers/sdd/2026-10-06-console-shared-tool-prep
 
 ## Next architecture work
 
-The [retained ordinary commit plan](../superpowers/plans/2026-10-06-console-native-commit-ownership.md) specifies a prerequisite for safely showing earlier Preparing feedback. It does not move durability or history later and does not claim save-speed gains. Atomic admission/promotion, screen-free capture and the runtime initial-hook-review bridge still precede enabling receipt. Measured preparation/admission consolidation remains the main throughput work; warm personal/budget lookups are excluded from speculative optimization.
+The draft [retained ordinary commit plan](../superpowers/plans/2026-10-06-console-native-commit-ownership.md) records the prerequisite for safely showing earlier Preparing feedback. Source review exposed unresolved accepted-cancellation settlement, bounded Close/dispose ownership, and identical-draft-retyping behavior; the draft is explicitly not execution-ready. It does not move durability or history later and does not claim save-speed gains. Atomic admission/promotion, screen-free capture and the runtime initial-hook-review bridge still precede enabling receipt. Measured preparation/admission consolidation remains the main throughput work; warm personal/budget lookups are excluded from speculative optimization.
 
 ADR: [ADR-222](../../backlog/decisions/222-console-send-preparation-and-io-ownership.md).
+
+## Finite run-log consolidation
+
+TASK-34563.6 applies the existing per-invocation path-context API inside the existing synchronous storage scope. Ordinary stock binding now resolves one sensitive-path context for its base and run-directory checks instead of two. Both candidate paths still resolve/check independently. No context survives the bind. Legacy migration keeps its separate fresh observation. Sharing requires the original writer and unchanged function, body and defaults for containment, its sensitive predicate and its context resolver. Custom routes retain their original two-argument checks without eager preparation or retry. These definition-time anchors select call shape only; they grant no execution authority.
+
+Original-source RED: six expected new failures exposed duplicate resolutions or missing supplied context; 56 checks passed, including all 51 original writer cases. Review of the first implementation found that changed containment defaults, a custom predicate or a custom resolver could lose their ordinary refusal semantics when supplied an explicit context. Three additional controls reproduced that defect before correction. The final 15 new cases cover those routes, both path denials, fresh subsequent binds, disabled/idempotent behavior and independent legacy migration.
+
+Final integrated verification passed **89 targeted cases, zero failures/errors/skips**, covering the new tests, original writer behavior, sandbox/workspace isolation, actual scoped source admission and same-identity body drift. The four source/test hashes matched before/after. Scoped Ruff checks pass. The new test's final mixed newline was then normalized by Ruff with identical parsed AST; production bytes remain the tested bytes. Run-log/file-tool formatting passes. Two existing formatting findings in `sensitive_paths.py` are outside the changed anchors and remain unchanged from the committed base.
+
+The combined run exceeded the bounded diagnostic process-history recorder (144 overflow events, one PID lookup race). Repeating the same unchanged scope in 78-case behavior and 11-case native batches passed again. The behavior batch had no overflow and two lookup races; the native batch still exceeded historical capacity (146 events) and had one race. These diagnostic limitations remain explicit; there is no strict complete PID-history claim. Every run independently proved its contained Job empty at parent exit, released the native identity, retired pipe/monitor tasks, kept the containment source current, required no forced retirement and removed the private profile. The native tests retain their own physical-owner assertions. None of this substitutes for general production-resource qualification.
+
+A final observer-free private app check on the unchanged product completed three Sends in **11.092 / 8.207 / 9.989 seconds** to actual adapter entry. It produced three linked complete replies/traces and zero dispatch checkpoints. All 7,742 source-manifest entries matched; Job/identity/pump retirement was normal with zero recorder overflow/races, and the private profile was removed. This is one candidate diagnostic, not a new matched comparison; the inherited runner receipt kind `matched_observer_control` does not change that fact. UAT's last confirmed native-idle state remained unchanged, but no fresh acknowledgement arrived. The original subsecond target and actual 100 ms rendered feedback remain unmet/unqualified respectively. No end-to-end gain is claimed from the proven 2-to-1 context count reduction.
+
+Evidence: `checks/runlog-path-red.*`, `checks/runlog-custom-red.*`, `checks/runlog-final*`, and `native-pairs/runlog-candidate-1.*` under the retained worktree evidence directory. The next performance boundary is repeated synchronous admission preparation; independent task/thread entry and live owner/path checks remain required.

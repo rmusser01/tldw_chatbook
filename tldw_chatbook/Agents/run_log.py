@@ -628,11 +628,34 @@ class RunLogWriter:
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
 
         with acquire_storage(root):
-            from tldw_chatbook.Tools.file_operation_tools import is_within
+            from tldw_chatbook.Tools.file_operation_tools import (
+                _IS_WITHIN_ORIGINAL,
+                is_sensitive_path,
+                is_within,
+            )
+            from tldw_chatbook.Utils.sensitive_paths import (
+                _IS_SENSITIVE_PATH_ORIGINAL,
+                _RESOLVE_SENSITIVE_CONTEXT_ORIGINAL,
+                resolve_sensitive_context,
+            )
 
+            context_kwargs = {}
+            if _stock_writer(self) and all(
+                callback is original
+                and callback.__code__ is code
+                and callback.__defaults__ is defaults
+                for callback, (original, code, defaults) in (
+                    (is_within, _IS_WITHIN_ORIGINAL),
+                    (is_sensitive_path, _IS_SENSITIVE_PATH_ORIGINAL),
+                    (resolve_sensitive_context, _RESOLVE_SENSITIVE_CONTEXT_ORIGINAL),
+                )
+            ):
+                # One finite bind owns this data. Each path still resolves and
+                # checks independently; custom callbacks retain two arguments.
+                context_kwargs["context"] = resolve_sensitive_context()
             base = root / dir_name
             # Verify containment before creating any directories.
-            if not is_within(base, root):
+            if not is_within(base, root, **context_kwargs):
                 logger.warning("run log: base directory escapes root; logging disabled")
                 self._active = False
                 return
@@ -653,7 +676,7 @@ class RunLogWriter:
                 gitignore.write_text("*\n", encoding="utf-8")
             run_dir = base / run_id
             # Verify containment of run_dir before creating it.
-            if not is_within(run_dir, root):
+            if not is_within(run_dir, root, **context_kwargs):
                 logger.warning("run log: run directory escapes root; logging disabled")
                 self._active = False
                 return
