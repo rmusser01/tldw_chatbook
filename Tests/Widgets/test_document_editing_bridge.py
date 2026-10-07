@@ -146,3 +146,26 @@ async def test_scroll_and_focus_survive_format():
         assert app.editor.scroll_offset == scroll
         assert app.editor.has_focus
         assert app.editor.cursor_location == (40, 6)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start,end", [(7, 9), (9, 7), (8, 8)])
+async def test_preserves_selection_and_caret_inside_unchanged_literal_spaces(
+    start, end
+):
+    app = Harness()
+    async with app.run_test() as pilot:
+        source = '{"a":"x  y"}'
+        replacement = '{\n  "a": "x  y"\n}'
+        app.editor.load_text(source)
+        original = Selection((0, start), (0, end))
+        app.editor.selection = original
+        request = DocumentRequest(KEY, source, "json")
+        app.bridge.capture_request(request)
+        assert app.bridge.apply_format(result(request, replacement), KEY, True)
+        # Formatting adds four characters before the unchanged two-space run.
+        assert app.editor.selection == Selection((1, start + 2), (1, end + 2))
+        assert app.editor.selected_text == ("" if start == end else "  ")
+        await pilot.press("ctrl+z")
+        assert app.editor.text == source
+        assert app.editor.selection == original

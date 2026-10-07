@@ -18,9 +18,18 @@ def _map_offset(source: str, replacement: str, offset: int) -> int:
     for index, char in enumerate(replacement):
         if not char.isspace():
             if rank == 0:
-                return index
+                break
             rank -= 1
-    return len(replacement)
+    else:
+        index = len(replacement)
+    # Preserve distance to the next anchor within its preceding whitespace run.
+    source_end = offset
+    while source_end < len(source) and source[source_end].isspace():
+        source_end += 1
+    run_start = index
+    while run_start > 0 and replacement[run_start - 1].isspace():
+        run_start -= 1
+    return index - min(source_end - offset, index - run_start)
 
 
 class TextAreaFormatBridge:
