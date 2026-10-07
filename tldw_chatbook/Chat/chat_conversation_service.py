@@ -1287,7 +1287,12 @@ class ChatConversationService:
             "depth_cap": depth_cap,
         }
 
-    def effective_active_leaf(self, conversation_id: str) -> str | None:
+    def effective_active_leaf(
+        self,
+        conversation_id: str,
+        *,
+        rows: Sequence[Mapping[str, Any]] | None = None,
+    ) -> str | None:
         """Resolve the conversation's EFFECTIVE active-leaf message id.
 
         The durable pointer when it references a live row; otherwise the
@@ -1296,10 +1301,23 @@ class ChatConversationService:
         written at create time must reference a real row -- the column is
         FK-enforced) and ``copy_conversation_active_path`` so both resolve
         the same leaf.
+
+        Args:
+            conversation_id: Stable conversation identifier.
+            rows: Optional pre-fetched ``get_messages_for_conversation``
+                page (same FORK_READ shape this method would fetch). Callers
+                that already hold the rows -- the fork copy -- pass them to
+                avoid a duplicate full-conversation read; when omitted the
+                method fetches exactly as before (task 19a).
+
+        Returns:
+            The effective leaf message id, or None when the conversation has
+            no live messages.
         """
-        rows = self.db.get_messages_for_conversation(
-            conversation_id, limit=FORK_READ_MAX_MESSAGES
-        )
+        if rows is None:
+            rows = self.db.get_messages_for_conversation(
+                conversation_id, limit=FORK_READ_MAX_MESSAGES
+            )
         if not rows:
             return None
         live_ids = {str(row["id"]) for row in rows}
@@ -1338,7 +1356,10 @@ class ChatConversationService:
         if not rows:
             raise ValueError("empty_history")
         nodes = {str(row["id"]): row for row in rows}
-        leaf_id = self.effective_active_leaf(source_conversation_id)
+        # Task 19a: reuse the page already fetched above -- the leaf
+        # resolution runs the identical selection logic on these rows instead
+        # of re-issuing the same full-conversation query.
+        leaf_id = self.effective_active_leaf(source_conversation_id, rows=rows)
         if leaf_id is None or leaf_id not in nodes:
             raise ValueError("empty_history")
 
