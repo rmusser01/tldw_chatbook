@@ -1,7 +1,7 @@
 ---
 id: TASK-34653
 title: Preserve structured source and language in portable note imports and exports
-status: In Progress
+status: Done
 created_date: 2026-10-07 03:08
 dependencies:
 - TASK-34571
@@ -13,7 +13,7 @@ labels:
 - structured-editing
 documentation:
 - /Users/macbook-dev/.codex/worktrees/structured-document-editing/tldw_chatbook/Docs/superpowers/plans/2026-09-27-structured-document-editing.md
-updated_date: 2026-10-07 10:43
+updated_date: 2026-10-07 11:26
 ---
 
 ## Description
@@ -24,11 +24,11 @@ Let users move source files and portable notes without losing document text or l
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Raw source exports retain exact text with a matching mode extension; portable notes retain source as a string plus language and metadata.
-- [ ] #2 Versioned Chatbook/portable envelopes preserve Canvas and structured Notes together, with older supported readers retained.
-- [ ] #3 Unknown archive/envelope versions fail before storage mutation; recognized source extensions carry mode without sniffing document text.
-- [ ] #4 Targeted source/envelope/import/transaction tests verify exact-source round trips, atomic rejection and scoped static evidence.
-- [ ] #5 Relevant governing ADR is assessed/linked and repo-local completion notes name actual evidence and remaining limitations.
+- [x] #1 Raw source exports retain exact text with a matching mode extension; portable notes retain source as a string plus language and metadata.
+- [x] #2 Versioned Chatbook/portable envelopes preserve Canvas and structured Notes together, with older supported readers retained.
+- [x] #3 Unknown archive/envelope versions fail before storage mutation; recognized source extensions carry mode without sniffing document text.
+- [x] #4 Targeted source/envelope/import/transaction tests verify exact-source round trips, atomic rejection and scoped static evidence.
+- [x] #5 Relevant governing ADR is assessed/linked and repo-local completion notes name actual evidence and remaining limitations.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -48,14 +48,13 @@ Rulings35/36 (task-6-contract-rulings.md and progress.md): exact portable format
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented tldw.note.v1 note carriers and Chatbook4.0 for every new Notes archive under ADR194 and Rulings35/36, retaining Canvas and v1-v3 readers. Explicit raw source parsing preserves exact UTF-8 source and extension mode; legacy containers retain their default readers. Actual planner, approval fingerprint and receipt/executor owners carry language with omission/null distinction, preserving historical omitted fingerprints and binding approved source/mode effects. Targeted real SQLite/archive/approval verification and immutable-base/scoped static/security/formatter evidence is in .superpowers/sdd/2026-09-27-structured-document-editing/task-6-report.md. In Progress pending independent review; no new transport/store/service or editor adoption.
+Implemented exact tldw.note.v1 source/language carriers and Chatbook4.0 Notes archives under backlog/decisions/194-structured-note-language-and-local-editor-validation.md. Stable identity JSON carriers retain whitespace, opaque/null language, metadata and Canvas; supported v1-v3 readers remain. Actual raw-source import, planner, approval fingerprint and receipt/executor owners preserve source/mode presence without a new service. C821 targeted tests pass; immutable-base scoped Ruff/Bandit and changed-region Black evidence show no introduced debt. Independent task review and fix1 scoped review approved, with C unchanged during server fixes. Full evidence: .superpowers/sdd/2026-09-27-structured-document-editing/task-6-report.md and task-6-fix1-review.md. Existing whole-file debt, legacy lossy archives and later live editor/export-control qualification remain explicit.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Portable source and mode preservation complete for this unit; C61bd971 source commit, C821 targeted tests, independent/scoped reviews approved. ADR194 applies. Later editor and release qualification remains outside this task.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
