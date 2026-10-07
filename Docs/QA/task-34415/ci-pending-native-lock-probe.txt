@@ -1,0 +1,86 @@
+"""Hold the real rebuild lock across the legacy journey's single idle pause."""
+
+import inspect
+import threading
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def held_legacy_projection(request, monkeypatch):
+    from Tests.private_profile import is_private_profile_child
+
+    if not is_private_profile_child(request):
+        yield
+        return
+
+    from textual.pilot import Pilot
+    from tldw_chatbook import config
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    original_sync = ChatScreen._sync_console_rail_and_controls
+    original_pause = Pilot.pause
+    release = threading.Event()
+    held = threading.Event()
+    expired = threading.Event()
+    owner = None
+    watchdog = None
+    armed = False
+    returned = False
+
+    def sync(screen):
+        nonlocal owner, watchdog, armed, returned
+        caller = inspect.currentframe().f_back.f_code.co_name
+        if (
+            not armed
+            and caller == "_verify_legacy_tool_approval_counts_in_the_mounted_view"
+            and screen._console_pending_approval_count() == 1
+        ):
+            inspector = screen.query_one("#console-run-inspector-state")
+            print("PR3034 probe: pre-sync Inspector", inspector.state.pending_approval_count, flush=True)
+            assert inspector.state.pending_approval_count == 0, "probe missed the unpublished frame"
+            lock = config._settings_rebuild_lock()
+
+            def hold():
+                with lock:
+                    held.set()
+                    release.wait()
+
+            def expire():
+                expired.set()
+                release.set()
+
+            owner = threading.Thread(target=hold)
+            owner.start()
+            assert held.wait(2), "probe owner did not acquire the native lock"
+            watchdog = threading.Timer(5, expire)
+            watchdog.start()
+            armed = True
+            result = original_sync(screen)
+            assert result is False and screen._console_control_bar_sync_scheduled
+            print("PR3034 probe: native lock deferred the original sync", flush=True)
+            returned = True
+            return result
+        return original_sync(screen)
+
+    async def pause(pilot, *args, **kwargs):
+        try:
+            return await original_pause(pilot, *args, **kwargs)
+        finally:
+            if returned and not release.is_set():
+                release.set()
+                owner.join(2)
+                print("PR3034 probe: released native lock after original idle pause", flush=True)
+
+    monkeypatch.setattr(ChatScreen, "_sync_console_rail_and_controls", sync)
+    monkeypatch.setattr(Pilot, "pause", pause)
+    try:
+        yield
+    finally:
+        if watchdog is not None:
+            watchdog.cancel()
+        release.set()
+        if owner is not None:
+            owner.join(2)
+            assert not owner.is_alive()
+        assert armed and returned and not expired.is_set(), "native-lock probe was not exercised cleanly"

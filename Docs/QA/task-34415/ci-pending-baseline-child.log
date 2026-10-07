@@ -1,0 +1,34 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.                                                                        [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_console_pending_interrupt_projection.py::test_session_owned_pending_projection_journeys
+  /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/Tests/conftest.py:609: UserWarning: open file descriptors grew by 205 over the test session (start=14, end=219, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /private/tmp/pr3034-pending-baseline-k981ty/pytest/test_session_owned_pending_pro0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+79.25s call     Tests/UI/test_console_pending_interrupt_projection.py::test_session_owned_pending_projection_journeys
+
+(2 durations < 1s hidden.)
+1 passed, 1 warning in 82.75s (0:01:22)

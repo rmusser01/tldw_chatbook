@@ -1366,7 +1366,9 @@ async def _await_original_console_sync_completion(screen, pilot, *, deadline):
             if task is not asyncio.current_task()
         )
         if (not pending and not screen._console_sync_in_progress
-                and not screen._console_sync_requested):
+                and not screen._console_sync_requested
+                and not getattr(screen, "_console_control_bar_replay_whole_sync", False)
+                and not getattr(screen, "_console_control_bar_sync_scheduled", False)):
             return
         remaining = deadline - time.monotonic()
         assert remaining > 0, "Original Console sync did not finish within startup budget"
@@ -1405,11 +1407,10 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
         ):
             projection_task = timer._task
             break
-    assert projection_task is not None
-
-    # The one-shot timer queues its projection with call_next; queue an event
-    # behind it so completion means the production projection itself has run.
-    await asyncio.wait_for(asyncio.shield(projection_task), timeout=10.0)
+    # Textual keeps timers weakly: a completed one-shot may already be gone.
+    # Await any pending timer, then drain its call_next projection in either case.
+    if projection_task is not None:
+        await asyncio.wait_for(asyncio.shield(projection_task), timeout=10.0)
     projection_drained = asyncio.Event()
     projection_deadline = time.monotonic() + 10.0
     screen.call_next(projection_drained.set)
@@ -1427,6 +1428,14 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     assert not screen._console_setup_modal_blocking()
     assert not screen._console_sync_in_progress
     assert not screen._console_sync_requested
+    assert not getattr(screen, "_console_control_bar_replay_whole_sync", False)
+    assert not getattr(screen, "_console_control_bar_sync_scheduled", False)
+    assert not any(
+        worker.node is screen
+        and worker.group == "console-sync"
+        and not worker.is_finished
+        for worker in screen.workers
+    )
     return screen
 
 

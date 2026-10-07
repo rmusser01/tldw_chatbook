@@ -298,8 +298,16 @@ async def test_workbench_mounts_rail_canvas_inspector_and_loads_local_servers():
         workbench = app.query_one(MCPWorkbench)
         # The initial after-refresh dispatch may not have created its worker
         # yet. An empty worker manager is not evidence that loading finished.
+        # Loading can also finish before the rail's queued replacement mounts.
+        # Ending the pilot then can prune a Select before its overlay composes.
+        rail = workbench.query_one(MCPRail)
         async with asyncio.timeout(10):
-            while workbench.is_loading or workbench._reloading:
+            while (
+                workbench.is_loading
+                or workbench._reloading
+                or rail.recompose_in_flight
+                or len(list(app.query("Button.mcp-rail-row"))) != 3
+            ):
                 await pilot.pause(0.025)
         assert workbench.active_mode == "servers"
         # builtin + docs rows (+ "All servers")

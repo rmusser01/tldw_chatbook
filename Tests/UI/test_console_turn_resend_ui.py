@@ -20,11 +20,11 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
     FailThenRecoverGateway,
-    _ReadyResolutionGateway,
     _build_console_send_test_app,
+    _ReadyResolutionGateway,
     _select_llamacpp_console,
-    _wait_for_text,
     _visible_text,
+    _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -443,14 +443,15 @@ async def test_console_r_resends_a_refused_echo_as_one_message():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("hello")
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "llama.cpp unavailable")
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        # Control-bar refusal text can precede the echo's transcript publication.
+        await _wait_for_text(transcript, pilot, "llama.cpp unavailable")
         echo = next(row for row in _session_rows(console) if row.role is USER)
         assert echo.status == "failed"
         session_id = console._ensure_console_chat_store().active_session_id
         assert console._console_runtime().recoveries_for_session(session_id)
         gateway.blocked = False
 
-        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.focus()
         transcript.select_message(echo.id)
         await _wait_for_selector(

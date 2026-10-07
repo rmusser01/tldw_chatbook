@@ -35,7 +35,7 @@ that made it hard to change.
 from __future__ import annotations
 
 import ast
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -87,7 +87,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: Re-measured on top of dev (dev had grown the file to 25375 lines
     #: against its own 25363 row): the combined tree measures 25218/759,
     #: still under dev's 25363/762, so nothing rises.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25218, 759),
+    #: TASK-34415 moves checked config refresh into Console_Modules: the
+    #: original tree measures 25204/759. The latest-dev replay also retires
+    #: two unreferenced control helpers and the one-use widget lookup:
+    #: combined tree measures 25204/756; no ceiling rises.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25204, 756),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
@@ -913,7 +917,7 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
 # (20099/633, red for months) added no signal the _BUDGETS row does not.
 
 
-@lru_cache(maxsize=None)
+@cache
 def _measure(rel_path: str, class_name: str) -> tuple[int, int]:
     """Line count of a module and method count of one class inside it.
 
@@ -1015,4 +1019,3 @@ def test_budget_is_not_left_slack_after_a_wave(rel_path: str) -> None:
         f"{class_name} is {max_methods - methods} methods under its budget "
         f"({methods} vs {max_methods}). Set it to {methods}."
     )
-

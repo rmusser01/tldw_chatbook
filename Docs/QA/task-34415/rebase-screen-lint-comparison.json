@@ -1,0 +1,24 @@
+{
+  "base": "cddc89d3e780b27392549b58ff9134b64e7d5907",
+  "normalization": "Ignore shifted from-line references inside F811 diagnostic messages only",
+  "base_count": 192,
+  "work_count": 189,
+  "added": [],
+  "removed": [
+    {
+      "code": "F401",
+      "message": "`...Chat.console_session_settings._summary_row_value` imported but unused",
+      "count": 1
+    },
+    {
+      "code": "UP045",
+      "message": "Use `X | None` for type annotations",
+      "count": 1
+    },
+    {
+      "code": "RET501",
+      "message": "Do not explicitly `return None` in function if it is the only possible return value",
+      "count": 1
+    }
+  ]
+}

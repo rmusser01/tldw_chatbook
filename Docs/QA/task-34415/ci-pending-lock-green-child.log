@@ -1,0 +1,37 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PR3034 probe: pre-sync Inspector 0
+PR3034 probe: native lock deferred the original sync
+PR3034 probe: released native lock after original idle pause
+.                                                                        [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_console_pending_interrupt_projection.py::test_session_owned_pending_projection_journeys
+  /Users/macbook-dev/.codex/worktrees/console-busy-config-review/tldw_chatbook/Tests/conftest.py:609: UserWarning: open file descriptors grew by 208 over the test session (start=14, end=222, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /private/tmp/pr3034-pending-lock-probe-S7Aeia/pytest-green/test_session_owned_pending_pro0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+65.59s call     Tests/UI/test_console_pending_interrupt_projection.py::test_session_owned_pending_projection_journeys
+
+(2 durations < 1s hidden.)
+1 passed, 1 warning in 68.29s (0:01:08)

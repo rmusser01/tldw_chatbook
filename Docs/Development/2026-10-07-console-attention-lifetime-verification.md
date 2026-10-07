@@ -11,3 +11,9 @@ All three native ownership cases (new handle, borrowed transaction, query failur
 The 57.437-second contained run preserved source/HEAD and exited normally, with zero forced retirement, observer overflow or identity lookup races. Production and new regression lint pass, the new test is formatted, and the original attention body is preserved. The 47-case targeted set is included in Windows/macOS/Linux CI.
 
 The actual original pending-close journey still needs a post-fix run. Prior Linux/macOS diagnostics show the same kind of open worker handle, but this isolated result alone does not prove the complete journey is repaired. Whole startup/Send performance remains open.
+
+## Integrated and cross-platform result
+
+At `fd6476cbc9`, all 47 attention checks pass without failures or errors on Windows, macOS and Linux in [CI run 37675252023](https://github.com/rmusser01/tldw_chatbook/actions/runs/37675252023). The original pending-close journey and all 128 supplemental cases pass on Linux and macOS. The prior CharactersRAGDB worker-connection cleanup failure is absent. Windows passes 126 of 128 supplemental cases; the remaining pending-run arming and failed-close/retry cases miss their original timing/state expectations. No deadline was increased.
+
+The corrected first original attention case also passes locally in the merged-dev targeted selection (72 pass, two unrelated file-size assertions fail). The entire run kept sources and HEAD unchanged and exited normally. These results supersede the pending attention rerun statements above; they do not establish whole startup/Send performance acceptance.

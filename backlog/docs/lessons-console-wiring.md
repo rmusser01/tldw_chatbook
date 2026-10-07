@@ -514,3 +514,56 @@ to fourteen actual calls (thirteen OmniVoice plus one setup-resume) before
 review, with stopped metadata invocations retained. All positive/NON-GREEN
 raw/XML, late stale-cleanup tails and physical/service/provisioning/playback
 limits remain. Overlapping selections are never summed.
+
+## Busy configuration locks must not park the Console event loop
+
+**TASK-34415, 2026-10-06.** Forwarding observations found real REBUILD waits
+outside the control render callback. A held-native-lock regression made both
+refresh callers block until its two-second watchdog. Reuse the installed
+coalesced fresh-state retry, not a config cache: probe the same REBUILD then
+FILE RLocks nonblocking and retain acquired locks across unchanged checked
+entry/retirement, so a writer cannot win between probe and entry. Release a
+partial REBUILD acquisition when FILE is busy. Real-holder, fresh-source and
+cleanup assertions establish this repair; they do not prove the full 50ms
+activation matrix or native terminal qualification.
+
+## A completed one-shot timer need not remain discoverable
+
+**TASK-34415, PR3034 UI1, 2026-10-07.** Approval geometry failed before its
+layout assertions because the readiness helper required a startup timer object.
+Installed Textual's timer registry is a WeakSet. Observing real successful
+projection and natural timer retirement reproduced the exact None assertion.
+Await a still-present timer, then drain its queued callback in either case and
+retain actual readiness/rendered-state assertions. The same retired-timer probe
+and a genuinely held pending-timer control passed without extending deadlines
+or changing production startup/profile behavior.
+
+## A drained callback is not a completed coalesced refresh
+
+**TASK-34415, PR3034 final-head UI1, 2026-10-07.** The same approval geometry
+helper next failed its original requested=False assertion after one callback
+drain. A real REBUILD holder and second native sync reproduced the assertion
+with clean holder retirement. The installed trailing replay also clears its
+flags before starting its async worker; a real pending-worker control exposed
+readiness returning in that gap. Retain the callback drain, then observe both
+the real flags and unfinished same-screen console-sync workers within the
+existing projection deadline. Native and worker GREEN, all six original
+consumers, and a frozen-replay rejection preserve the assertions and bound.
+This proves supported deferral, not the hosted runner's specific lock cause.
+Review then caught Pilot.pause's independent 30-second screen drain inside
+that nominally ten-second loop. Use a remaining-budget-capped asyncio yield,
+not another unbounded-to-this-phase drain. A call-path guard is RED on the
+initial poll and GREEN with real native/worker replay; all original controls
+and the frozen-replay rejection pass their intended outcomes afterward.
+
+## Refusal text in controls is not transcript publication
+
+**TASK-34415, PR3034 final-head UI3, 2026-10-07.** The refused-send Resend
+journey saw provider refusal text anywhere on screen, then selected an echo not
+yet in the transcript. A 250ms call-through publication delay reproduced the
+exact missing-button failure: selection of an absent row is intentionally a
+no-op, and later publication does not retry it. Scope the existing text wait
+to the actual transcript before selection, retaining its bounds and assertions.
+The same delayed original node and thirteen affected cases pass; no production
+selection semantics or timeout change is needed. This controlled proof does
+not attribute unrecorded hosted ordering or certify full qualification.

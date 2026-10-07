@@ -1,0 +1,6 @@
+.                                                                        [100%]
+============================= slowest 25 durations =============================
+12.56s call     Tests/UI/test_console_mcp_approval.py::test_alt_a_reaches_the_card_at_80_columns_with_inspector_closed
+
+(2 durations < 1s hidden.)
+1 passed in 14.39s

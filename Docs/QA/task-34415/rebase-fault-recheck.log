@@ -1,0 +1,17 @@
+......                                                                   [100%]
+============================= slowest 25 durations =============================
+8.63s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[generation]
+6.27s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[away-back]
+5.34s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[open-failure]
+5.10s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[transcript]
+4.35s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay]
+3.84s call     Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[cancel]
+2.21s setup    Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[generation]
+2.02s setup    Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[cancel]
+1.63s setup    Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[transcript]
+1.40s setup    Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[open-failure]
+1.38s setup    Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[overlay]
+1.31s setup    Tests/UI/test_console_character_activation_presentation.py::test_installed_activation_rejects_stale_or_failed_owner_and_preserves_visit[away-back]
+
+(6 durations < 1s hidden.)
+6 passed in 47.46s
