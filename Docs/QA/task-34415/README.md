@@ -330,7 +330,7 @@ to originals in `/private/tmp/pr3034-rebase-6a08-U06HKm` after trailing-whitespa
 normalization only. The fourteen new timer-correction receipt files above also
 compare equal to their normalized originals; no warning or failure was omitted.
 
-## Bounded task closeout
+## Prior bounded task closeout
 
 Published head `57fa8b739d3b5def6c105b344ff9e230b454fba1` on current dev
 `6a08c6a18add254751023387d6e97203552efa2b` completed
@@ -348,6 +348,61 @@ debt and failures/warnings remain unchanged. This final closeout commit needs
 its own exact-head CI before the authorized protected merge. No merge or
 warning-free full qualification is claimed here; the non-green incoming
 mounted Interrupt teardown receipt remains recorded above.
+
+## Final-head callback-drain failure and bounded correction
+
+The documentation-only head `97e64dd93b4aaa2c264ee8d73465376daef825e4`
+did **not** receive merge clearance:
+[Derived 37577168073](https://github.com/rmusser01/tldw_chatbook/actions/runs/37577168073)
+failed UI1 at the original private-profile approval geometry readiness assertion,
+`assert not screen._console_sync_requested`. UI1 reported 650 passed, one failed
+and two warnings in 554.27s. PR, UI2/3/4 and Perf passed, but required derived
+reproduction failed. Only TASK34415 was reopened, with AC7 added before the
+test-only correction. The prior green closeout is historical evidence.
+
+One drained callback is not completion of a full refresh deferred to the
+installed coalesced timer. A real native REBUILD holder and a second real sync
+request reproduced the exact original assertion with clean holder retirement.
+A separate real pending-worker control exposed the interval after the replay
+clears its flags but before its `console-sync` worker finishes. These controls
+prove supported deferral, not which lock the hosted runner encountered.
+
+The shared helper retains its unconditional callback drain and all original
+readiness/geometry/focus assertions. Within the existing ten-second projection
+phase it now observes all four real sync/replay flags and unfinished workers
+owned by this screen in the existing `console-sync` group. No production,
+profile, admission, workflow or qualification bound changes. Both native and
+worker controls pass; a frozen replay still fails the original assertion within
+the unchanged bound. All six original consumers pass, including the original
+private-profile geometry child. Four inherited helper Ruff findings remain
+unchanged; format and all eleven artifact guards pass.
+
+Fresh review also caught the initial poll's independent 30-second
+`Pilot.pause` screen drain. The final wait uses only an asyncio yield capped
+by remaining phase time. A direct call-path guard is RED before this change
+and GREEN with the actual native/pending-worker replay afterward; this is not
+a claimed hosted 30-second timeout reproduction. All six original consumers,
+the frozen-replay negative control, format, unchanged inherited lint comparison
+and all eleven guards were rerun after that one-line adjustment.
+
+The [audited receipt](ci-readiness-receipt.md) records positive, negative and
+invalid preparation outcomes without crediting preparatory failures as RED.
+The exact runnable [diagnostic source](ci-readiness-probe.txt) is retained.
+The [phase guard](ci-readiness-budget-guard.txt) pins the non-draining poll.
+Full unmodified raw parent/child logs and XML remain local, indexed by
+[SHA-256 manifest](ci-readiness-sha256.txt). A safeguard rejected publication of
+the diagnostic dumps because of possible environment/credential-like metadata;
+this narrower receipt publishes outcomes and hashes, not those dumps.
+It is not a full-log or normalized-copy claim. The hosted failed log remains
+available in the linked run and locally; existing warning/failure receipts are
+unchanged. Fresh scoped review and new exact-head CI are required before merge.
+
+Fresh final staged review found no Critical/Important/Minor findings and
+resolved both completion and polling-bound findings. The reviewer verified
+all six consumers, exact probe sources and all 95 raw hashes; the first 65
+entries are unchanged. This clears the scoped correction, not latest-dev
+replay or new exact-head CI. All seven AC are checked; TASK34415 remains
+In Progress for those publication gates and bounded closeout.
 
 ## Still open
 

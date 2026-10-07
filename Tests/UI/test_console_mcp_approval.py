@@ -1374,9 +1374,24 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     # Await any pending timer, then drain its call_next projection in either case.
     if projection_task is not None:
         await asyncio.wait_for(asyncio.shield(projection_task), timeout=10.0)
+    deadline = time.monotonic() + 10.0
     projection_drained = asyncio.Event()
     screen.call_next(projection_drained.set)
     await asyncio.wait_for(projection_drained.wait(), timeout=10.0)
+    # A drained callback does not complete a refresh deferred to its timer.
+    while time.monotonic() < deadline and (
+        screen._console_sync_in_progress
+        or screen._console_sync_requested
+        or getattr(screen, "_console_control_bar_replay_whole_sync", False)
+        or getattr(screen, "_console_control_bar_sync_scheduled", False)
+        or any(
+            worker.node is screen
+            and worker.group == "console-sync"
+            and not worker.is_finished
+            for worker in screen.workers
+        )
+    ):
+        await asyncio.sleep(min(0.05, deadline - time.monotonic()))
 
     assert app.screen is screen
     assert screen._console_attach_reconciled
@@ -1385,6 +1400,14 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     assert not screen._console_setup_modal_blocking()
     assert not screen._console_sync_in_progress
     assert not screen._console_sync_requested
+    assert not getattr(screen, "_console_control_bar_replay_whole_sync", False)
+    assert not getattr(screen, "_console_control_bar_sync_scheduled", False)
+    assert not any(
+        worker.node is screen
+        and worker.group == "console-sync"
+        and not worker.is_finished
+        for worker in screen.workers
+    )
     return screen
 
 

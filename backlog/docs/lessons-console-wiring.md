@@ -509,3 +509,21 @@ Await a still-present timer, then drain its queued callback in either case and
 retain actual readiness/rendered-state assertions. The same retired-timer probe
 and a genuinely held pending-timer control passed without extending deadlines
 or changing production startup/profile behavior.
+
+## A drained callback is not a completed coalesced refresh
+
+**TASK-34415, PR3034 final-head UI1, 2026-10-07.** The same approval geometry
+helper next failed its original requested=False assertion after one callback
+drain. A real REBUILD holder and second native sync reproduced the assertion
+with clean holder retirement. The installed trailing replay also clears its
+flags before starting its async worker; a real pending-worker control exposed
+readiness returning in that gap. Retain the callback drain, then observe both
+the real flags and unfinished same-screen console-sync workers within the
+existing projection deadline. Native and worker GREEN, all six original
+consumers, and a frozen-replay rejection preserve the assertions and bound.
+This proves supported deferral, not the hosted runner's specific lock cause.
+Review then caught Pilot.pause's independent 30-second screen drain inside
+that nominally ten-second loop. Use a remaining-budget-capped asyncio yield,
+not another unbounded-to-this-phase drain. A call-path guard is RED on the
+initial poll and GREEN with real native/worker replay; all original controls
+and the frozen-replay rejection pass their intended outcomes afterward.
