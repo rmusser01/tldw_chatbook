@@ -24,6 +24,20 @@
 - ADR check: none required (additive feature, ephemeral data — reasoning recorded in the spec's ADR Check section).
 - Backlog: task A "Session usage ledger and provider tap points" = Tasks 1–3; task B "Quit-time session usage summary dialog and quit integration" = Tasks 4–7.
 
+## Dev-Tip Anchor Addendum (2026-10-07, verified on `origin/dev` @ 518277133c)
+
+The line anchors below **override** the ones written in the task bodies, which were gathered on a feature branch that has since diverged from dev (dev decomposed `app.py` into lifecycle/navigation modules and consolidated the provider set). Everything else in the plan (code, patterns, tests) carries over; anchor by symbol names.
+
+- **Quit flow lives in `tldw_chatbook/app_lifecycle.py`** (`LifecycleMixin`, a base of `TldwCli` — method binding via `TldwCli.<name>` still works for tests): `action_quit` :1856; `await self._run_approved_quit_cleanup()` :2022; `_run_approved_quit_cleanup` :2095 with `self.exit()` in `finally` :2113; `_run_blocking_quit_persistence` :2139. Tasks 4/6 add their methods/edits **here**, not in `app.py`.
+- **`_startup_start_time`** is stamped in `TldwCli.__init__` at `app.py:1042` (`time.perf_counter()` — unchanged).
+- **Provider set is now 7 functions** in `LLM_Calls/LLM_API_Calls.py`: openai :565, anthropic :1360, cohere :2567, google :3373, huggingface :4113, moonshot :4638, zai :4716. **deepseek/groq/mistral/openrouter no longer exist on dev** — drop them from Task 2's table. Usage-log sites (5): openai :979 (`usage = response_data.get("usage", {})`), anthropic :2182 (`usage = response_data.get("usage", {})`), cohere :3163 (`usage_data`), google :3954 (`usage_meta` — dev's block reads the raw google shape; record via a normalized `{prompt_tokens, completion_tokens, total_tokens}` mapping built from `usage_meta`, mirroring the block's own field reads), huggingface :4501 (`usage = result.get("usage", {})`). **moonshot/zai have no usage-log block** — inspect them; if their responses carry `usage` untapped, add only a `record_provider_payload` line (no histogram exists to preserve). Model variable names: read the enclosing block's `labels={"model": <var>}` — same convention as before.
+- **Streaming helpers** (Task 3): `_responses_stream_to_chat_sse` :300 with `completed_usage` at :338–340; anthropic `usage_accumulator` :1924 (find the `if output_captured:` seam after it); openai pass-through loop and `include_usage` request (~:717) unchanged in shape.
+- **Service taps** (Task 3): gateway `_maybe_record_usage` :7650; `Agents/agent_service.py:1735`; `Library/library_rag_answer_service.py:654`; realtime `openai_session.py` (grep `from_provider_payload`).
+- **Settings screen** (Task 7): model_catalog Checkbox query at `settings_screen.py:15918`; compose group and handlers as before by symbol.
+- **Config template** (Task 4): `[splash_screen]` at `config.py:4343`, `[logging]` at :4389 — insert `[session_summary]` between them (after the `[splash_screen.effects]` sub-table).
+- Test files `Tests/Chat/test_openai_streaming_usage.py`, `test_anthropic_streaming_usage.py`, `Tests/UI/test_app_quit_guard.py` all exist on dev and remain the patterns to mirror.
+- **Running tests from this worktree**: use the main checkout's venv with the worktree first on the path — `cd .worktrees/quit-summary-365 && PYTHONPATH=. /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python -m pytest ...` (verified: `import tldw_chatbook` resolves into the worktree, not the main checkout's editable install).
+
 ---
 
 ### Task 1: SessionUsageLedger
