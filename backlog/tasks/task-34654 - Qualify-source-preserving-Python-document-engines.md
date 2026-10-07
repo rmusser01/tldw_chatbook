@@ -1,7 +1,7 @@
 ---
 id: TASK-34654
 title: Qualify source-preserving Python document engines
-status: In Progress
+status: Done
 created_date: 2026-10-07 03:09
 dependencies:
 - TASK-34565
@@ -12,7 +12,7 @@ labels:
 - structured-editing
 documentation:
 - /Users/macbook-dev/.codex/worktrees/structured-document-editing/tldw_chatbook/Docs/superpowers/plans/2026-09-27-structured-document-editing.md
-updated_date: 2026-10-07 12:08
+updated_date: 2026-10-07 12:15
 ---
 
 ## Description
@@ -48,15 +48,13 @@ Fix round1 (task-8-review.md I1): correct the shared YAML1.2 Core integer tag ma
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented the pure JSON/JSONL and YAML document engines with E1 request-aware contracts; source tokens, comments and symbolic YAML graph are verified before edits. Qualified and pinned ruamel.yaml 0.19.1 MIT event/token APIs after source/graph/fixture/license experiments; generic round-trip dumping is rejected. ADR-194 amendment and durable evidence: Docs/superpowers/reviews/2026-09-27-document-engine-python.md. Four targeted files pass 120 tests including generated JSON and actual YAML positives/refusals; scoped Ruff, Black and Bandit pass. Source/depth/diagnostic limits and cooperative deadlines are tested. No hard termination or heap cap is claimed: dense fixtures reached about 190 MB RSS and deadline cleanup about 2.02 seconds; E4 remains the process owner. Unknown tags/mixed versions/complex or alias keys/indentless sequences/token-changing multiline layouts explicitly decline. No UI/save/network/filesystem changes; fixtures unchanged. Self-review found and fixed tag/merge admission, candidate-error normalization, comment invariants, EOF indentation and line clamping; testing lesson recorded. Status remains In Progress pending controller review.
-Fix round1 / I1: narrowed optional signs to the decimal branch of the YAML 1.2 Core integer matcher, preserving the separate 1.1 resolver. Added both-sign/both-base default/explicit1.2 distinct-key and quoted-duplicate controls, plus explicit1.1 signed hex/legacy-octal compatibility cases. RED: 16 failed/56 passed; whole YAML covering GREEN: 72 passed in 0.14s, exit 0. Changed-file Ruff/Black/Bandit and reviewed-base diff checks pass. Durable qualification correction recorded; unchanged JSON/position/contracts not rerun. Existing ADR194 applies; no new dependency or boundary. Self-reviewed one-line root-cause fix; remains In Progress for fresh review.
+Implemented pure source-preserving JSON/JSONL and YAML engines with unchanged E1 request-aware models. Strict stdlib JSON retains number/string tokens and decoded-key scope; qualified ruamel.yaml0.19.1 MIT scan/events retain comments, directives, markers, anchors/aliases/merges and scalar content without constructors or dumping. ADR194 and Docs/superpowers/reviews/2026-09-27-document-engine-python.md record actual dependency/license, frozen37-fixture hash/outcomes, positive/refusal and resource observations. Original four-file120 tests pass; amended whole-YAML72 tests pass after meaningful Core-sign RED16/56, with changed Ruff/Black/Bandit/diff0. Initial independent review plus fresh scoped fix review approved; all three cross-task/chronology items resolved in task-8-review-scope-resolution.md. Commits4f42519c and ba744f90. Explicit unqualified YAML constructs refuse; pure deadlines remain cooperative and no RSS ceiling is claimed (~190MB dense input observed). E4 owns hard termination/IPC; actual editor/history/startup and cross-runtime/release qualification remain later units. No full sweep or UI/save authority claim; exact source-safe evidence is in task-8-report.md.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Python parser/formatter qualification complete for this unit under ADR194; original120 plus amended YAML72 targeted coverage, scoped static/security/format checks and independent/scoped reviews passed. Qualified source/token/event edits only. Hard worker/editor/cross-runtime qualification remains later work.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
