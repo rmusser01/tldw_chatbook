@@ -255,3 +255,55 @@ def test_indentless_sequence_is_explicitly_unqualified(request_for):
     result = format_document(request_for("root:\n- a\n- b\n", language="yaml"))
     assert result.check.state == "unsupported" and result.state == "blocked"
     assert result.replacement is None
+
+
+@pytest.mark.parametrize("directive", ["", "%YAML 1.2\n---\n"])
+@pytest.mark.parametrize(
+    "spelling, decimal",
+    [("+0xB", "11"), ("-0xB", "-11"), ("+0o13", "11"), ("-0o13", "-11")],
+)
+@pytest.mark.parametrize("quoted", [False, True])
+def test_core_signed_base_spellings_are_string_keys(
+    request_for, directive, spelling, decimal, quoted
+):
+    from tldw_chatbook.Document_Editing.engine import format_document
+
+    other = f'"{spelling}"' if quoted else decimal
+    source = f"{directive}{spelling}:   a\n{other}: b\n"
+    result = format_document(request_for(source, language="yaml"))
+    assert result.check.state == "checked" and result.check.complete
+    if quoted:
+        assert result.state == "blocked" and result.replacement is None
+        (diagnostic,) = result.check.diagnostics
+        assert diagnostic.code == "duplicate_key" and diagnostic.severity == "error"
+        assert source[diagnostic.start : diagnostic.end] == other
+    else:
+        assert result.check.format_allowed and not result.check.diagnostics
+        assert result.state == "formatted"
+        assert result.replacement == f"{directive}{spelling}: a\n{other}: b\n"
+        assert (
+            format_document(request_for(result.replacement, language="yaml")).state
+            == "unchanged"
+        )
+
+
+@pytest.mark.parametrize(
+    "spelling, decimal",
+    [("+0xB", "11"), ("-0xB", "-11"), ("+013", "11"), ("-013", "-11")],
+)
+@pytest.mark.parametrize("quoted", [False, True])
+def test_explicit_yaml11_signed_hex_and_legacy_octal_stay_numeric(
+    request_for, spelling, decimal, quoted
+):
+    from tldw_chatbook.Document_Editing.engine import format_document
+
+    other = f'"{spelling}"' if quoted else decimal
+    source = f"%YAML 1.1\n---\n{spelling}:   a\n{other}: b\n"
+    result = format_document(request_for(source, language="yaml"))
+    if quoted:
+        assert result.check.format_allowed and not result.check.diagnostics
+        assert result.replacement == f"%YAML 1.1\n---\n{spelling}: a\n{other}: b\n"
+    else:
+        assert result.state == "blocked" and result.replacement is None
+        (diagnostic,) = result.check.diagnostics
+        assert diagnostic.code == "duplicate_key" and diagnostic.severity == "error"

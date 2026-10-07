@@ -16,7 +16,7 @@ from .models import Diagnostic
 from .source_positions import MAX_DIAGNOSTICS, Budget, DocumentError
 
 _PREFIX = "tag:yaml.org,2002:"
-_CORE_INT = re.compile(r"[+-]?(?:[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)\Z")
+_CORE_INT = re.compile(r"(?:[+-]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)\Z")
 _CORE_FLOAT = re.compile(
     r"[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|\.(?:inf|Inf|INF))\Z"
 )

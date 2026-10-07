@@ -110,3 +110,9 @@ No fixture edits. Spans are zero-based Unicode-scalar `[start,end)` into the exa
 | yaml-chomping | checked | — | [] | true | unchanged |
 | yaml-duplicate | checked | duplicate_key | [[5, 6]] | false | blocked |
 | yaml-malformed | checked | syntax | [[9, 9]] | false | blocked |
+
+## Review correction I1 — YAML Core numeric signs
+
+Review of base `4f42519c8ee85b6b53a70d4f29f19b666084de96` found that the Core integer matcher incorrectly applied optional signs to hexadecimal/octal alternatives. The [YAML 1.2.2 Core resolution table](https://yaml.org/spec/1.2.2/#1032-tag-resolution) permits signs only on decimal integers. The shared matcher now follows that rule: `+0xB`, `-0xB`, `+0o13`, and `-0o13` are strings in default/explicit 1.2, distinct from decimal keys and duplicates of their quoted spellings. Formatting preserves those strings and refuses the quoted duplicates. Explicit 1.1 retains signed hexadecimal and legacy octal numeric resolution through its separate resolver.
+
+The new controls initially produced **16 failed, 56 passed** (exit 1); after the one-line matcher correction the whole YAML file produced **72 passed in 0.14s** (exit 0). Scoped Ruff/Black on changed source/tests, Bandit on changed production source, and the diff check against the reviewed base passed (exit 0). Logs: `/private/tmp/tldw-task8-evidence/fix1-{red,green,ruff,black,bandit,diff}.log`. The unchanged JSON/position/contract selections were not rerun; shared fixtures, parser dependency, resource controls and ADR boundary are unchanged. Task remains In Progress for fresh review.
