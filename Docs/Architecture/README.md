@@ -36,10 +36,20 @@ It complements the other doc families:
 
 ### Data and pipelines
 
-- [database-layer.md](./database-layer.md) — `BaseDB` infrastructure, ChaChaNotes schema v73 and migrations, Media DB, cross-DB patterns, satellite DBs
+- [database-layer.md](./database-layer.md) — `BaseDB` infrastructure, ChaChaNotes schema v78 and migrations, Media DB, cross-DB patterns, satellite DBs
 - [notes-sync.md](./notes-sync.md) — review-first bidirectional notes sync, root leases, recovery-first executor, session file-notes and guarded git
 - [media-ingestion.md](./media-ingestion.md) — parse-without-DB worker model, per-type extraction, single write seam, chunk stamping
 - [media-generation.md](./media-generation.md) — image/video adapter registries, secrets precedence, validation choke point, chat integration, ephemeral video store
+
+### Surfaces and supporting subsystems
+
+- [library-shell.md](./library-shell.md) — Library destination: rail/canvas navigation, adaptive reader, read-it-later, collections, the durable ingest job queue
+- [subscriptions-watchlists.md](./subscriptions-watchlists.md) — source polling, single-flight run claims, items and briefings, the artifact chain
+- [scheduling-workflows.md](./scheduling-workflows.md) — unified scheduler (reminders, watchlist checks, briefings, automations), server ownership/transfer, workflows authoring (run gated off), meetings
+- [evals.md](./evals.md) — classic evals orchestration, word bench, character probe engines, EvalsDB
+- [speech.md](./speech.md) — TTS service and adapter registry, voice profiles, PCM playback, dictation, hands-free loop
+- [personal-context.md](./personal-context.md) — encrypted profile store, bounded snapshot injection, agent lessons and human-reviewed promotion
+- [acp.md](./acp.md) — ACP runtime launcher, session payloads, Console-follow handoff, honest boundaries
 
 ## Conventions
 
@@ -50,4 +60,4 @@ It complements the other doc families:
 
 ## Not yet covered
 
-Subsystem docs that do not exist yet (candidates, roughly in value order): speech/TTS stack (`TTS/`, voice profiles, hands-free loop), evals orchestration (`Evals/`), subscriptions/watchlists, scheduling/workflows, personal context (`Personal_Context/`), the Library shell, ACP. Until a doc exists here, the ADR set and `Docs/User_Guide/` are the reference for those areas.
+Areas without a doc here yet (candidates): the Home screen, Artifacts screen, notifications, metrics/telemetry (`Metrics/`), the theme system, Canvas, the research workspace, the server-sync seams (`Sync_Interop/`, `tldw_api/`). Until a doc exists here, the ADR set and `Docs/User_Guide/` are the reference for those areas.
