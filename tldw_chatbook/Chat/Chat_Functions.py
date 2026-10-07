@@ -1651,6 +1651,38 @@ def _debug_dump_llm_payload_summary(
         )
 
 
+# Parsed post-generation replacement dictionaries (task-20c), keyed by the
+# configured dictionary path; each value is ((path, size, mtime_ns), entries).
+# chat() runs on worker threads; dict get/set is GIL-atomic, so a racy miss
+# can only cost a duplicate parse -- the stat signature is re-checked on every
+# hit, so a stale entry is never served.
+_POST_GEN_DICT_CACHE: Dict[str, Tuple[Tuple[str, int, int], Dict[str, str]]] = {}
+
+
+def _load_post_gen_dict_entries(dict_path: str) -> Dict[str, str]:
+    """Return post-gen replacement entries, re-parsing only on file change (task-20c).
+
+    The dictionary markdown is re-read only when its (path, size, mtime_ns)
+    signature changes, so an unchanged dictionary costs one parse per
+    signature instead of one parse per non-streaming response. A different
+    configured path is a different cache key. A stat failure bypasses the
+    cache and falls through to the parser's own error handling.
+    """
+
+    normalized_path = str(dict_path)
+    try:
+        stat = os.stat(normalized_path)
+    except OSError:
+        return parse_user_dict_markdown_file(normalized_path)
+    cache_key = (normalized_path, stat.st_size, stat.st_mtime_ns)
+    cached = _POST_GEN_DICT_CACHE.get(normalized_path)
+    if cached is not None and cached[0] == cache_key:
+        return dict(cached[1])
+    entries = parse_user_dict_markdown_file(normalized_path)
+    _POST_GEN_DICT_CACHE[normalized_path] = (cache_key, dict(entries))
+    return entries
+
+
 def chat(
     message: str,
     history: List[Dict[str, Any]],
@@ -2204,7 +2236,7 @@ def chat(
                     post_gen_replacement_dict_path
                 ):
                     try:
-                        parsed_dict_entries = parse_user_dict_markdown_file(
+                        parsed_dict_entries = _load_post_gen_dict_entries(
                             post_gen_replacement_dict_path
                         )
                         if parsed_dict_entries:
