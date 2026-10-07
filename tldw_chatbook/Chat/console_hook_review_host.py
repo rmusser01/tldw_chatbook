@@ -194,7 +194,12 @@ class InitialHookReviewMixin:
         return answer
 
     def claim_hook_review_presentation(
-        self, review_id: str, generation: int, attachment_generation: int
+        self,
+        review_id: str,
+        generation: int,
+        attachment_generation: int,
+        *,
+        replace_existing: bool = False,
     ) -> ConsoleHookReviewProjection | None:
         """Claim only the selected session; displaced exact sources terminate."""
         displaced = False
@@ -209,7 +214,8 @@ class InitialHookReviewMixin:
             ] and self._hook_review_head_locked(state):
                 token = state["presentation_token"]
                 if (
-                    token is None
+                    replace_existing
+                    or token is None
                     or state["attachment_generation"] != attachment_generation
                 ):
                     if token is not None:

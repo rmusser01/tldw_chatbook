@@ -4703,7 +4703,9 @@ class ConsoleRuntime:
     def _start_hook_review_operation(self, host, operation, expected, keys):
         coroutine = self._execute_hook_review_operation(host, operation, expected, keys)
         try:
-            task = asyncio.create_task(coroutine)
+            # A configurable factory can eagerly issue native work, then raise
+            # without returning its handle. This private driver must start lazily.
+            task = asyncio.Task(coroutine, loop=asyncio.get_running_loop())
         except BaseException as error:
             coroutine.close()
             host.finish_hook_review_operation(operation, None, error=error)

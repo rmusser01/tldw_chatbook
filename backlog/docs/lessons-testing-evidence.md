@@ -18751,3 +18751,12 @@ Two original continuation tests waited 30 seconds for a machine acceptance that 
 ## Shielding a Task is not ownership of its native worker
 
 **TASK-34563.10, 2026-10-07.** Hook-review lifetime tests initially cancelled only the outer action waiter and passed. Cancelling every action-created Task while the original HookPermissions write held real storage leases let its `to_thread` Task report cancellation and Close complete before native retirement. Two further controls exposed an executor that queued before raising and a driver cancelled before its first coroutine step. The final implementation retains a private executor Future, seals callback entry until submission succeeds, and retires an unstarted driver through an exact-host done callback. Capture the issuing owner before scheduling; replacement-controller cleanup had incorrectly targeted the successor. The real held-write and submission/pre-entry tests in `Tests/Chat/test_console_initial_hook_review.py` cover these distinct boundaries. Scope task cancellation to the operation's cohort: the first broad fixture attempt also cancelled an unrelated Canvas policy reader and produced an additional teardown error.
+
+
+### Scheduling failure may already have started the native operation
+
+TASK-34563.10 follow-up, 2026-10-07: a custom task factory created an eager stdlib Task for the consent driver, then raised before returning it. The startup error path closed the entered coroutine and declared retirement while the original HookPermissions write still held storage leases. A direct lazy stdlib Task for this private finite driver prevents that partially started factory boundary. The held-original-body regression proves the distinction; a factory that only raises before starting would not have caught it.
+
+### A remounted modal needs a new presentation token before old Unmount finishes
+
+TASK-34563.10 follow-up, 2026-10-07: a mounted Cancel check failed because Textual resumed the Console and projected a replacement review before the popped modal's Unmount released its token. Both modals shared a token, so late old cleanup invalidated the visible replacement. A deterministic original-projector control reproduced the reused token. New presentation creation now rotates the token; updates to the same presentation retain it. Testing only unmount-then-remount serially had missed the actual framework ordering.

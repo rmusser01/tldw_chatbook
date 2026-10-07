@@ -630,7 +630,11 @@ def project_runtime_hook_review(runtime: ConsoleRuntime, pending) -> bool | None
         return False
     host = runtime.chat_controller._interrupt_host
     projection = host.claim_hook_review_presentation(
-        pending.decision_id, pending.payload["generation"], runtime._attached_generation
+        pending.decision_id,
+        pending.payload["generation"],
+        runtime._attached_generation,
+        # ScreenResume can precede the popped modal's late Unmount release.
+        replace_existing=matching is None,
     )
     if projection is None:
         return False

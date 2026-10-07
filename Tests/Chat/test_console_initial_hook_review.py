@@ -512,3 +512,103 @@ async def test_driver_cancelled_before_first_step_retires_exact_reservation(
         state.host.finish_hook_review_operation(
             operation, None, error=asyncio.CancelledError()
         )
+
+
+async def test_eager_task_factory_failure_cannot_retire_live_native_consent(
+    review_runtime,
+):
+    state = review_runtime
+    await _request(state)
+    _view, _attachment, projection = _present(state)
+    probe = _OriginalVisit(state.owner)
+    probe.snapshot_code = HookPermissions._decision.__code__
+    loop = asyncio.get_running_loop()
+    previous_factory = loop.get_task_factory()
+    factory_tasks = []
+    action = None
+
+    def starts_then_raises(owner_loop, coroutine, **kwargs):
+        if coroutine.cr_code is ConsoleRuntime._execute_hook_review_operation.__code__:
+            task = asyncio.Task(
+                coroutine,
+                loop=owner_loop,
+                context=kwargs.get("context"),
+                eager_start=True,
+            )
+            factory_tasks.append(task)
+            raise RuntimeError("factory failed after eager native issuance")
+        if previous_factory is not None:
+            return previous_factory(owner_loop, coroutine, **kwargs)
+        return asyncio.Task(coroutine, loop=owner_loop, **kwargs)
+
+    with probe.installed():
+        try:
+            loop.set_task_factory(starts_then_raises)
+            action = asyncio.Task(
+                state.runtime.apply_hook_review_action(
+                    "review",
+                    1,
+                    "approve",
+                    state.snapshot,
+                    _keys(state.snapshot),
+                    presentation_token=projection.presentation_token,
+                ),
+                loop=loop,
+            )
+            state.tasks.append(action)
+            assert await _until(probe.entered.is_set, 5)
+            probe.assert_live()
+            retirements = state.host.hook_review_retirements(state.session.id)
+            assert (
+                len(retirements) == 1 and not retirements[0].done()
+            ), "an eager factory failure retired the original native write"
+        finally:
+            loop.set_task_factory(previous_factory)
+            probe.release.set()
+            if action is not None:
+                await asyncio.gather(action, *factory_tasks, return_exceptions=True)
+            assert await _until(probe.retired, 5)
+    probe.assert_retired()
+    assert action.result().ready
+    assert state.host.hook_review_retirements() == ()
+
+
+async def test_new_modal_token_survives_delayed_old_modal_unmount(review_runtime):
+    from tldw_chatbook.Chat.console_hook_review import HookReviewResult
+    from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
+        project_runtime_hook_review,
+    )
+
+    state = review_runtime
+    waiter = await _request(state)
+    view = _View(state.app)
+    state.app.screen = view
+    state.app.screen_stack = [view]
+
+    def push_screen(modal):
+        state.app.screen_stack.append(modal)
+        state.app.screen = modal
+
+    state.app.push_screen = push_screen
+    attachment = state.runtime.attach_view(view)
+    assert state.runtime.finish_view_reconciliation(view, attachment)
+    pending = state.controller.pending_decision_projection(state.session.id)
+    assert project_runtime_hook_review(state.runtime, pending)
+    old_modal = state.app.screen
+    old = old_modal._console_hook_review_projection
+
+    # Textual posts ScreenResume before the popped modal's Unmount finishes.
+    state.app.screen_stack.remove(old_modal)
+    state.app.screen = view
+    state.runtime._reconciled_view = view
+    assert project_runtime_hook_review(state.runtime, pending)
+    new_modal = state.app.screen
+    current = new_modal._console_hook_review_projection
+    assert new_modal is not old_modal
+    assert current.presentation_token is not old.presentation_token
+    old_modal.on_unmount()
+    assert project_runtime_hook_review(state.runtime, pending)
+    assert state.app.screen is new_modal
+    assert new_modal._runtime_result(HookReviewResult("cancel"))
+    assert (await waiter).kind == "cancel"
+    assert state.controller.pending_decision_projection(state.session.id) is None
