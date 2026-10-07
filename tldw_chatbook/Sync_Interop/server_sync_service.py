@@ -194,9 +194,11 @@ class ServerSyncService:
         device_id: str,
     ) -> tuple[Any, Any]:
         """Pin one existing runtime client and reject context changes through cleanup."""
-        client = self._require_client()
         provider = self.client_provider
-        context = provider.get_active_context() if provider is not None else None
+        if self.client is not None or provider is None:
+            raise ValueError("notes_authority_unavailable")
+        client = provider.build_client()
+        context = provider.get_active_context()
         runtime = getattr(provider, "runtime_context", None)
         revision = runtime.snapshot()[1] if runtime is not None else None
         if context is None:
@@ -206,8 +208,10 @@ class ServerSyncService:
 
         def assert_current() -> None:
             if (
-                self._require_client() is not client
-                or (context is not None and provider.get_active_context() != context)
+                self.client is not None
+                or self.client_provider is not provider
+                or provider.build_client() is not client
+                or provider.get_active_context() != context
                 or (runtime is not None and runtime.snapshot()[1] != revision)
             ):
                 raise ValueError("notes_authority_changed")

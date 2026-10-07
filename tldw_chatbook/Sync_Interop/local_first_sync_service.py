@@ -105,6 +105,11 @@ class LocalFirstSyncService:
         """
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from tldw_chatbook.tldw_api import SyncV2Envelope
+        from tldw_chatbook.tldw_api.exceptions import (
+            APIConnectionError,
+            APIResponseError,
+            AuthenticationError,
+        )
 
         profile = self.state_repository.get_sync_v2_profile_state(
             server_profile_id=server_profile_id,
@@ -150,7 +155,13 @@ class LocalFirstSyncService:
                 ):
                     raise TypeError("notes_authority_unavailable")
                 notes_authority[1]()
-            except (TypeError, ValueError) as exc:
+            except (
+                TypeError,
+                ValueError,
+                APIConnectionError,
+                APIResponseError,
+                AuthenticationError,
+            ) as exc:
                 reason = (
                     str(exc)
                     if str(exc)

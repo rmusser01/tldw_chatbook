@@ -1420,3 +1420,227 @@ async def test_injected_notes_peer_without_capture_refuses_and_retains_pending(
         len(repo.list_pending_sync_v2_outbox_envelopes(**SCOPE, dataset_id="dataset-1"))
         == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_mixed_fixed_client_provider_cannot_borrow_target_proof():
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Sync_Interop.server_sync_service import ServerSyncService
+
+    class Client:
+        async def get_sync_v2_profile(self, **kwargs):
+            return {"user_id": "same-user"}
+
+        async def get_sync_v2_restore_manifest(self, **kwargs):
+            return {
+                "datasets": [
+                    {
+                        "dataset_id": "same-dataset",
+                        "scope_type": "personal",
+                        "workspace_id": None,
+                    }
+                ]
+            }
+
+    fixed = Client()
+    provider_client = Client()
+
+    class Provider:
+        def build_client(self):
+            return provider_client
+
+        def get_active_context(self):
+            return SimpleNamespace(active_server_id="server-a")
+
+    with pytest.raises(ValueError, match="notes_authority_unavailable"):
+        await ServerSyncService(
+            fixed, client_provider=Provider()
+        ).capture_notes_authority(
+            "server-a",
+            authenticated_principal_id="same-user",
+            workspace_scope=None,
+            dataset_id="same-dataset",
+            device_id="device-1",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["fixed", "provider", "provider_client"])
+async def test_captured_notes_authority_rechecks_provider_ownership(change):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Sync_Interop.server_sync_service import ServerSyncService
+
+    class Client:
+        async def get_sync_v2_profile(self, **kwargs):
+            return {"user_id": "same-user"}
+
+        async def get_sync_v2_restore_manifest(self, **kwargs):
+            return {
+                "datasets": [
+                    {
+                        "dataset_id": "same-dataset",
+                        "scope_type": "personal",
+                        "workspace_id": None,
+                    }
+                ]
+            }
+
+        async def get_sync_v2_capabilities(self, **kwargs):
+            raise AssertionError("stale provider must refuse before probe")
+
+    class Provider:
+        def __init__(self):
+            self.current = Client()
+
+        def build_client(self):
+            return self.current
+
+        def get_active_context(self):
+            return SimpleNamespace(active_server_id="server-a")
+
+    provider = Provider()
+    service = ServerSyncService(None, client_provider=provider)
+    authority = await service.capture_notes_authority(
+        "server-a",
+        authenticated_principal_id="same-user",
+        workspace_scope=None,
+        dataset_id="same-dataset",
+        device_id="device-1",
+    )
+    assert authority[0] is provider.current
+    authority[1]()
+    if change == "fixed":
+        service.client = provider.current
+    elif change == "provider":
+        service.client_provider = Provider()
+    else:
+        provider.current = Client()
+    with pytest.raises(ValueError, match="notes_authority_changed"):
+        authority[1]()
+    with pytest.raises(ValueError, match="notes_authority_changed"):
+        await service.get_v2_capabilities(
+            dataset_id="same-dataset", notes_authority=authority
+        )
+    with pytest.raises(ValueError, match="notes_authority_changed"):
+        await service._push_v2_envelopes(
+            dataset_id="same-dataset",
+            device_id="device-1",
+            envelopes=[],
+            notes_authority=authority,
+        )
+    with pytest.raises(ValueError, match="notes_authority_changed"):
+        await service._pull_v2_envelopes(
+            dataset_id="same-dataset", device_id="device-1", notes_authority=authority
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["identity", "manifest"])
+@pytest.mark.parametrize(
+    "failure", ["connection", "authentication", "response", "cancel", "programming"]
+)
+async def test_notes_proof_read_failure_preserves_real_store_pending(
+    tmp_path, db, stage, failure
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Sync_Interop.local_first_sync_service import (
+        LocalFirstSyncService,
+    )
+    from tldw_chatbook.Sync_Interop.server_sync_service import ServerSyncService
+    from tldw_chatbook.tldw_api.exceptions import (
+        APIConnectionError,
+        APIResponseError,
+        AuthenticationError,
+    )
+
+    errors = {
+        "connection": APIConnectionError("private-network-detail"),
+        "authentication": AuthenticationError("private-auth-detail"),
+        "response": APIResponseError(503, "private-response-detail"),
+        "cancel": asyncio.CancelledError(),
+        "programming": RuntimeError("programming defect"),
+    }
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def get_sync_v2_profile(self, **kwargs):
+            self.calls.append("identity")
+            if stage == "identity":
+                raise errors[failure]
+            return {"user_id": "user-a"}
+
+        async def get_sync_v2_restore_manifest(self, **kwargs):
+            self.calls.append("manifest")
+            raise errors[failure]
+
+        async def get_sync_v2_capabilities(self, **kwargs):
+            raise AssertionError("no capability call after failed proof")
+
+        async def push_sync_v2_envelopes(self, request):
+            raise AssertionError("no publication after failed proof")
+
+        async def pull_sync_v2_envelopes(self, **kwargs):
+            raise AssertionError("no pull after failed proof")
+
+    client = Client()
+
+    class Provider:
+        def build_client(self):
+            return client
+
+        def get_active_context(self):
+            return SimpleNamespace(active_server_id="server-a")
+
+    scope = {**SCOPE, "authenticated_principal_id": "user-a"}
+    path = tmp_path / "proof-errors.db"
+    repo = SyncStateRepository(path)
+    repo.set_sync_v2_profile_state(
+        **scope,
+        profile_mode="local_first",
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_cursors={"dataset-1": 3},
+    )
+    envelope = builder(
+        notes_adapter_versions={"notes.note": [2]}
+    ).build_notes_note_upsert(
+        note_id="pending", title="T", content=SOURCE, content_language=LANGUAGE
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        **scope, dataset_id="dataset-1", envelope=envelope
+    )
+    before = repo.list_pending_sync_v2_outbox_envelopes(**scope, dataset_id="dataset-1")
+    mirror = NotesMirror(":memory:")
+    service = LocalFirstSyncService(
+        server_service=ServerSyncService(None, client_provider=Provider()),
+        state_repository=repo,
+        local_store=SQLiteNotesStore(db),
+        notes_mirror=mirror,
+        notes_mirror_scope=("server-a", "user-a", None),
+    )
+    expected = (
+        type(errors[failure]) if failure in {"cancel", "programming"} else ValueError
+    )
+    with pytest.raises(expected):
+        await service.sync_once(**scope, domains=["notes.note"])
+    reopened = SyncStateRepository(path)
+    state = reopened.get_sync_v2_profile_state(**scope)
+    assert state["dataset_cursors"] == {"dataset-1": 3}
+    assert state["last_error"] == (
+        None if failure in {"cancel", "programming"} else "notes_authority_unavailable"
+    )
+    assert (
+        reopened.list_pending_sync_v2_outbox_envelopes(**scope, dataset_id="dataset-1")
+        == before
+    )
+    assert client.calls == (
+        ["identity"] if stage == "identity" else ["identity", "manifest"]
+    )
+    assert mirror.get("dataset-1", "pending") is None
+    assert db.get_note_by_id("pending") is None
