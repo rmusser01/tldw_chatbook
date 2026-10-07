@@ -442,7 +442,8 @@ def _profile_row(db, text, facet="topic"):
     return dict(row) if row is not None else None
 
 
-def _seed_story_with_feedback(db, *, matched, kind, created_at=None):
+def _seed_story_with_feedback(db, *, matched, kind, created_at=None,
+                              story_kind="content"):
     """One story plus one feedback row with a CONTROLLED created_at."""
     collection = db.get_collection_by_date("2026-09-20")
     if collection is None:
@@ -459,7 +460,7 @@ def _seed_story_with_feedback(db, *, matched, kind, created_at=None):
         body="b",
         status="complete",
         source="web",
-        kind="content",
+        kind=story_kind,
         event_date=None,
         location=None,
         matched_topics=matched,
@@ -658,6 +659,20 @@ def test_feedback_ignores_old_and_neutral_reactions(dreams_db, settings):
     assert _net(dreams_db) == {}
 
 
+def test_feedback_tracked_reaction_is_positive(dreams_db, settings):
+    """Phase 2 Track flip: ``tracked`` now nets +1 (+0.1 snapshot weight)."""
+    _fresh_topic(dreams_db, "tracked topic", 0.5)
+    _seed_story_with_feedback(dreams_db, matched=["tracked topic"],
+                              kind="tracked")
+    net = _net(dreams_db)
+    assert net == {"tracked topic": 1}
+    assert _snapshot_weight(dreams_db, "tracked topic", net) == \
+        pytest.approx(0.6)
+    # The stored weight is untouched (offset, never rewrite).
+    assert _profile_row(dreams_db, "tracked topic")["weight"] == \
+        pytest.approx(0.5)
+
+
 @pytest.mark.asyncio
 async def test_feedback_never_compounds_across_cycles(dreams_db, settings):
     """Regression: one reaction used to re-add +0.1 on EVERY cycle."""
@@ -688,6 +703,168 @@ async def test_cycle_feeds_feedback_into_the_snapshot(dreams_db, settings,
     result = await run_cycle(_deps(dreams_db), trigger="manual")
     assert result["status"] == "complete"
     assert seen == [{"rust tui": 1}]
+
+
+# --- Goal query-angle feedback (task-33165) -----------------------------------
+#
+# The OTHER feedback half: goals never change weight; feedback on a story
+# whose matched_topics include a GOAL steers that goal's QUERY ANGLE
+# ("avoid: {story kind}" on less, "prefer: {story kind}" on any positive
+# kind; the newest non-neutral reaction replaces whatever came before).
+
+
+def _angles(db):
+    from tldw_chatbook.Dreams.cycle_service import _apply_goal_angles
+
+    _apply_goal_angles(db, now=NOW)
+
+
+def _goal_angle(db, text):
+    row = _profile_row(db, text, facet="goal")
+    return None if row is None else row["query_angle"]
+
+
+def test_goal_less_on_event_story_writes_avoid_angle_weight_immune(
+        dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="event")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "avoid: event"
+    # The goal's weight is untouched: angles steer, weights stay immune.
+    assert _profile_row(dreams_db, "visit japan",
+                        facet="goal")["weight"] == pytest.approx(0.9)
+
+
+def test_goal_positive_kinds_write_prefer_angle(dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="more",
+                              story_kind="deal")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "prefer: deal"
+
+
+def test_goal_angle_positive_replaces_negative_and_back(dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="event")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="kept",
+                              story_kind="deal")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "prefer: deal"
+    # And a negative after a positive replaces it right back.
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="social_opportunity")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "avoid: social_opportunity"
+
+
+def test_goal_angle_second_less_with_different_kind_replaces(
+        dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="event")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="deal")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "avoid: deal"
+
+
+def test_goal_angle_unknown_story_kind_maps_to_content(dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="unknown")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") == "avoid: content"
+
+
+def test_goal_angle_exported_reaction_is_neutral(dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"],
+                              kind="exported", story_kind="event")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") is None
+
+
+def test_topic_only_stories_never_touch_goal_angles(dreams_db, settings):
+    """A story matching only TOPIC rows steers no goal, ever."""
+    _fresh_topic(dreams_db, "rust tui", 0.5, source="user")
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="less",
+                              story_kind="event")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") is None
+    assert _profile_row(dreams_db, "visit japan",
+                        facet="goal")["weight"] == pytest.approx(0.9)
+
+
+def test_goal_angle_matched_text_is_normalized_against_profile_casing(
+        dreams_db, settings):
+    """Stories store lowercased matches; the goal row keeps its casing."""
+    _fresh_topic(dreams_db, "Visit Japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="more",
+                              story_kind="event")
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "Visit Japan") == "prefer: event"
+
+
+def test_goal_angle_ignores_feedback_outside_the_window(dreams_db, settings):
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(
+        dreams_db, matched=["visit japan"], kind="less", story_kind="event",
+        created_at=(NOW - timedelta(days=15)).isoformat())
+    _angles(dreams_db)
+    assert _goal_angle(dreams_db, "visit japan") is None
+
+
+@pytest.mark.asyncio
+async def test_cycle_writes_goal_angle_and_goal_weight_stays_immune(
+        dreams_db, settings):
+    """End to end: the cycle's feedback stage steers the goal's angle."""
+    _seed_topics(dreams_db)
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="event")
+    result = await run_cycle(_deps(dreams_db), trigger="manual")
+    assert result["status"] == "complete"
+    goal = _profile_row(dreams_db, "visit japan", facet="goal")
+    assert goal["query_angle"] == "avoid: event"
+    assert goal["weight"] == pytest.approx(0.9)
+
+
+@pytest.mark.asyncio
+async def test_goal_angle_failure_degrades_without_killing_the_cycle(
+        dreams_db, settings, monkeypatch):
+    """A dead angle write is a note; the topic offset and cycle survive."""
+    from tldw_chatbook.Dreams import interest_profile
+
+    _seed_topics(dreams_db)
+    _fresh_topic(dreams_db, "rust tui", 0.5, source="user")
+    _fresh_topic(dreams_db, "visit japan", 0.9, source="user", facet="goal")
+    _seed_story_with_feedback(dreams_db, matched=["rust tui"], kind="more")
+    _seed_story_with_feedback(dreams_db, matched=["visit japan"], kind="less",
+                              story_kind="event")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("angle write refused")
+
+    monkeypatch.setattr(DreamsDB, "set_goal_query_angle", boom)
+    seen = []
+    real = interest_profile.snapshot
+
+    def spy(db, *, now_epoch, feedback=None):
+        seen.append(feedback)
+        return real(db, now_epoch=now_epoch, feedback=feedback)
+
+    monkeypatch.setattr(interest_profile, "snapshot", spy)
+    result = await run_cycle(_deps(dreams_db), trigger="manual")
+    assert result["status"] == "complete"
+    row = dreams_db.get_collection_by_date(_today())
+    assert "goal angle feedback failed" in row["degradation_notes"]
+    # The net (both matched texts, goal-derived included -- the SNAPSHOT is
+    # what applies it to topic rows only) still reached the snapshot: the
+    # angle failure took nothing else down with it.
+    assert seen == [{"rust tui": 1, "visit japan": -1}]
 
 
 # --- Budget / pool / ledger regressions (Qodo review) -------------------------
@@ -797,3 +974,57 @@ async def test_llm_fallback_story_does_not_repeat_next_day(dreams_db, settings):
     day_two = dreams_db.get_collection_by_date(
         tomorrow.astimezone().strftime("%Y-%m-%d"))
     assert not urls & {s["url"] for s in dreams_db.list_stories(day_two["id"])}
+
+
+# --- track lifecycle sweep at stage 0 (Phase 2 Task 6) -------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_sweeps_tracked_lifecycle_and_records_notes(
+        dreams_db, settings, monkeypatch):
+    """Stage 0 runs the sweep after stale-reclaim, before the profile stages.
+
+    The sweep's notes are degradation notes: they land on the collection row
+    like every other stage's.
+    """
+    from tldw_chatbook.Dreams import track_service
+
+    seen: list[tuple] = []
+
+    async def spy(db, *, now, subs_service_getter=None,
+                  scheduling_db_getter=None):
+        seen.append((db, now))
+        return ["track sweep: retired item 9 (event passed)"]
+
+    monkeypatch.setattr(track_service, "sweep_track_lifecycle", spy)
+    _seed_topics(dreams_db)
+    result = await run_cycle(_deps(dreams_db), trigger="manual")
+
+    assert result["status"] == "complete"
+    assert seen and seen[0][0] is dreams_db, "the sweep got the cycle's DB"
+    assert seen[0][1] is not None, "the sweep got the cycle's clock"
+    row = dreams_db.get_collection_by_date(_today())
+    assert "retired item 9" in (row["degradation_notes"] or ""), (
+        "sweep notes are carried into the collection's degradation notes"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_sweep_failure_degrades_and_cycle_completes(
+        dreams_db, settings, monkeypatch):
+    """A sweep exception is a degradation note, never an abort."""
+    from tldw_chatbook.Dreams import track_service
+
+    async def boom(db, *, now, subs_service_getter=None,
+                   scheduling_db_getter=None):
+        raise RuntimeError("sweep exploded")
+
+    monkeypatch.setattr(track_service, "sweep_track_lifecycle", boom)
+    _seed_topics(dreams_db)
+    result = await run_cycle(_deps(dreams_db), trigger="manual")
+
+    assert result["status"] == "complete", (
+        "a sweep failure must not abort the cycle"
+    )
+    row = dreams_db.get_collection_by_date(_today())
+    assert "track sweep failed" in (row["degradation_notes"] or "")

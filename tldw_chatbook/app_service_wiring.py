@@ -1991,6 +1991,12 @@ class ServiceWiringMixin:
         # first use while `[dreams] enabled` is set.
         self.dreams_db = None
         self._dreams_db_lock = threading.Lock()
+        # guardian task 1: the same ruling for Guardian (ADR-204 contract
+        # 1) -- no import here, no storage while `[guardian] enabled` is
+        # off; `get_guardian_db` builds lazily and nothing calls it until
+        # the Task 3 settings toggle.
+        self.guardian_db = None
+        self._guardian_db_lock = threading.Lock()
 
     def _wire_collections_capture_services(self) -> None:
         """Compose the profile-owned Local capture authority and scope seam."""
@@ -3432,6 +3438,38 @@ class ServiceWiringMixin:
                     return None
             return self.dreams_db
 
+    def get_guardian_db(self) -> Any:  # guardian task 1
+        """The Guardian DB, created on first use while Guardian is enabled.
+
+        Returns ``None`` while ``[guardian] enabled`` is off (ADR-204
+        contract 1: an off-by-default feature must not create storage) or
+        when the database cannot open. Reachable from the UI thread and
+        from the checker's ``asyncio.to_thread`` record hops, hence the
+        lock around first construction. Every Guardian import is deferred
+        to this call site (ADR-097 boot-census ratchet); NOTHING calls
+        this builder until the Task 3 settings toggle flips the feature
+        on, so importing or mounting the app with Guardian off never
+        creates the file.
+        """
+        from .Guardian.settings import guardian_db_path, guardian_setting
+
+        if not guardian_setting("enabled"):
+            return getattr(self, "guardian_db", None)
+        with self._guardian_db_lock:
+            if getattr(self, "guardian_db", None) is None:
+                try:
+                    from .DB.Guardian_DB import GuardianDB
+
+                    self.guardian_db = GuardianDB(
+                        guardian_db_path(), CLI_APP_CLIENT_ID
+                    )
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Guardian DB unavailable",
+                    )
+                    return None
+            return self.guardian_db
+
     def _dreams_cycle_deps(self):  # dreams phase 1
         """Build ``CycleDeps`` for a scheduled or catch-up Dreams cycle.
 
@@ -3472,6 +3510,22 @@ class ServiceWiringMixin:
             # May raise RuntimeError when no provider resolves; run_cycle
             # catches that and degrades the cycle by design.
             chat_getter=resolve_dreams_chat,
+            # Dreams phase 2 (Qodo #1/#13, PR #2890): the track lifecycle
+            # sweep disables a retired wrapper's dream-created subscription
+            # and linked reminder through these seams. Same getter-lambda
+            # discipline as the rest of the bag -- resolved at sweep time,
+            # None degrades to the legacy sweep behavior, never an error.
+            subs_service_getter=lambda: getattr(
+                self, "local_watchlists_service", None
+            ),
+            scheduling_db_getter=lambda: getattr(
+                getattr(self, "scheduling_service", None), "db", None
+            ),
+            # guardian: the aggregate Dreams feed (ADR-204 contract 3) --
+            # resolved at cycle time so the enabled-gated builder returns
+            # None while Guardian is off, and the profile refresh skips
+            # the source silently.
+            guardian_db_getter=lambda: self.get_guardian_db(),
         )
 
     def _start_dreams_boot_catchup(self) -> None:  # dreams phase 1
@@ -3522,6 +3576,75 @@ class ServiceWiringMixin:
             self.get_dreams_db
         )
         self._start_dreams_boot_catchup()
+
+        # dreams phase 2: the track-check handler rides the same post-
+        # `_ui_ready` seam (ADR-097 boot-census ratchet: deferred import
+        # only, nothing Dreams-shaped at module scope). It reuses the SAME
+        # cycle deps getter with the notification dispatcher attached via
+        # `CycleDeps.dispatch_getter`, so a `changed` track verdict can
+        # reach the shared inbox; a missing dispatcher degrades to a run
+        # row without delivery inside `run_track_check`, never an error.
+        # The loop's handler dict is mutated in place, in the same slice
+        # as the projection attach above -- the scheduler worker cannot
+        # run before this slice yields, so a `dream_track_check` task can
+        # only ever dispatch after its handler exists.
+        from .Scheduling.scheduler.handlers.dream_track_handler import (
+            DreamTrackHandler,
+        )
+
+        def _dreams_track_deps():
+            deps = self._dreams_cycle_deps()
+            if deps is not None:
+                deps.dispatch_getter = (
+                    lambda: self.notification_dispatch_service
+                )
+            return deps
+
+        self.scheduler_loop.handlers["dream_track_check"] = DreamTrackHandler(
+            deps_getter=_dreams_track_deps
+        )
+
+    def _wire_guardian_scheduler_integration(self) -> None:  # guardian task 2
+        """Wire the Guardian daily trend task into the live scheduler.
+
+        Same post-``_ui_ready`` seam as the Dreams wiring above (ADR-097
+        boot-census ratchet: deferred imports only, nothing
+        Guardian-shaped at module scope; this method is imported-lazy at
+        its call site in ``_on_ui_ready``'s tail). The projection is built
+        unconditionally because its ``[guardian] enabled`` gate is read
+        live on every ``tasks()`` call; the Guardian store itself is built
+        lazily by the enabled-gated ``get_guardian_db`` builder, so a
+        default (disabled) install never creates ``guardian.sqlite``. The
+        handler's deps getter re-reads the gate and the store on every
+        dispatch, so a mid-session disable stops the daily runs without a
+        restart.
+        """
+        from .Scheduling.services.guardian_projection import GuardianProjection
+
+        self.scheduler_loop.queue.guardian_projection = GuardianProjection(
+            self.get_guardian_db
+        )
+
+        from .Scheduling.scheduler.handlers.guardian_trend_handler import (
+            GuardianTrendDeps,
+            GuardianTrendHandler,
+        )
+        from .Guardian.settings import guardian_setting
+
+        def _guardian_trend_deps():
+            if not guardian_setting("enabled"):
+                return None
+            db = self.get_guardian_db()
+            if db is None:
+                return None
+            return GuardianTrendDeps(
+                guardian_db=db,
+                dispatch_service=self.notification_dispatch_service,
+            )
+
+        self.scheduler_loop.handlers["guardian_trends"] = GuardianTrendHandler(
+            deps_getter=_guardian_trend_deps
+        )
 
     def _observe_notes_sync_runtime_start(self, task: asyncio.Task[None]) -> None:
         """Consume a detached startup failure without exposing private detail."""

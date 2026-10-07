@@ -112,14 +112,21 @@ def snapshot(
 ) -> dict:
     """Read the profile's topics, decay them, and pair them with the region.
 
-    Only searchable ``facet == "topic"`` rows join the snapshot (goals ride
-    along in later cycle steps, undecayed); ``last_boosted_at`` is stored as
-    an ISO string or NULL and is converted to epoch floats for the decay
-    math. Feedback is applied here as an OFFSET over the decayed weight
-    (``FEEDBACK_STEP`` per net reaction, clamped) instead of being written
-    back into the stored weight: a stored write would re-apply the same
-    reactions every cycle of their window, and the signal refresh would
-    clobber it on derived rows.
+    Only searchable ``facet == "topic"`` rows join the snapshot's topics
+    (goals ride along as their own ``goals`` list, undecayed and untouched:
+    no feedback offset, no ``last_boosted_at`` conversion, and no
+    ``searchable`` filtering -- rows keep their flag so the egress layer,
+    query synthesis, is the single place that enforces the privacy gate);
+    ``last_boosted_at`` is stored as an ISO string or NULL and is converted
+    to epoch floats for the decay math. The ``profile_digest`` the cycle
+    hashes this whole mapping into is a LOCAL commitment that intentionally
+    covers unsearchable goals: it never leaves the machine, and the goals'
+    raw text is already plaintext in the same SQLite DB. Feedback is
+    applied here as an OFFSET over the decayed weight (``FEEDBACK_STEP``
+    per net reaction, clamped) instead of being written back into the
+    stored weight: a stored write would re-apply the same reactions every
+    cycle of their window, and the signal refresh would clobber it on
+    derived rows.
 
     Args:
         db: Dreams database to read the interest profile from.
@@ -129,13 +136,16 @@ def snapshot(
 
     Returns:
         ``{"topics": [decayed topic rows, heaviest first, at most
-        SNAPSHOT_TOPIC_CAP], "region": str}`` where ``region`` comes from
+        SNAPSHOT_TOPIC_CAP], "goals": [goal rows, untouched, heaviest
+        first], "region": str}`` where ``region`` comes from
         ``dreams_setting("region")`` (empty when unset).
     """
+    profile = db.list_profile()
     rows = [
-        row for row in db.list_profile()
+        row for row in profile
         if row.get("facet") == "topic" and int(row.get("searchable") or 0)
     ]
+    goals = [row for row in profile if row.get("facet") == "goal"]
     for row in rows:
         row["last_boosted_at"] = _epoch(row.get("last_boosted_at"))
     topics = decay_weights(rows, now_epoch=now_epoch)
@@ -145,7 +155,7 @@ def snapshot(
             topic["weight"] = min(WEIGHT_CEILING, max(
                 WEIGHT_FLOOR, float(topic["weight"]) + FEEDBACK_STEP * net))
     topics.sort(key=lambda topic: float(topic["weight"]), reverse=True)
-    return {"topics": topics[:SNAPSHOT_TOPIC_CAP],
+    return {"topics": topics[:SNAPSHOT_TOPIC_CAP], "goals": goals,
             "region": str(dreams_setting("region", ""))}
 
 

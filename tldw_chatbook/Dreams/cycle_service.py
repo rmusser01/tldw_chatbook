@@ -3,7 +3,9 @@
 ``run_cycle`` is the whole discovery pipeline of spec §discovery staged
 end-to-end — reclaim stale rows, refresh the interest profile from
 notes/media/Personal-Context signals (ruling R18), apply the feedback loop
-to topic weights (ruling R19), snapshot the profile, claim the local date,
+to topic weights (ruling R19) and to goal query angles (task-33165:
+goals never change weight, their feedback steers the angle), snapshot the
+profile, claim the local date,
 synthesize queries, search, harvest the watchlist, rank unseen candidates,
 generate one story per pick, and write every outcome as a row. Every
 blocking call (web search, chat, SQLite) runs under ``asyncio.to_thread``
@@ -45,6 +47,7 @@ from tldw_chatbook.Dreams import (
     profile_sources,
     query_synthesis,
     story_service,
+    track_service,
 )
 from tldw_chatbook.Dreams.discovery import Candidate
 from tldw_chatbook.Dreams.settings import dreams_setting
@@ -66,9 +69,10 @@ _LLM_URL_PREFIX = "dreams://llm/"
 
 #: How far back the feedback loop reads (spec §feedback loop: a trailing
 #: two-week window of story reactions). Feedback kinds count +1 (``more``/
-#: ``kept``/``dived``/``ingested``) or −1 (``less``); ``exported``/
-#: ``tracked`` are recorded but carry no weight signal. The per-reaction
-#: step and clamp live with the snapshot that applies them
+#: ``kept``/``dived``/``ingested``/``tracked`` -- the Phase 2 Track flip:
+#: tracking a story is a positive signal) or −1 (``less``); ``exported`` is
+#: recorded but carries no weight signal. The per-reaction step and clamp
+#: live with the snapshot that applies them
 #: (``interest_profile.FEEDBACK_STEP``).
 _FEEDBACK_WINDOW_DAYS = 14
 
@@ -108,6 +112,28 @@ class CycleDeps:
         perform_search: ``perform_websearch``-shaped search seam.
         now: Injected clock (UTC-aware); drives date bucketing, staleness,
             and catch-up windows.
+        dispatch_getter: Returns the ``NotificationDispatchService`` or
+            ``None``; read only by the Phase 2 track check
+            (``track_service.run_track_check``) to deliver a ``changed``
+            verdict's notification. ``None`` (the default) means a run row
+            without delivery -- existing cycle construction is unaffected.
+        subs_service_getter: Returns the app's ``LocalWatchlistsService``
+            or ``None``; read only by the Phase 2 lifecycle sweep
+            (``track_service.sweep_track_lifecycle``) to disable the
+            dream-created subscription of a wrapper it retires (Qodo #1,
+            PR #2890). ``None`` (the default) keeps the legacy behavior --
+            retired page items keep their subscription -- never an error.
+        scheduling_db_getter: Returns the ``ScheduledTasksDB`` or
+            ``None``; read only by the Phase 2 lifecycle sweep and untrack
+            to disable the one-time reminder linked to a retired tracked
+            item (Qodo #13, PR #2890). ``None`` (the default) leaves
+            linked reminders enabled.
+        guardian_db_getter: Returns the Guardian DB or ``None``; read only
+            by the profile refresh, whose Guardian reader
+            (``profile_sources.read_guardian_topics``) contributes
+            AGGREGATE topic counts from feeds_discovery rules' alerts
+            (ADR-204 contract 3). ``None`` (the default) means no
+            Guardian signal -- a disabled Guardian never feeds Dreams.
     """
     dreams_db: DreamsDB
     chachanotes_db_getter: Callable[[], Any]
@@ -119,6 +145,10 @@ class CycleDeps:
     now: Callable[[], datetime] = field(
         default=lambda: datetime.now(UTC)
     )
+    dispatch_getter: Callable[[], Any] | None = None
+    subs_service_getter: Callable[[], Any] | None = None
+    scheduling_db_getter: Callable[[], Any] | None = None
+    guardian_db_getter: Callable[[], Any] | None = None
 
 
 @dataclass(slots=True)
@@ -347,9 +377,9 @@ def _preferred_sources(
 
     A topic the sources agree on keeps ONE row, so it needs one ``source``:
     the reader whose signal contributed the most weight wins, first-read
-    order (notes, media, personal context) breaking ties. The reader's own
-    ``source`` value is preferred when it sets one, with the origin name as
-    the fallback.
+    order (notes, media, guardian, personal context) breaking ties. The
+    reader's own ``source`` value is preferred when it sets one, with the
+    origin name as the fallback.
     """
     winners: dict[tuple[str, str], tuple[float, str]] = {}
     for origin, rows in collected:
@@ -421,11 +451,18 @@ async def _refresh_profile_signals(
 ) -> list[str]:
     """Stage 0a (ruling R18): rebuild derived profile rows from signals.
 
-    Reads the three signal sources through the injected getters (a ``None``
-    skips that source silently), merges them, and upserts the merged topics.
-    Every source — and the write — degrades with a note on failure; the
-    cycle always continues. Reads run one ``asyncio.to_thread`` hop per
-    source DB, and the Dreams write is one more hop (stage discipline).
+    Reads the signal sources through the injected getters (a ``None``
+    skips that source silently), merges them, and upserts the merged
+    topics. Every source — and the write — degrades with a note on
+    failure; the cycle always continues. Reads run one ``asyncio.to_thread``
+    hop per source DB, and the Dreams write is one more hop (stage
+    discipline).
+
+    The Guardian source (ADR-204 contract 3) rides the same discipline:
+    ``guardian_db_getter`` contributes AGGREGATE topic counts from
+    feeds_discovery rules' alerts only (the gate lives in
+    ``profile_sources.read_guardian_topics``'s join), written under origin
+    ``'guardian'`` so the profile keeps the provenance of every row.
     """
     notes: list[str] = []
     collected: list[tuple[str, list[dict]]] = []
@@ -443,6 +480,14 @@ async def _refresh_profile_signals(
                 profile_sources.read_media_topics, media_db)))
         except Exception as exc:  # noqa: BLE001
             notes.append(f"profile signals: media failed: {exc}")
+    guardian_getter = getattr(deps, "guardian_db_getter", None)
+    guardian_db = guardian_getter() if guardian_getter is not None else None
+    if guardian_db is not None:
+        try:
+            collected.append(("guardian", await asyncio.to_thread(
+                profile_sources.read_guardian_topics, guardian_db)))
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"profile signals: guardian failed: {exc}")
     pc_service = deps.pc_service_getter()
     if pc_service is not None:
         try:
@@ -470,17 +515,78 @@ async def _refresh_profile_signals(
     return notes
 
 
+#: Feedback kinds carrying a POSITIVE signal (ruling R19): they net +1 on
+#: the topic-weight path and steer a matched goal's angle toward "prefer".
+_POSITIVE_FEEDBACK_KINDS = ("more", "kept", "dived", "ingested", "tracked")
+
+#: Story kinds a query angle may name (task-33165 R1); ``unknown`` stories
+#: steer as ``content``.
+_ANGLE_STORY_KINDS = ("content", "event", "deal", "social_opportunity")
+
+
+def _feedback_window_rows(dreams_db: DreamsDB, *, now: datetime) -> list:
+    """The trailing window's feedback rows joined to stories, oldest first.
+
+    One parameterized read shared by BOTH feedback halves (task-33165): the
+    topic-weight net and the goal query-angle pass walk the same rows, so
+    they can never disagree about what the window contains. Ordered by
+    ``(created_at, id)`` so the angle pass's replacement semantics ("any
+    positive after a negative replaces it") read chronologically even when
+    reactions share a timestamp (insertion order breaks ties).
+    """
+    cutoff = to_utc_iso(now - timedelta(days=_FEEDBACK_WINDOW_DAYS))
+    with dreams_db.connection() as conn:
+        return conn.execute(
+            "SELECT ds.matched_topics AS matched, ds.kind AS story_kind,"
+            " fb.kind AS kind"
+            " FROM dream_feedback AS fb"
+            " JOIN dream_stories AS ds ON ds.id = fb.story_id"
+            " WHERE fb.created_at >= ?"
+            " ORDER BY fb.created_at, fb.id",
+            (cutoff,),
+        ).fetchall()
+
+
+def _matched_texts(row: Any) -> list[str]:
+    """Decode one window row's matched-topics JSON; junk decodes to []."""
+    try:
+        matched = json.loads(row["matched"] or "[]")
+    except ValueError:
+        return []
+    return [str(topic) for topic in matched] if isinstance(matched, list) else []
+
+
+def _net_from_rows(rows: list) -> dict[str, int]:
+    """Net each row's reactions per normalized topic (pure; nothing written).
+
+    +1 per ``more``/``kept``/``dived``/``ingested``/``tracked`` -- tracking
+    a story is a positive signal, the Phase 2 Track flip -- −1 per ``less``;
+    ``exported`` is neutral. ``interest_profile.snapshot`` applies the
+    result as an offset, so a reaction counts exactly once per cycle for as
+    long as it is inside the window -- never compounding into the stored
+    weight -- and a derived topic's refresh cannot erase it.
+    """
+    net: dict[str, int] = {}
+    for row in rows:
+        kind = str(row["kind"])
+        delta = (1 if kind in _POSITIVE_FEEDBACK_KINDS
+                 else -1 if kind == "less" else 0)
+        if delta == 0:
+            continue
+        for topic in _matched_texts(row):
+            topic = topic.strip().lower()
+            if topic:
+                net[topic] = net.get(topic, 0) + delta
+    return {topic: value for topic, value in net.items() if value}
+
+
 def _feedback_net(dreams_db: DreamsDB, *, now: datetime) -> dict[str, int]:
     """Net reactions per matched topic over the trailing window (sync).
 
     Joins ``dream_feedback`` → ``dream_stories.matched_topics`` and nets
-    each normalized topic (+1 per ``more``/``kept``/``dived``/``ingested``,
-    −1 per ``less``; ``exported``/``tracked`` are neutral). Nothing is
-    written: ``interest_profile.snapshot`` applies the result as an offset,
-    so a reaction counts exactly once per cycle for as long as it is inside
-    the window -- never compounding into the stored weight -- and a derived
-    topic's refresh cannot erase it. Goals are immune because the snapshot
-    only offsets ``facet='topic'`` rows.
+    each normalized topic. Nothing is written: the snapshot applies the
+    result as an offset. Goals are immune because the snapshot only offsets
+    ``facet='topic'`` rows.
 
     Args:
         dreams_db: The Dreams database.
@@ -489,49 +595,88 @@ def _feedback_net(dreams_db: DreamsDB, *, now: datetime) -> dict[str, int]:
     Returns:
         ``{normalized_topic: net}`` with zero nets omitted.
     """
-    cutoff = to_utc_iso(now - timedelta(days=_FEEDBACK_WINDOW_DAYS))
-    with dreams_db.connection() as conn:
-        rows = conn.execute(
-            "SELECT ds.matched_topics AS matched, fb.kind AS kind"
-            " FROM dream_feedback AS fb"
-            " JOIN dream_stories AS ds ON ds.id = fb.story_id"
-            " WHERE fb.created_at >= ?",
-            (cutoff,),
-        ).fetchall()
-    net: dict[str, int] = {}
+    return _net_from_rows(_feedback_window_rows(dreams_db, now=now))
+
+
+def _write_goal_angles(dreams_db: DreamsDB, rows: list) -> None:
+    """Steer matched goals' ``query_angle`` from window rows (task-33165).
+
+    The OTHER feedback half: a goal never changes weight -- feedback on a
+    story whose ``matched_topics`` include a goal row instead writes that
+    goal's query angle, a short steering note derived from the reaction and
+    the story's kind: ``less`` records ``"avoid: {kind}"`` and any positive
+    kind records ``"prefer: {kind}"``; ``exported`` and unrecognized
+    reactions are neutral. An ``unknown`` story steers as ``content``.
+    Rows arrive oldest-first and each write REPLACES the previous note
+    (plain UPDATE, no accumulation), so the newest non-neutral reaction in
+    the window wins -- a positive after a negative replaces it and vice
+    versa. The matched text joins goal rows on the same strip+lower
+    normalization the weight path uses, but the write lands on the goal
+    row's STORED text (casing preserved).
+
+    Args:
+        dreams_db: The Dreams database.
+        rows: ``_feedback_window_rows`` output, oldest first.
+    """
+    goals = {
+        str(row["text"]).strip().lower(): str(row["text"])
+        for row in dreams_db.list_profile()
+        if row.get("facet") == "goal"
+    }
+    if not goals:
+        return
+    updates: dict[str, tuple[str, str]] = {}
     for row in rows:
-        try:
-            topics = json.loads(row["matched"] or "[]")
-        except ValueError:
-            continue
         kind = str(row["kind"])
-        delta = (1 if kind in ("more", "kept", "dived", "ingested")
-                 else -1 if kind == "less" else 0)
-        if delta == 0 or not isinstance(topics, list):
+        if kind not in _POSITIVE_FEEDBACK_KINDS and kind != "less":
             continue
-        for topic in topics:
-            topic = str(topic).strip().lower()
-            if topic:
-                net[topic] = net.get(topic, 0) + delta
-    return {topic: value for topic, value in net.items() if value}
+        story_kind = str(row["story_kind"] or "unknown")
+        if story_kind not in _ANGLE_STORY_KINDS:
+            story_kind = "content"
+        angle = (f"prefer: {story_kind}" if kind in _POSITIVE_FEEDBACK_KINDS
+                 else f"avoid: {story_kind}")
+        for topic in _matched_texts(row):
+            key = topic.strip().lower()
+            if key in goals:
+                updates[key] = (goals[key], angle)
+    for text, angle in updates.values():
+        dreams_db.set_goal_query_angle("goal", text, angle=angle)
+
+
+def _apply_goal_angles(dreams_db: DreamsDB, *, now: datetime) -> None:
+    """Read the window once, then steer matched goals' angles (sync)."""
+    _write_goal_angles(dreams_db, _feedback_window_rows(dreams_db, now=now))
 
 
 async def _apply_feedback(
     deps: CycleDeps, now: datetime
 ) -> tuple[dict[str, int], list[str]]:
-    """Stage 0b (ruling R19): read recent story feedback for the snapshot.
+    """Stage 0b (rulings R19 + task-33165): read recent story feedback.
 
-    One ``asyncio.to_thread`` hop against the Dreams DB; any failure
-    degrades with a note (and no offset) and never aborts the cycle.
+    One ``asyncio.to_thread`` hop runs BOTH feedback halves against one
+    window read: the topic net the snapshot applies as a weight offset, and
+    the goal query-angle writes (goals never change weight; their feedback
+    steers the angle instead). Any failure degrades with a note and never
+    aborts the cycle; an angle-write failure does not take the topic
+    offset down with it (independent mechanisms, separate notes).
 
     Returns:
         ``(net_by_topic, degradation_notes)``.
     """
+
+    def stage() -> tuple[dict[str, int], list[str]]:
+        rows = _feedback_window_rows(deps.dreams_db, now=now)
+        notes: list[str] = []
+        try:
+            _write_goal_angles(deps.dreams_db, rows)
+        except Exception as exc:  # noqa: BLE001 - angles degrade alone
+            notes.append(f"goal angle feedback failed: {exc}")
+        return _net_from_rows(rows), notes
+
     try:
-        net = await asyncio.to_thread(_feedback_net, deps.dreams_db, now=now)
+        return await asyncio.to_thread(stage)
     except Exception as exc:  # noqa: BLE001 - the loop degrades, not the cycle
         return {}, [f"feedback loop failed: {exc}"]
-    return net, []
 
 
 async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
@@ -584,11 +729,29 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
         seen_cutoff = to_utc_iso(now - timedelta(
             days=int(dreams_setting("seen_item_ttl_days"))))
         await asyncio.to_thread(dreams_db.prune_seen, seen_cutoff)
+        # Track lifecycle sweep (Phase 2 Task 6, stage 0 with the other
+        # maintenance passes): retire event-passed and quiet watches, pause
+        # repeatedly failing ones. Degrade-never-abort -- a sweep exception
+        # is a note on the collection, not a dead cycle -- and the sweep's
+        # own notes ride the same degradation channel. The service getters
+        # let a retirement also disable its dream-created subscription and
+        # linked reminder (Qodo #1/#13, PR #2890); both are optional, and
+        # the sweep degrades without them.
+        stage_notes: list[str] = []
+        try:
+            stage_notes += await track_service.sweep_track_lifecycle(
+                dreams_db, now=now,
+                subs_service_getter=getattr(
+                    deps, "subs_service_getter", None),
+                scheduling_db_getter=getattr(
+                    deps, "scheduling_db_getter", None),
+            )
+        except Exception as exc:  # noqa: BLE001 - the sweep degrades, never aborts
+            stage_notes.append(f"track sweep failed: {exc}")
         # Profile stages (rulings R18/R19) run BEFORE the snapshot so it
         # reflects refreshed signals and the feedback offsets; both degrade
         # with notes and never abort the cycle. Their notes are carried into
         # the collection row once it exists.
-        stage_notes: list[str] = []
         stage_notes += await _refresh_profile_signals(deps, now)
         feedback_net, feedback_notes = await _apply_feedback(deps, now)
         stage_notes += feedback_notes
@@ -661,8 +824,13 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                     counting_chat, snapshot=snap, count=query_count,
                     exploration_slots=int(dreams_setting("exploration_slots")))
             else:
-                queries = query_synthesis.preview_queries(
-                    [str(t["text"]) for t in snap["topics"]], query_count)
+                # preview_queries now returns labeled rows (Phase 2 Task 1);
+                # the cycle still wants plain query strings. Its internal
+                # filter already dropped unsearchable goals.
+                queries = [row["query"] for row in
+                           query_synthesis.preview_queries(
+                               [str(t["text"]) for t in snap["topics"]],
+                               snap.get("goals", []), count=query_count)]
                 notes.append("llm budget exhausted: fallback queries, no "
                              "synthesis call")
         except Exception as exc:  # noqa: BLE001 - provider unavailable, degrade

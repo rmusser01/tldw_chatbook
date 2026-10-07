@@ -8,13 +8,32 @@ into an interest profile, turns that into search queries, and writes one
 short "story" per interesting find. Reactions you give to stories nudge the
 next cycle toward (or away from) similar finds.
 
-Dreams is **off by default** and has no Settings panel in Phase 1: enabling
-it is a `[dreams]` section in your `config.toml` away.
+Dreams is **off by default**. Enable it in Settings.
 
 ## Enabling Dreams
 
-Open your `config.toml` (the same file Settings edits; `~/.config/tldw_cli/
-config.toml` by default) and add:
+Open **Settings** (**F9**) ▸ **Domain Defaults** ▸ **Dreams** and press
+**Enable Dreams**. The change takes effect on the next cycle or at boot;
+while Dreams is off, nothing runs and nothing is spent. The same page lets
+you:
+
+- pick a **provider** and **model** for Dreams alone — leave both unset to
+  follow your chat defaults (Settings ▸ Providers & Models);
+- set a **region** (only claimed when it literally appears in a story's
+  source text — never guessed);
+- manage **your topics**: add a topic you care about with a weight
+  (default 0.5), or remove one. Topics you add are yours — the nightly
+  signal refresh never overwrites them. Goals are edited from any Dreams
+  story (press **g**), not here.
+
+The remaining keys (budgets, cadence, track caps) are shown read-only on
+that page; editing them is a `config.toml` escape hatch.
+
+### The config.toml escape hatch
+
+You can also enable Dreams by hand in your `config.toml` (the same file
+Settings edits; `~/.config/tldw_cli/config.toml` by default) — useful for
+scripted setups or the keys the Settings page only displays:
 
 ```toml
 [dreams]
@@ -48,6 +67,9 @@ the defaults:
 | `seen_item_ttl_days` | `90` | How long a surfaced URL stays deduped. |
 | `max_searches_per_day` | `30` | Daily search budget. |
 | `max_llm_calls_per_day` | `60` | Daily LLM budget (synthesis + stories). |
+| `tracked_item_cap` | `20` | How many tracked pages/questions may be active at once. |
+| `track_min_check_interval_hours` | `12` | Floor between two checks of the same tracked item. |
+| `track_quiet_retire_count` | `14` | Consecutive unchanged checks before a quiet retire. |
 
 ## Where the stories live
 
@@ -67,9 +89,43 @@ From an open story you can:
 - **Ingest (i)** — submit the story's URL to your read-it-later capture
   queue. Only offered for real web (http/https) sources; stories generated
   purely from LLM knowledge have nothing to ingest.
+- **Track this (t) / Untrack (u)** — watch (or stop watching) the story's
+  page for changes; see [Tracking](#tracking) below.
+- **Watch question (w)** — watch the discovery query itself instead of the
+  page: Dreams re-runs it as a search on the check cadence and notifies you
+  when a judged change lands (see [Tracking](#tracking)).
 - **More like this (m) / Less like this (l)** — record feedback that the
   next cycle's interest profile picks up (plus dive/keep/export/ingest
-  themselves count as positive signals).
+  themselves count as positive signals). When the story matched one of your
+  goals, that feedback instead steers the goal's query angle — how Dreams
+  phrases its searches for the goal — never the goal itself.
+
+## Tracking
+
+From an open story, **Track this (t)** puts the page under watch: Dreams
+creates (or adopts) a watchlists subscription for the URL, joins it to a
+shared "Dreams Tracked" watchlist, and pins a change alert — every new
+item the page produces lands in the Watchlists **Notifications** pane.
+Tracking an event-dated story also schedules one reminder a week before
+the event. **Watch question (w)** instead tracks the question that found
+the story: the story's discovery query is re-run as a search on the check
+cadence, and one judge call decides whether the results materially
+changed — an unchanged digest never spends the judge. A changed verdict
+surfaces as a row in the **Tracked** group above the Dreams rows;
+selecting a Tracked row opens the story it came from (or a summary
+notice, when its origin story is gone). Both kinds of watch retire the
+same way (see below).
+
+Tracked watches retire on their own: an event-dated watch retires one
+day after its event has passed, and any watch that comes back unchanged
+`track_quiet_retire_count` checks in a row (default 14) retires as
+quiet. A watch whose checks keep failing is paused after 3 errors
+instead of spending budget forever. **Untrack (u)** retires a watch
+manually — a subscription Dreams created is disabled (never deleted), so
+its watchlist membership and alert rules survive; at most
+`tracked_item_cap` watches (default 20) are active at once, and no
+watch is checked more often than once per
+`track_min_check_interval_hours` (default 12).
 
 ## Cost and privacy
 
@@ -79,5 +135,11 @@ From an open story you can:
   title/snippet/URL — never note bodies or Personal Context records.
 - Everything is stored locally in the Dreams SQLite database.
 
+Dreams' interest profile can also draw on [Guardian](guardian.md):
+awareness rules you explicitly opt in with *feeds Dreams* contribute their
+topic **counts** (never message text) to this profile — and crisis-flagged
+rules can never opt in, so crisis-adjacent text never becomes a search
+query.
+
 —
-*Verified against dev @ 8cb20b929d — 2026-09-22*
+*Actions/tracking verified against feat/dreams-phase-3 @ a5f7daa078 — 2026-09-28; enabling-via-Settings section added on feat/dreams-phase-4 — 2026-09-28*

@@ -334,3 +334,9 @@ idx_fleet_progress_conversation_sequence	plan-pinned	Tests/Agents/test_durable_f
 idx_automatic_progress_claims_attempt	plan-pinned	Tests/DB/test_automatic_work_budget.py::test_automatic_work_indexes_serve_real_queries_without_statistics
 idx_automatic_chains_allowance_root	plan-pinned	Tests/DB/test_automatic_work_budget.py
 idx_automatic_chat_start_conversation_active	plan-pinned	Tests/DB/test_automatic_work_budget.py
+idx_dream_track_runs_item	plan-pinned	Tests/Dreams/test_dreams_db_track.py (list_recent_track_runs + consecutive_track_dispositions ordering; tldw_chatbook/DB/Dreams_DB.py)tured without stats
+idx_dream_tracked_status	plan-pinned	Tests/Dreams/test_dreams_db_track.py (list_tracked_items status filter + count_active_tracked; tldw_chatbook/DB/Dreams_DB.py)tatus filter plan never captured without stats
+idx_dream_tracked_origin_story	plan-pinned	Tests/Dreams/test_dreams_db_track.py (find_tracked_by_story active-only lookup; per-story badge read; tldw_chatbook/DB/Dreams_DB.py)tory lookup plan never captured without stats
+idx_guardian_alerts_rule_ts	pre-convention	guardian local stack (ADR-204) shipped without a captured plan
+idx_guardian_alerts_session_ts	pre-convention	guardian local stack (ADR-204) shipped without a captured plan
+idx_guardian_alerts_topic_ts	pre-convention	guardian local stack (ADR-204) shipped without a captured plan
