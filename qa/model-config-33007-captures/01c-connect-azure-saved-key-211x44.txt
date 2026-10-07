@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │                                                                                                                            │  │  │ No unsaved changes                      │
+│  Core                        │  │  │   Connect                                                                                                                  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │  Provider                │ Azure OpenAI                       new-chat default configured: Anthropic, Azure OpenAI +1 ·…   │  │  │  Save (s) — no changes                  │
+│ █  > Providers & Models      │  │  │  API key                 │ Local config key saved;    Clear   saved in config  masked · (t) test · (ctrl+l) clear          │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │  Env var                 │ AZURE_OPENAI_API_KEY               not set          safer: keeps keys out of config.toml        │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │  Endpoint                │ Optional provider endpoint         built-in         blank uses the provider default             │  │  │ file.                                   │
+│  Interface                   │  │  │  Key check                Not ready · no URL                                                                  Test (t)     │  │  │ Applies to                              │
+│      Appearance              │  │  │   Provider settings have not been saved this session.                                                                      │  │  │  New chats: yes                         │
+│      Theme                   │  │  │                                                                                                                            │  │  │  Unused open chats: follow the saved    │
+│      Splash Screen           │  │  │   Default model for new chats                                                                                              │  │  │  default                                │
+│      Console Behavior        │  │  │  Model                   │ my-gpt-deployment                  new-chat default type to search · Custom ID for others       │  │  │  Chats with work: keep their own;       │
+│  Data & Privacy              │  │  │  Applies to               new chats (Ctrl+T, temporary, workspace). Open chat “Chat 1” is unused and will use Azure        │  │  │  switch there with Alt+M                │
+│      Storage                 │  │  │                           OpenAI · my-gpt-deployment.                                                                      │  │  │  Model defaults: chats that switch to   │
+│      Workspaces              │  │  │   ▼ Model defaults · Azure OpenAI · my-gpt-deployment                                                                      │  │  │  this model pick them up                │
+│      Tool Profiles           │  │  │  Temperature             │ 0.0 - 2.0      Console Behavior inherits 0.6 · Console Behavior                                 │  │  │ Next new chat will use                ▁ │
+│      Privacy & Security      │  │  │  Max tokens              │ tokens         provider         blank = provider default                                        │  │  │  Azure OpenAI · my-gpt-deployment       │
+│      Network                 │  │  │  Streaming               │ Inherit     ▼  provider         inherits On · provider                                          │  │  │  T 0.6 · max not set · stream On        │
+│      My Profile              │  │  │   ▶ Sampling · all inherit · Azure OpenAI does not accept 10 fields (open to list them)                                    │  │  │ Focused field guide                     │
+│  Troubleshooting             │  │  │                                                                                                                            │  │  │  Focused setting: None — Tab to a       │
+│      Diagnostics (view)      │  │  │   Advanced                                                                                                                 │  │  │  setting                                │
+│      About (view)            │  │  │   ▶ Context window · unknown · enter the model's documented limit                                                          │  │  │  Purpose: Configure the default         │
+│      Agents                  │  │  │   ▶ Saved model list · 0 saved in config · none discovered                                                                 │  │  │  provider, model, endpoint, and         │
+│  Expert                      │  │  │   ▶ Catalog refresh · applies immediately · startup refresh Off · per-provider choices not in effect                       │  │  │  credential source.                     │
+│      Hooks                   │  │  │   ▶ Custom endpoints · no named endpoints · applies immediately                                                            │  │  │  Save: staged - press s to save, r to   │
+│      Internal Prompts        │  │  │   ▶ Prompt-cache snapshots · llama.cpp only · Off                                                                          │  │  │  revert                                 │
+│      Advanced Config         │  │  │                                                                                                                            │  │  │  Validation: test provider readiness    │
+│   Domain Defaults ▸ (11)     │  │  │                                                                                                                            │  │  │  before saving these defaults           │
+│                              │  │  │                                                                                                                            │  │  │  ▶ config key                           │
+│                              │  │  │                                                                                                                            │  │  │ Key                                     │
+│                              │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
