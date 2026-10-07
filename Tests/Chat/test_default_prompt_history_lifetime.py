@@ -55,9 +55,13 @@ def observe_history_callback(history, hook=None):
     resolver_code = resolver.__code__
     io = prompt_history.PromptHistory._history_io
     io_code = io.__code__
+    file_body = raw._file
+    file_code = file_body.__wrapped__.__code__
     run = _FileJob.run
     run_code = run.__code__
-    observed = SimpleNamespace(jobs=[], resolver_actors=[], io_actors=[])
+    observed = SimpleNamespace(
+        jobs=[], resolver_actors=[], io_actors=[], file_actors=[]
+    )
 
     def observe(frame, event, argument):
         if event == "call":
@@ -69,6 +73,10 @@ def observe_history_callback(history, hook=None):
                     observed.jobs.append(job)
             elif frame.f_code is io_code and frame.f_locals["self"] is history:
                 observed.io_actors.append(threading.current_thread())
+            elif frame.f_code is file_code:
+                state = raw._states.get(frame.f_locals.get("operation"))
+                if state is not None and state.source is history:
+                    observed.file_actors.append(threading.current_thread())
         if hook is not None:
             hook(frame, event, argument)
 
@@ -86,6 +94,8 @@ def observe_history_callback(history, hook=None):
         assert resolver.__code__ is resolver_code
         assert prompt_history.PromptHistory._history_io is io
         assert io.__code__ is io_code
+        assert raw._file is file_body
+        assert file_body.__wrapped__.__code__ is file_code
         assert _FileJob.run is run
         assert run.__code__ is run_code
     finally:
@@ -206,6 +216,7 @@ async def test_default_history_recancel_retains_native_read_and_cache_delivery(
                 assert state.selected == selected and not state.writing
                 assert state.route == "prompt_history"
                 assert state.thread in observed.io_actors
+                assert state.thread in observed.file_actors
                 assert state.files and state.descriptors and state.leases
                 leases = tuple(state.leases)
                 assert all(lease in storage._live_leases for lease in leases)
@@ -300,8 +311,8 @@ async def test_bound_default_history_refuses_actual_retarget_without_following(
         assert history.persistence_error == "RecoveryRequired"
         assert observed.resolver_actors
         assert (
-            not observed.io_actors
-        ), "retargeted default source entered the original IO body"
+            not observed.file_actors
+        ), "retargeted default source entered the original file operation"
         assert all(
             actor is not threading.current_thread()
             for actor in observed.resolver_actors
@@ -336,7 +347,7 @@ async def test_closed_default_history_refuses_fresh_worker_selection(
             assert await history.append("must refuse") is False
             assert history.persistence_error == "RecoveryRequired"
             assert observed.resolver_actors, "fresh default qualification did not run"
-            assert not observed.io_actors, "closed source entered the original IO body"
+            assert not observed.file_actors, "closed source entered the file operation"
             assert all(
                 actor is not threading.current_thread()
                 for actor in observed.resolver_actors

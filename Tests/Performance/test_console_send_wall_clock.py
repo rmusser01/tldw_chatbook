@@ -3,12 +3,14 @@
 This diagnostic preserves the original profile, typing, provider adapter modes,
 turn custody, persistence, trace settlement, heartbeat and teardown. It does not
 establish rendered feedback or speed acceptance. The original budget test stays
-unchanged and authoritative.
+unchanged and authoritative. Set TLDW_SEND_PHASE_PROBE=1 to add bounded scalar
+phase spans to the existing probe result; the default installs no phase observer.
 """
 
 import asyncio
 import contextlib
 import json
+import os
 import time
 from dataclasses import replace
 
@@ -45,6 +47,7 @@ async def test_clean_console_send_wall_clock(monkeypatch, tmp_path, request):
     observed = Observation()
     result = {"complete": False, "provider_calls": 0}
     heartbeat = None
+    phase_probe = None
     try:
         # Deliberately omit native-operation monitoring, audit hooks and stack sampler.
         # This separate diagnostic measures their combined observation cost.
@@ -164,6 +167,13 @@ async def test_clean_console_send_wall_clock(monkeypatch, tmp_path, request):
                     await pilot.press("a")
                 await asyncio.sleep(0.5)
             trace_store = controller.store
+            if os.environ.get("TLDW_SEND_PHASE_PROBE") == "1":
+                from Tests.Performance.console_send_phase_probe import SendPhaseProbe
+
+                phase_probe = SendPhaseProbe(
+                    controller, gateway, lambda: observed.phase
+                )
+                phase_probe.start()
             for index in range(1, 4):
                 send_deadline = time.perf_counter() + MAX_CAPTURED_SEND_SECONDS
                 with observed.phase_scope(f"send_{index}"):
@@ -184,6 +194,8 @@ async def test_clean_console_send_wall_clock(monkeypatch, tmp_path, request):
                         trace_store, deadline=send_deadline
                     )
                     assert controller.store is trace_store
+            if phase_probe is not None:
+                phase_probe.stop()
             messages = controller.store.messages_for_session(
                 controller.store.active_session_id
             )
@@ -265,4 +277,9 @@ async def test_clean_console_send_wall_clock(monkeypatch, tmp_path, request):
             try:
                 observed.stop_seams()
             finally:
-                observed.write(result)
+                try:
+                    if phase_probe is not None:
+                        phase_probe.stop()
+                        result["send_phase_probe"] = phase_probe.report()
+                finally:
+                    observed.write(result)

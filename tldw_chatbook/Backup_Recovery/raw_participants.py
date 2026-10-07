@@ -215,7 +215,7 @@ def _types():
     }
 
 
-def _async_source_selection(source, route):
+def _async_source_selection(source, route, *, _require_installed=False):
     """Resolve only the three actual async file owners; labels grant no authority."""
     if route == "note_templates":
         selected, installed, _ = settings_files.selection(source, route, None)
@@ -237,6 +237,8 @@ def _async_source_selection(source, route):
             module._get_effective_config_path().parent / "ui_state.toml"
         )
         installed = type(source) is cls
+    if _require_installed and not installed:
+        raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     # An already bound source cannot silently become an ordinary custom source
     # to bypass its closed gate when configuration changes beneath it.
     participant = _source_participants.get(source)
@@ -635,6 +637,7 @@ def _scope(
     template=None,
     user_template=True,
     selected_read=None,
+    _require_installed=False,
 ):
     previous = getattr(_local, "operation", None)
     if previous is not None:
@@ -662,7 +665,9 @@ def _scope(
                     if route == "config"
                     else settings_files.selection(source, route, selected_read)[0]
                     if route in settings_files.ROUTES | {"config"}
-                    else _async_source_selection(source, route)[0]
+                    else _async_source_selection(
+                        source, route, _require_installed=_require_installed
+                    )[0]
                 )
             )
             if selected_read is not None and lexical_path(
@@ -690,6 +695,10 @@ def _scope(
         selected, installed, directory_only = _selection(
             source, route, template, user_template, selected_read
         )
+        # A queued default-history job may only narrow this source decision.
+        # Check before the platform mask: native guard availability is separate.
+        if _require_installed and not installed:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
         if (
             route
             in config_files.ROUTES

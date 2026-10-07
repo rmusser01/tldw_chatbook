@@ -129,10 +129,14 @@ class PromptHistory:
         if self._default_path and self.path is None:
             self.path = lexical_path(default_prompt_history_path())
 
-    def _history_io(self, selected, payload):
+    def _history_io(self, selected, payload, *, _require_installed=False):
         """Own the complete real thread scope; payload is a fixed write snapshot."""
         with raw._scope(
-            self, "prompt_history", writing=payload is not None, selected_read=selected
+            self,
+            "prompt_history",
+            writing=payload is not None,
+            selected_read=selected,
+            _require_installed=_require_installed,
         ) as operation:
             if payload is None:
                 entries = []

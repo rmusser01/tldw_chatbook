@@ -117,16 +117,16 @@ class _FileJob:
 
                 if self._deferred_history:
                     PromptHistory._resolve_default_path(self._source)
-                    self.selected, installed = raw._async_source_selection(
-                        self._source, self._route
+                    self.selected = self._source.path
+                    # Select and admit once at the actual file operation. Keep
+                    # the job's default origin even if source flags later change.
+                    value = PromptHistory._history_io(
+                        self._source, self.selected, payload, _require_installed=True
                     )
-                    if not installed:
-                        raise bootstrap.RecoveryRequired("raw_source_selection_changed")
-                    if raw._pinned_io_available():
-                        participant = raw._raw_participant(self._source)
-                        if raw._participant_state(participant).closed:
-                            raise bootstrap.RecoveryRequired("storage_locally_paused")
-                value = PromptHistory._history_io(self._source, self.selected, payload)
+                else:
+                    value = PromptHistory._history_io(
+                        self._source, self.selected, payload
+                    )
             elif self._route == "note_templates":
                 from ..Event_Handlers.note_ingest_events import _import_template_files
 
