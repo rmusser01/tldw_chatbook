@@ -869,6 +869,54 @@ class CharacterConversationSearchRepository:
             )
         return CharacterRepairResult.APPLIED
 
+    def _keyword_ready_snapshot_confirmed(self) -> bool:
+        """Read-only probe: is the activated READY corpus already current?
+
+        Mirrors the write path's READY determination using SELECTs only:
+        the singleton is activated for this authority/policy, no live build
+        lease exists, and the newest generation for the current source
+        revision is READY. Any doubt (dormant singleton, authority/policy
+        mismatch, live build, stale or missing generation) returns False and
+        the caller runs the original write path, which re-reads and re-guards
+        everything inside its own ``BEGIN IMMEDIATE`` -- so a writer racing
+        this probe is caught there, never missed. (The write path's singleton
+        UPDATE is itself unconditional rather than status-guarded, but in the
+        probe-confirmed state it would only rewrite the identical values plus
+        ``updated_at``, and nothing reads that timestamp.)
+
+        Returns:
+            True when ``ensure_keyword_index`` can only return READY as-is.
+        """
+
+        with self._database.transaction() as connection:
+            state = connection.execute(
+                "SELECT activated, data_authority_id, active_policy_version "
+                "FROM character_conversation_search_state WHERE singleton_id = 1"
+            ).fetchone()
+            if (
+                state is None
+                or not int(state["activated"] or 0)
+                or str(state["data_authority_id"] or "") != self._authority
+                or str(state["active_policy_version"] or "")
+                != str(self._POLICY_VERSION)
+            ):
+                return False
+            active_build = connection.execute(
+                "SELECT 1 FROM character_conversation_search_generations "
+                "WHERE data_authority_id = ? AND status = 'building' "
+                "AND lease_expires_at > CURRENT_TIMESTAMP LIMIT 1",
+                (self._authority,),
+            ).fetchone()
+            if active_build is not None:
+                return False
+            current = connection.execute(
+                "SELECT status FROM character_conversation_search_generations "
+                "WHERE data_authority_id = ? AND policy_version = ? "
+                "AND source_revision = ? ORDER BY rowid DESC LIMIT 1",
+                (self._authority, self._POLICY_VERSION, self._revision(connection)),
+            ).fetchone()
+            return current is not None and str(current["status"]) == "ready"
+
     def ensure_keyword_index(self) -> CharacterKeywordIndexStatus:
         """Explicitly activate and build or maintain the local Keyword corpus.
 
@@ -876,8 +924,16 @@ class CharacterConversationSearchRepository:
             READY after complete fenced promotion/maintenance, BUILDING when
             another lease owns a build, or FAILED on a handled build/maintenance
             failure. Prior ready snapshots survive failed replacement builds.
-            Construction alone never starts work; call from an owning worker."""
+            Construction alone never starts work; call from an owning worker.
 
+        A read-only probe short-circuits the steady state: when the activated
+        corpus is already READY for the current revision, no write transaction
+        is opened at all (this used to take ``BEGIN IMMEDIATE`` plus the
+        singleton UPDATE on every call).
+        """
+
+        if self._keyword_ready_snapshot_confirmed():
+            return CharacterKeywordIndexStatus.READY
         with self._database.transaction(immediate=True) as connection:
             revision = self._revision(connection)
             connection.execute(

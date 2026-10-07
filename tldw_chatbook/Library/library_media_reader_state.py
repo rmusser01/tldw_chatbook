@@ -24,6 +24,10 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
 )
 
 SELECTION_SETTLE_SECONDS = 0.12
+#: Debounce for the media toolbar's filter Input (F14). Distinct from the
+#: 0.12 s row-selection settle above (a paint-settling value): search typing
+#: gets its own window so a burst of keystrokes requests one filtered browse.
+MEDIA_FILTER_DEBOUNCE_SECONDS = 0.25
 
 ReaderMode = Literal["read", "analysis", "highlights", "info"]
 BackingMediaId = int | str

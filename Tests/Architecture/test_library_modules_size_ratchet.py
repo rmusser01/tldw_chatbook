@@ -366,7 +366,12 @@ _BUDGETS: dict[str, int] = {
     # `LibraryMediaCanvas(...)` construction site, which is what lets the
     # canvas own its sixteen canvas-origin `@on` rows without reaching back
     # through the screen. The screen shrank 63 lines in the same commit.
-    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4768,
+    # 2026-10-06, perf wave 5 task 12 (media filter debounce): 4768 -> 4769.
+    # Exactly one line: the `MEDIA_FILTER_DEBOUNCE_SECONDS` import that the
+    # filter handler now arms its timer with (it previously reused
+    # SELECTION_SETTLE_SECONDS, a row-selection paint-settle value, as its
+    # search debounce). No moved body was touched.
+    "tldw_chatbook/UI/Library_Modules/library_media_controller.py": 4769,
     # 2026-09-08, wave-8 task 2 (notes controller PR, notes series 2/N):
     # born governed. 185 moved methods carrying 3,934 source lines of body,
     # plus the module docstring, imports, the constructor's 93 keyword-only

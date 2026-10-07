@@ -474,6 +474,7 @@ from ...Library.ingest_analysis import (
 )
 from ...Library.library_export_scope import ExportScope
 from ...Library.library_media_reader_state import (
+    MEDIA_FILTER_DEBOUNCE_SECONDS,
     SELECTION_SETTLE_SECONDS,
     LibraryMediaReaderSessionState,
     begin_selection,
@@ -2294,7 +2295,7 @@ class LibraryMediaController:
         """Debounce Media search through the authoritative browse controller."""
         self._stop_library_media_filter_timer()
         self._library_media_filter_timer = self.set_timer(
-            SELECTION_SETTLE_SECONDS,
+            MEDIA_FILTER_DEBOUNCE_SECONDS,
             partial(self._request_library_media_filter, event.value),
         )
 

@@ -7058,6 +7058,119 @@ class TestConversationsPanel:
             )
             searched.assert_not_awaited()
 
+    def test_conversation_search_handler_debounces_rapid_changes(self):
+        """A burst of conversation-search messages dispatches exactly one search.
+
+        Hermetic twin of the library-search debounce test: it drives the REAL
+        screen handler bodies (handler, cancel, dispatch) against a minimal
+        receiver -- the same fake-receiver shape the Library media tests use
+        for controller handlers -- because the mounted personas harness is
+        environmentally unavailable on this branch (the suite-ordering
+        RecoveryRequired setup artifact fails every mounted
+        TestConversationsPanel test identically on the base commit).
+        """
+        from types import MethodType
+
+        from tldw_chatbook.Widgets.Persona_Widgets.personas_pane_messages import (
+            ConversationSearchChanged,
+        )
+
+        PersonasScreen = personas_screen_module.PersonasScreen
+
+        class _FakeTimer:
+            def __init__(self, delay: float, callback) -> None:
+                self.delay = delay
+                self.callback = callback
+                self.active = True
+
+            def stop(self) -> None:
+                self.active = False
+
+            def fire(self) -> None:
+                if self.active:
+                    self.callback()
+
+        class _ConversationSearchScreenFake:
+            def __init__(self) -> None:
+                self.state = SimpleNamespace(
+                    active_mode="characters",
+                    runtime_source="local",
+                    selected_entity_kind="character",
+                )
+                self.conversations = SimpleNamespace(
+                    search_conversations=AsyncMock()
+                )
+                self.timers: list = []
+                self._conversation_search_debounce_timer = None
+                self._cancel_conversation_search_debounce = MethodType(
+                    PersonasScreen._cancel_conversation_search_debounce, self
+                )
+                self._start_debounced_conversation_search = MethodType(
+                    PersonasScreen._start_debounced_conversation_search, self
+                )
+
+            def set_timer(self, delay: float, callback) -> _FakeTimer:
+                timer = _FakeTimer(delay, callback)
+                self.timers.append(timer)
+                return timer
+
+            def run_worker(self, coro, **_kwargs) -> None:
+                asyncio.run(coro)
+
+        fake = _ConversationSearchScreenFake()
+
+        def _deliver(query: str) -> None:
+            message = ConversationSearchChanged(query)
+            result = PersonasScreen._handle_conversation_search_changed(
+                fake, message
+            )
+            if asyncio.iscoroutine(result):
+                # Pre-debounce shape: the handler dispatched inline.
+                asyncio.run(result)
+
+        for value in ("c", "ca", "cas", "case", "case file"):
+            _deliver(value)
+
+        # The burst itself dispatches nothing.
+        fake.conversations.search_conversations.assert_not_awaited()
+
+        # Five keystrokes re-armed five timers at the debounce delay; the
+        # first four were stopped in favour of the newest (last value wins).
+        expected_delay = (
+            personas_screen_module.PERSONAS_CONVERSATION_SEARCH_DEBOUNCE_SECONDS
+        )
+        assert [timer.delay for timer in fake.timers] == [expected_delay] * 5
+        assert [timer.active for timer in fake.timers] == [
+            False,
+            False,
+            False,
+            False,
+            True,
+        ]
+
+        # Firing the whole burst -- stale timers included -- dispatches
+        # exactly one search, for the final query.
+        for timer in fake.timers:
+            timer.fire()
+        fake.conversations.search_conversations.assert_awaited_once_with(
+            "case file"
+        )
+
+        # The dispatch guard still applies when the timer fires outside the
+        # characters/local/character state.
+        fake.state.active_mode = "personas"
+        _deliver("ignored")
+        fake.timers[-1].fire()
+        fake.conversations.search_conversations.assert_awaited_once_with(
+            "case file"
+        )
+
+        # Unmount cleanup: cancel stops a pending timer dead.
+        fake._conversation_search_debounce_timer = fake.timers[-1]
+        fake._cancel_conversation_search_debounce()
+        assert fake.timers[-1].active is False
+        assert fake._conversation_search_debounce_timer is None
+
     @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
     async def test_rejected_deep_link_is_visible_and_retries_same_immutable_link(
         self,

@@ -189,6 +189,57 @@ def test_explicit_card_insert_invalidates_missing_card_chats(
     }
 
 
+def test_ensure_keyword_index_ready_requires_no_write_transaction(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A READY corpus must be confirmable read-only; only misses take the write path.
+
+    Before this, every ``ensure_keyword_index`` call opened a write
+    transaction (``BEGIN IMMEDIATE`` + singleton UPDATE) even in the steady
+    state where the index was already READY for the current revision.
+    """
+    db = CharactersRAGDB(tmp_path / "ready-probe.sqlite", client_id="probe")
+    try:
+        card_id = _card(db, "Searcher")
+        _chat(
+            db,
+            conversation_id="probe-chat",
+            character_id=card_id,
+            title="Needle",
+            content="probe evidence",
+            modified="2026-09-03T10:00:00Z",
+        )
+        service = CharacterConversationNavigationService(db)
+
+        write_transactions: list[bool] = []
+        real_transaction = db.transaction
+
+        def counting_transaction(*, immediate: bool = False):
+            if immediate:
+                write_transactions.append(immediate)
+            return real_transaction(immediate=immediate)
+
+        monkeypatch.setattr(db, "transaction", counting_transaction)
+
+        # Build once: the write path legitimately runs here.
+        assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+
+        # Steady state: READY invocations open zero write transactions.
+        write_transactions.clear()
+        for _ in range(3):
+            assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+        assert write_transactions == []
+        assert service.keyword_search("probe").total == 1
+
+        # Non-READY (source revision moved): the write path still runs.
+        _card(db, "Revision mover")
+        write_transactions.clear()
+        assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+        assert write_transactions, "a stale index must still take the write path"
+    finally:
+        db.close_connection()
+
+
 def _chat(
     db: CharactersRAGDB,
     *,
@@ -1553,6 +1604,15 @@ def test_keyword_competing_builders_claim_one_sqlite_owner(
 
     @contextmanager
     def interleaved_transaction(*args, **kwargs):
+        if not kwargs.get("immediate"):
+            # Read-only transactions (the READY probe ahead of the write
+            # path, backfill batches) do not participate in this write-race
+            # choreography: the barriers below coordinate the two builders'
+            # WRITE transactions by call number, and counting reads shifted
+            # that numbering. Only writes fence.
+            with transaction(*args, **kwargs) as connection:
+                yield connection
+            return
         counters.count = getattr(counters, "count", 0) + 1
         count = counters.count
         statements = []
