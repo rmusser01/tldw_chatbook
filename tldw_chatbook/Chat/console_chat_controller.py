@@ -51,10 +51,8 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     TOOL_DESCRIPTION_CAPTURE_CAP,
 )
 from tldw_chatbook.Character_Chat.emote_directives import (
-    CharacterEmoteAssetReference,
     CharacterEmoteRunSnapshot,
     append_character_emote_prompt_instruction,
-    project_character_emote_assets,
 )
 from tldw_chatbook.Chat.attachment_core import (
     PendingAttachment,
@@ -325,11 +323,19 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     resolve_console_message_presentation,
     session_send_system_prompt,
 )
+from tldw_chatbook.Chat.console_configuration_capture import (
+    CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS as CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+    _character_emote_snapshot_from_graph as _character_emote_snapshot_from_graph,
+    capture_character_authority as capture_character_authority,
+    capture_console_turn_configuration,
+    capture_mcp_definition_maximum as capture_mcp_definition_maximum,
+    capture_prompt_transform_inputs as capture_prompt_transform_inputs,
+    capture_skill_context_maximum as capture_skill_context_maximum,
+)
 from tldw_chatbook.Chat.console_turn_context import (
     capture_change_review_admission,
     resolve_turn_persona_policy_rules,
     resolve_turn_tool_policy_profile_id,
-    ConsoleCharacterAuthoritySnapshot,
     ConsoleProjectAuthoritySnapshot,
     ConsoleProjectBindingSnapshot,
     ConsoleTurnCustodyRequest,
@@ -486,7 +492,6 @@ from tldw_chatbook.config import (
     runtime_capture_policy,
     get_runtime_config_snapshot,
 )
-from tldw_chatbook.Library.library_tool_contract import LIBRARY_TOOL_DESCRIPTORS
 from tldw_chatbook.Library.library_rag_service import (
     LibraryRagSearchRequest,
     _outcome_from_service_result,
@@ -589,27 +594,6 @@ class _TodoWiring(TypedDict, total=False):
 
     todo_store: SessionTodoStore
     on_todo_change: TodoChangeCallback
-
-
-#: task-1337 (plan Task 8): raw built-in tool names the Console-composed
-#: ``MCPToolProvider`` must exclude -- the current ``library_*`` descriptor tools
-#: (served to Console agents by the run's own direct/RAG Library provider, in
-#: either retrieval mode) plus the five legacy RAG/chat readers whose Console
-#: coverage those providers replace. The legacy names live HERE, not in the
-#: shared descriptor table: they are not part of the 18-tool contract. The
-#: filter is source-scoped inside the provider (``builtin:tldw_chatbook``
-#: only), so external/local MCP profiles fronting the same raw names stay
-#: eligible and permission-governed.
-CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS: frozenset = frozenset(
-    tuple(LIBRARY_TOOL_DESCRIPTORS)
-    + (
-        "search_rag",
-        "search_notes",
-        "search_conversations",
-        "get_conversation_history",
-        "export_conversation",
-    )
-)
 
 
 #: ADR-067: 0 -- the default for all three human-prompt timeouts below --
@@ -1219,222 +1203,6 @@ def capture_project_instruction_authority(
         selected=selected,
         options=options,
     )
-
-
-def _character_emote_snapshot_from_graph(
-    actor_id: int | None,
-    graph: Mapping[str, Any] | None,
-    *,
-    fallback_reason: str,
-) -> CharacterEmoteRunSnapshot:
-    """Project an active graph into a detached, bounded turn snapshot."""
-    if graph is None:
-        return CharacterEmoteRunSnapshot(
-            actor_id=actor_id, fallback_reason=fallback_reason
-        )
-    try:
-        pack_id = int(graph["pack"]["id"])
-        pack_version_id = int(graph["version"]["id"])
-        raw_assets = tuple(graph["assets"])
-        if pack_id < 1 or pack_version_id < 1:
-            raise ValueError
-        # Preserve the newer single-pass projection while moving the result
-        # into the detached turn snapshot used by custody and recovery.
-        sources = project_character_emote_assets(raw_assets)
-        assets: list[CharacterEmoteAssetReference] = []
-        for state, source in sources.items():
-            if not isinstance(source, Mapping):
-                continue
-            asset_id = source.get("id")
-            expression_key = source.get("expression_key")
-            if (
-                isinstance(asset_id, bool)
-                or not isinstance(asset_id, int)
-                or asset_id < 1
-                or not isinstance(expression_key, str)
-            ):
-                continue
-            assets.append(
-                CharacterEmoteAssetReference(
-                    state=state,
-                    expression_key=expression_key,
-                    asset_id=asset_id,
-                )
-            )
-        return CharacterEmoteRunSnapshot(
-            actor_id=actor_id,
-            pack_id=pack_id,
-            pack_version_id=pack_version_id,
-            states=tuple(asset.state for asset in assets),
-            assets=tuple(assets),
-        )
-    except (KeyError, TypeError, ValueError, OverflowError):
-        return CharacterEmoteRunSnapshot(
-            actor_id=actor_id, fallback_reason="resolver_error"
-        )
-
-
-def capture_character_authority(
-    session: ConsoleChatSession, repository: Any | None = None
-) -> ConsoleCharacterAuthoritySnapshot | None:
-    """Freeze the identity fence that may authorize emotes for this turn."""
-    if session.assistant_kind != "character":
-        return None
-    local_character_id = session.local_character_id()
-    graph = None
-    fallback_reason = "no_active_pack"
-    if local_character_id is not None and repository is not None:
-        try:
-            graph = repository.get_active_actor_pack("character", local_character_id)
-        except Exception:  # noqa: BLE001 -- uncertainty freezes no emote grant
-            fallback_reason = "resolver_error"
-    return ConsoleCharacterAuthoritySnapshot(
-        identity_revision=session.identity_revision,
-        runtime_backend=session.runtime_backend,
-        assistant_id=session.assistant_id,
-        assistant_authority_id=session.assistant_authority_id,
-        local_character_id=local_character_id,
-        emote_snapshot=_character_emote_snapshot_from_graph(
-            local_character_id, graph, fallback_reason=fallback_reason
-        ),
-    )
-
-
-def capture_prompt_transform_inputs(
-    app: Any, session: ConsoleChatSession
-) -> dict[str, Any]:
-    """Capture bounded dictionary/world inputs without retaining a screen."""
-    conversation_id = session.persisted_conversation_id
-    db = getattr(app, "chachanotes_db", None)
-    dictionary_entries: tuple[Any, ...] = ()
-    world_books: tuple[Any, ...] = ()
-    world_enabled = False
-    if db is not None and conversation_id:
-        try:
-            from tldw_chatbook.Character_Chat import Chat_Dictionary_Lib as cdl
-
-            dictionary_entries = tuple(
-                cdl.collect_active_chatdict_entries(db, conversation_id, None)
-            )
-        except Exception:  # noqa: BLE001 -- optional prompt context fails closed
-            dictionary_entries = ()
-        try:
-            from tldw_chatbook.Character_Chat.world_info_resolver import (
-                _collect_active_world_books,
-            )
-            from tldw_chatbook.config import get_cli_setting
-
-            books, _has_character_book = _collect_active_world_books(
-                db, conversation_id, None
-            )
-            world_books = tuple(books)
-            world_enabled = bool(
-                get_cli_setting("character_chat", "enable_world_info", True)
-            )
-        except Exception:  # noqa: BLE001 -- optional prompt context fails closed
-            world_books = ()
-            world_enabled = False
-    return {
-        "conversation_id": conversation_id,
-        "dictionary_entries": dictionary_entries,
-        "world_books": world_books,
-        "world_enabled": world_enabled,
-    }
-
-
-def _empty_local_skill_context() -> dict[str, Any]:
-    """Represent a completed local capture that granted no skill authority."""
-    return {
-        "backend": "local",
-        "available_skills": (),
-        "blocked_skills": (),
-        "context_text": "",
-    }
-
-
-def capture_skill_context_maximum(
-    app: Any, workspace_id: str | None = None
-) -> dict[str, Any]:
-    """Capture the currently eligible local-skill catalog synchronously."""
-    scope = getattr(app, "skills_scope_service", None)
-    local = getattr(scope, "local_service", None) or getattr(
-        app, "local_skills_service", None
-    )
-    if local is None:
-        return _empty_local_skill_context()
-    try:
-        records = local._visible_records()  # noqa: SLF001 -- app-owned snapshot seam
-        available: list[dict[str, Any]] = []
-        blocked: list[dict[str, Any]] = []
-        for _, record in sorted(records.items()):
-            summary = local._summary_for_record(record)  # noqa: SLF001
-            # A built-in never reads trust; with no definition_digest the
-            # later digest gates skip it, and execute re-verifies its pins.
-            is_builtin = record.get("source") == "builtin"
-            trust = None if is_builtin else getattr(local, "trust_service", None)
-            if not summary.get("trust_blocked") and trust is not None:
-                summary["definition_digest"] = trust.current_fingerprint_digest(
-                    str(summary.get("name", ""))
-                )
-            (blocked if summary.get("trust_blocked") else available).append(summary)
-        plugin_service = getattr(local, "plugin_service", None)
-        if plugin_service is not None:
-            plugin_context = plugin_service.capture_maximum(workspace_id)
-            names = {item.get("name") for item in available + blocked}
-            available.extend(
-                row
-                for row in plugin_context["available_skills"]
-                if row["name"] not in names
-            )
-        return {
-            "plugin_run_id": "pending:" + str(uuid4()),
-            "available_skills": available,
-            "blocked_skills": blocked,
-            "context_text": "\n".join(
-                f"- {item['name']}" for item in available if item.get("name")
-            ),
-            "backend": "local",
-        }
-    except Exception:  # noqa: BLE001 -- uncertainty freezes an empty maximum
-        return _empty_local_skill_context()
-
-
-def capture_mcp_definition_maximum(app: Any) -> dict[str, str]:
-    """Capture exact eligible MCP identities and definition hashes."""
-    service = getattr(app, "unified_mcp_service", None)
-    if service is None:
-        return {}
-    try:
-        if service.get_kill_switch():
-            return {}
-        from tldw_chatbook.MCP.hub_tool_catalog import (
-            builtin_tools_from_inventory,
-            local_tools_from_record,
-        )
-
-        local_service = getattr(service, "local_service", None)
-        tools: list[Any] = []
-        if local_service is not None:
-            for record in local_service.get_external_servers() or ():
-                tools.extend(local_tools_from_record(record))
-            inventory = local_service.get_inventory()
-            if isinstance(inventory, Mapping):
-                tools.extend(builtin_tools_from_inventory(inventory))
-        effective = service.effective_tool_states(tools)
-        from tldw_chatbook.MCP.permission_store import definition_hash
-
-        return {
-            tool.tool_id: definition_hash(tool.description, tool.input_schema)
-            for tool in tools
-            if not (
-                tool.server_key == "builtin:tldw_chatbook"
-                and tool.name in CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS
-            )
-            and getattr(effective.get((tool.server_key, tool.name)), "state", "ask")
-            != "deny"
-        }
-    except Exception:  # noqa: BLE001 -- uncertainty freezes an empty maximum
-        return {}
 
 
 def capture_mcp_tool_maximum(app: Any) -> frozenset[str]:
@@ -22206,10 +21974,6 @@ class ConsoleChatController:
             capture_console_definition_maximum,
             standard_console_sources,
         )
-        from tldw_chatbook.UI.Console_Modules.session import (
-            ConsoleSessionController,
-            _CONSOLE_TURN_CONTEXT_BUILDER,
-        )
 
         original_provider = self._turn_context_provider
         provider = (
@@ -22231,11 +21995,19 @@ class ConsoleChatController:
             return context
 
         screen_owner = getattr(provider, "__self__", None)
-        standard_screen = (
-            isinstance(provider, MethodType)
-            and type(screen_owner) is ConsoleSessionController
-            and provider.__func__ is _CONSOLE_TURN_CONTEXT_BUILDER
-        )
+        standard_screen = False
+        if isinstance(provider, MethodType):
+            # UI compatibility is needed only for an explicitly supplied bound
+            # provider. Default app-owned capture has no Console UI dependency.
+            from tldw_chatbook.UI.Console_Modules.session import (
+                ConsoleSessionController,
+                _CONSOLE_TURN_CONTEXT_BUILDER,
+            )
+
+            standard_screen = (
+                type(screen_owner) is ConsoleSessionController
+                and provider.__func__ is _CONSOLE_TURN_CONTEXT_BUILDER
+            )
         if provider is not None and not standard_screen:
             return synchronous_capture()
         app = self.app
@@ -22370,87 +22142,24 @@ class ConsoleChatController:
         *,
         mcp_definition_maximum: Mapping[str, str] | None = None,
     ) -> ConsoleTurnConfigurationSnapshot:
-        """Capture configuration without consulting a screen-owned provider."""
-
-        selection = self._provider_selection_for_session(session_id)
-        model = selection.explicit_model or selection.configured_model
-        session = next(item for item in self.store.sessions() if item.id == session_id)
-        held_scope = session.rag_scope_holder.scope
+        """Resolve app-owned inputs for the shared configuration producer."""
         from tldw_chatbook.Chat.console_agent_bridge import console_run_budget
         from tldw_chatbook.Library.library_rag_state import library_rag_profile_top_k
 
+        selection = self._provider_selection_for_session(session_id)
+        session = next(item for item in self.store.sessions() if item.id == session_id)
         workspace_id = self.store.session_workspace_id(session_id)
-        roots, aliases, skipped = capture_change_review_admission(
-            self.app, workspace_id
-        )
         app_config = self._provider_config() if self._provider_config else {}
         console_config = app_config.get("console", {})
         if not isinstance(console_config, Mapping):
             console_config = {}
-        return ConsoleTurnConfigurationSnapshot.capture(
-            session_id=session_id,
+        return capture_console_turn_configuration(
+            self.app,
+            self.store,
+            session_id,
             provider_selection=selection,
             scratch_space=self._scratch_spaces.snapshot(session_id),
-            session_settings=self.store.effective_session_settings(session_id),
-            workspace_roots=roots,
-            change_review_root_aliases=aliases,
-            change_review_skipped_roots=skipped,
-            tool_policy_profile_id=resolve_turn_tool_policy_profile_id(
-                self.app, workspace_id
-            ),
-            persona_policy_rules=resolve_turn_persona_policy_rules(self.app, session),
             presentation_context=self._presentation_context_for(session_id),
-            library_policy_maximum=session.library_policy_holder.snapshot,
-            library_scope_maximum=ConsoleLibraryItemScopeSnapshot(
-                note_ids=(
-                    tuple(
-                        str(item.source_id)
-                        for item in held_scope.items
-                        if item.source_type == "note"
-                    )
-                    if held_scope is not None
-                    else ()
-                ),
-                media_ids=(
-                    tuple(
-                        str(item.source_id)
-                        for item in held_scope.items
-                        if item.source_type == "media"
-                    )
-                    if held_scope is not None
-                    else ()
-                ),
-                conversations_allowed=held_scope is None,
-            ),
-            project_authority=capture_project_instruction_authority(
-                session,
-                getattr(self.app, "workspace_registry_service", None),
-                include_bindings=self._agent_dispatch_is_eligible(
-                    session,
-                    prefill=self.store.session_one_shot_prefill(session_id),
-                ),
-            ),
-            character_authority=capture_character_authority(
-                session, self._visual_identity_repository
-            ),
-            prompt_transform_inputs=capture_prompt_transform_inputs(
-                self.app,
-                session,
-            ),
-            skill_context_maximum=capture_skill_context_maximum(self.app, workspace_id),
-            mcp_tool_maximum=(
-                mcp_definition_maximum := (
-                    capture_mcp_definition_maximum(self.app)
-                    if mcp_definition_maximum is None
-                    else mcp_definition_maximum
-                )
-            ),
-            mcp_definition_maximum=mcp_definition_maximum,
-            capabilities={
-                "vision": bool(model)
-                and is_vision_capable(selection.provider, model or ""),
-                "max_history_images": max_history_images(selection.provider, model),
-            },
             rag_defaults={"top_k": library_rag_profile_top_k()},
             tool_configuration={
                 "session_ephemeral": bool(session.ephemeral),
@@ -22491,22 +22200,20 @@ class ConsoleChatController:
                     get_cli_setting("console", "exchange_capture", True), True
                 ),
             },
-            provider_payload_settings={
-                "streaming": selection.streaming,
-                "temperature": selection.temperature,
-                "top_p": selection.top_p,
-                "min_p": selection.min_p,
-                "top_k": selection.top_k,
-                "max_tokens": selection.max_tokens,
-                "seed": selection.seed,
-                "presence_penalty": selection.presence_penalty,
-                "frequency_penalty": selection.frequency_penalty,
-                "reasoning_effort": selection.reasoning_effort,
-                "reasoning_summary": selection.reasoning_summary,
-                "verbosity": selection.verbosity,
-                "thinking_effort": selection.thinking_effort,
-                "thinking_budget_tokens": selection.thinking_budget_tokens,
-            },
+            project_authority=capture_project_instruction_authority(
+                session,
+                getattr(self.app, "workspace_registry_service", None),
+                include_bindings=self._agent_dispatch_is_eligible(
+                    session, prefill=self.store.session_one_shot_prefill(session_id)
+                ),
+            ),
+            skill_workspace_id=workspace_id,
+            character_repository=self._visual_identity_repository,
+            tool_policy_profile_id=resolve_turn_tool_policy_profile_id(
+                self.app, workspace_id
+            ),
+            persona_policy_rules=resolve_turn_persona_policy_rules(self.app, session),
+            mcp_definition_maximum=mcp_definition_maximum,
         )
 
     def resolve_turn_execution_context(

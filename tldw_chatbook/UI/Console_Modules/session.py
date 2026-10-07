@@ -169,18 +169,14 @@ from ...Chat.console_chat_store import (
 )
 from ...Chat.console_chat_controller import (
     ProjectInstructionBindingRecovery,
-    capture_character_authority,
-    capture_mcp_definition_maximum,
-    capture_prompt_transform_inputs,
     capture_project_instruction_authority,
-    capture_skill_context_maximum,
     resolve_project_instruction_binding,
 )
+from ...Chat.console_configuration_capture import capture_console_turn_configuration
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextPolicyError,
 )
-from ...Chat.console_dispatch_checkpoint import ConsoleLibraryItemScopeSnapshot
 from ...Chat.console_expression_state import (
     CharacterEmoteHistoryIdentity,
     resolve_console_expression_state,
@@ -237,7 +233,6 @@ from ...Chat.thinking_blocks import normalize_thinking_history_policy
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
 from ...Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
-    capture_change_review_admission,
     resolve_turn_persona_policy_rules,
     resolve_turn_tool_policy_profile_id,
 )
@@ -4405,20 +4400,12 @@ class ConsoleSessionController:
         *,
         mcp_definition_maximum: Mapping[str, str] | None = None,
     ) -> ConsoleTurnConfigurationSnapshot:
-        """Capture one detached configuration snapshot for an owning session."""
-        from ...Chat.attachment_core import max_history_images
-        from ...model_capabilities import is_vision_capable
+        """Resolve mounted inputs for the shared configuration producer."""
         from ...Chat.console_agent_bridge import console_run_budget
-        from ..Screens.settings_library_rag_defaults import (
-            load_direct_library_tools,
-        )
+        from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 
         app_config = self._provider_readiness_app_config()
         selection = self._build_provider_selection_fn(session_id)
-        settings = self._ensure_console_chat_store().effective_session_settings(
-            session_id
-        )
-        model = selection.explicit_model or selection.configured_model
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
         )
@@ -4426,95 +4413,22 @@ class ConsoleSessionController:
             console_config = {}
         store = self._ensure_console_chat_store()
         workspace_id = store.session_workspace_id(session_id)
-        presentation_context = store.presentation_context(
-            session_id,
-            _console_global_user_display_name(app_config),
-        )
         session = next(item for item in store.sessions() if item.id == session_id)
         app_instance = getattr(self, "app_instance", None)
         agent_dispatch_eligible = bool(
-            coerce_bool_setting(
-                console_config.get("agent_runtime", True),
-                True,
-            )
+            coerce_bool_setting(console_config.get("agent_runtime", True), True)
             and not store.session_one_shot_prefill(session_id)
             and session.assistant_kind != "character"
         )
-        project_authority = capture_project_instruction_authority(
-            session,
-            getattr(app_instance, "workspace_registry_service", None),
-            include_bindings=agent_dispatch_eligible,
-        )
-        held_scope = session.rag_scope_holder.scope
-        library_scope = ConsoleLibraryItemScopeSnapshot(
-            note_ids=tuple(
-                str(item.source_id)
-                for item in held_scope.items
-                if item.source_type == "note"
-            )
-            if held_scope is not None
-            else (),
-            media_ids=tuple(
-                str(item.source_id)
-                for item in held_scope.items
-                if item.source_type == "media"
-            )
-            if held_scope is not None
-            else (),
-            conversations_allowed=held_scope is None,
-        )
-        workspace_roots, ready_review_aliases, skipped_review_roots = (
-            capture_change_review_admission(app_instance, workspace_id)
-        )
-        # Workspace assistant defaults (Task 7): this turn's tool posture --
-        # the workspace's named permission profile (absent/Default/global
-        # defaults degrade to "default") and the owning session's persona
-        # policy rules. Every failure degrades to the identity posture
-        # rather than blocking the send; posture is narrowing-only, so a
-        # degraded read can never widen access.
-        tool_policy_profile_id = self._resolve_turn_tool_policy_profile_id(workspace_id)
-        persona_policy_rules = self._resolve_turn_persona_policy_rules(session_id)
-
-        if mcp_definition_maximum is None:
-            mcp_definition_maximum = capture_mcp_definition_maximum(app_instance)
-        return ConsoleTurnConfigurationSnapshot.capture(
-            session_id=session_id,
+        return capture_console_turn_configuration(
+            app_instance,
+            store,
+            session_id,
             provider_selection=selection,
             scratch_space=self._scratch_snapshot_provider(session_id),
-            session_settings=settings,
-            workspace_roots=workspace_roots,
-            change_review_root_aliases=ready_review_aliases,
-            change_review_skipped_roots=skipped_review_roots,
-            persona_policy_rules=persona_policy_rules,
-            tool_policy_profile_id=tool_policy_profile_id,
-            presentation_context=presentation_context,
-            library_policy_maximum=session.library_policy_holder.snapshot,
-            library_scope_maximum=library_scope,
-            project_authority=project_authority,
-            character_authority=capture_character_authority(
-                session,
-                getattr(
-                    (
-                        self._ensure_console_chat_controller()
-                        if hasattr(self, "_ensure_console_chat_controller_fn")
-                        else None
-                    ),
-                    "_visual_identity_repository",
-                    None,
-                ),
+            presentation_context=store.presentation_context(
+                session_id, _console_global_user_display_name(app_config)
             ),
-            prompt_transform_inputs=capture_prompt_transform_inputs(
-                app_instance,
-                session,
-            ),
-            skill_context_maximum=capture_skill_context_maximum(app_instance),
-            mcp_tool_maximum=mcp_definition_maximum,
-            mcp_definition_maximum=mcp_definition_maximum,
-            capabilities={
-                "vision": bool(model)
-                and is_vision_capable(selection.provider, model or ""),
-                "max_history_images": max_history_images(selection.provider, model),
-            },
             rag_defaults={
                 "source_types": tuple(self._rag_source_types_accessor()),
                 "top_k": self._rag_top_k_accessor(),
@@ -4557,22 +4471,26 @@ class ConsoleSessionController:
                     console_config.get("exchange_capture", True), True
                 ),
             },
-            provider_payload_settings={
-                "streaming": selection.streaming,
-                "temperature": selection.temperature,
-                "top_p": selection.top_p,
-                "min_p": selection.min_p,
-                "top_k": selection.top_k,
-                "max_tokens": selection.max_tokens,
-                "seed": selection.seed,
-                "presence_penalty": selection.presence_penalty,
-                "frequency_penalty": selection.frequency_penalty,
-                "reasoning_effort": selection.reasoning_effort,
-                "reasoning_summary": selection.reasoning_summary,
-                "verbosity": selection.verbosity,
-                "thinking_effort": selection.thinking_effort,
-                "thinking_budget_tokens": selection.thinking_budget_tokens,
-            },
+            project_authority=capture_project_instruction_authority(
+                session,
+                getattr(app_instance, "workspace_registry_service", None),
+                include_bindings=agent_dispatch_eligible,
+            ),
+            skill_workspace_id=None,
+            character_repository=getattr(
+                (
+                    self._ensure_console_chat_controller()
+                    if hasattr(self, "_ensure_console_chat_controller_fn")
+                    else None
+                ),
+                "_visual_identity_repository",
+                None,
+            ),
+            tool_policy_profile_id=self._resolve_turn_tool_policy_profile_id(
+                workspace_id
+            ),
+            persona_policy_rules=self._resolve_turn_persona_policy_rules(session_id),
+            mcp_definition_maximum=mcp_definition_maximum,
         )
 
     #: Cross-pass memo for `_default_console_session_settings`, as
