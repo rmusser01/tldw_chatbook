@@ -1,8 +1,9 @@
 ---
 id: TASK-34431
 title: Small perf fixes batch A
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:43
+updated_date: 2026-10-07 21:13
 ---
 
 ## Description

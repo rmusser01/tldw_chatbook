@@ -3,7 +3,7 @@ id: TASK-34430
 title: Batch Chroma document deletes on reindex
 status: Done
 created_date: 2026-10-07 02:43
-updated_date: 2026-10-07 21:15
+updated_date: 2026-10-07 21:13
 ---
 
 ## Description
