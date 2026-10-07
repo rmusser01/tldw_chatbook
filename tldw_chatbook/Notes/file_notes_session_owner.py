@@ -1167,18 +1167,20 @@ class FileNotesSessionOwner:
         retained record. Records with move edges never collapse. If the
         log is still over the bound afterwards, oldest records drop.
 
-        Oldest-drop safety: coalescing groups per lineage, so dropping a
-        record only matters for a lineage holding more records than the
-        limit, and that lineage's NEWEST record survives, keeping it
-        represented with its current path and latest action. The residual
-        risk is referenced-only state: ``_staging_ownership`` keys and
-        commit captures reference group_id -- a lineage's EARLIEST sequence
-        -- so a shifted or dropped earliest sequence makes
-        ``_current_ownership_sequences_locked`` return ``None``, which
-        refuses the commit publication (fail-closed into the commit
-        recovery flow) rather than double-applying. That needs a Stage
-        capture outstanding across a burst of 500+ change records; bounded
-        memory wins that trade.
+        Oldest-drop safety: unlike compaction, oldest-drop can remove a
+        lineage ENTIRELY -- a burst of more than the limit of distinct
+        paths drops single-record lineages whole (their only record is old
+        enough to fall outside the window). That is safe because the log
+        is a session-scoped PROJECTION of Chatbook-initiated mutations:
+        disk bytes and the recovery replica stay authoritative, so what is
+        lost is the change's entry in the session's commit-review listing,
+        never file content. The machinery that could double-apply --
+        ``_staging_ownership`` keys and commit captures referencing
+        group_id, a lineage's EARLIEST sequence -- fails closed when a
+        referenced group is gone: ``_current_ownership_sequences_locked``
+        returns ``None`` and the commit publication is refused into the
+        recovery flow. That needs a Stage capture outstanding across a
+        burst of 500+ change records; bounded memory wins that trade.
         """
         self._changes.append(
             SequencedSessionChange(
@@ -1195,8 +1197,9 @@ class FileNotesSessionOwner:
                     self._change_limit_logged = True
                     logger.warning(
                         "File Notes session change log bounded at {} newest "
-                        "records; older lineages keep only their newest "
-                        "record",
+                        "records; records outside the window leave the "
+                        "session listing (disk and the replica stay "
+                        "authoritative)",
                         SESSION_CHANGE_RECORD_LIMIT,
                     )
         self._change_log_version += 1

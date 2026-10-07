@@ -4,11 +4,13 @@ Covers the four performance pieces of the File Notes workspace poll:
 
 1. ``reconcile`` short-circuits on an unchanged discovery signature, so an
    idle tab performs no replica reads and no second-pass loads after the
-   first tick.
+   first tick. A degraded (warning-carrying) pass never arms the gate, so
+   a broken replica self-heals on the first healthy tick.
 2. The discovery walk is bounded (files/entries/depth) and truncation is
-   logged, not fatal.
-3. The session-change log is capped (newest 500) and same-path repeat
-   actions coalesce at append time.
+   logged once per truncation episode, never fatal.
+3. The session-change log is capped (newest 500). Below the cap it stays
+   strictly append-only; past it, same-(action, path) duplicates compact
+   to their newest record before oldest records drop.
 4. The workspace poll backs off to 6 s after four quiet ticks and resets to
    the active cadence on the first real change.
 """
@@ -152,7 +154,7 @@ def test_touching_a_file_runs_exactly_one_full_reconcile(
     assert spy.active_reads == 2
 
 
-def test_reconcile_gate_returns_cached_warning_until_state_moves(
+def test_reconcile_gate_only_caches_clean_results(
     tmp_path: Path,
     replica: FileNotesReplica,
 ) -> None:
@@ -165,6 +167,66 @@ def test_reconcile_gate_returns_cached_warning_until_state_moves(
     assert first.replica_warning is None
     repeat = service.reconcile()
     assert repeat.replica_warning is first.replica_warning
+
+
+def test_degraded_reconcile_does_not_arm_the_gate_and_self_heals(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """Review I1: a warning-carrying pass must not arm the signature gate.
+
+    If the replica read raises mid-pass, the projection is degraded (rows
+    this pass should have written may be missing). Caching it would freeze
+    the damage: once the vault went quiet and the replica recovered, every
+    tick would replay the cached projection and the missed rows would
+    never land until the next real vault change. The pre-gate code
+    re-diffed every tick and self-healed; the gate must preserve that.
+    """
+    import sqlite3
+
+    root = tmp_path / "notes"
+    root.mkdir()
+    _seed_vault(root, 3)
+    service = _service(root, replica)
+
+    real_active = replica.list_active_files
+    real_upsert = replica.upsert_file
+
+    def broken(*args: object, **kwargs: object) -> object:
+        raise sqlite3.OperationalError("forced replica failure")
+
+    replica.list_active_files = broken  # type: ignore[method-assign]
+    replica.upsert_file = broken  # type: ignore[method-assign]
+    degraded = service.reconcile()
+    assert degraded.status == "ok"
+    assert degraded.replica_warning is not None
+    assert degraded.vault_unchanged is False
+    assert degraded.created == ()
+
+    # Replica recovers; the vault itself did not move.
+    replica.list_active_files = real_active  # type: ignore[method-assign]
+    replica.upsert_file = real_upsert  # type: ignore[method-assign]
+    reads = {"active": 0}
+
+    def counting_active(root_key: str):
+        reads["active"] += 1
+        return real_active(root_key)
+
+    replica.list_active_files = counting_active  # type: ignore[method-assign]
+
+    healed = service.reconcile()
+    assert healed.vault_unchanged is False
+    # The full pass ran against the recovered replica: it was read, the
+    # previously missed rows landed, and the result is clean.
+    assert reads["active"] == 1
+    assert healed.replica_warning is None
+    assert healed.created == ("note-0000.md", "note-0001.md", "note-0002.md")
+    assert len(real_active(service.root_key)) == 3
+
+    # A clean result arms the gate: the next quiet tick is gated again.
+    quiet = service.reconcile()
+    assert quiet.vault_unchanged is True
+    assert reads["active"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -273,8 +335,47 @@ def test_truncated_walk_never_tombstones_the_invisible_tail(
     assert replica.list_deleted(service.root_key) == []
 
 
+def test_truncation_warning_logs_once_per_truncation_episode(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review M4: the poll would re-log truncation every pass (~10/min)."""
+    root = tmp_path / "notes"
+    root.mkdir()
+    _seed_vault(root, 10)
+    service = _service(root, replica)
+
+    warnings: list[object] = []
+    monkeypatch.setattr(
+        service_module,
+        "logger",
+        SimpleNamespace(warning=lambda *args, **kwargs: warnings.append(args)),
+    )
+
+    # Over the cap: the first truncated pass logs, repeated passes do not.
+    monkeypatch.setattr(service_module, "WALK_MAX_FILES", 5)
+    service.reconcile()
+    service.reconcile()
+    service.reconcile()
+    assert len(warnings) == 1
+
+    # Back under the cap (strictly -- a walk that stops AT the cap counts
+    # as truncated, because it cannot know no further files follow): a
+    # complete walk closes the episode...
+    monkeypatch.setattr(service_module, "WALK_MAX_FILES", 12)
+    service.reconcile()
+    assert len(warnings) == 1
+
+    # ...so a NEW truncation episode logs exactly once more.
+    monkeypatch.setattr(service_module, "WALK_MAX_FILES", 5)
+    service.reconcile()
+    service.reconcile()
+    assert len(warnings) == 2
+
+
 # ---------------------------------------------------------------------------
-# 3. Session-change bound: cap + append-time coalescing.
+# 3. Session-change bound: cap + overflow compaction.
 # ---------------------------------------------------------------------------
 
 
