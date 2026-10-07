@@ -5,7 +5,7 @@ status: Done
 created_date: 2026-10-07 02:42
 dependencies:
 - TASK-34419
-updated_date: 2026-10-07 13:54
+updated_date: 2026-10-07 19:08
 ---
 
 ## Description
@@ -23,8 +23,8 @@ Wave 6 / F11: julianday keyset ordering datetime(next_review) filtering and json
 
 <!-- SECTION:PLAN:BEGIN -->
 See Docs/superpowers/plans/2026-10-06-nonconsole-efficiency-remediation.md Task 15 (T15)
+Reviewer-verified: migration idempotency via GLOB guard + %f three-digit glob match; monotonic normalization with golden-ordering tests incl. cross-format order flips and same-instant ties; trigger recreation byte-identical to v70_to_v71 origin; recovery wiring mirrors fleet-v78 precedent shape-for-shape; character-card partial expression index serves page+count with no post-sort. Deferred minors: messages-table normalization scoped out (ADR-documented); _DUE_FLASHCARDS drift risk; unconsumed fixture fact; broad pytest.raises in one test; EXPLAIN table in SDD report.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
