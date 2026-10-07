@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Callable, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 from tldw_chatbook.Library.library_notes_state import (
     DatabaseNoteDraft,
@@ -16,6 +17,14 @@ from tldw_chatbook.Library.library_notes_state import (
     NoteValidationVeto,
     validate_database_note_draft,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Notes.note_draft_recovery import (
+        NoteDraftRecovery,
+        NoteDraftScope,
+    )
+
+_LANGUAGE_UNSET = object()
 
 
 class DatabaseNoteSessionPort(Protocol):
@@ -283,6 +292,8 @@ class DatabaseNoteSessionCoordinator:
         port: DatabaseNoteSessionPort,
         *,
         clock: Callable[[], datetime] | None = None,
+        recovery: NoteDraftRecovery | None = None,
+        recovery_scope: NoteDraftScope | None = None,
     ) -> None:
         """Initialize the coordinator with its minimal async port.
 
@@ -291,6 +302,11 @@ class DatabaseNoteSessionCoordinator:
             clock: Timestamp source used for saved status and baseline metadata.
         """
         self._port = port
+        self._recovery = recovery
+        self._recovery_scope = recovery_scope
+        self._recovery_task: asyncio.Task[bool] | None = None
+        self._retained_revision: tuple[int, int] | None = None
+        self._recovery_base_version = 0
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._snapshot: LibraryNoteSessionSnapshot | None = None
         self._session_request_token = 0
@@ -331,9 +347,78 @@ class DatabaseNoteSessionCoordinator:
         """Make every currently pending detail-load completion stale."""
         self._session_request_token += 1
 
-    def close_session(self) -> None:
-        """End the active session and invalidate every pending completion."""
+    def close_session(self) -> bool:
+        """Close only after any pending draft has a durable recovery copy."""
+        snapshot = self._snapshot
+        if (
+            self._recovery is not None
+            and snapshot is not None
+            and snapshot.dirty
+            and self._retained_revision
+            != (snapshot.session_generation, snapshot.draft_revision)
+        ):
+            self._snapshot = replace(
+                snapshot,
+                status_message="Local draft storage failed or is pending — stay here and retry Save.",
+            )
+            return False
         self._close_session()
+        return True
+
+    def _queue_recovery(self) -> None:
+        snapshot = self._snapshot
+        if self._recovery is None or snapshot is None or not snapshot.dirty:
+            return
+        previous = self._recovery_task
+        base_version = self._recovery_base_version
+
+        async def retain() -> bool:
+            if previous is not None:
+                await asyncio.shield(previous)
+            try:
+                if self._recovery_scope is None:
+                    raise ValueError("Draft recovery owner unavailable.")
+                await self._recovery.save(
+                    self._recovery_scope, snapshot.draft, base_version
+                )
+            except (OSError, sqlite3.Error, RuntimeError, ValueError):
+                current = self._snapshot
+                if (
+                    current is not None
+                    and current.session_generation == snapshot.session_generation
+                ):
+                    self._snapshot = replace(
+                        current,
+                        status_message="Local draft storage failed — stay here and retry Save.",
+                    )
+                return False
+            self._retained_revision = (
+                snapshot.session_generation,
+                snapshot.draft_revision,
+            )
+            return True
+
+        self._recovery_task = asyncio.create_task(retain())
+
+    async def _retain_current_draft(self) -> bool:
+        if self._recovery is None:
+            return False
+        self._queue_recovery()
+        task = self._recovery_task
+        return await asyncio.shield(task) if task is not None else True
+
+    async def _acknowledge_recovery(self, note_id: str, revision: int) -> bool:
+        if self._recovery is None:
+            return True
+        try:
+            if self._recovery_task is not None:
+                await asyncio.shield(self._recovery_task)
+            if self._recovery_scope is None:
+                return False
+            await self._recovery.acknowledge(self._recovery_scope, note_id, revision)
+            return True
+        except (OSError, sqlite3.Error, RuntimeError, ValueError):
+            return False
 
     async def open_session(
         self,
@@ -351,6 +436,17 @@ class DatabaseNoteSessionCoordinator:
         Returns:
             A typed loaded, missing, failed, or stale outcome.
         """
+        if (
+            self._snapshot is not None
+            and self._snapshot.dirty
+            and self._recovery is not None
+            and not await self._retain_current_draft()
+        ):
+            return NoteLoadOutcome(
+                NoteLoadOutcomeKind.FAILED,
+                note_id,
+                "Local draft storage failed — stay here and retry Save.",
+            )
         self._session_request_token += 1
         request_token = self._session_request_token
         try:
@@ -391,10 +487,37 @@ class DatabaseNoteSessionCoordinator:
                 "Loaded note identity did not match the request.",
             )
 
+        recovered = None
+        if self._recovery is not None and self._recovery_scope is not None:
+            try:
+                recovered = await self._recovery.load(self._recovery_scope, note_id)
+            except (OSError, sqlite3.Error, RuntimeError, ValueError):
+                return NoteLoadOutcome(
+                    NoteLoadOutcomeKind.FAILED,
+                    note_id,
+                    "Local draft recovery is unavailable. Retry before editing.",
+                )
+            if request_token != self._session_request_token:
+                return NoteLoadOutcome(NoteLoadOutcomeKind.STALE, note_id)
         self._start_loaded_session(
             reply.detail,
             untouched_create_token=untouched_create_token,
         )
+        if recovered is not None and self._snapshot is not None:
+            draft, base_version = recovered
+            self._recovery_base_version = base_version
+            self._snapshot = replace(
+                self._snapshot,
+                draft=draft,
+                dirty=True,
+                in_conflict=base_version != reply.detail.version,
+                status_message="Recovered local draft — not saved.",
+            )
+            self._retained_revision = (
+                self._snapshot.session_generation,
+                draft.revision,
+            )
+            self._untouched_create_token = None
         return NoteLoadOutcome(NoteLoadOutcomeKind.LOADED, note_id)
 
     def _start_loaded_session(
@@ -405,12 +528,14 @@ class DatabaseNoteSessionCoordinator:
     ) -> None:
         """Replace the active session from one coherent normalized detail."""
         self._session_generation += 1
+        self._recovery_base_version = detail.version
         draft = DatabaseNoteDraft(
             note_id=detail.note_id,
             title=detail.title,
             body=detail.body,
             keywords_text=", ".join(detail.keywords),
             revision=0,
+            content_language=detail.content_language,
         )
         self._snapshot = LibraryNoteSessionSnapshot(
             baseline=detail,
@@ -454,6 +579,7 @@ class DatabaseNoteSessionCoordinator:
         title: str | None = None,
         body: str | None = None,
         keywords_text: str | None = None,
+        content_language: str | None | object = _LANGUAGE_UNSET,
     ) -> bool:
         """Apply one genuine value change to the canonical raw draft.
 
@@ -471,6 +597,17 @@ class DatabaseNoteSessionCoordinator:
             return False
 
         draft = snapshot.draft
+        next_language = (
+            draft.content_language
+            if content_language is _LANGUAGE_UNSET
+            else content_language
+        )
+        if next_language is not None and (
+            not isinstance(next_language, str) or not 1 <= len(next_language) <= 100
+        ):
+            raise ValueError(
+                "content_language must be null or a nonempty string of at most 100 characters."
+            )
         next_title = draft.title if title is None else title
         next_body = draft.body if body is None else body
         next_keywords = draft.keywords_text if keywords_text is None else keywords_text
@@ -478,6 +615,7 @@ class DatabaseNoteSessionCoordinator:
             next_title == draft.title
             and next_body == draft.body
             and next_keywords == draft.keywords_text
+            and next_language == draft.content_language
         ):
             return False
 
@@ -487,6 +625,7 @@ class DatabaseNoteSessionCoordinator:
             body=next_body,
             keywords_text=next_keywords,
             revision=draft.revision + 1,
+            content_language=next_language,
         )
         self._snapshot = replace(
             snapshot,
@@ -499,6 +638,7 @@ class DatabaseNoteSessionCoordinator:
             ),
         )
         self._untouched_create_token = None
+        self._queue_recovery()
         return True
 
     async def request_save(self, *, explicit: bool) -> NoteSaveOutcome:
@@ -579,6 +719,13 @@ class DatabaseNoteSessionCoordinator:
             session_generation = snapshot.session_generation
             expected_version = snapshot.version
             draft_revision = snapshot.draft_revision
+            if self._recovery is not None and not await self._retain_current_draft():
+                return NoteSaveOutcome(
+                    NoteSaveOutcomeKind.FAILED,
+                    note_id=note_id,
+                    revision=draft_revision,
+                    message="Local draft storage failed — stay here and retry Save.",
+                )
             payload = validate_database_note_draft(snapshot.draft)
             if isinstance(payload, NoteValidationVeto):
                 self._snapshot = replace(
@@ -661,6 +808,25 @@ class DatabaseNoteSessionCoordinator:
                     message=message,
                 )
 
+            if not await self._acknowledge_recovery(note_id, draft_revision):
+                current = self._snapshot
+                if current is None or current.session_generation != session_generation:
+                    return NoteSaveOutcome(NoteSaveOutcomeKind.STALE, note_id=note_id)
+                self._snapshot = replace(
+                    current,
+                    saving=False,
+                    dirty=True,
+                    status_message="Note saved, but local recovery cleanup failed. Retry before leaving.",
+                )
+                return NoteSaveOutcome(
+                    NoteSaveOutcomeKind.FAILED,
+                    note_id=note_id,
+                    revision=draft_revision,
+                    message=self._snapshot.status_message,
+                )
+            current = self._snapshot
+            if current is None or current.session_generation != session_generation:
+                return NoteSaveOutcome(NoteSaveOutcomeKind.STALE, note_id=note_id)
             saved_at = self._clock()
             saved_version = (
                 reply.version if reply.version is not None else expected_version + 1
@@ -675,7 +841,9 @@ class DatabaseNoteSessionCoordinator:
                 version=saved_version,
                 created_at=current.baseline.created_at,
                 modified_at=reply.modified_at or saved_at.isoformat(),
+                content_language=payload.content_language,
             )
+            self._recovery_base_version = saved_version
             has_newer_draft = current.draft_revision > draft_revision
             self._snapshot = replace(
                 current,
@@ -793,6 +961,12 @@ class DatabaseNoteSessionCoordinator:
             if action is ConflictAction.RELOAD:
                 if current.draft_revision != operation.draft_revision:
                     return self._reload_draft_changed(operation)
+                if not await self._acknowledge_recovery(
+                    current.note_id, current.draft_revision
+                ):
+                    return self._finish_conflict_failure(
+                        operation, "Local draft discard failed — retry Reload."
+                    )
                 self._close_session()
                 return ConflictOutcome(
                     ConflictOutcomeKind.MISSING,
@@ -820,6 +994,18 @@ class DatabaseNoteSessionCoordinator:
         if action is ConflictAction.RELOAD:
             if current.draft_revision != operation.draft_revision:
                 return self._reload_draft_changed(operation)
+            if not await self._acknowledge_recovery(
+                current.note_id, current.draft_revision
+            ):
+                return self._finish_conflict_failure(
+                    operation, "Local draft discard failed — retry Reload."
+                )
+            if (
+                self._snapshot is None
+                or self._snapshot.draft_revision != current.draft_revision
+            ):
+                return self._reload_draft_changed(operation)
+            self._recovery_base_version = detail.version
             revision = current.draft_revision + 1
             draft = DatabaseNoteDraft(
                 note_id=detail.note_id,
@@ -827,6 +1013,7 @@ class DatabaseNoteSessionCoordinator:
                 body=detail.body,
                 keywords_text=", ".join(detail.keywords),
                 revision=revision,
+                content_language=detail.content_language,
             )
             self._snapshot = replace(
                 current,
@@ -846,6 +1033,7 @@ class DatabaseNoteSessionCoordinator:
                 message="Reloaded latest saved note.",
             )
 
+        self._recovery_base_version = detail.version
         self._snapshot = replace(
             current,
             baseline=detail,
@@ -972,6 +1160,16 @@ class DatabaseNoteSessionCoordinator:
                 NoteSaveOutcomeKind.ACKNOWLEDGED,
             }:
                 continue
+            if (
+                save_outcome.kind
+                in {NoteSaveOutcomeKind.FAILED, NoteSaveOutcomeKind.VALIDATION_VETO}
+                and await self._retain_current_draft()
+            ):
+                return NoteFlushOutcome(
+                    NoteFlushOutcomeKind.PERMITTED,
+                    "Draft kept locally; not saved.",
+                    save_outcome,
+                )
             outcome_kind = {
                 NoteSaveOutcomeKind.VALIDATION_VETO: NoteFlushOutcomeKind.VALIDATION_VETO,
                 NoteSaveOutcomeKind.FAILED: NoteFlushOutcomeKind.FAILED,

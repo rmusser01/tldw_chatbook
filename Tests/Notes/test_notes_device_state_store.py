@@ -35,6 +35,7 @@ from tldw_chatbook.Notes.notes_sync_models import (
 
 
 EXPECTED_TABLES = {
+    "note_drafts",
     "import_sessions",
     "import_items",
     "import_payload_effects",

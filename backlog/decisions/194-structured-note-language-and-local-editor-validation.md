@@ -77,3 +77,16 @@ Existing local publication-intent payloads carry the exact originating principal
 Notes publication/application captures the existing runtime target/client and authenticates the exact requested principal through Sync profile user_id and the exact dataset personal/workspace scope through its restore manifest. Unknown/null principals, absent target evidence and missing/ambiguous manifests retain pending intent. Reads and mutation use the same pinned client with current-context checks; this adds authenticated reads rather than a new authority owner.
 
 Complete backlink fields must be validated and retained through the existing upsert materializer. A target without backlink storage refuses non-null values before writes or mirror advancement; null remains lossless. No canonical schema or metadata side store is added. Supplied organization receipt origins bind immutable request fingerprints; ready saves capture the same existing intent in their transaction. Unproved historical origins retain source and expose a bounded scoped profile reason/count, which unrelated successful sync cannot clear.
+
+### Device-private draft recovery (F5)
+
+Database Note drafts reuse the runtime-owned NotesDeviceStateStore through a narrow
+recovery facade and a dedicated schema-v3 table. They are not filesystem sync
+journal entries and never enter portable backups, diagnostics or sync payloads.
+Rows hold exact source and language at one revision, with the original optimistic
+base version. Matching acknowledgements or explicit discard remove them; older
+acknowledgements cannot remove newer drafts. Storage failure fences navigation.
+The local Library port scopes drafts to its captured canonical database path
+identity, local principal and explicit global (null) workspace, never the selected
+remote profile. Moving that database requires explicit future recovery mapping.
+Facade construction does no I/O and neither starts watchers nor creates sync roots.

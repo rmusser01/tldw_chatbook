@@ -55,6 +55,7 @@ class NormalizedDatabaseNote:
     version: int
     created_at: str
     modified_at: str
+    content_language: str | None = None
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,7 @@ class DatabaseNoteDraft:
     body: str
     keywords_text: str
     revision: int
+    content_language: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,7 @@ class DatabaseNoteSavePayload:
     body: str
     keywords: tuple[str, ...]
     revision: int
+    content_language: str | None = None
 
 
 @dataclass(frozen=True)
@@ -279,6 +282,7 @@ def validate_database_note_draft(
         body=body,
         keywords=tuple(keywords),
         revision=draft.revision,
+        content_language=draft.content_language,
     )
 
 

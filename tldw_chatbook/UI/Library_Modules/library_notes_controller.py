@@ -3435,7 +3435,8 @@ class LibraryNotesController:
     ) -> None:
         """Reset presentation, invalidate old work, and start one editor load."""
         navigation_generation = self._supersede_library_notes_navigation()
-        self._library_note_session.close_session()
+        if not self._library_note_session.close_session():
+            return
         self._clear_finished_library_notes_operation()
         self._selected_note_id = note_id
         self._library_notes_view = "editor"
@@ -3630,8 +3631,9 @@ class LibraryNotesController:
         selection so every exit from the editor leaves save/autosave/
         conflict tracking in a clean ``idle`` state for the next note.
         """
+        if not self._library_note_session.close_session():
+            return
         self._dispatch_database_note_identity_cleared()
-        self._library_note_session.close_session()
         if self._library_notes_view != "import":
             self._library_notes_view = "list"
         self._selected_note_id = ""

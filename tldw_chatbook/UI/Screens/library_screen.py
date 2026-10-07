@@ -3989,11 +3989,30 @@ class LibraryScreen(BaseAppScreen):
         # A Library screen may be replaced while the accepted mutation keeps
         # running, so screen construction must never reset that shared receipt.
         self._skills_state.reader_mode = coerce_skill_reader_mode(None)
+        note_service = getattr(app_instance, "notes_service", None)
+        note_principal = getattr(app_instance, "notes_user_id", None) or "default_user"
+        note_template = getattr(note_service, "unified_db_template", None)
+        note_database_path = getattr(note_template, "db_path_str", None)
+
+        def note_authority_is_current() -> bool:
+            return (
+                getattr(app_instance, "notes_service", None) is note_service
+                and (getattr(app_instance, "notes_user_id", None) or "default_user")
+                == note_principal
+                and getattr(
+                    getattr(note_service, "unified_db_template", None),
+                    "db_path_str",
+                    None,
+                )
+                == note_database_path
+            )
+
         note_session_port = _LibraryDatabaseNoteSessionPort(
             run_service_call=self._run_library_service_call,
             notes_scope_service=getattr(app_instance, "notes_scope_service", None),
-            notes_service=getattr(app_instance, "notes_service", None),
-            user_id=getattr(app_instance, "notes_user_id", None) or "default_user",
+            notes_service=note_service,
+            user_id=note_principal,
+            is_current=note_authority_is_current,
             clock=lambda: datetime.now(timezone.utc),
             # task-32604: the note side's change producer for lasting sync.
             # Read late, like every other app-owned service here -- the
@@ -4010,8 +4029,22 @@ class LibraryScreen(BaseAppScreen):
                 else getattr(app_instance, "notes_sync_runtime_owner", None)
             ),
         )
+        from ...Notes.note_draft_recovery import NoteDraftScope
+
+        recovery_scope = None
+        if isinstance(note_database_path, str):
+            try:
+                recovery_scope = NoteDraftScope.local(
+                    note_database_path, note_principal
+                )
+            except ValueError:
+                pass
+        runtime = getattr(app_instance, "notes_sync_runtime_owner", None)
+        recovery = getattr(runtime, "draft_recovery", None)
         self._library_note_session = DatabaseNoteSessionCoordinator(
             note_session_port,
+            recovery=recovery,
+            recovery_scope=recovery_scope,
             clock=lambda: datetime.now(timezone.utc),
         )
         self._library_rail_collapsed: bool = False

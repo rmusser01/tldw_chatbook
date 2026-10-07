@@ -31,7 +31,6 @@ from tldw_chatbook.Library.library_notes_state import (
     NormalizedDatabaseNote,
 )
 
-
 NOW = datetime(2026, 7, 31, 12, 34, tzinfo=timezone.utc)
 
 
@@ -1095,3 +1094,167 @@ async def test_saved_time_is_rendered_in_local_time(los_angeles_zone):
     assert outcome.kind is NoteSaveOutcomeKind.SAVED
     assert coordinator.snapshot.status_message == "Saved 22:48"
     assert coordinator.snapshot.baseline.modified_at == "2026-09-13T05:48:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_language_only_edit_is_a_real_save():
+    port = FakeDatabaseNotePort(_detail())
+    port.save_replies.append(DatabaseNotePortSaveReply.saved(version=2))
+    owner = DatabaseNoteSessionCoordinator(port=port)
+    await owner.open_session("n-1")
+    owner.mutate(content_language="yaml")
+    await owner.request_save(explicit=True)
+    assert port.save_calls[-1][2].content_language == "yaml"
+    assert port.save_calls[-1][2].body == "Original body"
+    assert len(port.save_calls) == 1
+    assert owner.snapshot.draft_revision == owner.snapshot.saved_revision == 1
+    assert owner.snapshot.version == 2
+
+
+@pytest.mark.asyncio
+async def test_language_omission_preserves_and_null_resets_with_source():
+    port = FakeDatabaseNotePort(replace(_detail(), content_language="future-mode"))
+    owner = DatabaseNoteSessionCoordinator(port)
+    await owner.open_session("n-1")
+    owner.mutate(body="<>&\n雪")
+    assert owner.snapshot.draft.content_language == "future-mode"
+    owner.mutate(content_language=None)
+    port.save_replies.append(DatabaseNotePortSaveReply.saved(version=2))
+    await owner.request_save(explicit=True)
+    assert port.save_calls[-1][2].content_language is None
+    assert port.save_calls[-1][2].body == "<>&\n雪"
+    assert owner.snapshot.draft_revision == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", [ConflictAction.RELOAD, ConflictAction.OVERWRITE])
+async def test_conflict_resolves_language_with_its_source_revision(action):
+    port = FakeDatabaseNotePort(replace(_detail(), content_language="json"))
+    owner = DatabaseNoteSessionCoordinator(port)
+    await owner.open_session("n-1")
+    owner.mutate(body="local: true", content_language="yaml")
+    port.save_replies.append(DatabaseNotePortSaveReply.conflict())
+    await owner.request_save(explicit=True)
+    port.load_replies.append(
+        DatabaseNotePortLoadReply.loaded(
+            replace(_detail(body="remote", version=3), content_language="future-mode")
+        )
+    )
+    port.save_replies.append(DatabaseNotePortSaveReply.saved(version=4))
+    await owner.resolve_conflict(action)
+    expected = (
+        ("remote", "future-mode")
+        if action is ConflictAction.RELOAD
+        else ("local: true", "yaml")
+    )
+    assert (
+        owner.snapshot.draft.body,
+        owner.snapshot.draft.content_language,
+    ) == expected
+    assert (
+        owner.snapshot.baseline.body,
+        owner.snapshot.baseline.content_language,
+    ) == expected
+
+
+@pytest.mark.asyncio
+async def test_rejected_empty_draft_recovers_after_navigation_and_restart(tmp_path):
+    from tldw_chatbook.Notes.note_draft_recovery import (
+        NoteDraftRecovery,
+        NoteDraftScope,
+    )
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    path = tmp_path / "recovery.db"
+    scope = NoteDraftScope("profile", "alice", None)
+    store = NotesDeviceStateStore(path)
+    port = FakeDatabaseNotePort(_detail())
+    port.save_replies.extend(
+        [
+            DatabaseNotePortSaveReply.failed("empty content"),
+            DatabaseNotePortSaveReply.failed("empty content"),
+        ]
+    )
+    owner = DatabaseNoteSessionCoordinator(
+        port, recovery=NoteDraftRecovery(store), recovery_scope=scope
+    )
+    await owner.open_session("n-1")
+    owner.mutate(body="", content_language="json")
+    assert (await owner.request_save(explicit=True)).kind is NoteSaveOutcomeKind.FAILED
+    assert (await owner.flush()).kind is NoteFlushOutcomeKind.PERMITTED
+    assert owner.close_session()
+    store.close()
+    reopened = NotesDeviceStateStore(path)
+    owner = DatabaseNoteSessionCoordinator(
+        FakeDatabaseNotePort(_detail()),
+        recovery=NoteDraftRecovery(reopened),
+        recovery_scope=scope,
+    )
+    await owner.open_session("n-1")
+    assert owner.snapshot.draft.body == ""
+    assert owner.snapshot.draft.content_language == "json"
+    assert owner.snapshot.baseline.body == "Original body"
+    assert owner.snapshot.dirty
+    reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_recovery_storage_failure_fences_navigation(tmp_path, monkeypatch):
+    from tldw_chatbook.Notes.note_draft_recovery import (
+        NoteDraftRecovery,
+        NoteDraftScope,
+    )
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(tmp_path / "recovery.db")
+    recovery = NoteDraftRecovery(store)
+    owner = DatabaseNoteSessionCoordinator(
+        FakeDatabaseNotePort(_detail()),
+        recovery=recovery,
+        recovery_scope=NoteDraftScope("profile", "alice", None),
+    )
+    await owner.open_session("n-1")
+
+    async def fail(*args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(recovery, "save", fail)
+    owner.mutate(body="", content_language="yaml")
+    assert (await owner.flush()).kind is NoteFlushOutcomeKind.FAILED
+    assert not owner.close_session()
+    assert owner.snapshot.draft.body == ""
+    assert "storage failed" in owner.snapshot.status_message
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_recovered_conflict_keeps_original_base_after_another_edit(tmp_path):
+    from tldw_chatbook.Library.library_notes_state import DatabaseNoteDraft
+    from tldw_chatbook.Notes.note_draft_recovery import (
+        NoteDraftRecovery,
+        NoteDraftScope,
+    )
+    from tldw_chatbook.Notes.notes_device_state_store import NotesDeviceStateStore
+
+    store = NotesDeviceStateStore(tmp_path / "recovery.db")
+    recovery = NoteDraftRecovery(store)
+    scope = NoteDraftScope("profile", "alice", None)
+    await recovery.save(scope, DatabaseNoteDraft("n-1", "Local", "", "", 1, "yaml"), 1)
+    owner = DatabaseNoteSessionCoordinator(
+        FakeDatabaseNotePort(_detail(version=2)),
+        recovery=recovery,
+        recovery_scope=scope,
+    )
+    await owner.open_session("n-1")
+    assert owner.snapshot.in_conflict
+    owner.mutate(body="still local")
+    await owner._retain_current_draft()
+    reopened = DatabaseNoteSessionCoordinator(
+        FakeDatabaseNotePort(_detail(version=2)),
+        recovery=recovery,
+        recovery_scope=scope,
+    )
+    await reopened.open_session("n-1")
+    assert reopened.snapshot.in_conflict
+    assert (await recovery.load(scope, "n-1"))[1] == 1
+    store.close()
