@@ -1,8 +1,9 @@
 ---
 id: TASK-34424
 title: Debounce personas conversation search and read-only index check
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:42
+updated_date: 2026-10-07 12:02
 ---
 
 ## Description
