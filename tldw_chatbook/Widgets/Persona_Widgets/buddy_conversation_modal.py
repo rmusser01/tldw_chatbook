@@ -30,6 +30,16 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
     BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("escape", "request_safe_cancel", "Close")
     ]
+    #: Poll cadence while the bound session is executing a generation (task-10).
+    _POLL_ACTIVE_SECONDS: ClassVar[float] = 0.2
+    #: Poll cadence while the bound session is idle; ticks then only compare
+    #: the store fingerprint and cheap coordinator state before returning.
+    _POLL_IDLE_SECONDS: ClassVar[float] = 1.0
+    #: Unchanged quiet ticks allowed at the active cadence before decaying to
+    #: the idle cadence: one second of fast polling trails every observed
+    #: change so freshly armed decisions and just-started runs are picked up
+    #: at the historical 0.2 s latency.
+    _POLL_FAST_DECAY_TICKS: ClassVar[int] = 5
     BUNDLED_CSS = """
     BuddyConversationModal { align: center middle; }
     #buddy-conversation { width: 90; max-width: 96%; height: 90%; max-height: 52;
@@ -58,8 +68,11 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
         self._syncing_draft = False
         self._visible = True
         self._timer: Any = None
+        self._poll_interval: float = self._POLL_ACTIVE_SECONDS
+        self._quiet_ticks = 0
+        self._last_gate_key: tuple[Any, ...] | None = None
         self._last_transcript: str | None = None
-        self._last_decisions = ""
+        self._last_decision_key: tuple[Any, ...] = ()
         self._new_updates = False
         self._last_draft = coordinator.drafts.get(binding, "")
 
@@ -124,98 +137,184 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
     def on_mount(self) -> None:
         super().on_mount()
         self.query_one("#buddy-conversation-body", VerticalScroll).anchor()
-        self._timer = self.set_interval(0.2, self.refresh_projection)
+        self._set_poll_interval(self._POLL_ACTIVE_SECONDS)
         self.call_after_refresh(self.refresh_projection)
         self.query_one("#buddy-reply", TextArea).focus()
 
-    def refresh_projection(self) -> None:
+    def _set_poll_interval(self, seconds: float) -> None:
+        """Re-arm the poll timer only when the cadence class changes.
+
+        Stopping and recreating is safe even from inside a tick callback:
+        Textual delivers the cancellation to the timer task after the
+        callback returns. Re-arming on every call would reset the phase, so
+        unchanged cadences are a no-op.
+        """
+        if self._timer is not None and seconds == self._poll_interval:
+            return
+        self._poll_interval = seconds
+        if self._timer is not None:
+            self._timer.stop()
+        self._timer = self.set_interval(seconds, self._on_poll_tick)
+
+    def _on_poll_tick(self) -> None:
+        """Timer entry point: a change-gated projection poll (task-10)."""
+        self.refresh_projection(force=False)
+
+    def refresh_projection(self, *, force: bool = True) -> None:
+        """Re-render the projection.
+
+        Args:
+            force: Render even when the cheap change gate sees no movement.
+                Timer ticks pass ``False``; direct calls (mount, resume,
+                send, dictate, tests) keep the historical always-render
+                default.
+        """
         if not self.is_mounted or not self._visible:
             return
-        body = self.query_one("#buddy-conversation-body", VerticalScroll)
-        first = self._last_transcript is None
-        follow = first or body.scroll_y >= body.max_scroll_y - 1
-        changed = False
         coordinator = self.coordinator
         session = coordinator.resolve(self.binding)
         controller = coordinator.controller
         available = session is not None and controller is not None
-        coordinator.show_decisions(self, self.binding if available else None)
-        if not available:
-            coordinator.close_voice(self)
-        title = session.title if session is not None else "Conversation unavailable"
-        self.query_one("#buddy-conversation-title", Static).update(str(title))
-        busy = not available or not controller.run_state_for(session.id).is_send_allowed
-        if busy:
-            coordinator.close_voice(self)
-        activity = (
-            controller.run_state_for(session.id).status.value.replace("_", " ")
-            if available
-            else "This target is missing or unavailable. No other conversation will be used."
+        # Cheap reads only (task-10): the store fingerprint first, then the
+        # equally small decision identity tuple, one O(1) run-state lookup
+        # and coordinator ephemerals. Together they gate the whole render --
+        # an unchanged idle tick costs no snapshot, no transcript build, no
+        # card sync, no decision-view registration and no DOM writes.
+        fingerprint = (
+            controller.store.session_fingerprint(session.id) if available else None
         )
-        self.query_one("#buddy-activity", Static).update(activity)
-        self.query_one("#buddy-send", Button).disabled = (
-            busy or self.binding in coordinator.submitting
-        )
-        self.query_one(
-            "#buddy-open-console", Button
-        ).disabled = not coordinator.can_open_console(self.binding)
-        self.query_one("#buddy-reply", TextArea).disabled = not available
-        if available:
-            messages = controller.store.messages_for_session(session.id)[-60:]
-            transcript = "\n\n".join(
-                f"{message.role.value.title()}: {message.content}"
-                for message in messages
-            )[-64000:]
-            if transcript != self._last_transcript:
-                changed = True
-                self.query_one("#buddy-transcript", Static).update(
-                    transcript or "No messages yet."
-                )
-                self._last_transcript = transcript
-        else:
-            self.query_one("#buddy-transcript", Static).update("")
         payloads = coordinator.decision_payloads(self.binding) if available else {}
-        decisions = repr(payloads)
-        changed = changed or decisions != self._last_decisions
-        self._last_decisions = decisions
-        self.query_one("#buddy-pending", Button).display = bool(payloads)
-        if changed:
-            if follow:
-                self.call_after_refresh(self._scroll_latest)
-            else:
-                self._new_updates = True
-        self.query_one("#buddy-latest", Button).label = (
-            "Latest · new updates" if self._new_updates else "Latest"
-        )
-        approval = payloads.get("approval")
-        card = self.query_one(ChatApprovalCard)
-        if approval:
-            card.set_batch(
-                approval.get("calls", []),
-                timeout_seconds=approval.get("timeout_seconds", 0),
-                round_id=approval.get("round_id"),
-                phase=approval.get("phase", "approval"),
-                summary=approval.get("summary"),
+        # Identity tuple replaces the old O(payload) ``repr`` compare: kinds,
+        # decision ids, phases and the approval batch size move the key; the
+        # per-tick countdown inside ``timeout_seconds`` snapshots does not
+        # (the cards own their visible countdowns).
+        decision_key = tuple(
+            (
+                kind,
+                payload.get("_decision_id"),
+                payload.get("round_id") or payload.get("request_id"),
+                payload.get("phase"),
+                len(payload.get("calls") or ()),
             )
-        else:
-            card.display = False
-        self.query_one(SkillInstallConfirmCard).set_install(
-            payloads.get("skill_install")
+            for kind, payload in sorted(payloads.items())
         )
-        self.query_one(SkillScriptConfirmCard).set_script(payloads.get("skill_script"))
-        self.query_one(ChatQuestionCard).set_questions(payloads.get("question"))
-        rendered_id = None
-        for kind, card_type in (
-            ("approval", ChatApprovalCard),
-            ("skill_install", SkillInstallConfirmCard),
-            ("skill_script", SkillScriptConfirmCard),
-        ):
-            payload = payloads.get(kind)
-            if payload and self.query_one(card_type).display:
-                rendered_id = payload.get("_decision_id")
-        coordinator.show_decisions(
-            self, self.binding if available else None, decision_id=rendered_id
+        run_state = controller.run_state_for(session.id) if available else None
+        busy = not available or not run_state.is_send_allowed
+        gate_key = (
+            available,
+            fingerprint,
+            run_state.status.value if available else None,
+            decision_key,
+            self.binding in coordinator.submitting,
+            coordinator.notices.get(self.binding, ""),
+            coordinator.drafts.get(self.binding, ""),
+            coordinator.voice_status(self),
         )
+        changed_state = force or gate_key != self._last_gate_key
+        # Cadence (task-10): fast while executing, while a decision awaits
+        # the user, or briefly after any observed change; the quiet-idle
+        # decay keeps a settled modal at one cheap tick per second. This
+        # runs on gated ticks too, which is what keeps the timer from
+        # sticking fast or slow.
+        self._quiet_ticks = 0 if changed_state else self._quiet_ticks + 1
+        fast = (
+            busy or bool(payloads) or self._quiet_ticks <= self._POLL_FAST_DECAY_TICKS
+        )
+        self._set_poll_interval(
+            self._POLL_ACTIVE_SECONDS if fast else self._POLL_IDLE_SECONDS
+        )
+        if not changed_state:
+            return
+        self._last_gate_key = gate_key
+        try:
+            body = self.query_one("#buddy-conversation-body", VerticalScroll)
+            first = self._last_transcript is None
+            follow = first or body.scroll_y >= body.max_scroll_y - 1
+            changed = False
+            if not available:
+                coordinator.close_voice(self)
+            title = session.title if session is not None else "Conversation unavailable"
+            self.query_one("#buddy-conversation-title", Static).update(str(title))
+            if busy:
+                coordinator.close_voice(self)
+            activity = (
+                run_state.status.value.replace("_", " ")
+                if available
+                else "This target is missing or unavailable. No other conversation will be used."
+            )
+            self.query_one("#buddy-activity", Static).update(activity)
+            self.query_one("#buddy-send", Button).disabled = (
+                busy or self.binding in coordinator.submitting
+            )
+            self.query_one(
+                "#buddy-open-console", Button
+            ).disabled = not coordinator.can_open_console(self.binding)
+            self.query_one("#buddy-reply", TextArea).disabled = not available
+            if available:
+                messages = controller.store.messages_for_session(session.id)[-60:]
+                transcript = "\n\n".join(
+                    f"{message.role.value.title()}: {message.content}"
+                    for message in messages
+                )[-64000:]
+                if transcript != self._last_transcript:
+                    changed = True
+                    self.query_one("#buddy-transcript", Static).update(
+                        transcript or "No messages yet."
+                    )
+                    self._last_transcript = transcript
+            else:
+                self.query_one("#buddy-transcript", Static).update("")
+            changed = changed or decision_key != self._last_decision_key
+            self._last_decision_key = decision_key
+            self.query_one("#buddy-pending", Button).display = bool(payloads)
+            if changed:
+                if follow:
+                    self.call_after_refresh(self._scroll_latest)
+                else:
+                    self._new_updates = True
+            self.query_one("#buddy-latest", Button).label = (
+                "Latest · new updates" if self._new_updates else "Latest"
+            )
+            approval = payloads.get("approval")
+            card = self.query_one(ChatApprovalCard)
+            if approval:
+                card.set_batch(
+                    approval.get("calls", []),
+                    timeout_seconds=approval.get("timeout_seconds", 0),
+                    round_id=approval.get("round_id"),
+                    phase=approval.get("phase", "approval"),
+                    summary=approval.get("summary"),
+                )
+            else:
+                card.display = False
+            self.query_one(SkillInstallConfirmCard).set_install(
+                payloads.get("skill_install")
+            )
+            self.query_one(SkillScriptConfirmCard).set_script(
+                payloads.get("skill_script")
+            )
+            self.query_one(ChatQuestionCard).set_questions(payloads.get("question"))
+            rendered_id = None
+            for kind, card_type in (
+                ("approval", ChatApprovalCard),
+                ("skill_install", SkillInstallConfirmCard),
+                ("skill_script", SkillScriptConfirmCard),
+            ):
+                payload = payloads.get(kind)
+                if payload and self.query_one(card_type).display:
+                    rendered_id = payload.get("_decision_id")
+            coordinator.show_decisions(
+                self, self.binding if available else None, decision_id=rendered_id
+            )
+        except Exception:
+            # A render that failed mid-body must not leave a stale rendered
+            # claim spending the decision's visible allowance (pinned by
+            # test_buddy_clock_claim_keeps_render_and_owner_boundaries): the
+            # pre-task-10 refresh registered the claim-less view BEFORE
+            # rendering, so any raise left the owner unclaimed. Reproduce
+            # that end state here, then surface the failure.
+            coordinator.show_decisions(self, self.binding if available else None)
+            raise
         notice = coordinator.notices.get(self.binding, "")
         if "worktree_merge" in payloads:
             notice = "A worktree decision needs review. Open Console to continue."
