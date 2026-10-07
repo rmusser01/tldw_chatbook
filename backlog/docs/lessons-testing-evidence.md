@@ -19076,3 +19076,23 @@ assumed to receive; nothing pinned what shape the shared seam accepts.
 with a contract test (full body records nothing; extracted dict records
 once) — and make the plan's live end-to-end run part of the evidence
 before shipping a user-visible surface.**
+
+## A monkeypatched session factory plus a per-thread cache needs a reset per re-patch
+
+**TASK-34418, 2026-10-06.** Swapping provider calls to the per-thread session
+registry (ADR-222) turned two green suites red in ways that looked like logic
+bugs: `test_hosted_provider_engine_auth` failed with `IndexError` on
+`keyed.posts[0]` and qwencloud's looped tests asserted on sessions that never
+saw a request. Cause: those tests re-patch `create_default_session` per phase
+inside ONE test while every phase shares the same registry key
+`(provider, base_url)` — the first phase's session stayed cached and the new
+patch was never consulted. A cold-sandbox variant of the same trap hit the
+key's `requests_verify()` read directly: the guarded config bootstrap refused
+(`raw_source_selection_changed`) only when the factory was patched out, which
+is why single-file runs failed while full-suite runs passed.
+
+Reset the registry (`provider_sessions.close_all_for_current_thread()`)
+every time a test re-patches the factory — the root `Tests/conftest.py`
+autouse fixture covers test boundaries, not phases inside a test — and read
+config through guarded fragments that degrade instead of raising when the
+bootstrap is unreconciled.
