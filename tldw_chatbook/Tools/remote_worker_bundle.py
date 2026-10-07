@@ -1372,6 +1372,7 @@ def resolve_sensitive_context() -> SensitivePathContext:
     user_data_dir = _resolved(str(raw_user_dir)) if raw_user_dir is not None else None
     dynamic_dirs = (skill_trust_dir,) if skill_trust_dir is not None else ()
     return SensitivePathContext(files=tuple((p for p in (_resolved(str(raw)) for raw in single_files) if p is not None)), dirs=tuple((p for p in (_resolved(str(entry)) for entry in _SENSITIVE_DIRS + dynamic_dirs) if p is not None)), db_paths=tuple((p for p in (_resolved(str(raw)) for raw in db_paths) if p is not None)), user_data_dir=user_data_dir, direct_child_denied_dirs=tuple((p for p in (_resolved(str(raw)) for raw in containers) if p is not None)))
+_RESOLVE_SENSITIVE_CONTEXT_ORIGINAL = (resolve_sensitive_context, resolve_sensitive_context.__code__, resolve_sensitive_context.__defaults__)
 
 def merge_sensitive_context(base: SensitivePathContext, *, extra_files: Iterable[Path]=(), extra_dirs: Iterable[Path]=()) -> SensitivePathContext:
     """Fold per-workspace user exclusions into a per-call context snapshot.
@@ -1545,6 +1546,7 @@ def is_sensitive_path(candidate: Path, context: SensitivePathContext | None=None
         if _same_path(resolved.parent, denied_parent) and (not resolved.is_dir()):
             return True
     return False
+_IS_SENSITIVE_PATH_ORIGINAL = (is_sensitive_path, is_sensitive_path.__code__, is_sensitive_path.__defaults__)
 
 class SensitiveExclusion(NamedTuple):
     """One denial of :func:`is_sensitive_path`, expressed relative to a root.
@@ -5556,4 +5558,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("9e0f4cc683a423caa80a2c24f4bf0d7d199dd504ff0ee23cd8961080416444a6")
+BUNDLE_SHA256 = _enter_worker_exchange("fa5c2d93f7d7e7db970dd92939c4410e0776d4144c140700088b6c2768957ac8")

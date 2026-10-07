@@ -4288,6 +4288,26 @@ class ConsoleRuntime:
             tasks = getattr(controller, "_active_stream_tasks", None)
             return bool(tasks)
 
+        async def run_maintenance_call(operation, *args, **kwargs):
+            # Only this finite database callback survives cancellation. The
+            # outer scheduler still stops before admitting another batch.
+            owned = asyncio.Task(
+                run_owned_db_call(database, operation, *args, **kwargs), loop=loop
+            )
+            try:
+                return await asyncio.shield(owned)
+            except asyncio.CancelledError:
+                while not owned.done():
+                    try:
+                        await asyncio.shield(owned)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                if not owned.cancelled():
+                    owned.exception()
+                raise
+
         async def run() -> None:
             while not self._disposed and not getattr(self._app, "_ui_ready", True):
                 await asyncio.sleep(0.05)
@@ -4340,7 +4360,7 @@ class ConsoleRuntime:
                     maintenance.expect_work = True
                 seen_work = current_work
                 try:
-                    result = await run_owned_db_call(database, maintenance.run_batch)
+                    result = await run_maintenance_call(maintenance.run_batch)
                 except Exception as exc:  # noqa: BLE001 - retry remains restart-safe
                     logger.warning(
                         "legacy trace maintenance paused after {}",
@@ -4396,14 +4416,14 @@ class ConsoleRuntime:
                             None,
                         )
                         collector = TraceGarbageCollector(database)
-                        current_epoch = await run_owned_db_call(database,
+                        current_epoch = await run_maintenance_call(
                             collector.current_graph_epoch
                         )
                         if pending_gc_result is None:
                             if current_epoch == last_collected_epoch:
                                 await asyncio.sleep(1.0)
                                 continue
-                            pending_gc_result = await run_owned_db_call(database,
+                            pending_gc_result = await run_maintenance_call(
                                 collector.collect,
                                 request_id=f"auto-{new_opaque_id()}",
                             )
@@ -4429,7 +4449,7 @@ class ConsoleRuntime:
                             resume_dispatch=resume,
                             cancel_requested=lambda: self._disposed,
                         )
-                        outcome = await run_owned_db_call(database,
+                        outcome = await run_maintenance_call(
                             compactor.run_after_gc,
                             pending_gc_result,
                         )
@@ -5129,12 +5149,12 @@ class ConsoleRuntime:
 
     async def _drain_hook_review_operations(self, session_id=None) -> bool:
         controller = self._chat_controller
-        if controller is None:
+        host = getattr(controller, "_interrupt_host", None)
+        retirements = getattr(host, "hook_review_retirements", None)
+        if not callable(retirements):
             return False
         cancelled = False
-        while completions := controller._interrupt_host.hook_review_retirements(
-            session_id
-        ):
+        while completions := retirements(session_id):
             for completion in completions:
                 try:
                     await self._await_hook_review_work(completion)
@@ -5963,8 +5983,10 @@ class ConsoleRuntime:
                 self._hook_permissions.close()
             if engine is not None:
                 engine.close()
-        if self._chat_controller is not None:
-            self._chat_controller._interrupt_host.cancel_hook_reviews()
+        hook_host = getattr(self._chat_controller, "_interrupt_host", None)
+        cancel_hook_reviews = getattr(hook_host, "cancel_hook_reviews", None)
+        if callable(cancel_hook_reviews):
+            cancel_hook_reviews()
         if self._worktree_recovery is not None:
             self._worktree_recovery.begin_close()
         if self._voice_process_supervisor is not None:
@@ -6072,8 +6094,10 @@ class ConsoleRuntime:
                 self._hook_permissions.close()
             if engine is not None:
                 engine.close()
-        if self._chat_controller is not None:
-            self._chat_controller._interrupt_host.cancel_hook_reviews()
+        hook_host = getattr(self._chat_controller, "_interrupt_host", None)
+        cancel_hook_reviews = getattr(hook_host, "cancel_hook_reviews", None)
+        if callable(cancel_hook_reviews):
+            cancel_hook_reviews()
         if self._voice_process_supervisor is not None:
             self._voice_process_supervisor.begin_close()
         if self._worktree_recovery is not None:
