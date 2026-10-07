@@ -55,6 +55,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
 from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
+from tldw_chatbook.Chat.session_usage import session_usage
 from tldw_chatbook.config import (
     get_cli_setting,
     get_runtime_config_snapshot,
@@ -1001,6 +1002,16 @@ def chat_with_openai(
                     labels={"model": final_model},
                 )
 
+            session_usage().record_provider_payload(
+                usage,
+                provider="openai",
+                model=final_model,
+                fallback_texts=(
+                    json.dumps(input_data),
+                    _completion_text_from_response(response_data),
+                ),
+            )
+
             logger.debug("OpenAI: Non-streaming request successful.")
             if use_responses_api:
                 return _normalize_openai_responses_payload(
@@ -1228,6 +1239,33 @@ def _contains_extended_ttl(obj: Any) -> bool:
     if isinstance(obj, list):
         return any(_contains_extended_ttl(item) for item in obj)
     return False
+
+
+def _completion_text_from_response(response_data: Any) -> str:
+    """Best-effort completion text for token estimates. Never raises."""
+    try:
+        choices = response_data.get("choices")
+        if choices:
+            message = choices[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return "".join(
+                    part.get("text", "")
+                    for part in content
+                    if isinstance(part, dict)
+                )
+        content_blocks = response_data.get("content")
+        if isinstance(content_blocks, list):
+            return "".join(
+                part.get("text", "")
+                for part in content_blocks
+                if isinstance(part, dict)
+            )
+    except Exception:
+        pass
+    return ""
 
 
 #: The shortest credential form ``_credential_redacted_detail`` masks literally.
@@ -2211,6 +2249,13 @@ def chat_with_anthropic(
                     labels={"model": current_model},
                 )
 
+            session_usage().record_provider_payload(
+                usage,
+                provider="anthropic",
+                model=current_model,
+                fallback_texts=(json.dumps(input_data), full_assistant_content),
+            )
+
             return normalized_response
 
     except requests.exceptions.HTTPError as e:
@@ -3178,6 +3223,13 @@ def chat_with_cohere(
                     labels={"model": final_model},
                 )
 
+            session_usage().record_provider_payload(
+                usage_data,
+                provider="cohere",
+                model=final_model,
+                fallback_texts=(json.dumps(input_data), text),
+            )
+
             return openai_compatible_response
 
     except requests.exceptions.HTTPError as e:
@@ -3929,11 +3981,18 @@ def chat_with_google(
                 k in usage_meta
                 for k in ["promptTokenCount", "candidatesTokenCount", "totalTokenCount"]
             ):
-                normalized_response["usage"] = {
+                normalized_usage = {
                     "prompt_tokens": usage_meta.get("promptTokenCount"),
                     "completion_tokens": usage_meta.get("candidatesTokenCount"),
                     "total_tokens": usage_meta.get("totalTokenCount"),
                 }
+                normalized_response["usage"] = normalized_usage
+                session_usage().record_provider_payload(
+                    normalized_usage,
+                    provider="google",
+                    model=current_model,
+                    fallback_texts=(json.dumps(input_data), assistant_content),
+                )
 
             # Log non-streaming success metrics
             duration = time.time() - start_time
@@ -4517,6 +4576,16 @@ def chat_with_huggingface(
                     labels={"model": final_model_for_payload},
                 )
 
+            session_usage().record_provider_payload(
+                usage,
+                provider="huggingface",
+                model=final_model_for_payload,
+                fallback_texts=(
+                    json.dumps(input_data),
+                    _completion_text_from_response(result),
+                ),
+            )
+
             return result
 
     except requests.exceptions.HTTPError as e:
@@ -4709,6 +4778,18 @@ def chat_with_moonshot(
         time.time() - started_at,
         labels=labels,
     )
+    # Streaming results are stream objects, not mappings; usage there arrives
+    # on the wire during iteration, so only the non-streaming dict is tapped.
+    if isinstance(result, Mapping):
+        session_usage().record_provider_payload(
+            result.get("usage"),
+            provider="moonshot",
+            model=model or "",
+            fallback_texts=(
+                json.dumps(input_data),
+                _completion_text_from_response(result),
+            ),
+        )
     return result
 
 
@@ -4783,6 +4864,18 @@ def chat_with_zai(
         time.time() - started_at,
         labels=labels,
     )
+    # Streaming results are stream objects, not mappings; usage there arrives
+    # on the wire during iteration, so only the non-streaming dict is tapped.
+    if isinstance(result, Mapping):
+        session_usage().record_provider_payload(
+            result.get("usage"),
+            provider="zai",
+            model=model or "",
+            fallback_texts=(
+                json.dumps(input_data),
+                _completion_text_from_response(result),
+            ),
+        )
     return result
 
 

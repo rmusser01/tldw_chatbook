@@ -1,0 +1,242 @@
+"""Session-usage tap tests: provider functions record into the ledger.
+
+Mirrors the mocking pattern from Tests/Chat/test_chat_mocked_apis.py /
+test_openai_streaming_usage.py: patch ``requests.Session.post``, drive the
+real dispatcher via ``chat_api_call``, and inspect the session ledger.
+
+The first three tests are the brief's verbatim tap tests (openai exact,
+openai estimate fallback, anthropic exact). The remaining tests extend the
+same idiom to every other tapped site (cohere, google, huggingface) and the
+moonshot/zai compatibility wrappers, so a wrong variable name at any tap
+cannot slip through unexercised.
+"""
+
+import json
+from unittest.mock import Mock, patch
+
+import pytest
+
+from tldw_chatbook.Chat.session_usage import reset_for_tests, session_usage
+
+# These tests drive the real dispatcher, whose handler hot path reads the
+# guarded config loader; under the per-test env redirect that admission
+# fails closed with RecoveryRequired("raw_source_selection_changed") --
+# the same signature test_chat_unit_mocked_APIs.py / test_hosted_chat.py
+# carry in Tests/conftest.py's keep-list. Keep the bootstrap profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
+@pytest.fixture(autouse=True)
+def _fresh_ledger():
+    reset_for_tests()
+    yield
+    reset_for_tests()
+
+
+def _mock_post(payload_dict):
+    response = Mock()
+    response.status_code = 200
+    response.raise_for_status = Mock()
+    response.json.return_value = payload_dict
+    return response
+
+
+def test_openai_nonstreaming_records_exact_usage():
+    body = {
+        "choices": [{"message": {"role": "assistant", "content": "hello there"}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+    with patch("requests.Session.post", return_value=_mock_post(body)):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        chat_api_call(
+            "openai",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="sk-test",
+            model="gpt-4o",
+            streaming=False,
+        )
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 15
+    assert snap.estimated_tokens == 0
+    assert snap.calls == 1
+
+
+def test_openai_nonstreaming_without_usage_records_estimate():
+    body = {
+        "choices": [{"message": {"role": "assistant", "content": "hello there"}}],
+        # no "usage" key at all
+    }
+    with patch("requests.Session.post", return_value=_mock_post(body)):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        chat_api_call(
+            "openai",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="sk-test",
+            model="gpt-4o",
+            streaming=False,
+        )
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 0
+    assert snap.estimated_tokens > 0
+    assert snap.calls == 1
+
+
+def test_anthropic_nonstreaming_records_exact_usage():
+    body = {
+        "content": [{"type": "text", "text": "hi back"}],
+        "usage": {"input_tokens": 7, "output_tokens": 3},
+    }
+    with patch("requests.Session.post", return_value=_mock_post(body)):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        chat_api_call(
+            "anthropic",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="sk-test",
+            model="claude-3-5-sonnet",
+            streaming=False,
+        )
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 10
+    assert snap.calls == 1
+
+
+def test_cohere_nonstreaming_records_exact_usage():
+    body = {
+        "id": "chat-1",
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "hi back"}],
+        },
+        "finish_reason": "COMPLETE",
+        "usage": {"billed_units": {"input_tokens": 8, "output_tokens": 4}},
+    }
+    with patch("requests.Session.post", return_value=_mock_post(body)):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        chat_api_call(
+            "cohere",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="sk-test",
+            model="command-r-plus",
+            streaming=False,
+        )
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 12
+    assert snap.estimated_tokens == 0
+    assert snap.calls == 1
+
+
+def test_google_nonstreaming_records_exact_usage():
+    body = {
+        "candidates": [
+            {
+                "content": {"parts": [{"text": "hello"}], "role": "model"},
+                "finishReason": "STOP",
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 6,
+            "candidatesTokenCount": 4,
+            "totalTokenCount": 10,
+        },
+    }
+    with patch("requests.Session.post", return_value=_mock_post(body)):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        chat_api_call(
+            "google",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="test-key",
+            model="gemini-2.0-flash",
+            streaming=False,
+        )
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 10
+    assert snap.estimated_tokens == 0
+    assert snap.calls == 1
+
+
+def test_huggingface_nonstreaming_records_exact_usage():
+    body = {
+        "choices": [{"message": {"role": "assistant", "content": "hello"}}],
+        "usage": {"prompt_tokens": 9, "completion_tokens": 6, "total_tokens": 15},
+    }
+    with patch("requests.Session.post", return_value=_mock_post(body)):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        chat_api_call(
+            "huggingface",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="hf_test",
+            model="meta-llama/Llama-3.1-8B-Instruct",
+            streaming=False,
+        )
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 15
+    assert snap.estimated_tokens == 0
+    assert snap.calls == 1
+
+
+def test_moonshot_nonstreaming_records_exact_usage():
+    body = {
+        "id": "chatcmpl-moon-1",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "kimi-k2-instruct",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi back"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+    with patch("requests.Session.post", return_value=_mock_post(body)):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        chat_api_call(
+            "moonshot",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="sk-test",
+            model="kimi-k2-instruct",
+            streaming=False,
+        )
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 15
+    assert snap.estimated_tokens == 0
+    assert snap.calls == 1
+
+
+def test_zai_nonstreaming_records_exact_usage():
+    body = {
+        "id": "chatcmpl-zai-1",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "glm-4.6",
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi back"},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15},
+    }
+    with patch("requests.Session.post", return_value=_mock_post(body)):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        chat_api_call(
+            "zai",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="sk-test",
+            model="glm-4.6",
+            streaming=False,
+        )
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 15
+    assert snap.estimated_tokens == 0
+    assert snap.calls == 1
