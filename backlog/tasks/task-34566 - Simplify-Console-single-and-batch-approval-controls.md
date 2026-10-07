@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-06 06:41'
-updated_date: '2026-10-06 20:38'
+updated_date: '2026-10-07 03:51'
 labels: []
 dependencies:
   - TASK-34565
@@ -31,6 +31,7 @@ Make the common permission decision immediate and make batch decisions explicit 
 - [x] #3 Deny all remains usable for eligible mixed batches, and deliberate selection of a displayed Deny counts independently of its default value.
 - [ ] #4 Keyboard focus, Escape, resize, queued gestures and disclosures preserve the correct request without accidental approval or duplicate submission.
 - [x] #5 Batch broader choices stay under More options; ineligible bulk approval directs individual review while preserving Deny all and one complete staged Apply.
+- [x] #6 Affected rows visibly explain why independent exact-input choices are unavailable; geometry checks exercise the disclosed choices.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -58,6 +59,8 @@ Reason: Existing ADR-221/150/161/031 defines explicit approval interactions, tok
 Execution: consume the reviewed owner capture foundation while documented Windows dispatch and transport qualifications remain open; no scope/lifetime changes or speculative speed repair.
 
 Final review correction: implement batch scope disclosure with gesture-generation/focus protection and neutral Review individually route; cover actual batch gestures and scope/count preservation.
+
+PR3036 review remediation: reproduce the concrete source/CI findings, implement minimal display/correlation fixes, run targeted RED/GREEN and independent scoped review. ADR required: no new ADR; existing ADR221 and ADR220 govern observational ownership and consent. Preserve enforcement, lifetimes, stamps, originals and arbitration. No full sweep without opt-in.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -68,6 +71,8 @@ Implemented explicit single and counted bulk controls, deliberate raw review and
 Functional AC1–3 supported by reviewed captured-view/interaction and integration receipts. Invocation/native visual/full DoD qualifications remain open; status In Progress. Final qualification: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/README.md; ADR-221.
 
 Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-221.
+
+PR3036 remediation: captured withheld_scope_copy renders literally beneath affected choices under More options and refreshes/clears on reuse. Existing geometry regression now exercises both closed/disclosed states via real click with overlap, containment, token width28, hit-testing, focus and staged Escape assertions. Interaction28, geometry1, action ownership25, compact3 passed. Independent review found no remaining actionable issue. ADR-221/150/161. See Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native timing/full matrix and full DoD remain open; In Progress.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

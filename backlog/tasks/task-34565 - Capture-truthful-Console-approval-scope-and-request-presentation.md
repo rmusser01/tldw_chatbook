@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-06 06:41'
-updated_date: '2026-10-06 20:38'
+updated_date: '2026-10-07 03:51'
 labels: []
 dependencies:
   - TASK-34564
@@ -31,6 +31,8 @@ Give approval cards accurate action, target, authority and supported scope infor
 - [x] #3 More options describes Default inheritance and withholds remembered-input choices that repeated-tool stamp handling cannot honor.
 - [ ] #4 Presentation metadata remains ephemeral and cannot widen permissions, rewrite captured arguments or change provider stamp ownership.
 - [x] #5 Large grouped target previews stay bounded with explicit omissions, while complete captured redacted targets remain available through Details.
+- [x] #6 Complete URL/URI display values redact query credentials, preserving original matching inputs.
+- [x] #7 Direct MCP fallback approvals capture truthful profile/server ownership and retain supported scopes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -59,6 +61,8 @@ Reason: Existing ADR-221 with ADR-032/093 governs captured permission-owner scop
 Execution ordering: Task1 private control and recorder foundations passed independent review; unchanged transport baseline and final speed qualification remain open under the documented controller ruling.
 
 Final review correction: bound initial grouped target formatting; retain lossless captured targets/original arguments and explicit Details continuation; add mounted many-distinct-long-target regression.
+
+PR3036 review remediation: reproduce the concrete source/CI findings, implement minimal display/correlation fixes, run targeted RED/GREEN and independent scoped review. ADR required: no new ADR; existing ADR221 and ADR220 govern observational ownership and consent. Preserve enforcement, lifetimes, stamps, originals and arbitration. No full sweep without opt-in.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -77,6 +81,8 @@ Existing ADR-221 with ADR-032/093 applies. Source changes are approval_presentat
 Functional AC1–3 supported by reviewed captured-view/interaction and integration receipts. Invocation/native visual/full DoD qualifications remain open; status In Progress. Final qualification: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/README.md; ADR-221.
 
 Final bundled fix4542052fb5..9d8a1bd29a: batch broader scopes behind More options, neutral Review individually route, bounded complete-identifier preview with explicit omissions and complete captured target Details. Actual80x24 Console clipping reproduction repaired with existing batch-only4/2 viewport tokens and three-action toolbar. Interaction25/Details19/ownership25/compact1/journeys4/budget28/CSS5/token1/refinement1 passed. Independent scoped review all3 addressed, no new material issue; hashes verified. Evidence Docs/superpowers/qa/2026-10-05-console-approval-ux/task-6/final-review.md and final-fix/. Native/browser timing/fullmatrix, actual Windows dispatch and broader baseline failures remain open; In Progress, not Done. ADR-221.
+
+PR3036 remediation: shared recursive URL/URI query/userinfo redaction preserves original matching inputs and harmless spelling, handles malformed and whitespace-prefixed URIs. Direct MCP fallback now captures the exact gate profile/server owner. URL/capture/Details144, provider90, scope journeys14, trace26 targeted checks passed. Independent review found no remaining actionable issue after its whitespace finding was fixed with RED/GREEN. ADR-221/220; no new ADR. See Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native timing/Windows dispatch/full qualification remain open; In Progress.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

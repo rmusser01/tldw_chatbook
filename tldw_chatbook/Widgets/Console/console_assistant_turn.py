@@ -374,7 +374,7 @@ class ConsoleActivityDisclosure(Vertical):
         from tldw_chatbook.Chat.console_approval_feedback import format_approval_feedback
 
         feedback = (
-            format_approval_feedback(tool.approval_feedback)
+            format_approval_feedback(tool.approval_feedback, tool_status=tool.status)
             if tool is not None and tool.approval_feedback is not None
             else ""
         )

@@ -127,6 +127,7 @@ _VIEW_HOOK_OWNERSHIP = {
     "set_task_panel": "view-projection",
     "set_pending_question": "view-projection",
     "update_pending_approval_summary": "view-projection",
+    "approval_feedback_changed": "view-projection",
     "set_pending_skill_install": "runtime-projection-router",
     "set_pending_skill_script": "runtime-projection-router",
     # TASK-32873: a real SLOT (CONSOLE_VIEW_HOOK_SLOTS since the
@@ -665,6 +666,7 @@ def test_view_hook_inventory_contains_only_disposable_projections():
         "set_task_panel",
         "set_pending_question",
         "update_pending_approval_summary",
+        "approval_feedback_changed",
         "set_pending_skill_install",
         "set_pending_skill_script",
         "set_pending_worktree_merge",

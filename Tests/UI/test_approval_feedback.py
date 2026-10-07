@@ -136,3 +136,97 @@ async def test_full_grant_failure_remains_visible_on_collapsed_tool(size, theme)
         assert "Allowed this call; permission was not remembered" in " ".join(
             painted.split()
         )
+
+
+@pytest.mark.parametrize(
+    "status", ["success", "failed", "timed_out", "stopped", "blocked"]
+)
+def test_terminal_member_disclosure_does_not_retain_group_starting(status):
+    from tldw_chatbook.Chat.console_chat_models import ConsoleActivityPresentation
+    from tldw_chatbook.Chat.console_approval_feedback import ApprovalFeedback
+    from tldw_chatbook.Agents.approval_observation import ApprovalObservationIdentity
+    from tldw_chatbook.Widgets.Console.console_assistant_turn import (
+        ConsoleActivityDisclosure,
+    )
+
+    fact = ApprovalFeedback(
+        ApprovalObservationIdentity("s", "run", "r", 1, "group"),
+        decision_state="accepted",
+        selected_scope="approve_session",
+        grant_state="applied",
+        applied_scope="approve_session",
+        execution_state="dispatch_started",
+    )
+    presentation = ConsoleActivityPresentation(
+        "tool", "Read", status, call_id="member", approval_feedback=fact
+    )
+    disclosure = ConsoleActivityDisclosure(
+        "marker", "Read", status, tool_presentation=presentation
+    )
+    text = str(disclosure.feedback_notice.render())
+    assert "Starting" not in text and "Running" not in text
+    assert "Until Chatbook exits" in text
+
+
+def test_actual_group_projection_keeps_terminal_and_pending_members_distinct():
+    from tldw_chatbook.Agents.agent_models import AgentStep
+    from tldw_chatbook.Agents.approval_observation import ApprovalObservationIdentity
+    from tldw_chatbook.Chat.console_approval_feedback import ApprovalFeedback
+    from tldw_chatbook.Chat.console_chat_models import ConsoleActivityPresentation
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_tool_activity import ConsoleToolActivity
+    from tldw_chatbook.Widgets.Console.console_assistant_turn import (
+        ConsoleActivityDisclosure,
+    )
+    from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+    store = ConsoleChatStore()
+    session = store.ensure_session()
+    activity = ConsoleToolActivity(store, session.id)
+    for call_id in ("finished", "pending"):
+        activity.observe(
+            AgentStep(index=1, kind="tool_proposed", tool_name="read", call_id=call_id),
+            1,
+        )
+    fact = ApprovalFeedback(
+        ApprovalObservationIdentity(session.id, "run", "r", 1, "group"),
+        decision_state="accepted",
+        selected_scope="approve_session",
+        grant_state="applied",
+        applied_scope="approve_session",
+        execution_state="dispatch_started",
+        sequence=2,
+    )
+    activity.feedback((fact,), call_keys=lambda identity: ("finished", "pending"))
+    assert activity.complete(
+        AgentStep(
+            index=2,
+            kind="tool_result",
+            tool_name="read",
+            call_id="finished",
+            result="done",
+        ),
+        ConsoleActivityPresentation("tool", "read", "success"),
+        "done",
+        None,
+        record_trajectory=False,
+    )
+    transcript = ConsoleTranscript()
+    for message in store.messages_for_session(session.id):
+        presentation = message.activity_presentation
+        disclosure = ConsoleActivityDisclosure(
+            message.id,
+            presentation.label,
+            presentation.status,
+            tool_presentation=presentation,
+        )
+        collapsed = str(disclosure.feedback_notice.render())
+        expanded = str(
+            transcript._activity_components(message, ()).detail_widgets[0].render()
+        )
+        assert (
+            "Until Chatbook exits" in collapsed and "Until Chatbook exits" in expanded
+        )
+        for text in (collapsed, expanded):
+            assert ("Starting" in text) == (presentation.call_id == "pending")
+        assert presentation.approval_feedback == fact

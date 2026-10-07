@@ -1,0 +1,56 @@
+{
+  "files": [
+    "Docs/superpowers/qa/2026-10-05-console-approval-ux/private_control.py",
+    "Tests/Agents/test_mcp_tool_provider.py",
+    "Tests/Chat/test_approval_presentation.py",
+    "Tests/Chat/test_console_approval_feedback.py",
+    "Tests/Chat/test_console_approval_scope_journeys.py",
+    "Tests/MCP/test_redaction.py",
+    "Tests/UI/test_approval_batch_geometry.py",
+    "Tests/UI/test_approval_details.py",
+    "Tests/UI/test_approval_feedback.py",
+    "Tests/UI/test_approval_interaction.py",
+    "Tests/UI/test_console_runtime_ownership.py",
+    "tldw_chatbook/Agents/mcp_tool_provider.py",
+    "tldw_chatbook/Chat/console_approval_feedback.py",
+    "tldw_chatbook/MCP/redaction.py",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+    "tldw_chatbook/Widgets/Console/console_assistant_turn.py",
+    "tldw_chatbook/Widgets/Console/console_transcript.py"
+  ],
+  "current_findings": [
+    [
+      "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "E721",
+      "Do not compare types, use `isinstance()`"
+    ],
+    [
+      "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "E721",
+      "Do not compare types, use `isinstance()`"
+    ],
+    [
+      "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "E721",
+      "Do not compare types, use `isinstance()`"
+    ]
+  ],
+  "base_findings": [
+    [
+      "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "E721",
+      "Do not compare types, use `isinstance()`"
+    ],
+    [
+      "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "E721",
+      "Do not compare types, use `isinstance()`"
+    ],
+    [
+      "tldw_chatbook/Widgets/Console/console_transcript.py",
+      "E721",
+      "Do not compare types, use `isinstance()`"
+    ]
+  ],
+  "new_findings": []
+}

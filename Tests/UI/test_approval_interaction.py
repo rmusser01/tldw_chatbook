@@ -1,5 +1,7 @@
 """Approval choices never confuse a displayed default with deliberate review."""
 
+from html import unescape
+
 import pytest
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from tldw_chatbook.Chat.approval_presentation import (
@@ -240,7 +242,7 @@ class _PaintedCardHarness(_CardHarnessApp):
     CSS_PATH = list(APP_STYLESHEETS)
 
 
-def _owner_payload(*, count=1, warning=False, args=None):
+def _owner_payload(*, count=1, warning=False, args=None, stamp_domain="call"):
     from dataclasses import replace
     from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
     from tldw_chatbook.Chat.approval_presentation import profile_authority
@@ -264,7 +266,7 @@ def _owner_payload(*, count=1, warning=False, args=None):
             call_id=f"key-{index}",
             path_precheck_failed=warning,
             presentation_authority=profile_authority(
-                "mcp", "Writer", "Captured location", "call"
+                "mcp", "Writer", "Captured location", stamp_domain
             ),
         )
         for index in range(min(count, 2))
@@ -602,3 +604,112 @@ async def test_batch_disclosure_gesture_cannot_open_a_replacement_snapshot(actio
         assert not card._options_open
         assert all(not select.display for select in card.query(Select))
         assert not app.decided
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_repeated_tool_withheld_scope_is_explained_only_after_disclosure(size):
+    """Removing a legal choice must not silently hide its captured limitation."""
+    from textual.widgets import Static
+
+    payload = _owner_payload(count=2, stamp_domain="tool_name")
+    assert all(row.withheld_scope_copy for row in payload["view"].rows)
+    assert all(
+        "allow_matching" not in row.legal_decisions for row in payload["view"].rows
+    )
+    app = _PaintedCardHarness()
+    async with app.run_test(size=size) as pilot:
+        card = app.query_one(ChatApprovalCard)
+        _set_payload(card, payload)
+        await pilot.pause()
+        notes = list(card.query(".approval-row-withheld-scope"))
+        assert len(notes) == 2
+        assert all(not note.display for note in notes)
+        assert not app.decided
+
+        await pilot.click(card.query_one("#approval-more-options-batch", Button))
+        await pilot.pause()
+        for row, captured in zip(card.query(".approval-row"), payload["view"].rows):
+            note = row.query_one(".approval-row-withheld-scope", Static)
+            assert note.display
+            assert str(note.content) == captured.withheld_scope_copy
+            assert note.region.width > 0 and note.region.height > 0
+            assert row.region.contains_region(note.region)
+            note.scroll_visible(animate=False)
+            await pilot.pause()
+            _assert_painted(app, note)
+            assert card.query_one(
+                "#approval-batch-rows"
+            ).content_region.contains_region(note.region)
+            for action_id in (
+                "#approval-more-options-batch",
+                "#approval-submit",
+                "#approval-deny-all",
+            ):
+                action = card.query_one(action_id, Button)
+                _assert_painted(app, action)
+                assert action.region.width >= len(action.label.plain)
+            assert "Remember these inputs is unavailable" in unescape(
+                app.export_screenshot()
+            ).replace("\xa0", " ")
+        assert all(select.value == "approve_once" for select in card.query(Select))
+        assert not app.decided
+
+        # Ordinary re-sync preserves the disclosed limitation and staged scopes.
+        _set_payload(card, payload)
+        await pilot.pause()
+        assert card.has_class("approval-options-open")
+        assert all(note.display for note in notes)
+        await pilot.press("escape")
+        assert all(not note.display for note in notes)
+        assert not app.decided
+
+
+@pytest.mark.asyncio
+async def test_withheld_scope_copy_refreshes_in_reused_row_and_clears_when_unaffected():
+    """A reused row must neither lose captured copy nor keep a prior limitation."""
+    from dataclasses import replace
+    from textual.widgets import Static
+
+    original = _owner_payload()
+    limited = dict(original)
+    limited["view"] = replace(
+        original["view"],
+        rows=(
+            replace(
+                original["view"].rows[0],
+                legal_decisions=("approve_once", "approve_session", "deny"),
+                withheld_scope_copy="Captured limitation [literal]. Allow once remains available.",
+            ),
+        ),
+    )
+    app = _PaintedCardHarness()
+    async with app.run_test(size=(120, 40)) as pilot:
+        card = app.query_one(ChatApprovalCard)
+        _set_payload(card, original)
+        await pilot.pause()
+        row = card.query_one(".approval-row")
+        note = row.query_one(".approval-row-withheld-scope", Static)
+        assert not note.display and not str(note.content)
+
+        for round_id, payload in (
+            ("limited", limited),
+            ("limited-again", limited),
+            ("restored", original),
+        ):
+            _set_payload(card, payload, round_id=round_id)
+            await pilot.pause()
+            assert card.query_one(".approval-row") is row
+            assert row.query_one(".approval-row-withheld-scope", Static) is note
+            assert not note.display
+            await pilot.click(card.query_one(".approval-more-options", Button))
+            await pilot.pause()
+            expected = payload["view"].rows[0].withheld_scope_copy
+            assert note.display == bool(expected)
+            assert str(note.content) == expected
+            if expected:
+                _assert_painted(app, note)
+                assert "[literal]" in app.export_screenshot()
+            assert not app.decided
+            await pilot.press("escape")
+            assert not note.display

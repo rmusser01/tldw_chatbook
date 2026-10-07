@@ -980,8 +980,11 @@ def test_invoke_ask_callback_approve_once_executes_and_records_approved(running_
 
     assert result.ok is True
     assert len(captured["pending"]) == 1
+    from tldw_chatbook.Chat.approval_presentation import profile_authority
+
     assert captured["pending"][0] == MCPPendingCall(
         llm_name=tool_id,
+        presentation_authority=profile_authority("mcp", "default", "srv", "tool_name"),
         server_key="local:srv",
         tool_name="run",
         server_label="srv",

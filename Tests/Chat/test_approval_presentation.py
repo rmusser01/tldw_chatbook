@@ -278,3 +278,21 @@ def test_url_and_virtual_command_targets_are_complete_and_display_redacted():
     assert args["argv"][-1] in row.targets[0]
     assert "***" in row.targets[0]
     assert row.argument_sets == (args,)
+
+
+def test_captured_url_targets_redact_query_credentials_without_changing_inputs():
+    prefix = "https://example.test/" + "directory/" * 40
+    calls = [
+        pending(
+            key=str(index),
+            owner=authority(),
+            args={key: prefix + f"{index}.md?api_key=synthetic-{index}&page=2"},
+        )
+        for index, key in enumerate(("url", "uri", "destination"))
+    ]
+    rows = capture(*calls).rows
+    for index, (row, call) in enumerate(zip(rows, calls)):
+        expected = prefix + f"{index}.md?api_key=%2A%2A%2A&page=2"
+        assert row.targets == (expected,)
+        assert row.argument_sets == (call.arguments,)
+        assert f"synthetic-{index}" in next(iter(call.arguments.values()))

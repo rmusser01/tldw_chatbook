@@ -691,3 +691,37 @@ def test_captured_legacy_flag_is_required_for_synthesized_name_identity():
         ).call_key
         == "command"
     )
+
+
+@pytest.mark.parametrize("initial", ["failed", "not_applied"])
+def test_grouped_later_applied_fact_corrects_failure_without_regressing_success(
+    initial,
+):
+    from tldw_chatbook.Chat.console_approval_feedback import (
+        ApprovalFeedbackStore,
+        format_approval_feedback,
+    )
+    from tldw_chatbook.Agents.approval_observation import ApprovalObservation
+
+    view = captured()
+    store = ApprovalFeedbackStore()
+    store.bind_round(
+        replace(view, call_count=2, rows=(replace(view.rows[0], call_count=2),))
+    )
+    identity = store.context_for_call("run", "c")
+    store.publish(ApprovalObservation(identity, "settled", "accepted"))
+    assert store.publish(
+        ApprovalObservation(identity, "grant", initial, actual_scope="approve_session")
+    )
+    assert store.publish(
+        ApprovalObservation(
+            identity, "grant", "applied", actual_scope="approve_session"
+        )
+    )
+    assert not store.publish(
+        ApprovalObservation(identity, "grant", "failed", actual_scope="approve_session")
+    )
+    fact = store.snapshot("s", "run")[0]
+    assert fact.grant_state == "applied" and fact.applied_scope == "approve_session"
+    assert "Until Chatbook exits" in format_approval_feedback(fact)
+    assert "not remembered" not in format_approval_feedback(fact)

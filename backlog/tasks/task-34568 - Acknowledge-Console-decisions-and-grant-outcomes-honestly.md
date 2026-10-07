@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-06 06:42'
-updated_date: '2026-10-06 19:57'
+updated_date: '2026-10-07 03:49'
 labels: []
 dependencies:
   - TASK-34565
@@ -31,6 +31,8 @@ Show that an answer registered and distinguish it from grant application, final 
 - [x] #2 Controller receipt, host settlement, remembering outcomes and confirmed backend start derive from the matching authoritative owners.
 - [x] #3 Grant failures retain existing current-call execution behavior and explain that permission was not remembered without automatic re-prompting.
 - [x] #4 Stale or reordered observations affect only the owning chat and call, cannot overwrite newer states, and never authorize execution or enter durable capture.
+- [x] #5 Later owner-confirmed grouped grant success corrects prior failure copy without changing actual permission effects.
+- [x] #6 Completed individual tool rows cannot retain shared Starting feedback; grant facts remain visible.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,6 +63,8 @@ ADR path: backlog/decisions/221-console-approval-interaction-and-feedback.md
 Reason: Existing ADR221/067/195/210 governs optional noncontrolling observations and session-only feedback; no authority or persistence migration.
 
 Compatible observation clarification: publish_grant_application accepts optional actual_scope, supplied by the actual writer. This supports the required coalesced-grant scope evidence without inferring from the user selection; no authority/return contract changes.
+
+PR3036 review remediation: reproduce the concrete source/CI findings, implement minimal display/correlation fixes, run targeted RED/GREEN and independent scoped review. ADR required: no new ADR; existing ADR221 and ADR220 govern observational ownership and consent. Preserve enforcement, lifetimes, stamps, originals and arbitration. No full sweep without opt-in.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -73,6 +77,8 @@ Compatible display-only additions: publish_grant_application(actual_scope=...), 
 ADR221/067/195/210 applies. Evidence: Docs/superpowers/qa/2026-10-05-console-approval-ux/task-5/receipts.json. New ownership/store/UI checks:12/24/9 passed. Existing host29,activity12,raw revocation7,builtin74,MCP90,raw provider32,raw progress10,trace26,denial6,activity persistence157; CSS bundle5/token references1 and detachable hook checks pass. All46 local native-worker failing node IDs also fail with exact BASE owner source overlay; no native-worker success claim. Existing screen ratchet and pre-existing lint diagnostics remain documented. Native/browser frame timing, latency distributions, broader Inspect qualification and independent review remain open; retain In Progress and AC1 unchecked.
 
 Independent Task5 fix1 review at d28deef7b91d9ddfd9fa0b1c4c9aa60d9ce794b8 verified all five findings addressed: hook audit writes, exact call attribution, conservative grouped starts, virtual grant writers, completed child retirement. No new Critical/Important issue in the fix range. Owners34/feedback29/MCP90/trace26/host29/UI9 and marker2 receipts verified. Native dispatch and presented-frame qualification remain open. ADR-221; explicit legacy fallback metadata is observational only.
+
+PR3036 remediation: later actual grouped grant success corrects failure and later failures cannot regress an applied fact. Terminal collapsed and expanded notices retain grants without shared Starting while pending siblings preserve it. Reducer31, UIfeedback15, scope14, host12, toolactivity12 and hook inventory selection1 passed; independent review found no remaining actionable issue. Existing ADR221/220. Evidence: Docs/superpowers/qa/2026-10-05-console-approval-ux/pr3036-remediation/README.md. Native latency/full qualification remains open; In Progress.
 <!-- SECTION:NOTES:END -->
 
 ## Renumbering provenance

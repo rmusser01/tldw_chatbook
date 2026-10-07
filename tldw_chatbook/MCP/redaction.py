@@ -14,6 +14,7 @@ _SECRET_KEY_RE = re.compile(
     r"|authorization|bearer|credential)"
 )
 _INLINE_ARG_RE = re.compile(r"^(?P<key>[A-Za-z0-9_-]+)=(?P<value>.+)$")
+_URI_PREFIX_RE = re.compile(r"^[\x00-\x20]*(?:[A-Za-z][A-Za-z0-9+.-]*:|//)")
 
 #: A token that plausibly names a CLI flag rather than being a flag-shaped
 #: secret. Used to tell `--api-key --verbose` (flag never given a value) from
@@ -39,11 +40,10 @@ def _is_plausible_flag(text: str) -> bool:
     if match is None:
         return False
     limit = (
-        _MAX_LONG_FLAG_NAME
-        if match.group("dashes") == "--"
-        else _MAX_SHORT_FLAG_NAME
+        _MAX_LONG_FLAG_NAME if match.group("dashes") == "--" else _MAX_SHORT_FLAG_NAME
     )
     return len(match.group("name")) <= limit
+
 
 #: Values that are secrets whatever key they arrive under. Key-name matching
 #: alone let `{"note": "sk-live-..."}` through to the approval card.
@@ -106,7 +106,7 @@ def looks_like_secret_value(value: Any) -> bool:
 
 
 def _redact_value(value: Any) -> Any:
-    """Redact a scalar when its shape betrays it; otherwise return it as-is."""
+    """Redact scalar credential shapes and URI credentials for display only."""
     if isinstance(value, (bytes, bytearray)):
         # Decoded only to test the shape; the original is never returned once
         # it matches, and undecodable bytes are left alone.
@@ -115,7 +115,11 @@ def _redact_value(value: Any) -> Any:
         except (UnicodeDecodeError, AttributeError):
             return value
         return REDACTED if looks_like_secret_value(probe) else value
-    return REDACTED if looks_like_secret_value(value) else value
+    if looks_like_secret_value(value):
+        return REDACTED
+    if isinstance(value, str) and _URI_PREFIX_RE.match(value):
+        return redact_url(value)
+    return value
 
 
 def _is_present(value: Any) -> bool:
@@ -218,22 +222,27 @@ def redact_url(url: str) -> str:
     Query values are judged by name AND by shape, so a secret under an
     innocuous parameter name does not survive (TASK-26011 review, I6).
     """
-    parts = urlsplit(str(url))
+    try:
+        parts = urlsplit(str(url))
+    except ValueError:
+        return REDACTED
     if not parts.query and "@" not in parts.netloc:
         return str(url)
+    original_query = parse_qsl(parts.query, keep_blank_values=True)
     query = [
         (
             key,
-            REDACTED
-            if is_secret_key(key) or looks_like_secret_value(value)
-            else value,
+            REDACTED if is_secret_key(key) or looks_like_secret_value(value) else value,
         )
-        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        for key, value in original_query
     ]
+    netloc = _redact_netloc(parts.netloc)
+    if query == original_query and netloc == parts.netloc:
+        return str(url)
     return urlunsplit(
         (
             parts.scheme,
-            _redact_netloc(parts.netloc),
+            netloc,
             parts.path,
             urlencode(query),
             parts.fragment,

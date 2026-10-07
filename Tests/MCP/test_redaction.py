@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -126,3 +128,57 @@ def test_redact_args_reevaluates_flag_after_consecutive_secret_flags():
     result = redact_args(args)
     assert result == ["--api-key", "--token", REDACTED]
     assert "sk-456" not in result
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.test/long/path?api_key=synthetic-credential&page=2",
+        "postgres://database.test/catalog?password=synthetic-credential&page=2",
+        "file:/folder/document?token=synthetic-credential&page=2",
+        "//example.test/document?api_key=synthetic-credential&page=2",
+        " \t\nhttps://example.test/document?api_key=synthetic-credential&page=2",
+        "\x00 //example.test/document?api_key=synthetic-credential&page=2",
+    ],
+)
+def test_mapping_recursively_redacts_url_query_credentials_without_mutation(url):
+    data = {"url": url, "nested": {"items": [url, ({"uri": url},)]}}
+    redacted = redact_mapping(data)
+    values = (
+        redacted["url"],
+        redacted["nested"]["items"][0],
+        redacted["nested"]["items"][1][0]["uri"],
+    )
+    assert all("synthetic-credential" not in value for value in values)
+    assert all("page=2" in value for value in values)
+    assert all("%2A%2A%2A" in value for value in values)
+    assert data == {"url": url, "nested": {"items": [url, ({"uri": url},)]}}
+    assert isinstance(redacted["nested"]["items"][1], tuple)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example.test/docs?q=one%20two&path=%2fnotes&flag#section",
+        "file:/folder/document?section=one%20two",
+        " \t\nhttps://example.test/docs?q=one%20two&flag#section",
+        "C:/folder/document.txt",
+        "/repo/long-path/document.txt?draft=one%20two",
+        "See https://example.test/docs?q=one%20two for details.",
+    ],
+)
+def test_display_redaction_preserves_nonsecret_urls_paths_and_prose(value):
+    assert redact_mapping({"value": value}) == {"value": value}
+    assert redact_url(value) == value
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://[invalid/document?api_key=synthetic-credential",
+        "https://exa\uff0fmple.test/document?api_key=synthetic-credential",
+    ],
+)
+def test_malformed_url_is_safe_to_display_without_query_credentials(url):
+    assert redact_url(url) == REDACTED
+    assert redact_mapping({"uri": url}) == {"uri": REDACTED}

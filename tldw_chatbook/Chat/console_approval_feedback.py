@@ -126,7 +126,15 @@ class ApprovalFeedbackStore:
                 "received",
             }:
                 fields["decision_state"] = observation.outcome
-            elif observation.kind == "grant" and fact.grant_state == "unknown":
+            elif observation.kind == "grant" and (
+                fact.grant_state == "unknown"
+                or (
+                    observation.outcome == "applied"
+                    and fact.grant_state in {"failed", "not_applied"}
+                )
+            ):
+                # A later actual writer can succeed after a prior remembering failure.
+                # Failed repeat writes do not undo an already observed applied grant.
                 # Repeated writers cannot prove several distinct exact-input rules.
                 if (
                     self._counts[identity] > 1
@@ -189,7 +197,9 @@ class ApprovalFeedbackStore:
             }
 
 
-def format_approval_feedback(feedback: ApprovalFeedback) -> str:
+def format_approval_feedback(
+    feedback: ApprovalFeedback, *, tool_status: str = ""
+) -> str:
     """Describe observed facts; an accepted choice is not proof a tool ran."""
     if feedback.decision_state in {"timeout", "cancelled", "revoked"}:
         return {
@@ -211,6 +221,16 @@ def format_approval_feedback(feedback: ApprovalFeedback) -> str:
             "timeout": "Tool timed out",
             "cancelled": "Tool stopped",
         }.get(feedback.terminal_outcome, "Tool finished; outcome unknown")
+    if tool_status and tool_status not in {
+        "queued",
+        "awaiting_approval",
+        "starting",
+        "running",
+        "live",
+    }:
+        # Shared group facts cannot establish every member's execution stage.
+        # The individual terminal header already supplies its actual outcome.
+        execution = ""
     permitted = (
         feedback.terminal_outcome == "success" or feedback.confirmed_backend_start
     )

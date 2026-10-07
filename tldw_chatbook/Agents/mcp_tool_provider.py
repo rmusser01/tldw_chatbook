@@ -1276,8 +1276,9 @@ class MCPToolProvider:
             # ACTIVE workspace profile, so a named-profile "ask" beats a
             # default-profile "allow" here too (an approval round, never a
             # silent execution).
+            captured_profile_kwargs = self._profile_kwargs()
             state = self._persona_floor(
-                self._service.gate_tool_test(tool, **self._profile_kwargs()), tool
+                self._service.gate_tool_test(tool, **captured_profile_kwargs), tool
             )
         except Exception as exc:  # noqa: BLE001 -- invoke() must never raise
             return ToolResult(
@@ -1321,8 +1322,16 @@ class MCPToolProvider:
             self._record_decision_safe(tool, decision=POLICY_DENIED_DECISION)
             return ToolResult.blocked(DENY_REFUSAL)
 
+        from tldw_chatbook.Chat.approval_presentation import profile_authority
+
         pending = MCPPendingCall(
             llm_name=tool_id,
+            presentation_authority=profile_authority(
+                "mcp",
+                captured_profile_kwargs.get("profile_id", "default"),
+                tool.server_label,
+                "tool_name",
+            ),
             server_key=tool.server_key,
             tool_name=tool.name,
             server_label=tool.server_label,

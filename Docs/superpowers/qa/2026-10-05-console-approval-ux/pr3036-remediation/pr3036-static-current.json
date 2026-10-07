@@ -1,0 +1,53 @@
+[
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 35,
+      "row": 4683
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-approval-pr\\tldw_tui\\tldw_chatbook\\Widgets\\Console\\console_transcript.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 4683
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 4683,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 35,
+      "row": 4695
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-approval-pr\\tldw_tui\\tldw_chatbook\\Widgets\\Console\\console_transcript.py",
+    "fix": null,
+    "location": {
+      "column": 17,
+      "row": 4695
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 4695,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  },
+  {
+    "cell": null,
+    "code": "E721",
+    "end_location": {
+      "column": 49,
+      "row": 7083
+    },
+    "filename": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-approval-pr\\tldw_tui\\tldw_chatbook\\Widgets\\Console\\console_transcript.py",
+    "fix": null,
+    "location": {
+      "column": 28,
+      "row": 7083
+    },
+    "message": "Do not compare types, use `isinstance()`",
+    "noqa_row": 7083,
+    "url": "https://docs.astral.sh/ruff/rules/type-comparison"
+  }
+]

@@ -479,3 +479,56 @@ async def test_mounted_grouped_targets_have_bounded_preview_and_complete_details
         assert all(target in reconstructed for target in targets)
         assert "synthetic-secret" not in reconstructed and "***" in reconstructed
         assert not app.decided
+
+
+def test_complete_details_pages_redact_captured_nested_urls_and_preserve_originals():
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+    from tldw_chatbook.Chat.approval_presentation import (
+        capture_approval_view,
+        profile_authority,
+    )
+
+    prefix = "https://example.test/" + "directory/" * 40
+    url = prefix + "last.md?api_key=synthetic-url-credential&page=2"
+    uri = "postgres://database.test/catalog?password=synthetic-uri-credential&page=3"
+    arguments = {
+        "url": url,
+        "content": "body" * 3000,
+        "nested": {"items": [uri, {"destination": url}]},
+    }
+    call = MCPPendingCall(
+        llm_name="external_fetch",
+        tool_name="fetch",
+        server_key="external:example",
+        server_label="Example",
+        arguments=arguments,
+        reason="ask",
+        call_id="url-call",
+        options=("approve_once", "deny"),
+        presentation_authority=profile_authority(
+            "mcp", "default", "Example", "tool_name"
+        ),
+    )
+    row = capture_approval_view(
+        [call], round_id="url-round", session_id="s", run_id="run", revision=1
+    ).rows[0]
+    pages = list(details.iter_redacted_details(row.argument_sets, targets=row.targets))
+    assert len(pages) > 3
+    assert all(len(page.text) <= 4096 for page in pages)
+    assert all(page.has_more for page in pages[:-1])
+    assert not pages[-1].has_more
+    text = "".join(page.text for page in pages)
+    assert "synthetic-url-credential" not in text
+    assert "synthetic-uri-credential" not in text
+    records = json.loads(text)
+    safe_url = prefix + "last.md?api_key=%2A%2A%2A&page=2"
+    assert records[0]["captured_targets"] == [safe_url]
+    assert records[1]["url"] == safe_url
+    assert records[1]["nested"]["items"] == [
+        "postgres://database.test/catalog?password=%2A%2A%2A&page=3",
+        {"destination": safe_url},
+    ]
+    assert records[1]["content"] == arguments["content"]
+    assert call.arguments["url"] == row.argument_sets[0]["url"] == url
+    assert row.argument_sets[0]["nested"] == arguments["nested"]
+    assert arguments["nested"]["items"][0] == uri

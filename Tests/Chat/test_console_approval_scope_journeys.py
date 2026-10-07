@@ -259,3 +259,92 @@ def test_raw_chat_grant_reaches_runtime_then_disarm_refuses_later_call(tmp_path)
     with use_run_id("later"), use_tool_call_id("later"):
         result = provider.invoke("shell_exec", call.args)
     assert not result.ok and result.outcome == "blocked"
+
+
+@pytest.mark.parametrize("profile", ["default", "Writer"])
+@pytest.mark.parametrize("hook_policy", [False, True])
+def test_direct_mcp_fallback_captures_owner_and_preserves_temporary_scope(
+    tmp_path, running_loop, monkeypatch, profile, hook_policy
+):
+    import contextlib
+    import threading
+    import time
+    import tldw_chatbook.Agents.mcp_tool_provider as module
+    from tldw_chatbook.Chat.approval_presentation import capture_approval_view
+
+    controller, session, provider, service, transport = owner_journey(
+        tmp_path, running_loop, profile=profile
+    )
+    tool_id = provider.list_catalog()[0].id
+    seen = []
+
+    def approve(pending):
+        view = capture_approval_view(
+            pending,
+            round_id="fallback",
+            session_id=session.id,
+            run_id="direct",
+            revision=1,
+        )
+        seen.append(view)
+        row = view.rows[0]
+        assert row.authority.profile_id == profile
+        assert row.authority.location_label != "Unknown location"
+        assert "approve_session" in row.legal_decisions
+        assert "allow_matching" in row.legal_decisions
+        assert "always_allow" in row.legal_decisions
+        return {row.verdict_key: "approve_session"}
+
+    provider._approval_callback = approve
+    if hook_policy:
+        policy = module.MCPInvocationPolicy(
+            current=lambda: True,
+            deadline=time.monotonic() + 30,
+            cancel_event=threading.Event(),
+            allow_approval=True,
+            wait_scope=lambda kind: contextlib.nullcontext(),
+        )
+        monkeypatch.setattr(
+            module, "current_mcp_invocation_policies", lambda: (policy,)
+        )
+        monkeypatch.setattr(provider, "_check_current_definition", lambda tool: None)
+    with use_run_id("direct"), use_tool_call_id("direct-call"):
+        result = provider.invoke(tool_id, {"query": "original"})
+    assert result.ok and len(seen) == 1
+    hub = provider._entry_by_llm_name[tool_id][0]
+    assert service.is_session_approved(hub.server_key, hub.name, profile_id=profile)
+    assert len(transport.execute_calls) == 1
+
+
+def test_grouped_real_grant_success_corrects_an_earlier_failed_writer(
+    tmp_path, running_loop, monkeypatch
+):
+    controller, session, provider, service, transport = owner_journey(
+        tmp_path, running_loop, profile="Writer"
+    )
+    tool_id = provider.list_catalog()[0].id
+    pending = [
+        provider.pending_gate_for(tool_id, {"query": value})
+        for value in ("first", "second")
+    ]
+    answers = answer_round(controller, session, pending, {tool_id: "approve_session"})
+    provider.apply_batch_decisions("journey", answers)
+    actual_writer = service.approve_for_session
+    attempts = []
+
+    def fail_once(*args, **kwargs):
+        attempts.append(True)
+        if len(attempts) == 1:
+            raise OSError("synthetic remembering failure")
+        return actual_writer(*args, **kwargs)
+
+    monkeypatch.setattr(service, "approve_for_session", fail_once)
+    for index, row in enumerate(pending):
+        with use_run_id("journey"), use_tool_call_id(f"member-{index}"):
+            assert provider.invoke(tool_id, row.arguments).ok
+    hub = provider._entry_by_llm_name[tool_id][0]
+    assert service.is_session_approved(hub.server_key, hub.name, profile_id="Writer")
+    assert len(attempts) == 2 and len(transport.execute_calls) == 2
+    fact = controller.approval_feedback.snapshot(session.id, "journey")[0]
+    assert fact.grant_state == "applied" and fact.applied_scope == "approve_session"
+    assert "not remembered" not in format_approval_feedback(fact)

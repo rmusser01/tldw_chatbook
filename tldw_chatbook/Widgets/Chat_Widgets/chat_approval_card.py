@@ -1525,6 +1525,14 @@ class ChatApprovalCard(Container):
                 classes="approval-row-scope",
             )
             scope_statics.append(scope_static)
+            withheld_scope = Static(
+                captured[names[-1]].withheld_scope_copy
+                if names[-1] in captured
+                else "",
+                markup=False,
+                classes="approval-row-withheld-scope w-fill h-auto",
+            )
+            withheld_scope.display = False
             scope_children = (scope_static,)
             rows.append(
                 Vertical(
@@ -1537,6 +1545,7 @@ class ChatApprovalCard(Container):
                         *control_children,
                         classes="approval-row-controls",
                     ),
+                    withheld_scope,
                     Collapsible(
                         reason_input,
                         title="Reason if denied (optional)",
@@ -1658,6 +1667,7 @@ class ChatApprovalCard(Container):
             # task-32278: always present on a row this method built, so a
             # row without one is a shape it does not own -- rebuild instead.
             scope_static = row.query_one(".approval-row-scope", Static)
+            withheld_scope = row.query_one(".approval-row-withheld-scope", Static)
         except NoMatches:
             return False
         controls = [
@@ -1718,6 +1728,10 @@ class ChatApprovalCard(Container):
             if self._batch_view
             else DECISION_SCOPE_COPY.get(str(select.value), "")
         )
+        withheld_scope.update(
+            self._batch_view.rows[0].withheld_scope_copy if self._batch_view else ""
+        )
+        withheld_scope.display = False
         if context_widgets:
             context_widgets[0].update(
                 f"[dim italic]{CONTEXT_LABEL} {escape(context)}[/dim italic]"
@@ -1927,6 +1941,8 @@ class ChatApprovalCard(Container):
         self.set_class(opened, "approval-options-open")
         for select in self._batch_selects:
             select.display = opened
+        for withheld_scope in self.query(".approval-row-withheld-scope"):
+            withheld_scope.display = opened and bool(withheld_scope.content)
         self.query_one("#approval-submit").display = opened
         if not self.has_class("approval-single"):
             self.query_one("#approval-approve-all").display = not opened
