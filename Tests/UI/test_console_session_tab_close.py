@@ -678,36 +678,30 @@ async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
 
 @contextmanager
 def _pending_close_app(request, kind, *, surviving_child=False):
-    """Give only prepared new-chat cases a real, explicitly owned database."""
-    from tempfile import TemporaryDirectory
+    """Keep prepared databases alive until their captured Console owner retires."""
+    from tempfile import mkdtemp
 
     app = _ready_app()
     if kind != "chat_create":
         yield app
         return
-    with TemporaryDirectory(
-        prefix="prepared-close-", dir=request.getfixturevalue("tmp_path")
-    ) as directory:
-        db = CharactersRAGDB(
-            Path(directory) / "chats.sqlite", client_id="prepared-close"
-        )
-        register_database = request.getfixturevalue("owned_console_apps")
-        register_database(app.console_runtime, db)
-        app.chachanotes_db = db
-        app.local_chat_conversation_service = ChatConversationService(db)
-        runs = None
-        if surviving_child:
-            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    # The private pytest profile owns this directory. owned_console_apps drains
+    # its exact runtime before closing the registered databases at test teardown.
+    directory = Path(
+        mkdtemp(prefix="prepared-close-", dir=request.getfixturevalue("tmp_path"))
+    )
+    db = CharactersRAGDB(directory / "chats.sqlite", client_id="prepared-close")
+    register_database = request.getfixturevalue("owned_console_apps")
+    register_database(app.console_runtime, db)
+    app.chachanotes_db = db
+    app.local_chat_conversation_service = ChatConversationService(db)
+    if surviving_child:
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-            runs = AgentRunsDB(Path(directory) / "runs.sqlite")
-            register_database(app.console_runtime, runs)
-            app._pending_close_runs = runs
-        try:
-            yield app
-        finally:
-            if runs is not None:
-                runs.close()
-            db.close_connection()
+        runs = AgentRunsDB(directory / "runs.sqlite")
+        register_database(app.console_runtime, runs)
+        app._pending_close_runs = runs
+    yield app
 
 
 def _prepare_surviving_child(controller, session_id):
@@ -1404,7 +1398,7 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                 await _show_tabs(console, pilot, {keeper, doomed.id})
                 bridge = controller._agent_bridge
                 assert bridge is not None
-                close_progress = bridge.close_progress
+                close_progress = bridge.begin_close_progress
                 abort_fence = bridge.abort_fleet_fence
                 calls = []
 
@@ -1420,7 +1414,7 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         raise RuntimeError("progress cleanup unavailable")
                     return close_progress(session_id, conversation_id=conversation_id)
 
-                patch.setattr(bridge, "close_progress", fail_once)
+                patch.setattr(bridge, "begin_close_progress", fail_once)
                 if rollback_refused:
                     patch.setattr(
                         bridge, "abort_fleet_fence", lambda *_args, **_kwargs: False
@@ -1461,7 +1455,8 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                             ),
                         ), "provisional close failure dropped surviving-child usage"
                         assert bridge._fleet_fence_generations == {
-                            conversation_id: generation
+                            doomed.id: generation,
+                            conversation_id: generation,
                         }
                         assert controller._failed_session_close_generations == {
                             doomed.id: generation
@@ -1503,7 +1498,8 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         assert controller._session_close_generation == generation
                         assert calls == [doomed.id]
                         assert bridge._fleet_fence_generations == {
-                            conversation_id: generation
+                            doomed.id: generation,
+                            conversation_id: generation,
                         }
                         assert controller._failed_session_close_generations == {
                             doomed.id: generation
@@ -1531,8 +1527,11 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         )
                         await _await_tabs(console, pilot, {keeper})
                         assert calls == [doomed.id, doomed.id]
-                        assert not bridge._fleet_fence_generations
-                        assert not controller._fleet_wake._conversation_fences
+                        generation = controller._session_close_generations[doomed.id]
+                        assert bridge._fleet_fence_generations == {doomed.id: generation}
+                        assert controller._fleet_wake._conversation_fences == {
+                            doomed.id: generation
+                        }
                         assert not controller._session_close_states
 
                         # Low-level recreation can reuse the native ID, but it
@@ -1616,8 +1615,10 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         assert reopened.id in (
                             console._console_runtime()._admission_fenced_sessions
                         )
-                        assert not bridge._fleet_fence_generations
-                        assert not controller._fleet_wake._conversation_fences
+                        assert bridge._fleet_fence_generations == {doomed.id: generation}
+                        assert controller._fleet_wake._conversation_fences == {
+                            doomed.id: generation
+                        }
                         assert calls == [doomed.id, doomed.id]
                         assert reopened.id in _session_ids(store)
                         assert (
@@ -1628,9 +1629,10 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                     if isinstance(host.screen, ConfirmationDialog):
                         host.screen.dismiss(False)
                     patch.setattr(bridge, "abort_fleet_fence", abort_fence)
-                    generation = bridge._fleet_fence_generations.get(conversation_id)
-                    if generation is not None:
-                        abort_fence(conversation_id, generation=generation)
+                    for fenced_id in (doomed.id, conversation_id):
+                        generation = bridge._fleet_fence_generations.get(fenced_id)
+                        if generation is not None:
+                            abort_fence(fenced_id, generation=generation)
 
 
 @pytest.mark.asyncio

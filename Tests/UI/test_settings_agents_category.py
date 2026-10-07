@@ -453,6 +453,22 @@ async def test_preset_actions_render_with_production_css(runs_db, size):
             instructions.scroll_offset,
         )
 
+        fallback = panel.query_one("#agents-fallback-models-area")
+        fallback.text = "openai/alternate"
+        fallback.focus()
+        fallback.scroll_visible(animate=False)
+        await pilot.wait_for_scheduled_animations()
+        await pilot.pause()
+        assert fallback.content_region.height > 0
+        assert fallback.region.right <= size[0]
+        fallback_painted = " ".join(
+            _painted_text(pilot.app.export_screenshot(simplify=True)).split()
+        )
+        assert "openai/alternate" in fallback_painted, (
+            fallback.region,
+            fallback.content_region,
+        )
+
         focused_values = (
             ("#agents-name-input", "bulk-reader", "bulk-reader", BULK_READER_NAME),
             (

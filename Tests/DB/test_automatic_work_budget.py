@@ -47,7 +47,14 @@ def test_automatic_work_indexes_serve_real_queries_without_statistics(db):
         conversation = f"conversation-{number}"
         chain_id = chain(db, conversation=conversation, submission=conversation)
         run_id = survivor(db, chain_id, conversation=conversation)
-        claim(db, chain_id, [run_id], attempt=f"attempt-{number}")
+        db.automatic_work.claim_wake(
+            chain_id,
+            attempt_id=f"attempt-{number}",
+            owner_id="owner",
+            session_id="session",
+            run_ids=(run_id,),
+            progress_messages=((f"message-{number}", run_id),),
+        )
     statements = []
     with db.connection() as conn:
         assert (
@@ -55,6 +62,12 @@ def test_automatic_work_indexes_serve_real_queries_without_statistics(db):
                 "SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'"
             ).fetchone()
             is None
+        )
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM automatic_progress_wake_claims"
+            ).fetchone()[0]
+            == 32
         )
         conn.set_trace_callback(statements.append)
         try:
@@ -76,6 +89,10 @@ def test_automatic_work_indexes_serve_real_queries_without_statistics(db):
             (
                 "DELETE FROM automatic_wake_claims WHERE attempt_id=",
                 "idx_automatic_claims_attempt",
+            ),
+            (
+                "DELETE FROM automatic_progress_wake_claims WHERE attempt_id=",
+                "idx_automatic_progress_claims_attempt",
             ),
         ):
             query = next(sql for sql in statements if sql.startswith(fragment))

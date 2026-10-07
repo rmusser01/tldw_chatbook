@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import runpy
 import sqlite3
 from pathlib import Path
@@ -373,5 +374,53 @@ async def test_failed_disposal_preserves_its_resources_but_retires_other_owners(
         assert isinstance(caught.value.exceptions[0], ValueError)
         assert ("settled", "lock") in events
         assert {kind for name, kind in events if name == "undrained"} == {"dispose"}
+    finally:
+        await fixture.aclose()
+
+
+@pytest.mark.asyncio
+async def test_prepared_close_profile_outlives_its_pending_owner_write(
+    tmp_path, monkeypatch
+) -> None:
+    """A delayed real DB write finishes before captured owner retirement."""
+    from Tests.UI import test_console_session_tab_close as close_tests
+    from Tests.UI.console_fixture_ownership import owned_console_apps
+
+    fixture = owned_console_apps.__wrapped__(
+        SimpleNamespace(module=close_tests), monkeypatch
+    )
+    register = await anext(fixture)
+    request = SimpleNamespace(
+        getfixturevalue={
+            "tmp_path": tmp_path,
+            "owned_console_apps": register,
+        }.__getitem__
+    )
+    try:
+        with close_tests._pending_close_app(
+            request, "chat_create", surviving_child=True
+        ) as app:
+            db, runs = app.chachanotes_db, app._pending_close_runs
+            app.console_runtime.ensure_chat_store()
+            handles = (db.get_connection(), runs._held_connection())
+
+        def delayed_write():
+            try:
+                conversation = db.add_conversation({"title": "pending owner write"})
+                run = runs.create_run(
+                    conversation_id=conversation, agent_kind="primary"
+                )
+                return conversation, run
+            finally:
+                runs.close()
+                db.close_connection()
+
+        conversation, run = await asyncio.to_thread(delayed_write)
+        assert db.get_conversation_by_id(conversation)["title"] == "pending owner write"
+        assert runs.get_run(run)["conversation_id"] == conversation
+        await fixture.aclose()
+        for handle in handles:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                handle.execute("SELECT 1")
     finally:
         await fixture.aclose()

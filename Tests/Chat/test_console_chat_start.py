@@ -3906,3 +3906,79 @@ async def test_initial_identity_failure_precedes_native_start_authority(
         await controller.shutdown()
         runs.close()
         store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["draft", "start"])
+async def test_created_chat_progress_writer_wait_keeps_native_loop_responsive(
+    creation_controller, monkeypatch, mode
+):
+    import asyncio
+    import threading
+
+    from tldw_chatbook.Agents.fleet_messages import MessageStore
+
+    controller, source, _ = creation_controller
+    store = controller.store
+    messages = MessageStore()
+    store.register_progress_message_store(messages)
+    loop = asyncio.get_running_loop()
+    main_thread = threading.get_ident()
+    entered = threading.Event()
+    restored = []
+    restore = store.restore_persisted_session
+    wait = messages.wait_for_writer
+
+    def restore_on_loop(**kwargs):
+        assert threading.get_ident() == main_thread
+        assert kwargs["prepare_progress"] is False
+        target = restore(**kwargs)
+        restored.append(target)
+        return target
+
+    def wait_outside_loop():
+        assert threading.get_ident() != main_thread
+        entered.set()
+        wait()
+
+    def marshal(callback, *args, **kwargs):
+        async def invoke():
+            return callback(*args, **kwargs)
+
+        return asyncio.run_coroutine_threadsafe(invoke(), loop).result()
+
+    monkeypatch.setattr(store, "restore_persisted_session", restore_on_loop)
+    monkeypatch.setattr(messages, "wait_for_writer", wait_outside_loop)
+    monkeypatch.setattr(controller.app, "call_from_thread", marshal)
+    started = []
+
+    def start(approved, target):
+        assert restored == [target]
+        assert messages.get_inbox(target._progress_owner_id) is not None
+        started.append(target)
+        return {"launch_status": "started", "reason": None}
+
+    monkeypatch.setattr(controller, "_start_created_chat", start)
+    prepared = _prepared_creation(controller, source, destination="casual", mode=mode)
+    controller._chat_create_session_grants[source.id] = {prepared["_grant_scope"]}
+    assert controller.request_chat_create_confirm(prepared, session_id=source.id)[
+        "allow"
+    ]
+    messages._lock.acquire()
+    worker = asyncio.create_task(
+        asyncio.to_thread(controller.execute_agent_chat_create, prepared)
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        assert len(restored) == 1
+        assert store.active_session_id == source.id
+        assert restored[0].draft == "opening"
+        assert not worker.done()
+    finally:
+        messages._lock.release()
+    result = await asyncio.wait_for(worker, 5)
+    assert result["ok"] and not result.get("reason"), result
+    assert result["launch_status"] == ("started" if mode == "start" else "draft")
+    assert started == (restored if mode == "start" else [])
+    assert store._sessions[restored[0].id] is restored[0]
+    messages.close()

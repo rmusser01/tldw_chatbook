@@ -3700,6 +3700,95 @@ reads. Reusing operation-owned connection retirement fixed the actual workers;
 closing only the main-thread database or collecting Python objects did not.
 The final 105-case run passed without resource warnings or raised FD thresholds.
 
+## A worker cannot keep UI polling responsive when both share its writer lock (TASK-33431, 2026-09-29)
+
+**Incident.** Independent durable-progress review found that clicking Discard
+called SQLite on the UI thread. A mounted test held `BEGIN IMMEDIATE` from a
+separate real connection; the click prevented the heartbeat from running until
+the writer released its 1.2-second hold. Moving SQL into a thread alone would
+still leave the modal timer and navigation counts waiting on the global queue
+lock that protects the transaction. The repair publishes bounded immutable
+observations after commits and leaves every mutation and capability check under
+the authoritative lock. Both open-view and close-during-write cases passed with
+heartbeat/count reads observed while SQLite was still blocked, followed by
+exact selected-ID removal and retention of the other report.
+
+**Practice.** For an off-thread persistence fix, exercise the actual contention
+with another SQLite writer and measure every UI polling path during the wait.
+A launched worker or a responsive click before it enters SQL does not prove the
+UI remains responsive. Read-only observations may show the last committed
+state; they must never become mutation, permission or budget authority.
+
+
+**Native lifecycle follow-up (TASK-33431).** The first repair kept the open
+modal responsive, but a second mounted probe found actual native chat close,
+runtime disposal, and native bridge registration still waited synchronously
+on the same writer lock. Registration also held native identity while waiting,
+so putting that caller in a worker still blocked UI metadata reads. A final
+review probe found replacement registration held the bridge initialization lock
+while draining SQL; disposal still waited on that lock. Seventeen mounted contention
+modes now cover open/closed views, native close, disposal, caller cancellation,
+runtime replacement, real native rebinding, disposal during registration,
+first-fleet and sender binding, live-child cancellation, saved hydration and
+rollback. Immediate
+exact-generation revocation precedes runtime-owned physical cleanup; replacement
+drains outside native identity before loading committed rows. The important
+check is every lifecycle caller of the shared writer lock, including the locks
+it holds while waiting, not just the original button handler.
+
+Whole-store revocation must avoid initialization locks held through physical
+drains as well as queue and identity locks. The final regression waits until
+actual replacement registration has entered that boundary, disposes immediately,
+and proves heartbeat/count/identity reads run before SQLite releases. Delayed
+positive store access must then refuse rather than publish a reopened store.
+
+
+The lock audit also found first-fleet creation and live sender cancellation
+waiting on another chat's SQL while retaining native identity or coordinator
+ownership. Saved hydration still called synchronous preparation on the UI loop,
+and its rollback released the inbox under identity. The mounted matrix now
+holds the actual writer across these entry points and requires heartbeat,
+counts, identity reads and fleet fences before release. Preparation waits
+outside lifecycle locks; binding retries exact ownership; rollback immediately
+revokes and gives physical release to the existing finite worker.
+
+A cancellation-only subprocess then reproduced a different failure: an
+asyncio Task cancelled before its preparation started made a repeated shield
+loop spin forever. The final helper observes the existing worker's concurrent
+receipt, handles terminal cancellation, and retains an already-started leaf
+through caller or asyncio-observer cancellation. Mounted in-flight cancellation
+and bounded pre-start teardown probes verify both sides. A shield is not proof
+of physical ownership; inspect which future owns the work and how a terminal
+cancelled observer settles.
+
+
+**Worker cache follow-up (TASK-33431).** The 247-test affected selection passed
+but its descriptor sentinel reported growth of 282. A focused probe confirmed
+a concrete new path: saved-progress preparation opened a file-backed cache on
+the reused Chat worker, and shutting down the pool plus closing the UI handle
+left that connection registered and usable. Independent mounted probes found
+the same defect in the modal's prepare and discard callbacks; participant
+maintenance could not drain those leftover handles. Fresh/borrowed regressions
+now observe each actual worker entry. The repair reuses the existing finite
+local worker boundary to retire only caches opened by that operation, while
+keeping borrowed worker handles and the UI connection live for their owners.
+Aggregate descriptor counts do not identify ownership. Probe the new worker's
+registered cache after settlement and actual maintenance drain before calling
+a warning inherited; a completed Future does not prove its native handle was
+retired.
+
+
+The complete sink audit found a fourth instance on an actual AgentService child
+thread: spawn, report, wait and done committed a saved report, but joining the
+finished fleet thread and closing the UI database still left one registered
+Chat connection and a failed maintenance drain. Its existing worker guard
+retired AgentRuns/workspace handles, which did not cover the newly introduced
+Chat data owner. The exact runtime report callback now uses the same finite
+local worker boundary. Fresh/borrowed threaded regressions inspect the physical
+child after its report receipt, preserve prior caller ownership and prove drain
+after shutdown. Follow each new SQL sink through its real physical owner; a
+general worker guard only covers the database families it actually retires.
+
 
 ## Importing the test bootstrap also installs its socket guard
 

@@ -1804,6 +1804,7 @@ async def test_stop_active_run_returns_without_waiting_for_next_provider_chunk()
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_shutdown_stops_and_awaits_active_stream_task():
     """Verify controller shutdown stops and drains an active stream task."""
 
@@ -11177,6 +11178,7 @@ async def test_agent_cancellation_before_worker_start_retires_and_rejects_handof
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_agent_teardown_refusal_occurs_before_generation_issuance(
     monkeypatch,
 ) -> None:

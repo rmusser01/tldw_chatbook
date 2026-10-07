@@ -11,20 +11,26 @@ the developer machine's environment into the assertions.
 
 from __future__ import annotations
 
+import os
 import tomllib
+from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from textual.app import App
 from textual.widgets import Button, Input, Select, Static, TextArea
 
+from Tests.UI.consolidated_css import APP_STYLESHEETS
+from Tests.UI.test_destination_shells import _static_text
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Agents.agent_models import AgentDefinition, definition_from_row
 from tldw_chatbook.Agents.agent_routing import load_agents_routing_config
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Widgets.settings_agents_panel import AgentsSettingsPanel
 
-from Tests.UI.test_destination_shells import _static_text
+pytestmark = pytest.mark.bootstrap_profile
+
 
 #: A registry entry (llama.cpp family is keyless) plus a configured built-in
 #: model, shaped like Tests/Agents/test_agent_routing.py's APP_CFG.
@@ -61,19 +67,23 @@ def isolated_config(tmp_path, monkeypatch):
     """Route the atomic config writer/loader at a tmp file; pin env tier off."""
     for env_key in _AGENTS_ENV_KEYS:
         monkeypatch.delenv(env_key, raising=False)
-    config_path = tmp_path / "agents-routing-config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    # Keep the source-bound profile selected before config import.
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    original = config_path.read_bytes()
     config_module.load_settings(force_reload=True)
     config_module.load_cli_config_and_ensure_existence(force_reload=True)
     try:
         yield config_path
     finally:
+        config_path.write_bytes(original)
         config_module.load_settings(force_reload=True)
         config_module.load_cli_config_and_ensure_existence(force_reload=True)
 
 
 class PanelHarness(App):
-    """Same minimal host shape as test_settings_agents_category.py."""
+    """Use the actual scrollable Settings form and control geometry."""
+
+    CSS_PATH: ClassVar[list[str]] = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, panel):
         super().__init__()
@@ -98,6 +108,12 @@ def _fill_valid_preset_form(panel) -> None:
     panel.query_one("#agents-instructions-area", TextArea).text = "Cite sources."
 
 
+async def _click_save(panel, pilot) -> None:
+    panel.query_one("#agents-save-button", Button).scroll_visible(animate=False)
+    await pilot.pause()
+    assert await pilot.click("#agents-save-button")
+
+
 @pytest.mark.asyncio
 async def test_panel_saves_preset_routing(runs_db, isolated_config):
     panel = _make_panel(runs_db)
@@ -111,7 +127,10 @@ async def test_panel_saves_preset_routing(runs_db, isolated_config):
         panel.query_one(
             "#agents-params-area", TextArea
         ).text = "temperature = 0.2"
-        await pilot.click("#agents-save-button")
+        panel.query_one("#agents-fallback-models-area", TextArea).text = (
+            "llama_cpp/backup\ncustom-ep:qwen-local/alternate"
+        )
+        await _click_save(panel, pilot)
         await pilot.pause()
     rows = runs_db.list_agent_definitions()
     assert len(rows) == 1
@@ -119,6 +138,10 @@ async def test_panel_saves_preset_routing(runs_db, isolated_config):
     assert loaded.provider == "custom-ep:qwen-local"
     assert loaded.model == "qwen3.8-27b"
     assert loaded.params == (("temperature", 0.2),)
+    assert loaded.fallback_models == (
+        ("llama_cpp", "backup"),
+        ("custom-ep:qwen-local", "alternate"),
+    )
 
 
 @pytest.mark.asyncio
@@ -130,7 +153,7 @@ async def test_panel_rejects_bad_param_key_on_save(runs_db, isolated_config):
         panel.query_one(
             "#agents-params-area", TextArea
         ).text = "temprature = 0.2"
-        await pilot.click("#agents-save-button")
+        await _click_save(panel, pilot)
         await pilot.pause()
         status = panel.query_one("#agents-status", Static)
         assert "temprature" in _static_text(status)
@@ -163,7 +186,7 @@ async def test_panel_flags_stale_allowlist_slug(runs_db, isolated_config):
         panel.query_one(
             "#agents-default-model-input", Input
         ).value = "qwen3.8-27b"
-        await pilot.click("#agents-save-button")
+        await _click_save(panel, pilot)
         await pilot.pause()
         warning = panel.query_one("#agents-allowlist-warning", Static)
         assert "custom-ep:deleted-slug" in _static_text(warning)
@@ -209,7 +232,7 @@ async def test_test_routing_reports_readiness(runs_db, isolated_config):
     alpha_line = next(line for line in lines if line.startswith("alpha"))
     assert alpha_line == "alpha -> custom-ep:qwen-local / qwen3.8-27b — ready"
     beta_line = next(line for line in lines if line.startswith("beta"))
-    assert "[unknown_endpoint_slug]" in beta_line
+    assert "[unknown_endpoint_slug] (preset)" in beta_line
     # The configured default is always reported too (nothing configured here).
     assert any(line.startswith("(default)") for line in lines)
 
@@ -223,7 +246,7 @@ async def test_allowlist_model_glob_entries_round_trip(runs_db, isolated_config)
         panel.query_one("#agents-override-allowlist-area", TextArea).text = (
             "llama_cpp/qwen3.8-*\ncustom-ep:qwen-local/qwen3.*"
         )
-        await pilot.click("#agents-save-button")
+        await _click_save(panel, pilot)
         await pilot.pause()
     raw = tomllib.loads(isolated_config.read_text())
     assert raw["agents"]["spawn_override_allowlist"] == [
@@ -237,3 +260,21 @@ async def test_allowlist_model_glob_entries_round_trip(runs_db, isolated_config)
         "llama_cpp/qwen3.8-*",
         "custom-ep:qwen-local/qwen3.*",
     )
+
+
+@pytest.mark.parametrize("level", ["override", "preset", "default", "inherit"])
+def test_routing_report_names_the_failing_level(monkeypatch, level):
+    from tldw_chatbook.Agents.agent_routing import AgentsRoutingConfig, RoutingError
+    from tldw_chatbook.Widgets import settings_agents_panel
+
+    def refuse(*args, **kwargs):
+        raise RoutingError("provider_not_ready", "provider is unavailable", level=level)
+
+    monkeypatch.setattr(settings_agents_panel, "resolve_spawn_target", refuse)
+    report = AgentsSettingsPanel._routing_report_line(
+        SimpleNamespace(_routing_readiness=READY),
+        "child", APP_CONFIG, AgentsRoutingConfig(), preset=None,
+    )
+    assert f"({level})" in report
+    if level != "inherit":
+        assert "[provider_not_ready]" in report

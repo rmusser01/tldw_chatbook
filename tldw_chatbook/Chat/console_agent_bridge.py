@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
-    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
+    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage, MessageIdentity
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
     from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
@@ -1952,6 +1952,8 @@ class SubAgentSummary:
         created_at: Saved run start timestamp, absent on live summaries.
         updated_at: Saved last-update timestamp; only an approximate end.
         detail: Bounded saved result or last meaningful step for this child.
+        resolved_provider: Frozen provider selection, absent for legacy runs.
+        resolved_model: Frozen model selection, absent for legacy runs.
     """
 
     text: str
@@ -1962,6 +1964,8 @@ class SubAgentSummary:
     created_at: str | None = None
     updated_at: str | None = None
     detail: str = ""
+    resolved_provider: str | None = None
+    resolved_model: str | None = None
 
 
 def _subagent_summaries_from_fleet(
@@ -1979,7 +1983,8 @@ def _subagent_summaries_from_fleet(
     included), only its private ``_live_ids`` liveness set shrinks on
     ``finish``. So once non-empty for a run, it stays the source for the
     rest of that run, and every child's real status/run_id/handle_id is
-    always current.
+    always current. Inline fallback rows receive the frozen target when
+    their child enters its model scope.
 
     ``handles`` non-empty means AT LEAST ONE handle has been reserved for
     this run -- and once that is true, ``handles`` is used EXCLUSIVELY;
@@ -2046,6 +2051,8 @@ def _subagent_summaries_from_fleet(
                 status=h.status,
                 run_id=h.run_id or "",
                 handle_id=h.handle_id,
+                resolved_provider=h.resolved_provider,
+                resolved_model=h.resolved_model,
             )
             for h in handles
         )
@@ -3427,6 +3434,7 @@ class _StreamingModelAdapter:
             if per_call_kwargs.get(kwarg) is not None
         }
         api_base_url = per_call_kwargs.pop("api_base_url", None)
+        execution_provider = str(per_call_kwargs.pop("execution_provider", "") or "")
         # Any keys still in per_call_kwargs stay ignored, exactly as before.
         # Same-target decision keys on the parent's RAW selection identity,
         # not the flattened execution key: a child explicitly routed to the
@@ -3471,7 +3479,10 @@ class _StreamingModelAdapter:
             and requested_endpoint
             not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
         )
-        rerouted = bool(requested_endpoint) and not same_target
+        rerouted = bool(requested_endpoint) and (
+            not same_target
+            or bool(execution_provider and execution_provider != parent_execution_key)
+        )
 
         transport_messages = _serialize_project_instruction_rows_for_transport(
             messages_payload, native_tools=self._native_tools
@@ -3615,6 +3626,7 @@ class _StreamingModelAdapter:
                     model=model,
                     api_base_url=api_base_url,
                     sampling_overlays=sampling_overlays,
+                    execution_provider=execution_provider,
                 )
             # Forwarding `tools=` only when it is non-None (rather than
             # always passing the keyword, even as None) keeps every
@@ -4029,6 +4041,7 @@ class _StreamingModelAdapter:
         model: str | None,
         api_base_url: str | None,
         sampling_overlays: Mapping[str, Any],
+        execution_provider: str = "",
     ) -> ConsoleProviderResolution:
         """Re-resolve a per-call provider target through the gateway's send seam.
 
@@ -4036,7 +4049,8 @@ class _StreamingModelAdapter:
         ``resolve_for_send`` is async (the direct-llama path probes
         reachability). The seam is custom-ep aware per ADR-146, so a
         ``custom-ep:<slug>`` id resolves through its registry entry's family
-        and credential. Re-resolving per call -- never caching -- matches
+        and credential. A routed run can pin its execution family separately.
+        Re-resolving per call -- never caching -- matches
         Console's per-send discipline: a credential or readiness change
         between turns takes effect on the very next call.
 
@@ -4045,6 +4059,7 @@ class _StreamingModelAdapter:
             model: Per-call model, or None to fall back to the provider's
                 configured default.
             api_base_url: Per-call endpoint override, or None.
+            execution_provider: Internal frozen execution family for routed runs.
             sampling_overlays: Provided sampling values keyed by
                 ``ConsoleProviderSelection`` field name.
 
@@ -4069,6 +4084,7 @@ class _StreamingModelAdapter:
                 provider=provider,
                 base_url=str(api_base_url) if api_base_url else None,
                 base_url_is_pinned=bool(api_base_url),
+                execution_provider=execution_provider,
                 explicit_model=str(model) if model else None,
                 **sampling_overlays,
             )
@@ -5034,13 +5050,10 @@ def build_console_first_request_plan(
     config = AgentConfig(
         model=resolved_model,
         system_prompt=direct_prompt,
-        # TASK-26002: so the loop can name the provider when it reports a
-        # provider-level fault (an empty-response run is otherwise
-        # indistinguishable from the agent deciding it was finished).
-        # Reuses `api_endpoint` above rather than re-deriving it -- that is the
-        # key the request is actually sent under, and it already carries the
-        # execution_key -> provider -> "agent" fallback.
-        provider=api_endpoint,
+        # Keep selection identity on model calls; api_endpoint remains the
+        # execution key used for capabilities and protocol preparation.
+        provider=selected_provider,
+        base_url=getattr(resolution, "base_url", None),
         fallback_providers=console_fallback_providers(),
         allowed_tools=allowed_tools,
         budget=(
@@ -5375,7 +5388,15 @@ class ConsoleAgentBridge:
     ) -> None:
         self._message_store = message_store
         self._progress_closed = False
+        self._progress_shutdown_task: asyncio.Task[None] | None = None
+        self._progress_close_drains: dict[
+            str, tuple[MessageStore, str, MessageInbox | None]
+        ] = {}
         self._message_store_lock = threading.RLock()
+        self._progress_consumer_lock = threading.Lock()
+        self._progress_consumers: dict[str, Callable[[str, str, MessageIdentity], None]] = {}
+        if message_store is not None:
+            message_store.on_enqueue = self._on_progress_enqueue
         self._runtime_capacity = runtime_capacity
         self._runtime_capacity_factory = runtime_capacity_factory
         self._runtime_capacity_lock = threading.RLock()
@@ -6041,6 +6062,8 @@ class ConsoleAgentBridge:
             generation_token = self._store.begin_generation_attempt(
                 assistant_message_id
             )
+        # SQLite preparation must finish outside the native identity scope.
+        self._store.prepare_progress_inbox(session_id, message_store=self.message_store)
         # Capture before setup can yield to native close/state replacement.
         # Reusing a native ID must not let this delayed run bind its successor.
         with self._store.progress_owner_scope(
@@ -6899,6 +6922,23 @@ class ConsoleAgentBridge:
                     )
             tool_activity.observe(step, planning_deriver.active_round_ordinal)
 
+        def on_resolved_target(run_id: str, provider: str, model: str) -> None:
+            for index, summary in enumerate(subagents):
+                if summary.run_id != run_id:
+                    continue
+                subagents[index] = dataclass_replace(
+                    summary, resolved_provider=provider, resolved_model=model
+                )
+                snapshot = self._live.get(conversation_id, {}).get(primary_live_key)
+                if snapshot is not None:
+                    self._publish_live(
+                        conversation_id,
+                        primary_live_key,
+                        dataclass_replace(snapshot, subagents=tuple(subagents)),
+                        primary=False,
+                    )
+                break
+
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             if agent_kind == AGENT_KIND_PRIMARY and run_id:
                 self._live_primary_runs[conversation_id] = run_id
@@ -7483,22 +7523,32 @@ class ConsoleAgentBridge:
             if on_redirect_ready is not None:
                 on_redirect_ready(redirect_fn)
 
+        create_fleet = bool(
+            first_request_plan.schemas.runtime_schemas
+            or first_request_plan.schemas.active_schemas
+        )
+        progress_store = self.message_store
+        self._store.prepare_progress_inbox(
+            session_id, message_store=progress_store, create_temporary=create_fleet
+        )
         with self._store.progress_owner_scope(
-            session_id, message_store=self.message_store
+            session_id, message_store=progress_store
         ) as progress_owner_id:
             if progress_owner_id != initial_progress_owner_id:
                 from tldw_chatbook.Agents.fleet_messages import MessageError
 
                 raise MessageError("unavailable")
+            message_inbox = progress_store.get_inbox(progress_owner_id)
+            if create_fleet and message_inbox is None:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
             fleet_coordinator = self._conversation_fleet_coordinator(
                 conversation_id,
-                create=bool(
-                    first_request_plan.schemas.runtime_schemas
-                    or first_request_plan.schemas.active_schemas
-                ),
+                create=create_fleet,
                 progress_owner_id=progress_owner_id,
+                message_inbox=message_inbox,
             )
-            message_inbox = self.message_store.get_inbox(progress_owner_id)
         plugin_root_id = ""
         plugin_producer_pin = None
 
@@ -7671,6 +7721,7 @@ class ConsoleAgentBridge:
             clock=self._clock,
             app_config=self._app_config,
             on_step=on_step,
+            on_resolved_target=on_resolved_target,
             on_tool_activity=on_tool_activity,
             # TASK-25903: hands the controller a steer(text) bound to THIS
             # run once its mailbox registers -- run ids are minted inside
@@ -7721,6 +7772,7 @@ class ConsoleAgentBridge:
                 adapter,
                 conversation_id,
                 primary_live_key,
+                inline_subagents=subagents if fleet_coordinator is None else None,
             ),
             managed_child_required=bool(plugin_entries),
             managed_child_resume=(
@@ -9045,19 +9097,60 @@ class ConsoleAgentBridge:
 
     @property
     def message_store(self):
-        """Create the shared progress store only when execution needs it."""
+        """Create the shared progress store; publish loaded hints after initialization."""
+        from tldw_chatbook.Agents.fleet_messages import MessageError, MessageStore
+
+        created = False
         with self._message_store_lock:
             if self._progress_closed:
-                from tldw_chatbook.Agents.fleet_messages import MessageError
-
                 raise MessageError("unavailable")
             if self._message_store is None:
-                from tldw_chatbook.Agents.fleet_messages import MessageStore
-
                 self._message_store = MessageStore()
+                self._message_store.on_enqueue = self._on_progress_enqueue
+                # Revocation may race construction; assignment precedes this
+                # check so close can always deny this exact newly created store.
+                if self._progress_closed:
+                    self._message_store.begin_close()
+                    raise MessageError("unavailable")
                 if self._store is not None:
-                    self._store.register_progress_message_store(self._message_store)
-            return self._message_store
+                    self._store.register_progress_message_store(
+                        self._message_store, publish_hints=False
+                    )
+                created = True
+            message_store = self._message_store
+            if self._progress_closed:
+                message_store.begin_close()
+                raise MessageError("unavailable")
+        if created and self._store is not None:
+            for session_id in self._store.progress_owner_ids():
+                if self._progress_closed or self._message_store is not message_store:
+                    break
+                self._store.publish_progress_inbox_hints(
+                    session_id, message_store=message_store
+                )
+        return message_store
+
+    def on_progress_enqueued(
+        self, name: str, consumer: Callable[[str, str, MessageIdentity], None]
+    ) -> None:
+        """Register body-free committed-report hints; callbacks grant no authority."""
+        with self._progress_consumer_lock:
+            self._progress_consumers[name] = consumer
+
+    def _on_progress_enqueue(
+        self, owner_key: str, message_id: str, identity: MessageIdentity
+    ) -> None:
+        """Publish only after queue admission/commit, outside queue and owner locks."""
+        with self._progress_consumer_lock:
+            consumers = tuple(self._progress_consumers.values())
+        for consumer in consumers:
+            try:
+                consumer(owner_key, message_id, identity)
+            except Exception as exc:  # noqa: BLE001 -- one hint cannot block another
+                logger.warning(
+                    "progress hint consumer raised (exception_type={})",
+                    type(exc).__name__,
+                )
 
     def _session_progress_inbox(self, session_id: str) -> MessageInbox | None:
         """Noncreating lookup of the native session's exact progress owner."""
@@ -9069,6 +9162,20 @@ class ConsoleAgentBridge:
             return (
                 self._message_store.get_inbox(owner_id) if owner_id is not None else None
             )
+
+    def progress_pending_metadata(
+        self, session_id: str
+    ) -> tuple[tuple[str, MessageIdentity], ...]:
+        """Read current IDs/source metadata for a native session; never consume."""
+        inbox = self._session_progress_inbox(session_id)
+        if inbox is None:
+            return ()
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        try:
+            return inbox.pending_metadata()
+        except MessageError:
+            return ()
 
     def progress_snapshot(self, owner_id: str) -> tuple[ProgressMessage, ...]:
         """Inspect an opaque owner key from store.progress_owner_id; never allocate."""
@@ -9110,28 +9217,99 @@ class ConsoleAgentBridge:
     def close_progress(
         self, session_id: str, *, conversation_id: str | None = None
     ) -> None:
-        """Release a native binding before cancellation; last close drops progress."""
+        """Revoke a native binding; last close retains saved pending reports."""
         if self._progress_closed or self._message_store is None:
-            return None
+            return
         with self._store.progress_owner_scope(
             session_id, release=True, message_store=self._message_store
         ) as owner_id:
             if owner_id is not None:
                 self._fleet_coordinators.pop(conversation_id or session_id, None)
 
-    def close_all_progress(self) -> None:
-        """Permanently invalidate progress before worker shutdown."""
+    def begin_close_progress(
+        self, session_id: str, *, conversation_id: str | None = None
+    ) -> None:
+        """Immediately revoke native authority; leave physical cleanup to runtime."""
+        if self._progress_closed or self._message_store is None:
+            return
+        message_store = self._message_store
+        with self._store.progress_owner_scope(
+            session_id, release=True, message_store=message_store, defer_close=True
+        ) as owner_id:
+            if owner_id is not None:
+                inbox = message_store.begin_close_inbox(owner_id)
+                self._progress_close_drains[session_id] = (
+                    message_store, owner_id, inbox
+                )
+                self._fleet_coordinators.pop(conversation_id or session_id, None)
+
+    async def await_progress_closed(self, session_id: str) -> None:
+        """Own exact queue cleanup until admitted SQL physically releases its lock."""
+        record = self._progress_close_drains.get(session_id)
+        if record is None:
+            return
+        message_store, owner_id, inbox = record
+        physical = asyncio.create_task(
+            asyncio.to_thread(message_store.finish_close_inbox, owner_id, inbox),
+            name=f"console-progress-close-{session_id[:8]}",
+        )
+        cancelled = False
+        try:
+            while True:
+                try:
+                    await asyncio.shield(physical)
+                    break
+                except asyncio.CancelledError:
+                    cancelled = True
+        finally:
+            if self._progress_close_drains.get(session_id) is record:
+                self._progress_close_drains.pop(session_id, None)
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def begin_close_all_progress(self) -> None:
+        """Immediately revoke all live authority without waiting for durable SQL."""
+        # This deny-only latch must never wait for initialization's SQL drain.
+        self._progress_closed = True
+        message_store = self._message_store
+        if message_store is not None:
+            message_store.begin_close()
         with self._runtime_capacity_lock:
             self._runtime_capacity_closed = True
-        with self._message_store_lock:
-            self._progress_closed = True
-            if self._message_store is not None:
-                self._message_store.close()
-            self._fleet_coordinators.clear()
+        self._fleet_coordinators.clear()
         with self._live_usage_lock:
             self._live_usage_closed = True
             self._live_turn_usage.clear()
             self._live_usage_owners.clear()
+
+    async def await_all_progress_closed(self) -> None:
+        """Retain physical queue cleanup through close timeout or cancellation."""
+        if self._progress_shutdown_task is None:
+            self._progress_shutdown_task = asyncio.create_task(
+                asyncio.to_thread(self._finish_close_all_progress),
+                name="console-progress-dispose",
+            )
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(self._progress_shutdown_task)
+                break
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def _finish_close_all_progress(self) -> None:
+        """Wait away from the UI for initialization, then release exact queue state."""
+        with self._message_store_lock:
+            message_store = self._message_store
+        if message_store is not None:
+            message_store.close()
+
+    def close_all_progress(self) -> None:
+        """Synchronous compatibility cleanup outside runtime's async disposal."""
+        self.begin_close_all_progress()
+        self._finish_close_all_progress()
 
     def _conversation_fleet_coordinator(
         self,
@@ -9139,6 +9317,7 @@ class ConsoleAgentBridge:
         *,
         create: bool = True,
         progress_owner_id: str | None = None,
+        message_inbox: MessageInbox | None = None,
     ) -> FleetCoordinator | None:
         """The coordinator for this conversation, built on first use.
 
@@ -9214,13 +9393,26 @@ class ConsoleAgentBridge:
                 )
             )
         )
+        progress_store = self.message_store
+        if message_inbox is None:
+            message_inbox = progress_store.get_inbox(progress_owner_id or conversation_id)
+            if message_inbox is None and create:
+                # Production passes the exact native-prepared inbox; legacy
+                # direct callers also wait before taking fleet admission.
+                message_inbox = progress_store.open_inbox(
+                    progress_owner_id or conversation_id
+                )
         with self._fleet_admission_lock:
+            if self._progress_closed:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
             coordinator = self._fleet_coordinators.get(conversation_id)
             if (
                 coordinator is not None
                 and progress_owner_id is not None
                 and coordinator.message_inbox
-                is not self.message_store.get_inbox(progress_owner_id)
+                is not message_inbox
             ):
                 # Native state replacement closed the previous inbox. A new binding
                 # must not reuse a coordinator carrying that revoked capability.
@@ -9232,7 +9424,7 @@ class ConsoleAgentBridge:
                 coordinator = FleetCoordinator(
                     max_live=max_live,
                     clock=self._clock,
-                    message_inbox=self.message_store.open_inbox(progress_owner_id or conversation_id),
+                    message_inbox=message_inbox,
                     retained_transcripts=retained_transcripts,
                     retained_transcript_max_chars=retained_transcript_max_chars,
                     on_reserve=functools.partial(
@@ -9498,7 +9690,35 @@ class ConsoleAgentBridge:
         primary_live_key: str,
         run_id: str,
         agent_kind: str,
+        *,
+        inline_subagents: list[SubAgentSummary] | None = None,
     ):
+        snapshot = self._live.get(conversation_id, {}).get(primary_live_key)
+        if (
+            agent_kind == AGENT_KIND_SUBAGENT
+            and inline_subagents
+            and snapshot is not None
+            and snapshot.steps
+            and snapshot.steps[-1].kind == STEP_SPAWN
+        ):
+            # An inline child's model scope starts after its row is saved,
+            # before its first provider call. The primary's pending SPAWN
+            # identifies the latest fallback row; skill calls/refusals cannot
+            # reuse it after their parent step has advanced.
+            target = self._db.get_run_resolved_target(run_id)
+            if target is not None:
+                inline_subagents[-1] = dataclass_replace(
+                    inline_subagents[-1],
+                    run_id=run_id,
+                    resolved_provider=target["provider"],
+                    resolved_model=target["model"],
+                )
+                self._publish_live(
+                    conversation_id,
+                    primary_live_key,
+                    dataclass_replace(snapshot, subagents=tuple(inline_subagents)),
+                    primary=False,
+                )
         owner = (conversation_id, agent_kind, primary_live_key)
         with self._live_usage_lock:
             registered = not self._live_usage_closed
@@ -11132,6 +11352,29 @@ class ConsoleAgentBridge:
                 if any(step.get(key) for key in ("summary", "result", "tool_name")):
                     detail = ConsoleAgentBridge._summarize_persisted_step(step)
                     break
+        provider = record.get("resolved_provider")
+        model = record.get("resolved_model")
+        if record.get("fallback_targets_json") is not None:
+            provider = model = None
+            try:
+                targets = json.loads(record["fallback_targets_json"])
+                index = record.get("active_fallback_index", 0)
+                if (
+                    type(targets) is list
+                    and 1
+                    <= len(targets)
+                    <= agent_models_constants.MAX_PRESET_FALLBACK_MODELS + 1
+                    and type(index) is int
+                    and 0 <= index < len(targets)
+                ):
+                    target = targets[index]
+                    if isinstance(target, dict) and all(
+                        isinstance(target.get(key), str) and target[key]
+                        for key in ("provider", "model")
+                    ):
+                        provider, model = target["provider"], target["model"]
+            except (ValueError, TypeError):
+                pass
         return SubAgentSummary(
             text=str(record.get("task") or "sub-agent"),
             status=str(record.get("status") or "running"),
@@ -11140,6 +11383,8 @@ class ConsoleAgentBridge:
             created_at=record.get("created_at"),
             updated_at=record.get("updated_at"),
             detail=detail,
+            resolved_provider=provider,
+            resolved_model=model,
         )
 
     @staticmethod

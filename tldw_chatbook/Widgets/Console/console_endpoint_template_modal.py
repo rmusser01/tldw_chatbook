@@ -16,7 +16,6 @@ from collections.abc import Iterable, Mapping, MutableMapping
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
-from tldw_chatbook.Utils.input_validation import escape_markup
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -46,13 +45,17 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     validate_entry,
 )
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
-from tldw_chatbook.Chat.sampling_params import params_to_dict, params_to_tuple
+from tldw_chatbook.Chat.sampling_params import (
+    params_to_dict,
+    params_to_tuple,
+    parse_params_text,
+)
 from tldw_chatbook.config import (
     AtomicConfigSnapshot,
     apply_settings_mutation_to_cli_config,
 )
+from tldw_chatbook.Utils.input_validation import escape_markup
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
-from tldw_chatbook.Widgets.settings_agents_panel import parse_params_text
 
 MODAL_ID = "console-endpoint-template-modal"
 TEMPLATE_PICKER_ID = "endpoint-template-picker"

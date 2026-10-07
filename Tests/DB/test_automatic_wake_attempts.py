@@ -5,12 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
-
 from Tests.DB.test_automatic_work_budget import (
     _automatic_work_db,  # noqa: F401
     chain,
 )
+from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
 
 
 def survivor(db, chain_id, *, conversation="conversation"):
@@ -225,3 +224,145 @@ def test_wakes_and_native_starts_cannot_own_the_same_target(db, wake_first):
         assert db.automatic_work.abort_chat_start(native.id, owner_id="owner")
         claim(db, target_chain, [child])
     assert db.automatic_work.snapshot(root).used["generation"] == 0
+def test_live_progress_claims_share_budget_and_do_not_stamp_completion(db):
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+    chain_id = chain(db, generations=1)
+    parent = db.create_run(
+        conversation_id="conversation", agent_kind="primary", work_chain_id=chain_id
+    )
+    child = db.create_run(
+        conversation_id="conversation", parent_run_id=parent, agent_kind="subagent"
+    )
+    attempt = db.automatic_work.claim_wake(
+        chain_id,
+        attempt_id="progress",
+        owner_id="owner",
+        session_id="session",
+        run_ids=(),
+        progress_messages=(("report-1", child),),
+    )
+    assert attempt.cause == "progress"
+    assert attempt.message_ids == ("report-1",)
+    assert attempt.run_ids == ()
+    assert db.automatic_work.abort_wake("progress", owner_id="owner")
+    assert db.automatic_work.snapshot(chain_id).available["generation"] == 1
+    db.automatic_work.claim_wake(
+        chain_id,
+        attempt_id="retry-progress",
+        owner_id="owner",
+        session_id="session",
+        run_ids=(),
+        progress_messages=(("report-1", child),),
+    )
+    assert db.automatic_work.accept_wake("retry-progress", owner_id="owner")
+    assert not db.automatic_work.abort_wake("retry-progress", owner_id="owner")
+    assert db.automatic_work.complete_wake("retry-progress", owner_id="owner")
+    assert db.get_run(child)["wake_delivered_at"] is None
+    assert db.automatic_work.snapshot(chain_id).used["generation"] == 1
+    completed = survivor(db, chain_id)
+    with pytest.raises(AutomaticWorkRefused, match="generation"):
+        claim(db, chain_id, [completed], attempt="completion-after-progress")
+
+
+def test_foreign_progress_source_rolls_back_claim_and_generation(db):
+    first = chain(db)
+    second = chain(db, conversation="foreign", submission="foreign")
+    parent = db.create_run(
+        conversation_id="foreign", agent_kind="primary", work_chain_id=second
+    )
+    child = db.create_run(
+        conversation_id="foreign", parent_run_id=parent, agent_kind="subagent"
+    )
+    with pytest.raises(ValueError, match="scope"):
+        db.automatic_work.claim_wake(
+            first,
+            attempt_id="foreign-progress",
+            owner_id="owner",
+            session_id="session",
+            run_ids=(),
+            progress_messages=(("report-foreign", child),),
+        )
+    assert db.automatic_work.snapshot(first).reserved["generation"] == 0
+
+
+def test_temporary_progress_claim_is_private_and_survives_save_promotion(db):
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+    chain_id = chain(db)
+    parent = db.create_run(
+        conversation_id="conversation", agent_kind="primary", work_chain_id=chain_id
+    )
+    child = db.create_run(
+        conversation_id="conversation", parent_run_id=parent, agent_kind="subagent"
+    )
+    values = {
+        "chain_id": chain_id,
+        "attempt_id": "temporary",
+        "owner_id": "owner",
+        "session_id": "session",
+        "run_ids": (),
+        "progress_messages": (("temporary-report", child),),
+        "persistent_progress": False,
+    }
+    attempt = db.automatic_work.claim_wake(**values)
+    assert attempt == db.automatic_work.claim_wake(**values)
+    assert attempt.message_ids == ("temporary-report",)
+    with db.connection() as conn:
+        assert (
+            conn.execute(
+                "SELECT message_ids_json FROM automatic_wake_attempts WHERE id='temporary'"
+            ).fetchone()[0]
+            == "[]"
+        )
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM automatic_progress_wake_claims"
+            ).fetchone()[0]
+            == 0
+        )
+    assert db.automatic_work.accept_wake("temporary", owner_id="owner")
+    assert db.automatic_work.complete_wake("temporary", owner_id="owner")
+    # The exact native owner keeps this ledger through a Console Save. A newly
+    # saved inbox must still consult its existing process-local claims.
+    with pytest.raises(AutomaticWorkRefused, match="progress_already_claimed"):
+        db.automatic_work.claim_wake(
+            chain_id,
+            attempt_id="saved",
+            owner_id="owner",
+            session_id="session",
+            run_ids=(),
+            progress_messages=(("temporary-report", child),),
+            persistent_progress=True,
+        )
+
+
+def test_mixed_progress_claim_stamps_only_completion_and_recovery_never_replays(db):
+    chain_id = chain(db)
+    completed = survivor(db, chain_id)
+    parent = db.create_run(
+        conversation_id="conversation", agent_kind="primary", work_chain_id=chain_id
+    )
+    live = db.create_run(
+        conversation_id="conversation", parent_run_id=parent, agent_kind="subagent"
+    )
+    attempt = db.automatic_work.claim_wake(
+        chain_id,
+        attempt_id="mixed",
+        owner_id="owner",
+        session_id="session",
+        run_ids=(completed,),
+        progress_messages=(("report-live", live),),
+    )
+    assert attempt.cause == "mixed"
+    assert db.automatic_work.accept_wake("mixed", owner_id="owner")
+    assert db.automatic_work.complete_wake("mixed", owner_id="owner")
+    assert db.get_run(completed)["wake_delivered_at"]
+    assert db.get_run(live)["wake_delivered_at"] is None
+    db.automatic_work.recover(current_owner_id="new-owner")
+    assert (
+        db.automatic_work.pending_progress_sources(
+            "conversation", (("report-live", live),)
+        )
+        == ()
+    )

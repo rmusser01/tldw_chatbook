@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
     from .execution_capacity import ExecutionOwner, RuntimeCapacity
     from .agent_worktree import AgentWorktree
+    from .fleet_coordinator import PeerMessenger
     from .fleet_messages import MessageInbox, MessageReader, MessageSender
     from .run_log import RunLogWriter
     from .local_tool_provider import RunAdmittedWorkspaceRoot
@@ -48,6 +49,7 @@ from tldw_chatbook.Chat.custom_endpoint_registry import (
     entry_for,
     split_custom_endpoint_id,
 )
+from tldw_chatbook.Chat.console_provider_support import GENERATION_FIELD_REQUEST_KEYS
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.trajectory import contains_local_path, redact_local_paths
 from tldw_chatbook.Chat.sampling_params import params_to_dict, params_to_tuple
@@ -264,28 +266,6 @@ def __getattr__(name: str):
 
 TRUNCATION_NOTICE = "\n[truncated]"
 
-
-#: ``AgentConfig.sampling_params`` keys -> ``chat_api_call`` kwarg names,
-#: verified against the real signature (Chat/Chat_Functions.py ``def
-#: chat_api_call``); the key set is exactly ``KNOWN_SAMPLING_PARAM_KEYS``
-#: (Chat/sampling_params.py), which the preset/registry validators enforce
-#: upstream, so a direct map lookup can never miss for resolver-produced
-#: params.
-_CHAT_CALL_PARAM_MAP = {
-    "temperature": "temp",
-    "top_p": "topp",
-    "min_p": "minp",
-    "top_k": "topk",
-    "max_tokens": "max_tokens",
-    "seed": "seed",
-    "presence_penalty": "presence_penalty",
-    "frequency_penalty": "frequency_penalty",
-    "reasoning_effort": "reasoning_effort",
-    "reasoning_summary": "reasoning_summary",
-    "verbosity": "verbosity",
-    "thinking_effort": "thinking_effort",
-    "thinking_budget_tokens": "thinking_budget_tokens",
-}
 
 #: ``[agents]`` key sizing the fleet: how many sub-agents of one turn may
 #: be live at once. **A value of 1 means the fleet is OFF** and every spawn
@@ -791,6 +771,7 @@ def build_first_request_schema_plan(
     fleet_active: bool = False,
     progress_available: bool = False,
     reporting_available: bool = False,
+    peers_available: bool = False,
     worktree_merge_enabled: bool = False,
     fork_chat_enabled: bool = False,
     new_chat_enabled: bool = False,
@@ -843,6 +824,7 @@ def build_first_request_schema_plan(
         A frozen schema plan whose ``request_fits`` flag proves whether any
         provider request can be dispatched within the current context budget.
     """
+    api_endpoint = config.execution_provider or api_endpoint
     direct_prompt = direct_system_prompt or config.system_prompt
     discovery_prompt = discovery_system_prompt or config.system_prompt
 
@@ -907,6 +889,16 @@ def build_first_request_schema_plan(
             runtime.append(REPORT_TO_SUPERVISOR_SCHEMA)
             if REPORT_INSTRUCTIONS not in system_prompt:
                 system_prompt += "\n\n" + REPORT_INSTRUCTIONS
+        if peers_available and agent_kind == AGENT_KIND_SUBAGENT:
+            from .fleet_message_tools import (
+                LIST_PEER_AGENTS_SCHEMA,
+                PEER_INSTRUCTIONS,
+                SEND_TO_PEER_SCHEMA,
+            )
+
+            runtime.extend((LIST_PEER_AGENTS_SCHEMA, SEND_TO_PEER_SCHEMA))
+            if PEER_INSTRUCTIONS not in system_prompt:
+                system_prompt += "\n\n" + PEER_INSTRUCTIONS
         if offer_find_load:
             # TASK-26007: the deferred surface NAMES what exists -- the
             # model must never conclude a present capability is absent.
@@ -1111,7 +1103,8 @@ def _first_request_plan_fits(
     if type(reserve) is not int or reserve < 0:
         return False
     native = config.native_tools and provider_supports_native_tools(
-        api_endpoint, reasoning_replay=config.reasoning_replay
+        config.execution_provider or api_endpoint,
+        reasoning_replay=config.reasoning_replay,
     )
     schemas = plan.runtime_schemas + plan.active_schemas
     system_content = plan.system_prompt
@@ -2228,6 +2221,7 @@ class AgentService:
         worktree_repo_authority: RunAdmittedWorkspaceRoot | None = None,
         app_config: Mapping[str, Any] | None = None,
         on_tool_activity: Callable[[AgentStep, str, str], None] | None = None,
+        on_resolved_target: Callable[[str, str, str], None] | None = None,
     ) -> None:
         from .execution_capacity import RuntimeCapacity
         from .automatic_work_runtime import current_automatic_work
@@ -2258,6 +2252,7 @@ class AgentService:
         self._primary_trace_call_persistence_error: Exception | None = None
         self._on_step = on_step
         self._on_tool_activity = on_tool_activity
+        self._on_resolved_target = on_resolved_target
         self.skill_runner = skill_runner
         # task-3 (skills-foundation): per-run authorization + reader for the
         # skill_file runtime tool. `None` (the default, and every caller
@@ -2633,7 +2628,8 @@ class AgentService:
     ) -> ModelRequest:
         """Build the exact bounded messages and native tools sent on a turn."""
         native = config.native_tools and provider_supports_native_tools(
-            api_endpoint, reasoning_replay=config.reasoning_replay
+            config.execution_provider or api_endpoint,
+            reasoning_replay=config.reasoning_replay,
         )
         schemas = runtime_schemas + list(active_schemas)
         system_content = config.system_prompt
@@ -2989,7 +2985,8 @@ class AgentService:
         run_id: str | None = None,
     ):
         native = config.native_tools and provider_supports_native_tools(
-            api_endpoint, reasoning_replay=config.reasoning_replay
+            config.execution_provider or api_endpoint,
+            reasoning_replay=config.reasoning_replay,
         )
         initial_context_checked = False
         context_observed = False
@@ -3218,6 +3215,20 @@ class AgentService:
                         "project_instruction_delivery_failed"
                     ) from None
                 staged.pop("receipt", None)
+            if (
+                config.preset_fallback_targets
+                and not self._project_instruction_request_fits(
+                    config,
+                    config.execution_provider or api_endpoint,
+                    ModelRequest(
+                        messages=tuple(dict(row) for row in payload),
+                        tools=tuple(call_kwargs.get("tools", ())),
+                    ),
+                )
+            ):
+                raise _ProjectInstructionPayloadError(
+                    "request exceeds fallback model context budget"
+                )
             if not first_request_fits:
                 raise _ProjectInstructionPayloadError(
                     "first request exceeds model context budget"
@@ -3251,11 +3262,14 @@ class AgentService:
                 # Keys are drawn from KNOWN_SAMPLING_PARAM_KEYS by the
                 # upstream validators, so the map lookup is total.
                 for param_key, param_value in config.sampling_params:
-                    call_kwargs[_CHAT_CALL_PARAM_MAP[param_key]] = param_value
+                    for request_key in GENERATION_FIELD_REQUEST_KEYS[param_key]:
+                        call_kwargs[request_key] = param_value
                 if config.base_url:
                     call_kwargs["api_base_url"] = config.base_url
+                if config.execution_provider:
+                    call_kwargs["execution_provider"] = config.execution_provider
                 resp = self.chat_call(
-                    api_endpoint=api_endpoint,
+                    api_endpoint=config.provider or api_endpoint,
                     messages_payload=check_host_context(payload),
                     streaming=False,
                     model=config.model,
@@ -3822,6 +3836,8 @@ class AgentService:
             event = self._fleet_cancels.get(handle_id)
             if event is not None:
                 event.set()
+            if self._fleet is not None:
+                self._fleet.revoke_child_messages(handle_id)
         # PR2a Task 7: the cancel Event alone does not reach a child that
         # is BLOCKED on a human approval -- that wait sits on the child's
         # own per-call daemon thread with a card still on screen, and the
@@ -4982,6 +4998,7 @@ class AgentService:
         ) = None,
         seeded_steering_with_causes: tuple[tuple[str, str, str | None], ...] = (),
         progress_sender_factory: Callable[[], MessageSender | None] | None = None,
+        peer_messenger_factory: Callable[[], PeerMessenger | None] | None = None,
         run_log_writer: "RunLogWriter | None" = None,
         continuation_owner_message_id: str | None = None,
         continuation_durability: Literal["persistent", "ephemeral"] = "persistent",
@@ -5009,6 +5026,8 @@ class AgentService:
         resolved_model: str | None = None,
         resolved_base_url: str | None = None,
         resolved_params_json: str | None = None,
+        fallback_targets_json: str | None = None,
+        active_fallback_index: int = 0,
     ) -> tuple[str, RunOutcome]:
         if parent_run_id is None and self._hooks_v2_lifecycle is not None:
             config = self._hooks_v2_lifecycle.inherit_root_budget(
@@ -5073,6 +5092,8 @@ class AgentService:
                 resolved_model=resolved_model,
                 resolved_base_url=resolved_base_url,
                 resolved_params_json=resolved_params_json,
+                fallback_targets_json=fallback_targets_json,
+                active_fallback_index=active_fallback_index,
             )
             lifecycle_owner_seq = 0
             lifecycle_event_id = (
@@ -5135,6 +5156,7 @@ class AgentService:
         message_chain_id = self._work_chain_id
         message_automatic = current_automatic_work()
         progress_sender = progress_sender_factory() if progress_sender_factory else None
+        peer_messenger = peer_messenger_factory() if peer_messenger_factory else None
         progress_reader: MessageReader | None = None
 
         schema_plan = first_request_schema_plan
@@ -5196,6 +5218,7 @@ class AgentService:
                     )
                 ),
                 reporting_available=progress_sender is not None,
+                peers_available=peer_messenger is not None,
                 spawn_override_enabled=bool(
                     spawn_routing and spawn_routing.spawn_override_enabled
                 ),
@@ -5264,6 +5287,21 @@ class AgentService:
                 config = dataclasses.replace(
                     config,
                     system_prompt=config.system_prompt + "\n\n" + REPORT_INSTRUCTIONS,
+                )
+        if peer_messenger is not None:
+            from .fleet_message_tools import (
+                LIST_PEER_AGENTS_SCHEMA,
+                PEER_INSTRUCTIONS,
+                SEND_TO_PEER_SCHEMA,
+            )
+
+            for peer_schema in (LIST_PEER_AGENTS_SCHEMA, SEND_TO_PEER_SCHEMA):
+                if peer_schema not in runtime_schemas:
+                    runtime_schemas.append(peer_schema)
+            if PEER_INSTRUCTIONS not in config.system_prompt:
+                config = dataclasses.replace(
+                    config,
+                    system_prompt=config.system_prompt + "\n\n" + PEER_INSTRUCTIONS,
                 )
         if progress_inbox is not None:
             from .fleet_message_tools import (
@@ -5640,6 +5678,10 @@ class AgentService:
                     agent=agent_name,
                     isolation=isolation,
                     definition_wall_seconds=definition_wall_seconds,
+                    # Live metadata follows the active frozen config. The
+                    # resolved_* kwargs remain the original persisted audit.
+                    resolved_provider=child_kwargs["config"].provider,
+                    resolved_model=child_kwargs["config"].model,
                 )
                 if handle is None:
                     # At the live cap. Unlike a budget refusal this is
@@ -5688,6 +5730,10 @@ class AgentService:
                         resolved_model=child_kwargs.get("resolved_model"),
                         resolved_base_url=child_kwargs.get("resolved_base_url"),
                         resolved_params_json=child_kwargs.get("resolved_params_json"),
+                        fallback_targets_json=child_kwargs.get("fallback_targets_json"),
+                        active_fallback_index=child_kwargs.get(
+                            "active_fallback_index", 0
+                        ),
                     )
                 except Exception as exc:  # noqa: BLE001 — spawn refusal, never parent abort
                     fleet.finish(
@@ -5757,6 +5803,13 @@ class AgentService:
                 child_kwargs["continuation_agent_kind"] = "fleet"
                 child_kwargs["progress_sender_factory"] = lambda: (
                     fleet.bind_progress_sender(
+                        handle.handle_id,
+                        parent_run_id=run_id,
+                        chain_id=message_chain_id,
+                    )
+                )
+                child_kwargs["peer_messenger_factory"] = lambda: (
+                    fleet.bind_peer_messenger(
                         handle.handle_id,
                         parent_run_id=run_id,
                         chain_id=message_chain_id,
@@ -6081,6 +6134,89 @@ class AgentService:
                     finally:
                         child_owner.finish_root()
 
+        def initialize_child_hooks(child_kwargs, child_task, *, inline=False):
+            nonlocal sub_agent_spawns
+            if hook_run is None:
+                return None
+            child_config = child_kwargs["config"]
+            from .hooks_v2.lifecycle import narrow_child
+            from .hooks_v2.validation import CAPS
+            from .tool_catalog import ToolDefinitionSnapshot
+
+            child_plan = build_first_request_schema_plan(
+                self.registry,
+                child_config.allowed_tools,
+                child_config,
+                child_kwargs["api_endpoint"],
+                child_kwargs["messages"],
+                skill_file_enabled=bool(
+                    self.skill_file_bindings is not None
+                    and self.skill_file_bindings.authorized
+                ),
+                install_skill_enabled=False,
+                run_skill_script_enabled=self._run_skill_script_tool is not None,
+                run_log_active=False,
+                agent_kind=AGENT_KIND_SUBAGENT,
+                reporting_available=bool(fleet is not None and not inline),
+                peers_available=bool(fleet is not None and not inline),
+            )
+            tool_ids = {
+                name: self.registry.snapshot_for_hook(name).tool_id
+                for name in child_config.allowed_tools
+            }
+            tool_ids.update(
+                {
+                    schema.name: ToolDefinitionSnapshot.from_schema(
+                        schema, "runtime", 0, id(schema)
+                    ).tool_id
+                    for schema in child_plan.runtime_schemas
+                }
+            )
+            child_scope = self._hooks_v2_lifecycle.open_scope(parent=run_id)
+            event = self._hooks_v2_lifecycle.event(
+                "SubagentStart",
+                run_id=run_id,
+                turn_id=self._hooks_v2_turn_id,
+                data={
+                    "child_task": child_task,
+                    "tool_ids": list(tool_ids.values()),
+                    "budget_caps": {
+                        key: getattr(child_config.budget, key) for key in CAPS
+                    },
+                    **({"model": child_config.model} if child_config.model else {}),
+                    **(
+                        {"provider": child_config.provider}
+                        if child_config.provider
+                        else {}
+                    ),
+                },
+                initiator="child",
+            )
+            try:
+                result = self._hooks_v2_engine._sync(
+                    self._hooks_v2_lifecycle.fire(
+                        event, child_scope, current=lambda: not should_cancel()
+                    )
+                )
+                child_config, selected_ids = narrow_child(
+                    child_config, result, tool_ids
+                )
+                child_kwargs["config"] = child_config
+                child_kwargs["hook_tool_ids"] = selected_ids
+                child_kwargs["messages"] += list(
+                    self._hooks_v2_lifecycle.context.blocks(child_scope, "child")
+                )
+            except Exception:  # noqa: BLE001 -- hook boundary
+                sub_agent_spawns -= 1
+                return ToolResult(
+                    ok=False,
+                    error="sub-agent initialization refused",
+                    dispatch_state="settled",
+                )
+            finally:
+                self._hooks_v2_lifecycle.close_scope(child_scope)
+            return None
+
         def spawn(
             spawn_task: str,
             *,
@@ -6184,7 +6320,40 @@ class AgentService:
                     routing=load_agents_routing_config(),
                 )
             except RoutingError as err:
-                return SpawnAdmissionRefusal(ok=False, error=f"[{err.code}] {err}")
+                return SpawnAdmissionRefusal(
+                    ok=False, error=f"[{err.code}] ({err.level}) {err}"
+                )
+            from .agent_routing import (
+                execution_provider_for_target,
+                freeze_spawn_target,
+                resolve_preset_fallback_targets,
+            )
+
+            try:
+                fallback_targets = resolve_preset_fallback_targets(
+                    self._app_config,
+                    resolved,
+                    primary_provider=target.provider,
+                    primary_model=target.model,
+                )
+                if fallback_targets:
+                    target = freeze_spawn_target(
+                        self._app_config,
+                        target,
+                        selected_endpoint=(
+                            config.base_url
+                            if target.provider == (parent_raw_provider or api_endpoint)
+                            else None
+                        ),
+                    )
+            except RoutingError as err:
+                return SpawnAdmissionRefusal(
+                    ok=False, error=f"[{err.code}] ({err.level}) {err}"
+                )
+            child_execution_provider = (
+                target.execution_provider
+                or execution_provider_for_target(self._app_config, target.provider)
+            )
             if sub_agent_spawns >= config.budget.max_subagents:
                 return ToolResult(
                     ok=False,
@@ -6320,13 +6489,18 @@ class AgentService:
                 # Children report provider-level faults against the same
                 # provider the parent is using (review minor, 2026-08-31 --
                 # previously they reported "unknown provider").
-                provider=config.provider,
+                provider=target.provider,
+                execution_provider=child_execution_provider,
+                preset_fallback_targets=fallback_targets,
                 system_prompt=child_system_prompt,
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
                 native_tools=config.native_tools,
                 reasoning_replay=(
-                    config.reasoning_replay if child_model == config.model else None
+                    config.reasoning_replay
+                    if child_model == config.model
+                    and target.provider == (parent_raw_provider or api_endpoint)
+                    else None
                 ),
                 # A sub-agent operates on the same workspace roots as its
                 # parent, so it inherits the same environment note verbatim
@@ -6376,6 +6550,43 @@ class AgentService:
                 # onto the child run row so resume/continuation (Task 8)
                 # reuses IT rather than live re-resolution. Params persist
                 # as JSON only when the resolver produced any.
+                fallback_targets_json=(
+                    json.dumps(
+                        [
+                            {
+                                "provider": target.provider,
+                                "model": child_model,
+                                "base_url": target.base_url,
+                                "params_json": json.dumps(
+                                    params_to_dict(target.params)
+                                ),
+                                "execution_provider": child_execution_provider,
+                            },
+                            *[
+                                {
+                                    "provider": candidate.provider,
+                                    "model": candidate.model,
+                                    "base_url": candidate.target.base_url
+                                    if candidate.target
+                                    else None,
+                                    "params_json": json.dumps(
+                                        params_to_dict(candidate.target.params)
+                                    )
+                                    if candidate.target
+                                    else "{}",
+                                    "execution_provider": candidate.target.execution_provider
+                                    if candidate.target
+                                    else "",
+                                    "ready": candidate.ready,
+                                    "skip_reason": candidate.skip_reason,
+                                }
+                                for candidate in fallback_targets
+                            ],
+                        ]
+                    )
+                    if fallback_targets
+                    else None
+                ),
                 resolved_provider=target.provider,
                 resolved_model=child_model,
                 resolved_base_url=target.base_url,
@@ -6444,82 +6655,10 @@ class AgentService:
                         f"{refusal.message}"
                     ),
                 )
-            if hook_run is not None:
-                from .hooks_v2.lifecycle import narrow_child
-                from .hooks_v2.validation import CAPS
-                from .tool_catalog import ToolDefinitionSnapshot
-
-                child_plan = build_first_request_schema_plan(
-                    self.registry,
-                    child_config.allowed_tools,
-                    child_config,
-                    api_endpoint,
-                    child_kwargs["messages"],
-                    skill_file_enabled=bool(
-                        self.skill_file_bindings is not None
-                        and self.skill_file_bindings.authorized
-                    ),
-                    install_skill_enabled=False,
-                    run_skill_script_enabled=self._run_skill_script_tool is not None,
-                    run_log_active=False,
-                    agent_kind=AGENT_KIND_SUBAGENT,
-                    reporting_available=bool(fleet is not None and not inline),
-                )
-                tool_ids = {
-                    name: self.registry.snapshot_for_hook(name).tool_id
-                    for name in child_config.allowed_tools
-                }
-                tool_ids.update(
-                    {
-                        schema.name: ToolDefinitionSnapshot.from_schema(
-                            schema, "runtime", 0, id(schema)
-                        ).tool_id
-                        for schema in child_plan.runtime_schemas
-                    }
-                )
-                child_scope = self._hooks_v2_lifecycle.open_scope(parent=run_id)
-                event = self._hooks_v2_lifecycle.event(
-                    "SubagentStart",
-                    run_id=run_id,
-                    turn_id=self._hooks_v2_turn_id,
-                    data={
-                        "child_task": spawn_task,
-                        "tool_ids": list(tool_ids.values()),
-                        "budget_caps": {
-                            key: getattr(child_config.budget, key) for key in CAPS
-                        },
-                        **({"model": child_config.model} if child_config.model else {}),
-                        **(
-                            {"provider": child_config.provider}
-                            if child_config.provider
-                            else {}
-                        ),
-                    },
-                    initiator="child",
-                )
-                try:
-                    result = self._hooks_v2_engine._sync(
-                        self._hooks_v2_lifecycle.fire(
-                            event, child_scope, current=lambda: not should_cancel()
-                        )
-                    )
-                    child_config, selected_ids = narrow_child(
-                        child_config, result, tool_ids
-                    )
-                    child_kwargs["config"] = child_config
-                    child_kwargs["hook_tool_ids"] = selected_ids
-                    child_kwargs["messages"] += list(
-                        self._hooks_v2_lifecycle.context.blocks(child_scope, "child")
-                    )
-                except Exception:  # noqa: BLE001 -- hook boundary
-                    sub_agent_spawns -= 1
-                    return ToolResult(
-                        ok=False,
-                        error="sub-agent initialization refused",
-                        dispatch_state="settled",
-                    )
-                finally:
-                    self._hooks_v2_lifecycle.close_scope(child_scope)
+            failure = initialize_child_hooks(child_kwargs, spawn_task, inline=inline)
+            if failure is not None:
+                return failure
+            child_config = child_kwargs["config"]
             if fleet is None or inline:
                 # -- INLINE path: byte-identical to every release before
                 # PR2a. Kept, not merely tolerated: with no fleet there is
@@ -7017,11 +7156,15 @@ class AgentService:
             # this path's pre-Task-8 behavior byte-identical: inherit the
             # parent's endpoint, take the definition's CURRENT model.
             snapshot = None
+            fallback_state = None
             if retained.run_id is not None:
                 try:
                     snapshot = self.db.get_run_resolved_target(retained.run_id)
-                except Exception:  # noqa: BLE001 — a read failure is a miss
-                    snapshot = None
+                    fallback_state = self.db.get_run_fallback_state(retained.run_id)
+                except Exception:  # noqa: BLE001 — fail closed on frozen route reads
+                    return SpawnAdmissionRefusal(
+                        ok=False, error="could not read frozen child target"
+                    )
             if snapshot is not None:
                 child_endpoint = snapshot["provider"]
                 child_model = snapshot["model"] or config.model
@@ -7052,13 +7195,22 @@ class AgentService:
                 # Children report provider-level faults against the same
                 # provider the parent is using (review minor, 2026-08-31 --
                 # previously they reported "unknown provider").
-                provider=config.provider,
+                provider=child_endpoint,
+                execution_provider=(
+                    fallback_state["active_target"].get("execution_provider", "")
+                    if fallback_state
+                    else ""
+                ),
                 system_prompt=child_system_prompt,
                 allowed_tools=child_allowed_tools,
                 budget=child_budget,
                 native_tools=config.native_tools,
                 reasoning_replay=(
-                    config.reasoning_replay if child_model == config.model else None
+                    config.reasoning_replay
+                    if child_model == config.model
+                    and child_endpoint == (parent_raw_provider or api_endpoint)
+                    and not (fallback_state and fallback_state["active_index"])
+                    else None
                 ),
                 workspace_context_note=config.workspace_context_note,
                 personal_context_block=config.personal_context_block,
@@ -7104,14 +7256,47 @@ class AgentService:
                 # target. The legacy miss branch leaves them NULL -- a
                 # pre-v21 row's continuations keep re-resolving live, as
                 # they always have.
-                resolved_provider=snapshot["provider"] if snapshot else None,
-                resolved_model=child_model if snapshot else None,
-                resolved_base_url=snapshot["base_url"] if snapshot else None,
-                resolved_params_json=snapshot["params_json"] if snapshot else None,
+                fallback_targets_json=fallback_state["targets_json"]
+                if fallback_state
+                else None,
+                active_fallback_index=fallback_state["active_index"]
+                if fallback_state
+                else 0,
+                resolved_provider=(
+                    fallback_state["original_target"]["provider"]
+                    if fallback_state
+                    else snapshot["provider"]
+                    if snapshot
+                    else None
+                ),
+                resolved_model=(
+                    fallback_state["original_target"]["model"]
+                    if fallback_state
+                    else child_model
+                    if snapshot
+                    else None
+                ),
+                resolved_base_url=(
+                    fallback_state["original_target"]["base_url"]
+                    if fallback_state
+                    else snapshot["base_url"]
+                    if snapshot
+                    else None
+                ),
+                resolved_params_json=(
+                    fallback_state["original_target"]["params_json"]
+                    if fallback_state
+                    else snapshot["params_json"]
+                    if snapshot
+                    else None
+                ),
             )
             child_kwargs["spawn_parent_event_id"] = (
                 child_kwargs["spawn_event_id"] or f"agent-run:{run_id}"
             )
+            failure = initialize_child_hooks(child_kwargs, retained.task)
+            if failure is not None:
+                return failure
             handle, failure = _launch_fleet_child(
                 retained.task,
                 (resolved.name if resolved else None),
@@ -8072,34 +8257,51 @@ class AgentService:
         # required (shaping and the protocol-text cache resolve at build
         # time), but LoopDeps itself is never rebuilt -- TASK-25913's
         # wall-budget origin is untouched by a switch.
-        def _build_for_candidate(candidate_endpoint: str):
-            try:
-                # The candidate runs ITS OWN configured model, not the
-                # primary's -- an anthropic model id sent verbatim to cohere
-                # is a guaranteed invalid-model failure (review C3b). Empty
-                # means "let the handler use its provider default", the same
-                # resolution the rest of the app applies.
-                from tldw_chatbook.config import get_cli_setting
+        def _build_for_candidate(candidate):
+            from .fallback_chain import FallbackCandidate
 
-                candidate_model = str(
-                    get_cli_setting(f"api_settings.{candidate_endpoint}", "model", "")
-                    or ""
-                )
-                candidate_config = dataclasses.replace(
-                    config,
-                    model=candidate_model,
-                    provider=candidate_endpoint,
-                    # Endpoint/model approval belongs only to the resolved primary.
-                    reasoning_replay=None,
-                )
+            explicit = isinstance(candidate, FallbackCandidate)
+            candidate_endpoint = candidate.provider if explicit else candidate
+            try:
+                if explicit:
+                    target = candidate.target
+                    if target is None:
+                        return None
+                    candidate_config = dataclasses.replace(
+                        config,
+                        model=target.model,
+                        provider=target.provider,
+                        execution_provider=target.execution_provider,
+                        base_url=target.base_url,
+                        sampling_params=target.params,
+                        reasoning_replay=None,
+                    )
+                else:
+                    from tldw_chatbook.config import get_cli_setting
+
+                    candidate_model = str(
+                        get_cli_setting(
+                            f"api_settings.{candidate_endpoint}", "model", ""
+                        )
+                        or ""
+                    )
+                    candidate_config = dataclasses.replace(
+                        config,
+                        model=candidate_model,
+                        provider=candidate_endpoint,
+                        execution_provider="",
+                        base_url=None,
+                        sampling_params=(),
+                        reasoning_replay=None,
+                    )
                 return self._make_call_model(
                     candidate_config,
                     candidate_endpoint,
                     runtime_schemas,
                     log_active,
-                    continuation_groups,
-                    continuation_owner_key,
-                    continuation_owner_message_id,
+                    () if explicit else continuation_groups,
+                    None if explicit else continuation_owner_key,
+                    None if explicit else continuation_owner_message_id,
                     run_id=run_id,
                     trusted_role=trusted_guidance_role,
                     project_instruction_context=project_context,
@@ -8109,27 +8311,60 @@ class AgentService:
                     on_context_assembled=lambda categories: context_callback_ref[
                         "callback"
                     ](categories),
-                    first_request_fits=schema_plan.request_fits,
+                    first_request_fits=True if explicit else schema_plan.request_fits,
                 )
-            except Exception:  # noqa: BLE001 -- a broken candidate is skipped
+            except Exception:  # noqa: BLE001 -- construction failure remains a visible skip
                 return None
 
         fallback_runtime = None
-        from .fallback_chain import (
-            FallbackRuntime,
-            resolve_fallback_chain,
-        )  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+        from .fallback_chain import FallbackRuntime, resolve_fallback_chain
 
-        resolved_chain = resolve_fallback_chain(
-            getattr(config, "fallback_providers", None),
-            api_endpoint,
-            self._provider_is_ready,
-        )
-        if resolved_chain:
-            fallback_runtime = FallbackRuntime(
-                candidates=tuple(resolved_chain),
-                build=_build_for_candidate,
+        if config.preset_fallback_targets:
+            # Retained/private continuation never opens another preset chain.
+            if (
+                resumed_from_run_id is None
+                and not continuation_groups
+                and restore_provider_continuation is None
+            ):
+
+                def select_preset_target(candidate) -> None:
+                    self.db.set_run_active_fallback(run_id, candidate.index)
+                    if self._fleet is not None:
+                        self._fleet.set_resolved_target(
+                            run_id, candidate.provider, candidate.model
+                        )
+                    if self._on_resolved_target is not None:
+                        try:
+                            self._on_resolved_target(
+                                run_id, candidate.provider, candidate.model
+                            )
+                        except Exception as exc:  # noqa: BLE001 - observation cannot alter dispatch
+                            logger.warning(
+                                "agent_target_observer_failed error_type={}",
+                                _safe_exception_type(exc),
+                            )
+
+                fallback_runtime = FallbackRuntime(
+                    candidates=tuple(
+                        dataclasses.replace(
+                            candidate, native=config.native_tools and candidate.native
+                        )
+                        for candidate in config.preset_fallback_targets
+                    ),
+                    build=_build_for_candidate,
+                    pre_tool_only=True,
+                    select=select_preset_target,
+                )
+        else:
+            resolved_chain = resolve_fallback_chain(
+                getattr(config, "fallback_providers", None),
+                api_endpoint,
+                self._provider_is_ready,
             )
+            if resolved_chain:
+                fallback_runtime = FallbackRuntime(
+                    tuple(resolved_chain), _build_for_candidate
+                )
 
         def observe_step(step: AgentStep) -> None:
             try:
@@ -8219,7 +8454,7 @@ class AgentService:
             """Persist safe presence-only facts at the exact request seam."""
             attached = context_steps_ref.get("attached")
             injected = context_steps_ref.get("injected")
-            if attached is None or injected is None:
+            if attached is None or injected is None or attached.status == "completed":
                 return
             observed_at = _now_iso()
             attached.summary = f"{', '.join(categories)} context attached"
@@ -8306,14 +8541,34 @@ class AgentService:
             return True
 
         def report_to_supervisor(args: dict) -> ToolResult:
+            from tldw_chatbook.Backup_Recovery.participants import (
+                run_finite_local_worker,
+            )
+
+            from .fleet_message_tools import (
+                refused as refuse_progress,
+            )
             from .fleet_message_tools import (
                 report as report_progress,
-                refused as refuse_progress,
             )
 
             if progress_sender is None or not progress_authorized():
                 return refuse_progress()
-            return report_progress(progress_sender, args)
+            return run_finite_local_worker(report_progress, progress_sender, args)
+
+        def list_peer_agents(args: dict) -> ToolResult:
+            from .fleet_message_tools import list_peers, refused
+
+            if peer_messenger is None or not progress_authorized():
+                return refused()
+            return list_peers(peer_messenger, args)
+
+        def send_to_peer(args: dict) -> ToolResult:
+            from .fleet_message_tools import refused, send_peer
+
+            if peer_messenger is None or not progress_authorized():
+                return refused()
+            return send_peer(peer_messenger, args)
 
         def read_agent_messages(args: dict) -> ToolResult:
             from .fleet_message_tools import (
@@ -8619,12 +8874,14 @@ class AgentService:
                 if seeded_steering_with_causes or drain_mailbox_with_causes is not None
                 else None
             ),
-            report_to_supervisor=(
-                report_to_supervisor if progress_sender is not None else None
-            ),
-            read_agent_messages=(
-                read_agent_messages if progress_inbox is not None else None
-            ),
+            report_to_supervisor=report_to_supervisor
+            if progress_sender is not None
+            else None,
+            list_peer_agents=list_peer_agents if peer_messenger is not None else None,
+            send_to_peer=send_to_peer if peer_messenger is not None else None,
+            read_agent_messages=read_agent_messages
+            if progress_inbox is not None
+            else None,
             on_record=on_record,
             project_tool_record=self.registry.project_tool_record,
             has_tool_record_projection=lambda call: (
@@ -8737,12 +8994,13 @@ class AgentService:
                     steps=[self._service_error_step(run_id, str(error))],
                 )
             except Exception as exc:  # noqa: BLE001 — a run never raises out
+                from tldw_chatbook.Chat.Chat_Deps import ChatAPIError
+                from tldw_chatbook.Chat.console_trace_service import (
+                    TraceCallPersistenceError,
+                )
                 from tldw_chatbook.Chat.provider_failures import (
                     FAILURE_SUMMARY_MAX_CHARS,
                     describe_stream_failure,
-                )
-                from tldw_chatbook.Chat.console_trace_service import (
-                    TraceCallPersistenceError,
                 )
 
                 budget_tokens_known = False
@@ -8764,6 +9022,9 @@ class AgentService:
                             describe_stream_failure(exc)[:FAILURE_SUMMARY_MAX_CHARS],
                         )
                     ],
+                    console_copy=(
+                        exc.console_copy if isinstance(exc, ChatAPIError) else None
+                    ),
                 )
         finally:
             # A BaseException still owns its normal control-flow semantics, but

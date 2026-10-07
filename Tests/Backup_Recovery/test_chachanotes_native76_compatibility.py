@@ -114,7 +114,7 @@ def test_native76_staged_upgrade_preserves_machine_receipts(tmp_path, dictionary
         rows = tuple(connection.execute("SELECT * FROM console_dispatch_checkpoints"))
         messages = tuple(connection.execute("SELECT * FROM messages ORDER BY id"))
     assert validation.validate_candidate(_owner(), path, Event(), migrate=True) == ()
-    assert validation.validated_schema_version(_owner(), path, Event()) == 77
+    assert validation.validated_schema_version(_owner(), path, Event()) == 78
     with closing(sqlite3.connect(path)) as connection:
         assert (
             tuple(connection.execute("SELECT * FROM console_dispatch_checkpoints"))
@@ -519,7 +519,7 @@ def test_shipped76_malformed_catalog_refuses_before_writing(
 @pytest.mark.parametrize("subscriptions", [False, True], ids=["primary", "shared"])
 @pytest.mark.parametrize("version", [75, 76, 77])
 def test_repaired77_catalog_admits_only_its_exact_stamp(
-    tmp_path, dictionary, subscriptions, version
+    tmp_path, dictionary, subscriptions, version, monkeypatch
 ):
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.recovery_operations import (
@@ -528,7 +528,7 @@ def test_repaired77_catalog_admits_only_its_exact_stamp(
     )
     from tldw_chatbook.DB.recovery_core_schema import (
         CHACHANOTES_V77_SCHEMA,
-        CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+        CHACHANOTES_V77_DICTIONARY_UPDATE_SCHEMA,
         _CHAT_DICTIONARIES_UPDATED_TRIGGER,
     )
 
@@ -538,6 +538,8 @@ def test_repaired77_catalog_admits_only_its_exact_stamp(
 
         other = SubscriptionsDB(path)
         other.close()
+    # This control remains about the independently frozen historical v77 shape.
+    monkeypatch.setattr(CharactersRAGDB, "_CURRENT_SCHEMA_VERSION", 77)
     db = CharactersRAGDB(path, client_id="repaired-stamp")
     try:
         connection = db.get_connection()
@@ -553,7 +555,7 @@ def test_repaired77_catalog_admits_only_its_exact_stamp(
         assert actual == (
             _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS[int(dictionary)]
             if subscriptions
-            else CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
+            else CHACHANOTES_V77_DICTIONARY_UPDATE_SCHEMA
             if dictionary
             else CHACHANOTES_V77_SCHEMA
         )
@@ -570,7 +572,7 @@ def test_repaired77_catalog_admits_only_its_exact_stamp(
         else _owner()
     )
     before = _dump(path)
-    assert validation.validate_candidate(owner, path, Event(), migrate=True) == (
+    assert validation.validate_candidate(owner, path, Event(), migrate=False) == (
         () if version == 77 else ("unsupported_schema_version",)
     )
     assert _dump(path) == before
@@ -595,6 +597,9 @@ def test_strong_primary_catalog_accepts_historical_stamps(
         )
         connection.execute("UPDATE db_schema_version SET version=?", (version,))
         connection.commit()
+    from tldw_chatbook.DB.recovery_core_schema import _fleet_progress_catalog
+
+    catalog = tuple((sql,) for sql in _fleet_progress_catalog(tuple(row[0] for row in catalog)))
     assert validation.validate_candidate(_owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as connection:
         assert (
@@ -607,4 +612,4 @@ def test_strong_primary_catalog_accepts_historical_stamps(
         )
         assert connection.execute(
             "SELECT version FROM db_schema_version"
-        ).fetchone() == (77,)
+        ).fetchone() == (78,)

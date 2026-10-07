@@ -14,6 +14,7 @@ import pytest
 from textual.app import ComposeResult
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
@@ -22,6 +23,7 @@ from Tests.UI.test_console_native_chat_flow import (
     _build_console_send_test_app,
     _select_llamacpp_console,
     _wait_for_text,
+    _visible_text,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -221,6 +223,9 @@ async def test_a_second_resend_never_cancels_the_one_in_flight(in_flight):
         ),
         chat_store_accessor=lambda: store,
         ensure_console_chat_controller=lambda: controller,
+        generation_refusal_copy=lambda controller, session_id: (
+            controller.send_refusal_copy(session_id)
+        ),
     )
     button = SimpleNamespace(
         id="console-message-action-resend-u1",
@@ -372,3 +377,169 @@ async def test_console_r_resends_a_refused_echo_as_one_message():
     ]
     assert recoveries == ()
     assert draft == ""
+
+
+class _HeldRecoveryGateway(_ReadyResolutionGateway):
+    def __init__(self):
+        self.calls = 0
+        self.streaming = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def stream_chat(self, _resolution, _messages, **_kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            yield "original partial"
+            raise RuntimeError("llama.cpp stream failed")
+        yield "probe incremental reply"
+        self.streaming.set()
+        await self.release.wait()
+        yield " finished"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_resend_poll_survives_initial_hook_admission_read(request, monkeypatch):
+    gateway = _HeldRecoveryGateway()
+    host = _console_app(gateway)
+    hook_entered = asyncio.Event()
+    hook_release = asyncio.Event()
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
+            "hello"
+        )
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "llama.cpp stream failed")
+        await pilot.pause(0.4)
+        user = next(row for row in _session_rows(console) if row.role is USER)
+        assert user.persisted_message_id is not None
+        controller = console._ensure_console_chat_controller()
+        original_admission = controller.hook_admission_reason
+        reads = 0
+
+        async def held_admission():
+            nonlocal reads
+            reads += 1
+            if reads == 1:
+                hook_entered.set()
+                await hook_release.wait()
+            return await original_admission()
+
+        monkeypatch.setattr(controller, "hook_admission_reason", held_admission)
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(user.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-resend-{user.id}"
+        )
+        try:
+            assert await pilot.click(f"#console-message-action-resend-{user.id}")
+            await asyncio.wait_for(hook_entered.wait(), 5)
+            assert any(
+                worker.name == "console-resend" and not worker.is_finished
+                for worker in console.workers
+            )
+            timer = console._console_transcript_sync_timer
+            if timer is not None:
+                await timer._callback()
+            hook_release.set()
+            await asyncio.wait_for(gateway.streaming.wait(), 5)
+            await pilot.pause(0.65)
+            assert any(
+                "probe incremental reply" in row.content
+                for row in _session_rows(console)
+            )
+            assert "probe incremental reply" in _visible_text(console)
+        finally:
+            hook_release.set()
+            gateway.release.set()
+            await pilot.pause(0.25)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_transcript_resend_retains_failed_rows_until_connection_is_ready(request):
+    from datetime import UTC, datetime
+
+    from tldw_chatbook.Chat.console_session_settings import console_send_connection
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderTestEvidence,
+        provider_connection_evidence,
+    )
+
+    gateway = FailThenRecoverGateway()
+    host = _console_app(gateway)
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "llama.cpp stream failed")
+        user = next(row for row in _session_rows(console) if row.role is USER)
+        settings = console._active_console_settings_readiness_uncached()[0]
+        identity = console_send_connection(
+            settings,
+            app_config=console._provider_readiness_app_config(),
+        )
+        assert identity is not None
+        owner = provider_connection_evidence(host)
+        assert owner.publish(
+            ProviderTestEvidence(
+                identity,
+                "unreachable",
+                (),
+                "connection_refused",
+                observed_at=datetime.now(UTC),
+            ),
+            order=1,
+        )
+        console._poll_console_credential_readiness()
+        await console._sync_native_console_chat_ui()
+        assert (
+            console._active_console_settings_readiness()[1].blocker
+            == "endpoint_unreachable"
+        )
+        assert console.query_one("#console-send-message", Button).disabled
+        composer.load_draft("")
+        console._ensure_console_chat_store().set_session_draft(
+            console._ensure_console_chat_store().active_session_id, ""
+        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(user.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-resend-{user.id}"
+        )
+        before = tuple(
+            (row.id, row.status, row.content) for row in _session_rows(console)
+        )
+        assert await pilot.click(f"#console-message-action-resend-{user.id}")
+        await pilot.pause(0.3)
+        assert gateway.calls == 1
+        assert (
+            tuple((row.id, row.status, row.content) for row in _session_rows(console))
+            == before
+        )
+        assert owner.publish(
+            ProviderTestEvidence(
+                identity,
+                "reachable",
+                (settings.model,),
+                observed_at=datetime.now(UTC),
+            ),
+            order=2,
+        )
+        console._poll_console_credential_readiness()
+        await console._sync_native_console_chat_ui()
+        assert console._active_console_settings_readiness()[1].blocker is None
+        assert await pilot.click(f"#console-message-action-resend-{user.id}")
+        await _wait_for_text(console, pilot, "recovered")
+        assert gateway.calls == 2
+        assert (
+            next(row for row in _session_rows(console) if row.role is USER).id
+            == user.id
+        )

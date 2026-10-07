@@ -732,7 +732,11 @@ class ConsoleSessionSurface(Vertical):
         )
         self.set_session_title(active_session.title if active_session else None)
         async with self._session_sync_lock:
+            if not self.is_attached or self.app._exit:
+                return
             tab_strip = self.query_one("#console-native-tab-strip", HorizontalScroll)
+            if not tab_strip.is_attached:
+                return
             desired_ids = self._desired_tab_child_ids(
                 sessions=sessions,
                 active_session_id=active_session_id,
@@ -751,8 +755,11 @@ class ConsoleSessionSurface(Vertical):
 
             removed_count = len(tab_strip.children)
             mounted_count = (len(sessions) * 2) + 2
+            # Each removal or mount can yield to navigation or app shutdown.
             for child in list(tab_strip.children):
                 await child.remove()
+                if not tab_strip.is_attached or self.app._exit:
+                    return
             for session in sessions:
                 is_active = session.id == active_session_id
                 marker = self._resolve_tab_marker(
@@ -768,8 +775,14 @@ class ConsoleSessionSurface(Vertical):
                         queued_count=(queue_counts or {}).get(session.id, 0),
                     )
                 )
+                if not tab_strip.is_attached or self.app._exit:
+                    return
                 await tab_strip.mount(self._build_close_tab_button(session))
+                if not tab_strip.is_attached or self.app._exit:
+                    return
             await tab_strip.mount(self._build_new_tab_button())
+            if not tab_strip.is_attached or self.app._exit:
+                return
             await tab_strip.mount(self._build_new_temporary_tab_button())
             self._record_mount_churn(mounted=mounted_count, removed=removed_count)
         # TASK-28028: mounted/removed tabs change what is hidden past each

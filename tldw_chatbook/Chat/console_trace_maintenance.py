@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType
 
+from tldw_chatbook.Backup_Recovery.participants import _core_operation
 from tldw_chatbook.Chat.console_trace_legacy import (
     LegacyDecodedByteLimitError,
     LegacyTraceNormalizer,
@@ -780,10 +781,18 @@ class LegacyTraceMaintenance:
             )
 
     def run_batch(self) -> LegacyMaintenanceBatch:
-        """Run at most one bounded transaction and yield to the caller."""
+        """Run one bounded batch under shared repository admission.
 
+        Returns:
+            Content-free normalization progress or an unadmitted busy result.
+        """
         if self.provider_active():
             return LegacyMaintenanceBatch(False, 0, 0, False)
+        with _core_operation(self.db):
+            return self._run_admitted_batch()
+
+    def _run_admitted_batch(self) -> LegacyMaintenanceBatch:
+        """Keep the read probe and locked write recheck in the admitted scope."""
         expect_work, self.expect_work = self.expect_work, False
         if not expect_work and self._complete_without_pending_work():
             return LegacyMaintenanceBatch(True, 0, 0, True)
