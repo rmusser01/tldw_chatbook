@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-06 15:47'
-updated_date: '2026-10-07 06:35'
+updated_date: '2026-10-07 06:46'
 labels:
   - console
   - performance
@@ -86,4 +86,8 @@ Final-head readiness correction: retain unconditional call_next drain and all or
 Fresh staged review accepted the completion predicate but found one Important bound issue: installed Pilot.pause first drains screen callbacks with a 30-second timeout. Corrected only the new poll to asyncio.sleep capped by remaining phase time. Direct call-path guard RED4.97s before correction and GREEN6.05s with actual native deferral/pending Worker and installed replay afterward; not a claimed hosted 30s timeout. Frozen replay still rejects the original requested assertion within the original phase (14.28s total including startup), no fixture error. All six original consumers rerun after this adjustment: geometry child5.85s; five separate unchanged bootstrap-profile controls11.49/11.35/11.84/11.35/11.24s, no pytest warnings. Current format/all11 guards pass; inherited four lint messages unchanged. Raw evidence preserved, safe manifest augmented without overwriting prior records. Follow-up review and new exact-head CI still required.
 
 Fresh final independent scoped review of 97e64dd plus the eight staged correction/evidence paths: no Critical, Important or Minor findings. Both completion-gap and unbudgeted-Pilot-drain findings resolved. Reviewer verified final helper SHA-256 94ec5ad914106de9dd09f5b1595e2ec26ea388e1b1edc06778e7fb533f96584c, all six original assertions, exact probes and all 95 raw hashes; first 65 manifest entries unchanged. AC7 implemented and verified; TASK34415 remains In Progress for latest-dev integration, fresh exact-head CI and bounded closeout. No merge or qualification clearance.
+
+Latest-dev integration onto 5a607a14bffe9f9d52ec348985819e2c927a1fdd (PR3016 File Notes only): all eight patches rebased without conflicts, range-diff identical; authored Console/test/script/package/workflow inputs byte-identical to reviewed 84d53ecfbb7087a69904f08113a9a4055748de43, not whole-tree identity. No authored overlap; lazy Library factory/non-null workspace shutdown boundary checked. Rebased source 4382dafadc15a3a945fd67cc1c0b367cb69d9990 verified nine focused native-lock/size/geometry tests in 17.72s, child geometry in 5.94s; five original separate bootstrap-profile controls passed in 12.05/13.40/13.32/13.71/13.69s, no pytest warnings. All eleven combined-tree artifact guards pass. Sixteen raw integration hashes append to the safe manifest (111 total); complete local originals retained, no dump publication or full-copy claim. Final replay-identity/evidence review and new exact-head CI remain; task stays In Progress.
+
+Final replay-identity/evidence review confirmed committed source 4382dafadc15a3a945fd67cc1c0b367cb69d9990 on dev 5a607a14bffe9f9d52ec348985819e2c927a1fdd plus the four staged evidence-only paths: no Critical, Important or Minor findings. All eight patches identical, helper SHA-256 unchanged, all 111 raw hashes verified with previous 95 unchanged. Original production/readiness reviews remain applicable by exact authored-input identity. Ready for source-preserving evidence commit/publication, not merge clearance; TASK34415 stays In Progress until latest exact-head CI and bounded closeout.
 <!-- SECTION:NOTES:END -->

@@ -404,6 +404,29 @@ entries are unchanged. This clears the scoped correction, not latest-dev
 replay or new exact-head CI. All seven AC are checked; TASK34415 remains
 In Progress for those publication gates and bounded closeout.
 
+## Latest-dev File Notes replay
+
+Latest-dev replay onto `5a607a14bffe9f9d52ec348985819e2c927a1fdd`
+(merged PR3016 File Notes history/retention/delete safety) had no authored
+path overlap. All eight patches have identical range-diff and every authored
+Console/test/script/package/workflow input remains byte-identical to reviewed
+`84d53ecfbb7087a69904f08113a9a4055748de43`; this is not whole-tree identity.
+Library's File Notes factory and non-null-workspace shutdown boundary were
+inspected. The combined tree passes nine focused lock/size/geometry cases in
+17.72s, its original private geometry child in 5.94s, and all five separate
+original bootstrap-profile helper controls. No pytest warnings; all eleven
+artifact guards pass. The audited receipt and 111-entry manifest retain
+the new integration evidence from `/private/tmp/pr3034-rebase-5a607-qtopba`.
+Rebased source head `4382dafadc15a3a945fd67cc1c0b367cb69d9990` and the final
+evidence-only notes still require reviewed publication and fresh exact-head CI.
+
+Final replay-identity/evidence review confirmed that source head and the four
+staged evidence-only paths: no Critical/Important/Minor findings. All 111 hashes
+verify with the previous 95 unchanged; original production/readiness reviews
+remain applicable through exact authored-input identity. The final evidence
+commit preserves reviewed/tested source. Publication is ready; new exact-head
+CI and bounded task closeout remain required, not merge or qualification clearance.
+
 ## Still open
 
 Busy-lock responsiveness is not full unchanged 50ms activation qualification.

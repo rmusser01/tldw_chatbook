@@ -72,6 +72,24 @@ overwriting earlier evidence.
 
 ## Retention and rerun
 
+Latest-dev replay: all eight authored commits replayed without conflicts onto
+`5a607a14bffe9f9d52ec348985819e2c927a1fdd`, producing
+`4382dafadc15a3a945fd67cc1c0b367cb69d9990`. Every range-diff entry is identical;
+authored Console/test and script/package/workflow inputs are byte-identical
+to reviewed `84d53ecfbb7087a69904f08113a9a4055748de43`.
+Incoming PR3016 changes File Notes history/retention/delete safety; no authored
+path overlaps. Library's factory is lazy and its shutdown checks for a real
+workspace. No File Notes redesign or whole-tree identity claim.
+
+Combined-tree focused selection: nine passed in 17.72s (six real-lock cases,
+two Console size checks and ordinary geometry; its private child passed in
+5.94s). Five original separate bootstrap-profile controls passed in
+12.05s, 13.40s, 13.32s, 13.71s and 13.69s. No pytest warnings; all eleven
+combined-tree guards pass. Complete originals remain in
+`/private/tmp/pr3034-rebase-5a607-qtopba`; sixteen appended hashes identify
+them without publishing environment-rich dumps. Total manifest entries: 111.
+New exact-head CI is still required.
+
 Complete raw parent/child logs, XML, static outputs, observation and runnable
 probe source remain in `/private/tmp/pr3034-ready-sync-probe-9Zk8Xa`.
 The complete hosted log remains at
