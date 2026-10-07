@@ -1331,6 +1331,9 @@ class NotesOrganizationSyncService:
             dataset_id=dataset_id,
             base_version=base_version,
             request_fingerprint=request_fingerprint,
+            source_scope=(self._receipt_request_binding(receipt) or {}).get(
+                "source_scope"
+            ),
         )
         if collisions:
             review_id = NotesInteropService._ensure_folder_placement_review(
@@ -1525,7 +1528,7 @@ class NotesOrganizationSyncService:
         server_profile_id: str,
         authenticated_principal_id: str | None,
         workspace_scope: str | None,
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         """Project each latest dispatchable note sync intent idempotently."""
 
         if self.notes_producer is None:
@@ -1551,6 +1554,8 @@ class NotesOrganizationSyncService:
         }
         copied = 0
         already = 0
+        blocked = 0
+        reason = None
         for row in self.notes_repository.db.list_latest_dispatchable_note_sync_entries(
             server_profile_id=server_profile_id,
             dataset_id=dataset_id,
@@ -1562,6 +1567,12 @@ class NotesOrganizationSyncService:
                 "workspace_scope": workspace_scope,
             }
             if not isinstance(origin, dict) or origin != expected_origin:
+                blocked += 1
+                reason = (
+                    "notes_origin_scope_unproved"
+                    if not isinstance(origin, dict)
+                    else "notes_origin_scope_mismatch"
+                )
                 continue
             note_id = str(row["entity_id"])
             if str(row["operation"]) == "delete":
@@ -1607,7 +1618,29 @@ class NotesOrganizationSyncService:
                     "WHERE intent_id = ? AND acknowledged_at IS NULL",
                     (after_id, _utc_now(), str(row["intent_id"])),
                 )
-        return {"copied": copied, "already_copied": already}
+        if profile is not None and (
+            blocked
+            or profile.get("last_error")
+            in {"notes_origin_scope_unproved", "notes_origin_scope_mismatch"}
+        ):
+            self.state_repository.set_sync_v2_profile_state(
+                server_profile_id=server_profile_id,
+                authenticated_principal_id=authenticated_principal_id,
+                workspace_scope=workspace_scope,
+                profile_mode=profile["profile_mode"],
+                device_id=profile.get("device_id"),
+                dataset_id=profile.get("dataset_id"),
+                dataset_cursors=profile.get("dataset_cursors"),
+                capabilities=profile.get("capabilities"),
+                dry_run_metadata=profile.get("dry_run_metadata"),
+                last_mirror_report_id=profile.get("last_mirror_report_id"),
+                last_error=reason,
+            )
+        return {
+            "copied": copied,
+            "already_copied": already,
+            **({"blocked": blocked, "reason": reason} if blocked else {}),
+        }
 
     def _record_server_enrollment_status(
         self,

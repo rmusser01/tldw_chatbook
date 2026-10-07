@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
+from tldw_chatbook.Sync_Interop.notes_local_store import NotesMaterializationUnsupported
 from tldw_chatbook.Sync_Interop.sync_state import validate_note_language
 
 NOTES_NOTE_TITLE_MAX_CHARS = 255
@@ -77,7 +78,14 @@ class NotesM1SyncAdapter:
                         "both must be strings without control characters other than tab, CR, or LF."
                     ),
                 )
-            local_store.upsert_note(object_id, payload, object_revision=revision)
+            try:
+                local_store.upsert_note(object_id, payload, object_revision=revision)
+            except NotesMaterializationUnsupported:
+                return record_conflict(
+                    envelope,
+                    conflict_type="notes_materialization_unsupported",
+                    message="The Notes materializer cannot retain complete snapshot backlinks.",
+                )
         notes_mirror.record(
             dataset_id,
             object_id,
@@ -110,4 +118,10 @@ class NotesM1SyncAdapter:
             except ValueError:
                 return None
             result["content_language"] = payload["content_language"]
+        for backlink in ("conversation_id", "message_id"):
+            if backlink in payload:
+                value = payload[backlink]
+                if value is not None and not isinstance(value, str):
+                    return None
+                result[backlink] = value
         return result

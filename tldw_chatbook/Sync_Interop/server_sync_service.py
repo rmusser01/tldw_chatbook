@@ -184,14 +184,24 @@ class ServerSyncService:
             return self.client_provider.build_client()
         raise ValueError("TLDW API client is required for server sync operations.")
 
-    def capture_notes_authority(self, server_profile_id: str) -> tuple[Any, Any]:
+    async def capture_notes_authority(
+        self,
+        server_profile_id: str,
+        *,
+        authenticated_principal_id: str | None,
+        workspace_scope: str | None,
+        dataset_id: str,
+        device_id: str,
+    ) -> tuple[Any, Any]:
         """Pin one existing runtime client and reject context changes through cleanup."""
         client = self._require_client()
         provider = self.client_provider
         context = provider.get_active_context() if provider is not None else None
         runtime = getattr(provider, "runtime_context", None)
         revision = runtime.snapshot()[1] if runtime is not None else None
-        if context is not None and context.active_server_id != server_profile_id:
+        if context is None:
+            raise ValueError("notes_authority_unavailable")
+        if context.active_server_id != server_profile_id:
             raise ValueError("notes_authority_changed")
 
         def assert_current() -> None:
@@ -203,6 +213,35 @@ class ServerSyncService:
                 raise ValueError("notes_authority_changed")
 
         assert_current()
+        if authenticated_principal_id is None:
+            raise ValueError("notes_authority_unavailable")
+        identity = self._dump(await client.get_sync_v2_profile(device_id=device_id))
+        assert_current()
+        actual_principal = identity.get("user_id")
+        if not isinstance(actual_principal, str) or not actual_principal:
+            raise ValueError("notes_authority_unavailable")
+        if actual_principal != authenticated_principal_id:
+            raise ValueError("notes_authority_changed")
+        manifest = self._dump(
+            await client.get_sync_v2_restore_manifest(dataset_ids=[dataset_id])
+        )
+        assert_current()
+        matches = [
+            entry
+            for entry in manifest.get("datasets", [])
+            if entry.get("dataset_id") == dataset_id
+        ]
+        if len(matches) != 1:
+            raise ValueError("notes_authority_unavailable")
+        dataset = matches[0]
+        if "workspace_id" not in dataset or "scope_type" not in dataset:
+            raise ValueError("notes_authority_unavailable")
+        expected_scope = "workspace" if workspace_scope is not None else "personal"
+        if (
+            dataset.get("scope_type") != expected_scope
+            or dataset.get("workspace_id") != workspace_scope
+        ):
+            raise ValueError("notes_authority_changed")
         return client, assert_current
 
     async def get_v2_capabilities(

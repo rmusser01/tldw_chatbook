@@ -34,6 +34,17 @@ class SQLiteNotesStore:
         self.hashes = {}
 
     def upsert_note(self, object_id, payload, *, object_revision):
+        from tldw_chatbook.Sync_Interop.notes_local_store import (
+            NotesMaterializationUnsupported,
+        )
+
+        if any(
+            payload.get(field) is not None
+            for field in ("conversation_id", "message_id")
+        ):
+            raise NotesMaterializationUnsupported(
+                "Canonical Notes has no backlink storage"
+            )
         old = self.db.get_note_by_id(object_id)
         fields = {
             key: payload[key]
@@ -234,6 +245,15 @@ async def test_publication_rechecks_private_peer_and_retains_scope(tmp_path, db)
     )
 
     class UnsupportedPeer:
+        async def capture_notes_authority(self, server_profile_id, **scope):
+            assert server_profile_id == SCOPE["server_profile_id"]
+            assert (
+                scope["authenticated_principal_id"]
+                == SCOPE["authenticated_principal_id"]
+            )
+            assert scope["workspace_scope"] == SCOPE["workspace_scope"]
+            return self, lambda: None
+
         def __init__(self):
             self.probes = 0
             self.pushes = 0
@@ -442,6 +462,20 @@ async def test_transport_pins_probe_and_rejects_changed_authority(tmp_path):
         def __init__(self):
             self.calls = []
 
+        async def get_sync_v2_profile(self, **kwargs):
+            return {"user_id": "user-a"}
+
+        async def get_sync_v2_restore_manifest(self, **kwargs):
+            return {
+                "datasets": [
+                    {
+                        "dataset_id": "dataset-1",
+                        "scope_type": "personal",
+                        "workspace_id": None,
+                    }
+                ]
+            }
+
         async def get_sync_v2_capabilities(self, **kwargs):
             self.calls.append("probe")
             return {"writable_adapter_versions": {"notes.note": [2]}}
@@ -469,7 +503,13 @@ async def test_transport_pins_probe_and_rejects_changed_authority(tmp_path):
     context = type("Context", (), {"active_server_id": "server-a"})()
     provider = Provider()
     transport = ServerSyncService(None, client_provider=provider)
-    authority = transport.capture_notes_authority("server-a")
+    authority = await transport.capture_notes_authority(
+        "server-a",
+        authenticated_principal_id="user-a",
+        workspace_scope=None,
+        dataset_id="dataset-1",
+        device_id="device-1",
+    )
     await transport.get_v2_capabilities(
         dataset_id="dataset-1", notes_authority=authority
     )
@@ -505,6 +545,15 @@ async def test_clear_service_requires_exact_mirror_scope_and_applies_real_db(
     )
 
     class Peer:
+        async def capture_notes_authority(self, server_profile_id, **scope):
+            assert server_profile_id == SCOPE["server_profile_id"]
+            assert (
+                scope["authenticated_principal_id"]
+                == SCOPE["authenticated_principal_id"]
+            )
+            assert scope["workspace_scope"] == SCOPE["workspace_scope"]
+            return self, lambda: None
+
         async def pull_v2_envelopes(self, **kwargs):
             return {
                 "dataset_id": "dataset-1",
@@ -612,6 +661,15 @@ async def test_old_private_full_snapshot_stays_pending_even_with_v2_peer(tmp_pat
     repo.enqueue_sync_v2_outbox_envelope(**SCOPE, dataset_id="dataset-1", envelope=old)
 
     class Peer:
+        async def capture_notes_authority(self, server_profile_id, **scope):
+            assert server_profile_id == SCOPE["server_profile_id"]
+            assert (
+                scope["authenticated_principal_id"]
+                == SCOPE["authenticated_principal_id"]
+            )
+            assert scope["workspace_scope"] == SCOPE["workspace_scope"]
+            return self, lambda: None
+
         async def get_v2_capabilities(self, **kwargs):
             return {"writable_adapter_versions": {"notes": [1, 2]}}
 
@@ -929,3 +987,436 @@ async def test_restore_failed_enqueue_keeps_exact_origin_snapshot_after_restart(
     )[0]
     assert envelope["last_error"]["error_code"] == "notes_language_upgrade_required"
     store.close_connection()
+
+
+@pytest.mark.parametrize(
+    "backlinks",
+    [{"conversation_id": {}}, {"message_id": 4}, {"conversation_id": False}],
+)
+def test_complete_backlink_types_refused_before_store_or_mirror(db, backlinks):
+    mirror = NotesMirror(":memory:")
+    env = builder(notes_adapter_versions={"notes.note": [2]}).build_notes_note_upsert(
+        note_id="bad-links", title="T", content=SOURCE, content_language=LANGUAGE
+    )
+    payload = {**env.payload, **backlinks}
+    env = env.model_copy(
+        update={
+            "payload": payload,
+            "payload_hash": canonical_payload_hash(payload),
+            "object_revision": 1,
+            "server_cursor": 1,
+        }
+    )
+    result = SyncEnvelopeApplier(
+        local_store=SQLiteNotesStore(db), notes_mirror=mirror, dataset_id="dataset-1"
+    ).apply(env)
+    assert result["status"] == "conflict"
+    assert db.get_note_by_id("bad-links") is None
+    assert mirror.get("dataset-1", "bad-links") is None
+
+
+def test_complete_backlinks_reach_and_survive_existing_materializer():
+    from tldw_chatbook.Sync_Interop.notes_local_store import InMemoryNotesStore
+
+    store = InMemoryNotesStore()
+    mirror = NotesMirror(":memory:")
+    env = builder(notes_adapter_versions={"notes.note": [2]}).build_notes_note_upsert(
+        note_id="links",
+        title="T",
+        content=SOURCE,
+        content_language=LANGUAGE,
+        conversation_id="c",
+        message_id="m",
+    )
+    result = SyncEnvelopeApplier(
+        local_store=store, notes_mirror=mirror, dataset_id="dataset-1"
+    ).apply(env)
+    assert result["status"] == "applied"
+    assert store.get("links")["conversation_id"] == "c"
+    assert store.get("links")["message_id"] == "m"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "requested_user,actual_user,actual_workspace,manifest_count,has_provider",
+    [
+        ("user-a", "user-b", None, 1, True),
+        ("user-a", "user-a", "foreign-workspace", 1, True),
+        (None, "user-a", None, 1, True),
+        ("user-a", None, None, 1, True),
+        ("user-a", "user-a", None, 0, True),
+        ("user-a", "user-a", None, 2, True),
+        ("user-a", "user-a", None, 1, False),
+    ],
+)
+async def test_already_foreign_authenticated_scope_refuses_before_pull_or_apply(
+    tmp_path,
+    db,
+    requested_user,
+    actual_user,
+    actual_workspace,
+    manifest_count,
+    has_provider,
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Sync_Interop.local_first_sync_service import (
+        LocalFirstSyncService,
+    )
+    from tldw_chatbook.Sync_Interop.server_sync_service import ServerSyncService
+
+    scope = {**SCOPE, "authenticated_principal_id": requested_user}
+    env = (
+        builder(notes_adapter_versions={"notes.note": [2]})
+        .build_notes_note_upsert(
+            note_id="foreign", title="T", content=SOURCE, content_language=LANGUAGE
+        )
+        .model_copy(
+            update={
+                "object_revision": 1,
+                "server_cursor": 9,
+                "device_id": "other-device",
+            }
+        )
+    )
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        async def get_sync_v2_profile(self, **kwargs):
+            self.calls.append("identity")
+            return {"user_id": actual_user}
+
+        async def get_sync_v2_restore_manifest(self, **kwargs):
+            self.calls.append("manifest")
+            return {
+                "datasets": [
+                    {
+                        "dataset_id": "dataset-1",
+                        "scope_type": "workspace" if actual_workspace else "personal",
+                        "workspace_id": actual_workspace,
+                    }
+                ]
+                * manifest_count
+            }
+
+        async def get_sync_v2_capabilities(self, **kwargs):
+            self.calls.append("probe")
+            return {"writable_adapter_versions": {"notes.note": [2]}}
+
+        async def push_sync_v2_envelopes(self, request):
+            self.calls.append("push")
+            return {
+                "dataset_id": "dataset-1",
+                "accepted": [
+                    {
+                        "client_envelope_id": item.client_envelope_id,
+                        "domain": item.domain,
+                        "object_id": item.object_id,
+                        "object_revision": 1,
+                        "server_cursor": 4,
+                        "apply_status": "applied",
+                    }
+                    for item in request.envelopes
+                ],
+            }
+
+        async def pull_sync_v2_envelopes(self, **kwargs):
+            self.calls.append("pull")
+            return {
+                "dataset_id": "dataset-1",
+                "envelopes": [env.model_dump()],
+                "next_cursor": 9,
+                "has_more": False,
+            }
+
+    client = Client()
+
+    class Provider:
+        def build_client(self):
+            return client
+
+        def get_active_context(self):
+            return SimpleNamespace(active_server_id="server-a")
+
+    repo = SyncStateRepository(tmp_path / "stable-authority.db")
+    repo.set_sync_v2_profile_state(
+        **scope,
+        profile_mode="local_first",
+        dataset_id="dataset-1",
+        device_id="device-1",
+        dataset_cursors={"dataset-1": 3},
+    )
+    pending = builder(
+        notes_adapter_versions={"notes.note": [2]}
+    ).build_notes_note_upsert(
+        note_id="pending", title="T", content=SOURCE, content_language=LANGUAGE
+    )
+    repo.enqueue_sync_v2_outbox_envelope(
+        **scope, dataset_id="dataset-1", envelope=pending
+    )
+    mirror = NotesMirror(":memory:")
+    service = LocalFirstSyncService(
+        server_service=(
+            ServerSyncService(None, client_provider=Provider())
+            if has_provider
+            else ServerSyncService(client)
+        ),
+        state_repository=repo,
+        local_store=SQLiteNotesStore(db),
+        dataset_keys={"dataset-1": KEY},
+        notes_mirror=mirror,
+        notes_mirror_scope=("server-a", requested_user, None),
+    )
+    with pytest.raises(ValueError, match="notes_authority_(changed|unavailable)"):
+        await service.sync_once(**scope, domains=["notes.note"])
+    assert "push" not in client.calls
+    assert "pull" not in client.calls
+    assert "probe" not in client.calls
+    assert db.get_note_by_id("foreign") is None
+    assert mirror.get("dataset-1", "foreign") is None
+    assert (
+        len(repo.list_pending_sync_v2_outbox_envelopes(**scope, dataset_id="dataset-1"))
+        == 1
+    )
+    assert repo.get_sync_v2_profile_state(**scope)["dataset_cursors"] == {
+        "dataset-1": 3
+    }
+
+
+@pytest.mark.parametrize("field", ["conversation_id", "message_id"])
+def test_canonical_materializer_refuses_unsupported_backlink_without_writes(db, field):
+    mirror = NotesMirror(":memory:")
+    env = builder(notes_adapter_versions={"notes.note": [2]}).build_notes_note_upsert(
+        note_id="unsupported",
+        title="T",
+        content=SOURCE,
+        content_language=LANGUAGE,
+        **{field: "non-null"},
+    )
+    result = SyncEnvelopeApplier(
+        local_store=SQLiteNotesStore(db), notes_mirror=mirror, dataset_id="dataset-1"
+    ).apply(env)
+    assert result["status"] == "conflict"
+    assert result["conflict"]["conflict_type"] == "notes_materialization_unsupported"
+    assert db.get_note_by_id("unsupported") is None
+    assert mirror.get("dataset-1", "unsupported") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace", [None, "workspace-a"])
+async def test_typed_authenticated_profile_manifest_proves_exact_scope(workspace):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Sync_Interop.server_sync_service import ServerSyncService
+    from tldw_chatbook.tldw_api.sync_schemas import (
+        SyncV2ProfileResponse,
+        SyncV2RestoreManifestResponse,
+    )
+
+    class Client:
+        async def get_sync_v2_profile(self, **kwargs):
+            assert kwargs == {"device_id": "device-1"}
+            return SyncV2ProfileResponse(user_id="7")
+
+        async def get_sync_v2_restore_manifest(self, **kwargs):
+            assert kwargs == {"dataset_ids": ["dataset-1"]}
+            return SyncV2RestoreManifestResponse(
+                datasets=[
+                    {
+                        "dataset_id": "dataset-1",
+                        "scope_type": "workspace" if workspace else "personal",
+                        "workspace_id": workspace,
+                        "encryption_policy": "server_trusted_v1",
+                    }
+                ]
+            )
+
+    client = Client()
+
+    class Provider:
+        def build_client(self):
+            return client
+
+        def get_active_context(self):
+            return SimpleNamespace(active_server_id="server-a")
+
+    service = ServerSyncService(None, client_provider=Provider())
+    pinned, assert_current = await service.capture_notes_authority(
+        "server-a",
+        authenticated_principal_id="7",
+        workspace_scope=workspace,
+        dataset_id="dataset-1",
+        device_id="device-1",
+    )
+    assert pinned is client
+    assert_current()
+
+
+@pytest.mark.asyncio
+async def test_fixed_transport_without_target_proof_is_actionably_unavailable():
+    from tldw_chatbook.Sync_Interop.server_sync_service import ServerSyncService
+
+    class Client:
+        async def get_sync_v2_profile(self, **kwargs):
+            raise AssertionError(
+                "unproved target must refuse before authenticated reads"
+            )
+
+    with pytest.raises(ValueError, match="notes_authority_unavailable"):
+        await ServerSyncService(Client()).capture_notes_authority(
+            "server-a",
+            authenticated_principal_id="7",
+            workspace_scope=None,
+            dataset_id="dataset-1",
+            device_id="device-1",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "datasets",
+    [
+        [],
+        [{"dataset_id": "dataset-1", "scope_type": "personal", "workspace_id": None}]
+        * 2,
+        [{"dataset_id": "dataset-1", "scope_type": "personal"}],
+    ],
+)
+async def test_missing_or_ambiguous_authenticated_manifest_refuses(datasets):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Sync_Interop.server_sync_service import ServerSyncService
+
+    class Client:
+        async def get_sync_v2_profile(self, **kwargs):
+            return {"user_id": "7"}
+
+        async def get_sync_v2_restore_manifest(self, **kwargs):
+            return {"datasets": datasets}
+
+    client = Client()
+
+    class Provider:
+        def build_client(self):
+            return client
+
+        def get_active_context(self):
+            return SimpleNamespace(active_server_id="server-a")
+
+    with pytest.raises(ValueError, match="notes_authority_unavailable"):
+        await ServerSyncService(
+            None, client_provider=Provider()
+        ).capture_notes_authority(
+            "server-a",
+            authenticated_principal_id="7",
+            workspace_scope=None,
+            dataset_id="dataset-1",
+            device_id="device-1",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("capture_result", ["absent", "none", "bad_callback"])
+async def test_injected_notes_peer_without_capture_refuses_and_retains_pending(
+    tmp_path, db, capture_result
+):
+    from tldw_chatbook.Sync_Interop.local_first_sync_service import (
+        LocalFirstSyncService,
+    )
+
+    class UnprovedPeer:
+        def __init__(self):
+            self.calls = []
+
+        async def get_v2_capabilities(self, **kwargs):
+            self.calls.append("probe")
+            return {"writable_adapter_versions": {"notes.note": [2]}}
+
+        async def push_v2_envelopes(self, **kwargs):
+            self.calls.append("push")
+            return {
+                "dataset_id": "dataset-1",
+                "accepted": [
+                    {
+                        "client_envelope_id": env["client_envelope_id"],
+                        "domain": env["domain"],
+                        "object_id": env["object_id"],
+                        "object_revision": 1,
+                        "server_cursor": 4,
+                        "apply_status": "applied",
+                    }
+                    for env in kwargs["envelopes"]
+                ],
+            }
+
+        async def pull_v2_envelopes(self, **kwargs):
+            self.calls.append("pull")
+            return {
+                "dataset_id": "dataset-1",
+                "envelopes": [],
+                "next_cursor": 4,
+                "has_more": False,
+            }
+
+    repo = SyncStateRepository(tmp_path / "missing-guard.db")
+    repo.set_sync_v2_profile_state(
+        **SCOPE,
+        profile_mode="local_first",
+        device_id="device-1",
+        dataset_id="dataset-1",
+        dataset_cursors={"dataset-1": 3},
+    )
+    env = builder(notes_adapter_versions={"notes.note": [2]}).build_notes_note_upsert(
+        note_id="pending", title="T", content=SOURCE, content_language=LANGUAGE
+    )
+    repo.enqueue_sync_v2_outbox_envelope(**SCOPE, dataset_id="dataset-1", envelope=env)
+    mirror = NotesMirror(":memory:")
+    peer = UnprovedPeer()
+    if capture_result != "absent":
+
+        async def invalid_capture(*args, **kwargs):
+            return None if capture_result == "none" else (peer, None)
+
+        peer.capture_notes_authority = invalid_capture
+    service = LocalFirstSyncService(
+        server_service=peer,
+        state_repository=repo,
+        local_store=SQLiteNotesStore(db),
+        dataset_keys={"dataset-1": KEY},
+        notes_mirror=mirror,
+        notes_mirror_scope=("server-a", "user-a", None),
+    )
+    with pytest.raises(ValueError, match="notes_authority_unavailable"):
+        await service.sync_once(**SCOPE, domains=["notes.note"])
+    assert peer.calls == []
+    assert (
+        SyncStateRepository(tmp_path / "missing-guard.db").get_sync_v2_profile_state(
+            **SCOPE
+        )["last_error"]
+        == "notes_authority_unavailable"
+    )
+    pending = repo.list_pending_sync_v2_outbox_envelopes(
+        **SCOPE, dataset_id="dataset-1"
+    )
+    assert len(pending) == 1
+    assert pending[0]["client_envelope_id"] == env.client_envelope_id
+    assert repo.get_sync_v2_profile_state(**SCOPE)["dataset_cursors"] == {
+        "dataset-1": 3
+    }
+    assert mirror.get("dataset-1", "pending") is None
+    assert db.get_note_by_id("pending") is None
+
+    await service.sync_once(**SCOPE, domains=["chat"])
+    assert peer.calls == ["pull"]
+    assert (
+        SyncStateRepository(tmp_path / "missing-guard.db").get_sync_v2_profile_state(
+            **SCOPE
+        )["last_error"]
+        == "notes_authority_unavailable"
+    )
+    assert (
+        len(repo.list_pending_sync_v2_outbox_envelopes(**SCOPE, dataset_id="dataset-1"))
+        == 1
+    )

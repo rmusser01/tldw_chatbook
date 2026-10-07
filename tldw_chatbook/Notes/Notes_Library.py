@@ -824,11 +824,24 @@ class NotesInteropService:
         receipt_id: Optional[str] = None,
         server_profile_id: Optional[str] = None,
         dataset_id: Optional[str] = None,
+        source_scope: Mapping[str, Any] | None = None,
         _agent_lesson_context: object | None = None,
         _agent_lesson_raw_arguments: Mapping[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Save note content and additive organization in one Notes transaction."""
 
+        if source_scope is not None:
+            if set(source_scope) != {
+                "authenticated_principal_id",
+                "workspace_scope",
+            } or any(
+                value is not None and not isinstance(value, str)
+                for value in source_scope.values()
+            ):
+                raise ValueError(
+                    "source_scope requires exact principal/workspace proof"
+                )
+            source_scope = dict(source_scope)
         if (note_id is None) != (expected_version is None):
             raise ValueError("note_id and expected_version must be supplied together")
         if folder is not None and folder_sync_id is not None:
@@ -1038,6 +1051,7 @@ class NotesInteropService:
                 expected_organization_version=expected_organization_version,
                 profile=profile,
                 dataset=dataset,
+                source_scope=source_scope,
             )
             if retry is not None:
                 self._validate_receipt_retry(
@@ -1326,6 +1340,29 @@ class NotesInteropService:
                     cursor, str(unresolved_receipt["review_id"])
                 )
                 self._inject_organization_failure("after_receipt")
+            if (
+                source_scope is not None
+                and profile is not None
+                and dataset is not None
+                and receipt_state is None
+            ):
+                from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
+                    NotesOrganizationSyncService,
+                )
+
+                note_snapshot = cursor.execute(
+                    "SELECT * FROM notes WHERE id = ?", (selected_note_id,)
+                ).fetchone()
+                NotesOrganizationSyncService._insert_note_sync_intent(
+                    cursor,
+                    note_snapshot,
+                    intent_id=stable_receipt_id,
+                    server_profile_id=profile,
+                    dataset_id=dataset,
+                    base_version=expected_version,
+                    request_fingerprint=str(request_binding["fingerprint"]),
+                    source_scope=dict(source_scope),
+                )
             return self._organization_save_result(
                 db, cursor, selected_note_id, receipt_state
             )
@@ -1710,6 +1747,7 @@ class NotesInteropService:
         expected_organization_version: Optional[str],
         profile: Optional[str],
         dataset: Optional[str],
+        source_scope: Mapping[str, Any] | None = None,
     ) -> Dict[str, object]:
         canonical_request = {
             "content": content,
@@ -1723,13 +1761,15 @@ class NotesInteropService:
             "server_profile_id": profile,
             "title": title,
         }
+        if source_scope is not None:
+            canonical_request["source_scope"] = dict(source_scope)
         serialized = json.dumps(
             canonical_request,
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
         ).encode("utf-8")
-        return {
+        binding = {
             "dataset_id": dataset,
             "expected_organization_version": expected_organization_version,
             "expected_version": expected_version,
@@ -1737,6 +1777,9 @@ class NotesInteropService:
             "note_id": note_id,
             "server_profile_id": profile,
         }
+        if source_scope is not None:
+            binding["source_scope"] = dict(source_scope)
+        return binding
 
     @staticmethod
     def _serialize_receipt_request(

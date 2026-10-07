@@ -130,11 +130,44 @@ class LocalFirstSyncService:
         ):
             raise ValueError("notes_mirror_scope_unavailable")
         notes_authority = None
-        capture = getattr(self.server_service, "capture_notes_authority", None)
-        if any(domain in {"notes", "notes.note"} for domain in domains) and callable(
-            capture
-        ):
-            notes_authority = capture(server_profile_id)
+        if any(domain in {"notes", "notes.note"} for domain in domains):
+            capture = getattr(self.server_service, "capture_notes_authority", None)
+            try:
+                if not callable(capture):
+                    raise TypeError("notes_authority_unavailable")
+                notes_authority = await capture(
+                    server_profile_id,
+                    authenticated_principal_id=authenticated_principal_id,
+                    workspace_scope=workspace_scope,
+                    dataset_id=str(dataset_id),
+                    device_id=str(device_id),
+                )
+                if (
+                    not isinstance(notes_authority, tuple)
+                    or len(notes_authority) != 2
+                    or notes_authority[0] is None
+                    or not callable(notes_authority[1])
+                ):
+                    raise TypeError("notes_authority_unavailable")
+                notes_authority[1]()
+            except (TypeError, ValueError) as exc:
+                reason = (
+                    str(exc)
+                    if str(exc)
+                    in {"notes_authority_unavailable", "notes_authority_changed"}
+                    else "notes_authority_unavailable"
+                )
+                self._persist_profile_state(
+                    profile=profile,
+                    dataset_cursors=dict(profile.get("dataset_cursors") or {}),
+                    last_error=reason,
+                )
+                raise ValueError(reason) from exc
+            if profile.get("last_error") in {
+                "notes_authority_unavailable",
+                "notes_authority_changed",
+            }:
+                profile = {**profile, "last_error": None}
         authority_fields = (
             {"notes_authority": notes_authority} if notes_authority is not None else {}
         )
@@ -169,10 +202,22 @@ class LocalFirstSyncService:
                 dataset_id=str(dataset_id),
             )
             if "notes" in domains:
-                self.notes_organization_sync_service.drain_pending_note_intents(
-                    server_profile_id=server_profile_id,
-                    authenticated_principal_id=authenticated_principal_id,
-                    workspace_scope=workspace_scope,
+                drained_notes = (
+                    self.notes_organization_sync_service.drain_pending_note_intents(
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                    )
+                )
+                if drained_notes.get("blocked"):
+                    raise ValueError(drained_notes["reason"])
+                profile = (
+                    self.state_repository.get_sync_v2_profile_state(
+                        server_profile_id=server_profile_id,
+                        authenticated_principal_id=authenticated_principal_id,
+                        workspace_scope=workspace_scope,
+                    )
+                    or profile
                 )
         if self.notes_organization_sync_service is not None and any(
             domain in NOTES_ORGANIZATION_DOMAINS for domain in domains
@@ -1024,6 +1069,13 @@ class LocalFirstSyncService:
         dataset_cursors: Mapping[str, str | int],
         last_error: str | None,
     ) -> dict[str, Any]:
+        if last_error is None and profile.get("last_error") in {
+            "notes_origin_scope_unproved",
+            "notes_origin_scope_mismatch",
+            "notes_authority_unavailable",
+            "notes_authority_changed",
+        }:
+            last_error = profile["last_error"]
         return self.state_repository.set_sync_v2_profile_state(
             server_profile_id=str(profile["server_profile_id"]),
             authenticated_principal_id=profile.get("authenticated_principal_id"),

@@ -71,3 +71,9 @@ implementation planning may proceed. No existing accepted ADR is superseded.
 ### Immutable publication origin scope (F4)
 
 Existing local publication-intent payloads carry the exact originating principal and workspace, including explicit null. Drain compares both before copying source into a scoped outbox. Missing historical proof remains pending; an active profile cannot supply historical authority. This local metadata never enters wire payloads and adds no schema or transport.
+
+### Authenticated scope and complete materialization (F4 review correction)
+
+Notes publication/application captures the existing runtime target/client and authenticates the exact requested principal through Sync profile user_id and the exact dataset personal/workspace scope through its restore manifest. Unknown/null principals, absent target evidence and missing/ambiguous manifests retain pending intent. Reads and mutation use the same pinned client with current-context checks; this adds authenticated reads rather than a new authority owner.
+
+Complete backlink fields must be validated and retained through the existing upsert materializer. A target without backlink storage refuses non-null values before writes or mirror advancement; null remains lossless. No canonical schema or metadata side store is added. Supplied organization receipt origins bind immutable request fingerprints; ready saves capture the same existing intent in their transaction. Unproved historical origins retain source and expose a bounded scoped profile reason/count, which unrelated successful sync cannot clear.

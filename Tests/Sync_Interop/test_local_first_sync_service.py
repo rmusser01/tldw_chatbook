@@ -48,6 +48,11 @@ pytestmark = pytest.mark.asyncio
 
 
 class FakeLocalFirstServer:
+
+    async def capture_notes_authority(self, server_profile_id, **scope):
+        """Trusted fixture peer explicitly pins this test transport."""
+        return self, lambda: None
+
     def __init__(
         self,
         *,
@@ -66,7 +71,7 @@ class FakeLocalFirstServer:
         self.push_error = push_error
         self.pull_error = pull_error
 
-    async def get_v2_capabilities(self, *, dataset_id):
+    async def get_v2_capabilities(self, *, dataset_id, notes_authority=None):
         return {
             "writable_adapter_versions": {
                 "notes": [1, 2],
@@ -84,6 +89,7 @@ class FakeLocalFirstServer:
         idempotency_key=None,
         last_known_cursor=None,
         domains=None,
+        notes_authority=None,
     ):
         self.calls.append(
             (
@@ -129,6 +135,7 @@ class FakeLocalFirstServer:
         domains=None,
         page_size=None,
         include_own_changes=False,
+        notes_authority=None,
     ):
         self.calls.append(
             (
