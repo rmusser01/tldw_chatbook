@@ -116,11 +116,21 @@ def test_seek_cursor_treats_naive_datetime_as_utc(db):
     assert _ids(second_page) == ["tie-a", "older"]
 
 
-def test_seek_cursor_excludes_current_timestamp_style_row(db):
+def test_seek_cursor_excludes_equal_timestamp_row(db):
+    """The seek cursor's own row must not reappear on the next page, even
+    when another row holds the exact same timestamp (id tie-break only).
+
+    ADR-224 note: this invariant was historically pinned against
+    SQLite-CURRENT_TIMESTAMP-style (space-separated) rows; since the
+    v78→v79 normalization the stored column is uniformly canonical, so the
+    mixed-shape variant of this scenario lives in the migration suite
+    (``Tests/ChaChaNotesDB/test_sargable_timestamps.py``, golden ordering
+    + keyset/offset agreement on migrated mixed data).
+    """
     for conversation_id, last_modified in [
-        ("tie-z", "2026-08-27 04:00:00"),
-        ("tie-a", "2026-08-27 04:00:00"),
-        ("older", "2026-08-27 03:00:00"),
+        ("tie-z", "2026-08-27T04:00:00.000Z"),
+        ("tie-a", "2026-08-27T04:00:00.000Z"),
+        ("older", "2026-08-27T03:00:00.000Z"),
     ]:
         _seed_conversation(db, conversation_id, last_modified)
 
@@ -138,13 +148,17 @@ def test_seek_cursor_excludes_current_timestamp_style_row(db):
     assert set(_ids(first_page)).isdisjoint(_ids(second_page))
 
 
-def test_offset_and_seek_share_temporal_order_across_timestamp_formats(db):
-    expected_ids = ["space-newest", "canonical-z", "canonical-a", "space-older"]
+def test_offset_and_seek_share_temporal_order(db):
+    """Offset and seek pagination must enumerate the same order; equal
+    instants tie-break by id in both. (ADR-224: the cross-FORMAT variant
+    of this agreement is pinned on migrated mixed data in
+    ``Tests/ChaChaNotesDB/test_sargable_timestamps.py``.)"""
+    expected_ids = ["newest", "canonical-z", "canonical-a", "older"]
     for conversation_id, last_modified in [
-        ("space-newest", "2026-08-27 05:00:00"),
+        ("newest", "2026-08-27T05:00:00.000Z"),
         ("canonical-z", "2026-08-27T04:00:00.123Z"),
         ("canonical-a", "2026-08-27T04:00:00.123Z"),
-        ("space-older", "2026-08-27 03:00:00"),
+        ("older", "2026-08-27T03:00:00.000Z"),
     ]:
         _seed_conversation(db, conversation_id, last_modified)
 

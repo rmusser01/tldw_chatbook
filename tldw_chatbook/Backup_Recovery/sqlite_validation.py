@@ -99,6 +99,7 @@ class _Restrictions:
         self.shipped_checkpoint_migration = False
         self.shipped_checkpoint_rename = False
         self.fleet_progress_migration = False
+        self.sargable_migration = False
         self.canvas_schema = False
         self.changing_schema_trust = False
         self.reading_fts_metadata = False
@@ -262,6 +263,24 @@ class _Restrictions:
                     allowed.add("trim")
                 if self.migration_owner == "db.evals":
                     allowed.add("sqlite_drop_column")
+                # ADR-224 v78->v79: normalization UPDATEs (julianday/strftime),
+                # the partial json_extract index, and the functions compiled
+                # from every conversations/flashcards trigger body the UPDATE
+                # statement code-generates (current_timestamp, json_*).
+                if (
+                    self.sargable_migration
+                    and self.migration_owner == "db.chachanotes.primary"
+                ):
+                    allowed |= {
+                        "julianday",
+                        "strftime",
+                        "json_extract",
+                        "json_valid",
+                        "json_object",
+                        "json_type",
+                        "replace",
+                        "current_timestamp",
+                    }
             return sqlite3.SQLITE_OK if second in allowed else sqlite3.SQLITE_DENY
         if action == sqlite3.SQLITE_PRAGMA:
             reads = {
@@ -328,6 +347,76 @@ class _Restrictions:
                         or action == sqlite3.SQLITE_UPDATE
                         and first == "sqlite_master"
                         and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
+                )
+                # ADR-224 v78->v79: the two normalization UPDATEs, the two
+                # new indexes, and the two conversations triggers the
+                # migration drops and recreates verbatim (sync update;
+                # search-projection dirty marker -- both suppressed so a
+                # format-only change emits no events and no wall-clock
+                # stamps). Unlike the fleet step, ``source`` is NOT required
+                # to be None: the UPDATE statements still compile every
+                # other conversations/flashcards trigger body (FTS mirrors,
+                # sync journals), so trigger-sourced writes of exactly those
+                # shapes must pass. The admitted set was recorded from the
+                # statements the installed .sql file actually executes.
+                allowed |= (
+                    self.sargable_migration
+                    and database == "main"
+                    and (
+                        action == sqlite3.SQLITE_UPDATE
+                        and (
+                            first == "conversations"
+                            and second == "last_modified"
+                            or first == "flashcards"
+                            and second == "next_review"
+                            or first == "sqlite_master"
+                            and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                        )
+                        or action == sqlite3.SQLITE_INSERT
+                        and first
+                        in {
+                            "sqlite_master",
+                            "sync_log",
+                            "conversations_fts",
+                            "conversations_fts_data",
+                            "conversations_fts_docsize",
+                            "conversations_fts_idx",
+                            "flashcards_fts",
+                            "flashcards_fts_data",
+                            "flashcards_fts_docsize",
+                            "flashcards_fts_idx",
+                            "conversation_dictionary_attachments",
+                            "conversation_dictionary_unresolved",
+                        }
+                        or action == sqlite3.SQLITE_DELETE
+                        and first
+                        in {
+                            "sqlite_master",
+                            "sync_log",
+                            "conversations_fts_docsize",
+                            "flashcards_fts_docsize",
+                            "conversation_dictionary_attachments",
+                            "conversation_dictionary_unresolved",
+                        }
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and first
+                        in {"idx_conv_char_lm", "idx_character_cards_visible_name"}
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first
+                        in {"idx_conv_char_lm", "idx_character_cards_visible_name"}
+                        or action == sqlite3.SQLITE_CREATE_TRIGGER
+                        and first
+                        in {
+                            "conversations_sync_update",
+                            "character_conversation_search_conversations_au",
+                        }
+                        or action == sqlite3.SQLITE_DROP_TRIGGER
+                        and first
+                        in {
+                            "conversations_sync_update",
+                            "character_conversation_search_conversations_au",
+                        }
                     )
                 )
                 return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
@@ -537,6 +626,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V76_NATIVE_SCHEMAS,
         CHACHANOTES_V77_SCHEMAS,
         CHACHANOTES_V78_SCHEMAS,
+        CHACHANOTES_V79_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -556,6 +646,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V76_NATIVE_SCHEMAS,
         *CHACHANOTES_V77_SCHEMAS,
         *CHACHANOTES_V78_SCHEMAS,
+        *CHACHANOTES_V79_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -773,6 +864,7 @@ def _validate_candidate(
                         CHACHANOTES_V76_NATIVE_SCHEMAS,
                         CHACHANOTES_V76_SHIPPED_SCHEMAS,
                         CHACHANOTES_V77_SCHEMAS,
+                        CHACHANOTES_V78_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -784,6 +876,7 @@ def _validate_candidate(
                             *CHACHANOTES_V76_SHIPPED_SCHEMAS,
                         )
                         or version == 77 and actual_sql in CHACHANOTES_V77_SCHEMAS
+                        or version == 78 and actual_sql in CHACHANOTES_V78_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -803,7 +896,7 @@ def _validate_candidate(
                         if (
                             shipped_checkpoint and version == 76
                             or installed.owner_id == "db.chachanotes.primary"
-                            and version == 77
+                            and version in (77, 78)
                         ):
                             migration = (
                                 Path(__file__).resolve().parents[1]
@@ -812,11 +905,14 @@ def _validate_candidate(
                                 / (
                                     "chachanotes_v77_to_v78_fleet_progress.sql"
                                     if version == 77
+                                    else "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"
+                                    if version == 78
                                     else "chachanotes_v76_to_v77_agent_chat_starts.sql"
                                 )
                             )
                             restrictions.shipped_checkpoint_migration = version == 76
                             restrictions.fleet_progress_migration = version == 77
+                            restrictions.sargable_migration = version == 78
                             try:
                                 pending = ""
                                 for line in migration.read_text(
@@ -847,6 +943,7 @@ def _validate_candidate(
                             finally:
                                 restrictions.shipped_checkpoint_migration = False
                                 restrictions.fleet_progress_migration = False
+                                restrictions.sargable_migration = False
                         for statement in statements:
                             if restrictions.expired():
                                 raise InterruptedError

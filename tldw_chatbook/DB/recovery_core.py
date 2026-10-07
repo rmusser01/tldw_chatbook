@@ -469,6 +469,7 @@ class _CoreAdapter:
             CHACHANOTES_V77_SCHEMAS,
             CHACHANOTES_V78_SCHEMAS,
             CHACHANOTES_FLEET_V77_TO_V78_SQL,
+            CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
             CORE_SCHEMAS,
             PROMPTS_V4_SCHEMA,
             PROMPTS_V4_TO_V5_SQL,
@@ -490,11 +491,15 @@ class _CoreAdapter:
                 + CHACHANOTES_V76_NATIVE_SCHEMAS
             )
             schemas += tuple((77, schema) for schema in CHACHANOTES_V77_SCHEMAS)
-            schemas += tuple((78, schema) for schema in CHACHANOTES_V78_SCHEMAS[2:])
-            versions += (77, 76, 75)
+            # ADR-224: the full v78 lineage stays acceptable at version 78
+            # (its [0]/[1] used to ride the pre-v79 head entries); the
+            # v78->v79 step migrates such candidates up to the v79 head.
+            schemas += tuple((78, schema) for schema in CHACHANOTES_V78_SCHEMAS)
+            versions += (78, 77, 76, 75)
             migrations = (
                 (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
                 (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
+                (78, 79, CHACHANOTES_SARGABLE_V78_TO_V79_SQL),
             )
         elif self.owner_id == "db.prompts.primary":
             schemas += ((4, PROMPTS_V4_SCHEMA),)

@@ -1407,6 +1407,8 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_SARGABLE_SCHEMAS:
+        return ((79,),)
     if schema in _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS:
         return ((78,),)
     if schema in _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS:
@@ -1523,7 +1525,7 @@ _AGENT_RUNS_MIGRATION_22_23 = (
     "INSERT INTO schema_version (version) VALUES (23)",
 )
 
-from .recovery_core_schema import _fleet_progress_catalog
+from .recovery_core_schema import _fleet_progress_catalog, _sargable_catalog
 
 _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS = tuple(
     _fleet_progress_catalog(schema)
@@ -1532,4 +1534,12 @@ _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS = tuple(
 )
 _SUBSCRIPTIONS_SCHEMA += tuple(
     (2, schema) for schema in _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS
+)
+# ADR-224: hybrid shared-file catalogs whose ChaChaNotes side migrated to
+# the v79 sargable indexes (stamp 79).
+_SUBSCRIPTIONS_SARGABLE_SCHEMAS = tuple(
+    _sargable_catalog(schema) for schema in _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS
+)
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (2, schema) for schema in _SUBSCRIPTIONS_SARGABLE_SCHEMAS
 )

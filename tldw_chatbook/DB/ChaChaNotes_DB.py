@@ -82,6 +82,7 @@ from loguru import logger
 
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Utils.input_validation import validate_conversation_archive_scope
+from tldw_chatbook.Utils.timestamps import parse_utc, to_utc_iso
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 
 
@@ -745,7 +746,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 78  # Native receipts, then saved fleet progress.
+    _CURRENT_SCHEMA_VERSION = 79  # ADR-224 sargable timestamp normalization.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8027,6 +8028,41 @@ DELETE FROM keywords
         except (OSError, sqlite3.Error) as exc:
             raise SchemaError("Migration from V77 to V78 failed.") from exc
 
+    def _migrate_from_v78_to_v79(self, conn: sqlite3.Connection) -> None:
+        """Normalize the sargable trio's ordering columns (ADR-224).
+
+        Rewrites ``conversations.last_modified`` and
+        ``flashcards.next_review`` to the ADR-173 canonical UTC shape and
+        adds the indexes the raw (non-function-wrapped) comparisons need.
+        Idempotent: canonical rows are GLOB-guarded out and unparseable
+        values are left untouched (never NULLed). The conversations sync
+        trigger is dropped and recreated around the normalization UPDATE so
+        the format change does not enqueue spurious ``sync_log`` events.
+        """
+        self._require_migration_entry_version(conn, 78, "V78→V79")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), "V78→V79"
+                )
+                result = cursor.execute(
+                    "UPDATE db_schema_version SET version = 79 WHERE schema_name = ? AND version = 78",
+                    (self._SCHEMA_NAME,),
+                )
+                if result.rowcount != 1:
+                    raise SchemaError(
+                        "Migration V78 to V79 version update was not applied."
+                    )
+            if self._get_db_version(conn) != 79:
+                raise SchemaError("Migration V78 to V79 version check failed.")
+        except (OSError, sqlite3.Error) as exc:
+            raise SchemaError("Migration from V78 to V79 failed.") from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -8283,6 +8319,7 @@ DELETE FROM keywords
                     75: self._migrate_from_v75_to_v76,
                     76: self._migrate_from_v76_to_v77,
                     77: self._migrate_from_v77_to_v78,
+                    78: self._migrate_from_v78_to_v79,
                 }
 
                 if current_db_version == 0:
@@ -9143,11 +9180,39 @@ DELETE FROM keywords
             )
             raise
 
+    #: ADR-224: the browse (no-search) character queries, named so
+    #: ``Tests/ChaChaNotesDB/test_sargable_timestamps.py`` runs EXPLAIN
+    #: QUERY PLAN over the statements production actually uses. The page
+    #: and count forms are served by the partial expression index
+    #: ``idx_character_cards_visible_name`` (user-visible cards in NOCASE
+    #: name order); ``list_character_cards``' BINARY ``ORDER BY name`` is
+    #: served by the UNIQUE autoindex on ``name``. Methods, not plain
+    #: constants, because the visibility predicate's escaped ``{{}}``
+    #: brace must be interpolated exactly once.
+    def _character_cards_browse_page_sql(
+        self, *, order_by: str, include_image: bool
+    ) -> str:
+        return (
+            f"SELECT {self._character_card_select_columns(include_image=include_image)} "
+            f"FROM character_cards "
+            f"WHERE deleted = 0 "
+            f"AND {self._USER_VISIBLE_CHARACTER.format(a='character_cards')} "
+            f"{self._resolve_sort_clause(order_by, searching=False)} LIMIT ? OFFSET ?"
+        )
+
+    def _character_cards_browse_count_sql(self) -> str:
+        return (
+            "SELECT COUNT(*) FROM character_cards "
+            f"WHERE deleted = 0 "
+            f"AND {self._USER_VISIBLE_CHARACTER.format(a='character_cards')}"
+        )
+
     def list_character_cards(
         self, limit: int = 100, offset: int = 0, *, include_image: bool = False
     ) -> List[Dict[str, Any]]:
         """
-        Lists character cards, ordered by name.
+        Lists character cards, ordered by name (BINARY collation; the paged
+        Library view uses ``list_character_cards_page``'s NOCASE order).
 
         Only non-deleted cards are returned. JSON fields (see `_CHARACTER_CARD_JSON_FIELDS`)
         are deserialized.
@@ -9294,28 +9359,38 @@ DELETE FROM keywords
         searching = bool(search_term)
         sort_clause = self._resolve_sort_clause(order_by, searching=searching)
         params: list[Any] = []
-        where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
-        alias = "cc" if searching else "character_cards"
-        where.append(self._USER_VISIBLE_CHARACTER.format(a=alias))
-        if searching:
-            columns = self._character_card_select_columns(
-                include_image=include_image, alias="cc"
+        if not searching and tag is None:
+            # ADR-224: the common browse page goes through the named
+            # statement (served by idx_character_cards_visible_name) so the
+            # EXPLAIN QUERY PLAN budget asserts the plan production runs.
+            query = self._character_cards_browse_page_sql(
+                order_by=order_by, include_image=include_image
             )
-            head = (
-                f"SELECT {columns} FROM character_cards_fts fts "
-                "JOIN character_cards cc ON fts.rowid = cc.id"
-            )
-            where.insert(0, "fts.character_cards_fts MATCH ?")
-            params.append(search_term)
         else:
-            columns = self._character_card_select_columns(include_image=include_image)
-            head = f"SELECT {columns} FROM character_cards"
-        if tag is not None:
-            where.append(
-                f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
-            )
-            params.append(tag)
-        query = f"{head} WHERE {' AND '.join(where)} {sort_clause} LIMIT ? OFFSET ?"
+            where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
+            alias = "cc" if searching else "character_cards"
+            where.append(self._USER_VISIBLE_CHARACTER.format(a=alias))
+            if searching:
+                columns = self._character_card_select_columns(
+                    include_image=include_image, alias="cc"
+                )
+                head = (
+                    f"SELECT {columns} FROM character_cards_fts fts "
+                    "JOIN character_cards cc ON fts.rowid = cc.id"
+                )
+                where.insert(0, "fts.character_cards_fts MATCH ?")
+                params.append(search_term)
+            else:
+                columns = self._character_card_select_columns(
+                    include_image=include_image
+                )
+                head = f"SELECT {columns} FROM character_cards"
+            if tag is not None:
+                where.append(
+                    f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
+                )
+                params.append(tag)
+            query = f"{head} WHERE {' AND '.join(where)} {sort_clause} LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         cursor = self.execute_query(query, tuple(params))
         return [
@@ -9330,24 +9405,29 @@ DELETE FROM keywords
         """Count non-deleted character cards matching the same search+tag filter."""
         searching = bool(search_term)
         params: list[Any] = []
-        alias = "cc" if searching else "character_cards"
-        where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
-        where.append(self._USER_VISIBLE_CHARACTER.format(a=alias))
-        if searching:
-            head = (
-                "SELECT COUNT(*) FROM character_cards_fts fts "
-                "JOIN character_cards cc ON fts.rowid = cc.id"
-            )
-            where.insert(0, "fts.character_cards_fts MATCH ?")
-            params.append(search_term)
+        if not searching and tag is None:
+            # ADR-224: the plain browse count over the partial expression
+            # index (named statement; see the EXPLAIN QUERY PLAN budget).
+            query = self._character_cards_browse_count_sql()
         else:
-            head = "SELECT COUNT(*) FROM character_cards"
-        if tag is not None:
-            where.append(
-                f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
-            )
-            params.append(tag)
-        query = f"{head} WHERE {' AND '.join(where)}"
+            alias = "cc" if searching else "character_cards"
+            where = ["cc.deleted = 0"] if searching else ["deleted = 0"]
+            where.append(self._USER_VISIBLE_CHARACTER.format(a=alias))
+            if searching:
+                head = (
+                    "SELECT COUNT(*) FROM character_cards_fts fts "
+                    "JOIN character_cards cc ON fts.rowid = cc.id"
+                )
+                where.insert(0, "fts.character_cards_fts MATCH ?")
+                params.append(search_term)
+            else:
+                head = "SELECT COUNT(*) FROM character_cards"
+            if tag is not None:
+                where.append(
+                    f"EXISTS (SELECT 1 FROM {self._TAGS_JSON_EACH.format(t=alias)} WHERE value = ?)"
+                )
+                params.append(tag)
+            query = f"{head} WHERE {' AND '.join(where)}"
         cursor = self.execute_query(query, tuple(params))
         row = cursor.fetchone()
         return int(row[0]) if row else 0
@@ -11152,6 +11232,26 @@ DELETE FROM keywords
             )
             raise
 
+    #: The character-conversation list pages, ADR-224 style: raw (sargable)
+    #: ``last_modified`` keyset + order over ``idx_conv_char_lm``. Valid
+    #: because the v78→v79 migration normalized every stored value to the
+    #: canonical fixed-width shape, where TEXT order == time order. Named so
+    #: ``Tests/ChaChaNotesDB/test_sargable_timestamps.py`` runs EXPLAIN
+    #: QUERY PLAN over the statement production actually uses.
+    _CONVERSATIONS_FOR_CHARACTER_PAGE_SQL = (
+        "SELECT * FROM conversations "
+        "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
+        "AND {archive} "
+        "ORDER BY last_modified DESC, id DESC LIMIT ? OFFSET ?"
+    )
+    _CONVERSATIONS_FOR_CHARACTER_KEYSET_SQL = (
+        "SELECT * FROM conversations "
+        "WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' "
+        "AND {archive} "
+        "AND (last_modified < ? OR (last_modified = ? AND id < ?)) "
+        "ORDER BY last_modified DESC, id DESC LIMIT ?"
+    )
+
     def get_conversations_for_character(
         self,
         character_id: int,
@@ -11165,9 +11265,12 @@ DELETE FROM keywords
         """
         Lists conversations associated with a specific character ID.
 
-        Only non-deleted global conversations are returned, ordered by the
-        temporal value of ``last_modified`` descending with ``id`` as a
-        deterministic tie-breaker.
+        Only non-deleted global conversations are returned, ordered by
+        ``last_modified`` descending with ``id`` as a deterministic
+        tie-breaker. Since ADR-224 the column is uniformly canonical
+        (``YYYY-MM-DDTHH:MM:SS.mmmZ``), so the keyset and ordering compare
+        raw indexed values; a seek cursor is normalized to that same shape
+        before it is bound.
 
         Args:
             character_id: The integer ID of the character.
@@ -11175,7 +11278,7 @@ DELETE FROM keywords
             offset: The number of conversations to skip. Defaults to 0.
             before_last_modified: Timestamp text or the SQLite-returned DATETIME
                 value from the final row of the previous seek page. Naive datetime
-                values are adapted as UTC.
+                values are adapted as UTC; text must be a parseable timestamp.
             before_id: Conversation ID of the final row from the previous seek
                 page.
 
@@ -11183,8 +11286,9 @@ DELETE FROM keywords
             A list of dictionaries, each representing a conversation. Can be empty.
 
         Raises:
-            InputError: If only one cursor value is supplied, or a complete
-                cursor is combined with a nonzero offset.
+            InputError: If only one cursor value is supplied, a complete
+                cursor is combined with a nonzero offset, or the cursor
+                timestamp is unparseable text.
             CharactersRAGDBError: For database errors.
         """
         cursor_supplied = before_last_modified is not None or before_id is not None
@@ -11204,29 +11308,34 @@ DELETE FROM keywords
             raise InputError("before_id must be a non-empty string.")
         if cursor_supplied and offset != 0:
             raise InputError("A seek cursor cannot be combined with a nonzero offset.")
+        cursor_timestamp: str | None = None
+        if before_last_modified is not None:
+            if isinstance(before_last_modified, datetime):
+                cursor_timestamp = to_utc_iso(before_last_modified)
+            else:
+                try:
+                    cursor_timestamp = to_utc_iso(parse_utc(before_last_modified))
+                except ValueError as exc:
+                    raise InputError(
+                        "before_last_modified must be a parseable timestamp."
+                    ) from exc
 
         start_time = time.time()
         archive_clause = self._conversation_archive_scope_clause(archive_scope)
         if cursor_supplied:
-            query = (
-                "SELECT * FROM conversations "
-                f"WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' AND {archive_clause} "
-                "AND (julianday(last_modified) < julianday(?) "
-                "OR (julianday(last_modified) = julianday(?) AND id < ?)) "
-                "ORDER BY julianday(last_modified) DESC, id DESC LIMIT ?"
+            query = self._CONVERSATIONS_FOR_CHARACTER_KEYSET_SQL.format(
+                archive=archive_clause
             )
             params = (
                 character_id,
-                before_last_modified,
-                before_last_modified,
+                cursor_timestamp,
+                cursor_timestamp,
                 before_id,
                 limit,
             )
         else:
-            query = (
-                "SELECT * FROM conversations "
-                f"WHERE character_id = ? AND deleted = 0 AND scope_type = 'global' AND {archive_clause} "
-                "ORDER BY julianday(last_modified) DESC, id DESC LIMIT ? OFFSET ?"
+            query = self._CONVERSATIONS_FOR_CHARACTER_PAGE_SQL.format(
+                archive=archive_clause
             )
             params = (character_id, limit, offset)
         try:
@@ -21806,14 +21915,16 @@ DELETE FROM keywords
                     interval,
                     repetitions,
                     ease_factor,
-                    # TASK-32803.2: store the SAME shape SQLite's
-                    # CURRENT_TIMESTAMP uses -- space separator, no `T`, no
-                    # offset, no microseconds -- so the lexical `<=` in the
-                    # due queries is a real time comparison. `.isoformat()`
-                    # wrote `2026-09-19T02:13:11.35+00:00`, whose `T` (0x54)
-                    # sorts AFTER a space (0x20), so a card due at 02:13
-                    # today read as not-due until the UTC day rolled over.
-                    next_review.strftime("%Y-%m-%d %H:%M:%S"),
+                    # ADR-224 (superseding TASK-32803.2's write shape): store
+                    # the package-canonical UTC shape
+                    # (YYYY-MM-DDTHH:MM:SS.mmmZ). 32803.2 matched the legacy
+                    # space-separated rows so the lexical `<=` in the due
+                    # queries was a real time comparison; the v78→v79
+                    # migration normalized those rows, so the canonical
+                    # shape now provides that guarantee index-sargably.
+                    # last_review/updated_at stay CURRENT_TIMESTAMP: they
+                    # are payload-only (never filtered or ordered on).
+                    to_utc_iso(next_review),
                     card_id,
                 ),
             )
@@ -21829,28 +21940,44 @@ DELETE FROM keywords
                 (review_id, card_id, rating, interval, ease_factor),
             )
 
+    #: The due-card queries, ADR-224 style: RAW ``next_review`` comparison
+    #: against a Python-produced canonical now (``_get_current_utc_timestamp_iso``)
+    #: over the v78→v79-normalized column, so ``idx_flashcards_next_review``
+    #: serves the range probes instead of a full-table ``datetime()`` scan.
+    #: NULL means "never reviewed" and sorts due-first, exactly as the old
+    #: ``datetime()`` expression ordered it. Named for the EXPLAIN QUERY PLAN
+    #: assertions in ``Tests/ChaChaNotesDB/test_sargable_timestamps.py``.
+    _DUE_FLASHCARDS_WHERE_SQL = (
+        "SELECT f.* FROM flashcards f "
+        "JOIN decks d ON d.id = f.deck_id "
+        "WHERE f.is_deleted = 0 AND f.is_suspended = 0 "
+        "AND d.is_deleted = 0 "
+        "AND (f.next_review IS NULL OR f.next_review <= ?)"
+    )
+    _DUE_FLASHCARDS_SQL = _DUE_FLASHCARDS_WHERE_SQL + " ORDER BY f.next_review ASC"
+    _COUNT_DUE_FLASHCARDS_SQL = (
+        "SELECT COUNT(*) AS cnt FROM flashcards f "
+        "JOIN decks d ON d.id = f.deck_id "
+        "WHERE f.is_deleted = 0 AND f.is_suspended = 0 AND d.is_deleted = 0 "
+        "AND (f.next_review IS NULL OR f.next_review <= ?)"
+    )
+
     def get_due_flashcards(
         self, deck_id: Optional[str] = None, limit: int = 20
     ) -> List[Dict[str, Any]]:
         """Get flashcards due for review."""
-        query = """
-            SELECT f.* FROM flashcards f
-            JOIN decks d ON d.id = f.deck_id
-            WHERE f.is_deleted = 0 AND f.is_suspended = 0
-                AND d.is_deleted = 0
-                AND (f.next_review IS NULL OR datetime(f.next_review) <= datetime('now'))
-        """
-        params = []
+        query = self._DUE_FLASHCARDS_WHERE_SQL
+        params: List[Any] = [self._get_current_utc_timestamp_iso()]
 
         if deck_id:
             query += " AND f.deck_id = ?"
             params.append(deck_id)
 
-        # TASK-32803.2 / Qodo #5: order by the NORMALIZED time, matching the
-        # WHERE clause. Sorting the raw text placed a legacy T-separated row
-        # after a same-date space-separated row, so get_next_review_candidate
-        # (limit=1) could serve a chronologically-later card first.
-        query += " ORDER BY datetime(f.next_review) ASC LIMIT ?"
+        # TASK-32803.2 / Qodo #5 kept chronological order by sorting the
+        # NORMALIZED time; ADR-224 makes raw order chronological (the column
+        # is uniformly canonical since the v78→v79 migration), preserving
+        # that guarantee for get_next_review_candidate (limit=1).
+        query += " ORDER BY f.next_review ASC LIMIT ?"
         params.append(limit)
 
         # Qodo #3: use the standard read path like count_due_flashcards.
@@ -21866,13 +21993,9 @@ DELETE FROM keywords
             passed -- the exact total the Library rail badge displays.
             Uses the identical WHERE clause as ``get_due_flashcards``.
         """
-        query = """
-            SELECT COUNT(*) AS cnt FROM flashcards f
-            JOIN decks d ON d.id = f.deck_id
-            WHERE f.is_deleted = 0 AND f.is_suspended = 0 AND d.is_deleted = 0
-              AND (f.next_review IS NULL OR datetime(f.next_review) <= datetime('now'))
-        """
-        cursor = self.execute_query(query)
+        query = self._COUNT_DUE_FLASHCARDS_SQL
+        params: Tuple[Any, ...] = (self._get_current_utc_timestamp_iso(),)
+        cursor = self.execute_query(query, params)
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
