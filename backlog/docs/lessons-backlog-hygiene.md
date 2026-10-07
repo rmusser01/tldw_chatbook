@@ -21,31 +21,6 @@ recovery. A directory path alone does not prove which repository Git will mutate
 
 ---
 
-## A stale premise can be fixed by a predecessor while its enumerated tests re-break for newer reasons (TASK-22280, 2026-10-02)
-
-**Incident.** TASK-22280 was filed 2026-08-24 against dev `983aa5878` for 12
-red migration tests caused by `add_message` writing v48's
-`assistant_generation_state` into pre-v48 historical-bootstrap fixtures. The
-next day TASK-21441 (PR #2082) landed the per-schema
-`_messages_insert_statement` fix and measured those files red-to-green. Five
-weeks later, verifying the task at dev `e92b01515f` found 8 of them red again
-— every failure traced to LATER drift, none to the filed mechanism: seeding
-now died in `soft_delete_message`/`update_message` on the v56
-`console_trace_graph_epoch` table, and the hot-writer interleave/static-guard
-tests went blind after `add_message` became a thin wrapper. Both successor
-defects were already filed (TASK-33371, TASK-33621.36). Fixing either under
-TASK-22280 would have put three tasks' hands on the same reds.
-
-**What to do.** When a task's named cause no longer reproduces at your base,
-attribute EACH enumerated red to a mechanism before designing anything: a red
-test is not evidence the filed bug is alive. Sweep the board for the defects
-you do find — if later drift already has an owner, close your task with the
-attribution and the measured timeline instead of re-fixing under a dead
-premise; the AC's "tests pass" clause gets annotated with when it was true and
-who owns the re-breakage, not silently re-ticked or left as a zombie.
-
----
-
 ## Task IDs collide constantly — sweep every remote, not just dev
 
 **What happened.** This has recurred **ten-plus times**. Most recently, in one session:
@@ -279,13 +254,6 @@ the same markers, after the CLI's short summary.
 **What to do.** Run the CLI `--notes` command first (or use only the CLI's text), then
 hand-edit to elaborate — never the other order. Diff the task file after any `--notes`
 call to confirm what survived.
-
-**Another instance, 2026-10-04 (TASK-31966).** A status/plan edit discarded the
-free-form `## Evidence and scope` section, including the original frozen source
-IDs and failed latency measurements. The task diff caught it before commit. The
-historical evidence was recovered from the committed file into the CLI-owned
-plan markers. Essential evidence must live in an owned section, and every CLI
-task edit needs a diff check, not only `--notes` edits.
 
 **Second instance, 2026-09-11 (critique-10 fix wave, task-32057).** Nearly four
 years of this file saying so did not stop it. Closing out the pagers branch,
@@ -1023,7 +991,6 @@ update-branches in 70 minutes — dev moved every 20-40 minutes that evening, ag
 #2401 landing first.
 
 **What to do.**
-- Superseded when the merge queue is on (`gh variable get MERGE_QUEUE` = on): arm and let the queue sync; see CLAUDE.md 'Merging into dev'.
 - A BEHIND PR has exactly one path: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`
   the moment dev moves, then merge within the minute Derived reports success. The old
   "never update-branch every round" note means *do not update while checks or Qodo are
@@ -1195,59 +1162,21 @@ blob identity, creation metadata and ref object type before renumbering.
 A checkpoint of the same uncommitted task is not another owner. Do not exclude
 all Codex snapshots: they can also expose another session's uncommitted claim.
 
-## zsh does not word-split `$var`, so `rm -rf $S/$2` became `rm -rf $S/` (Console P0 batch, 2026-09-30)
+---
 
-**Incident.** While exporting two trees for a before/after comparison, a fix-up agent
-ran `for pair in "<sha> <dir>" …; do set -- $pair; rm -rf $S/$2; …` in the Bash tool.
-That tool runs **zsh**, which does not word-split an unquoted `$pair`. So `$2` was empty,
-and the command ran `rm -rf <session scratchpad>/`. It deleted the review's raw
-evidence (1 GB of captures), every parallel unit's logs, several agents' scratch
-profiles (including those of running apps), and the review tooling (the capture,
-contrast and proxy scripts). The P0/P1 evidence survived only because it had already
-been copied into the repo.
+## A grep-verified premise can still be wrong — read the pinning tests before deleting
 
-**What to do.** Never pass `rm -rf` a path built from a variable. If you must, use
-`${var:?}` (for example `rm -rf "${S:?}/${dir:?}"`) so an empty value aborts instead of
-widening the target. Do not rely on word splitting in the Bash tool, which is zsh:
-split explicitly with `${=pair}` or `read -r a b <<< "$pair"`, or use a literal list.
+**What happened.** 2026-09-27, simplification-cascade filings TASK-33128/33084/33082. The audit (run
+against a branch 1,872 commits behind dev) called `pipeline_loader.py` dead weight and the video
+registry's `stable_diffusion_cpp` entry phantom drift. Both claims had been **grep-verified against
+dev** — the reference counts matched. Execution still refuted them: dev's registry docstring plus two
+pinning tests document the "phantom" entry as a deliberate ADR-176 skeleton, and TASK-32628's fresh
+backup tests had adopted `PipelineLoader` as their storage-admission subject, alongside a middleware
+guard whose own docstring calls it "the deliverable, more than any single deletion". The counts were
+right; the *intent* behind them was invisible to grep. Two tasks closed refuted and one rescoped
+before any production code was touched — cheap, but only because closing happened before implementing.
 
-**Recurrence (Roleplay frame B0, 2026-10-02): the empty value was a filter, not a
-path.** A CI cleanup loop had the same shape:
-`for pair in "<PR> <branch>" …; do set -- $pair; gh run list --branch "$2" … | … gh run cancel`.
-It ran in the Bash tool (zsh), so `$2` was empty again. `gh run list --branch ""` does not
-fail; it applies no branch filter and lists the repository's recent runs. The loop
-cancelled 8 in-flight CI runs on the branches of 5 other sessions. All 8 were re-run,
-but each lost its place in the queue. The `rm -rf` rule above did not help, because
-nothing here was a path. An empty argument to a *filter* widens the selection just as
-an empty path segment widens a delete.
-
-**What to do (any loop whose action is destructive or shared: cancel, delete, close,
-merge, force-push):**
-- Write it as an explicit `bash` script (`bash <<'EOF' … EOF`, or a file run with
-  `bash`) with `set -u` at the top.
-- Refuse empty arguments: `[ -n "$branch" ] || { echo "empty branch"; exit 1; }`, or
-  `${branch:?}`.
-- Cross-check the pairing at the source: the PR's `headRefName`
-  (`gh pr view <n> --json headRefName -q .headRefName`) must equal the branch you are
-  about to act on.
-- Filter twice: once in the API call (`--branch "$branch"`) and once on the result
-  (`--json databaseId,headBranch` piped to `jq 'select(.headBranch == $b)'`). Then an
-  ignored or empty server-side filter still selects nothing.
-- Dry-run first: print the run ids and their `headBranch` values, read them, and only
-  then cancel.
-## Verify QA artifacts in Git before removing scratch
-
-**TASK-33805, Console chat starts, 2026-10-02.** The QA closure commit 31bdd52356 included exact compressed verification logs and their hash manifest. The repository log ignore rule excluded all 45 readable `.log` copies, although filesystem hash and link checks passed. The reports would therefore have broken links in a fresh checkout. Explicitly staging only the manifest-listed readable copies corrected the record; all 141 manifest artifact paths were then compared with their staged Git blobs.
-
-**What to do.** Before deleting plan scratch, verify every preserved or linked artifact against the Git index or HEAD. A filesystem check alone cannot establish that an ignored artifact will survive checkout. Use an explicit file list when force-adding QA logs so unrelated ignored files stay outside the commit.
-
-## `backlog task edit --notes` replaces the notes; `--append-notes` adds (TASK-33640, 2026-10-04)
-
-**Incident.** Adding a one-paragraph update to TASK-33640 with `--notes` silently
-deleted its existing Implementation Notes: the harness write-up, the six no-key probe
-findings and the nine-item Qodo round (12 lines). Only `git diff --stat` on the task file
-showed it (`2 insertions(+), 12 deletions(-)`); the CLI printed nothing unusual.
-
-**What to do.** Use `--notes` only on a task with no notes yet. To add to a task that
-has history, use `--append-notes`. After any task edit, check `git diff --stat` on the
-file: deletions you did not intend mean the edit replaced something.
+**What to do.** For any deletion/consolidation filing, before writing code: (1) `git log --oneline -5
+-- <module>` against dev for recent adoption; (2) read the module/class docstring; (3) read the tests
+that reference the target — a test that *pins* a structure is design intent, not dead weight.
+Reference counts verify reachability, not purpose.

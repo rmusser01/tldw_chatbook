@@ -1,5 +1,5 @@
 # tldw_chatbook.* modules resident at _ui_ready (warm second boot).
-# 1030 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
+# 1033 modules; warm boots wobble +/-1 (see the guard's docstring). Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).
 tldw_chatbook
 tldw_chatbook.ACP_Interop
 tldw_chatbook.ACP_Interop.runtime_process
@@ -147,6 +147,7 @@ tldw_chatbook.Chat.console_capture_policy_repository
 tldw_chatbook.Chat.console_chat_controller
 tldw_chatbook.Chat.console_chat_fork
 tldw_chatbook.Chat.console_chat_models
+tldw_chatbook.Chat.console_chat_start
 tldw_chatbook.Chat.console_chat_store
 tldw_chatbook.Chat.console_command_grammar
 tldw_chatbook.Chat.console_command_suggestions
@@ -425,6 +426,7 @@ tldw_chatbook.MCP.server
 tldw_chatbook.MCP.server_target_store
 tldw_chatbook.MCP.server_unified_service
 tldw_chatbook.MCP.tool_naming
+tldw_chatbook.MCP.tool_results
 tldw_chatbook.MCP.unified_context_store
 tldw_chatbook.MCP.unified_control_models
 tldw_chatbook.MCP.unified_control_plane_service
@@ -743,12 +745,14 @@ tldw_chatbook.UI.Console_Modules.agent
 tldw_chatbook.UI.Console_Modules.character
 tldw_chatbook.UI.Console_Modules.character_avatar_layout
 tldw_chatbook.UI.Console_Modules.character_context
+tldw_chatbook.UI.Console_Modules.composer_run_controls
 tldw_chatbook.UI.Console_Modules.console_spend_projection
 tldw_chatbook.UI.Console_Modules.dictation
 tldw_chatbook.UI.Console_Modules.dispatch_recovery
 tldw_chatbook.UI.Console_Modules.fleet
 tldw_chatbook.UI.Console_Modules.frame
 tldw_chatbook.UI.Console_Modules.hands_free
+tldw_chatbook.UI.Console_Modules.hooks
 tldw_chatbook.UI.Console_Modules.image
 tldw_chatbook.UI.Console_Modules.left_rail
 tldw_chatbook.UI.Console_Modules.library_activity
@@ -911,7 +915,6 @@ tldw_chatbook.Widgets.Console.console_inspector_section
 tldw_chatbook.Widgets.Console.console_library_access_modal
 tldw_chatbook.Widgets.Console.console_library_search_modal
 tldw_chatbook.Widgets.Console.console_message_more_menu
-tldw_chatbook.Widgets.Console.console_model_popover
 tldw_chatbook.Widgets.Console.console_project_instructions
 tldw_chatbook.Widgets.Console.console_prompt_comparison_modal
 tldw_chatbook.Widgets.Console.console_prompt_improve_view
@@ -969,7 +972,6 @@ tldw_chatbook.Widgets.diff_widgets
 tldw_chatbook.Widgets.emoji_picker
 tldw_chatbook.Widgets.glyph_fallback
 tldw_chatbook.Widgets.modal_dismissal
-tldw_chatbook.Widgets.model_search_picker
 tldw_chatbook.Widgets.pausable_progress
 tldw_chatbook.Widgets.project_skills_import_modal
 tldw_chatbook.Widgets.recompose_capture_guard
@@ -998,6 +1000,7 @@ tldw_chatbook.app
 tldw_chatbook.app_command_providers
 tldw_chatbook.app_feature_glue
 tldw_chatbook.app_ingest_queue
+tldw_chatbook.app_keep_alive
 tldw_chatbook.app_lifecycle
 tldw_chatbook.app_navigation
 tldw_chatbook.app_service_wiring
