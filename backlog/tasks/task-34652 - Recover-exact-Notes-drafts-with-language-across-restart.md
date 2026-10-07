@@ -1,7 +1,7 @@
 ---
 id: TASK-34652
 title: Recover exact Notes drafts with language across restart
-status: In Progress
+status: Done
 created_date: 2026-10-07 03:08
 dependencies:
 - TASK-34571
@@ -13,7 +13,7 @@ labels:
 - structured-editing
 documentation:
 - /Users/macbook-dev/.codex/worktrees/structured-document-editing/tldw_chatbook/Docs/superpowers/plans/2026-09-27-structured-document-editing.md
-updated_date: 2026-10-07 07:56
+updated_date: 2026-10-07 08:33
 ---
 
 ## Description
@@ -24,12 +24,12 @@ Keep unsaved edits recoverable across navigation, rejected saves and process res
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Body and source language share one canonical draft revision, including language-only mutation, conflicts and explicit null reset.
-- [ ] #2 An empty rejected draft recovers exactly after navigation and restart without claiming a successful save.
-- [ ] #3 Recovery is scoped to authority/workspace/note and removed only after its matching complete save; older acknowledgements preserve newer edits.
-- [ ] #4 Storage/quota failures prevent discard-producing navigation and show a truthful error; existing storage ownership is reused without diagnostics persistence.
-- [ ] #5 Targeted recovery/session tests cover profile isolation, logout, restart and actual copy/history owners touched by this change.
-- [ ] #6 Relevant governing ADR is assessed/linked and repo-local completion notes name actual evidence and remaining limitations.
+- [x] #1 Body and source language share one canonical draft revision, including language-only mutation, conflicts and explicit null reset.
+- [x] #2 An empty rejected draft recovers exactly after navigation and restart without claiming a successful save.
+- [x] #3 Recovery is scoped to authority/workspace/note and removed only after its matching complete save; older acknowledgements preserve newer edits.
+- [x] #4 Storage/quota failures prevent discard-producing navigation and show a truthful error; existing storage ownership is reused without diagnostics persistence.
+- [x] #5 Targeted recovery/session tests cover profile isolation, logout, restart and actual copy/history owners touched by this change.
+- [x] #6 Relevant governing ADR is assessed/linked and repo-local completion notes name actual evidence and remaining limitations.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,15 +50,13 @@ Reason: implement approved scoped durable-draft recovery and serialized-language
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Implemented exact language-bearing Library drafts and private durable recovery through the existing runtime-owned device-state store (schema v3), with captured local database/principal/global scope, matching acknowledgement cleanup, and navigation/authority fences. ADR-194 amended before storage changes. Targeted C covering run: 310 passed; final real port/authority selection: 8 passed; amended conflict recovery session suite: 49 passed. Immutable-base Ruff/Bandit comparison adds no findings. Task remains In Progress for controller review; full commands, static comparison and limitations are in the F5 implementation report.
-F5 fix round 1: deferred recovery awaits now revalidate session generation and revision before save or conflict reload can replace state. Deferred controls reproduced 7 failures before the fix; final amended session suite passed 57 tests. Added incident-backed lessons-testing-evidence entry. Scoped Ruff/Bandit unchanged against fix base 8313c43cc7; changed Python ranges pass Black. Remains In Progress pending independent controller review.
+Implemented coherent source/language drafts and exact private recovery through the existing runtime-owned device-state store (schema3). Captured local database/principal/global scope, matching-revision acknowledgement cleanup and navigation fences preserve newer or rejected edits. Deferred save/conflict awaits revalidate session and revision; actual Library port/wiring, duplication and storage lifecycle are covered. Governing ADR194 was amended before storage changes. Evidence: broader affected310 and real-port8, then final amended session57 after formatting; no introduced Ruff/Bandit findings and changed Python regions formatted. Initial task review and two scoped rounds are clean. No external live-server/OS-kill or downstream formatting UI claim; those remain later qualification gates.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+F5 complete after independent task review and two scoped fixes. Exact local drafts survive navigation/reopen and late acknowledgements retain newer edits. Final amended session57 passed; broader owner and real-port evidence is recorded in task-5-report.md. ADR194 applies; live integration/OS-kill and formatter adoption remain later units.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
