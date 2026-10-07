@@ -1,11 +1,11 @@
 ---
 id: TASK-34415
 title: Console control refresh defers busy native config locks
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-06 15:47'
-updated_date: '2026-10-07 04:54'
+updated_date: '2026-10-07 05:33'
 labels:
   - console
   - performance
@@ -67,4 +67,6 @@ Completed timer-correction controls: geometry passes with ordinary private-profi
 Latest-dev PR3037 dependency replay: all five patches range-diff identical; authored production/test/script/package/workflow inputs byte-identical to77c075f9, while upstream admission/runtime dependencies changed and were reviewed. Combined affected selection61 passed in174.90s without pytest warnings; original geometry and five existing bootstrap-profile helper controls pass; all eleven artifact guards pass. Extra incoming raw/native-pause/SessionEnd plus hook teardown selection remains non-green:29 passed, one mounted Interrupt executor-teardown error in487.88s at unchanged300s bound. Same node/body-pass/teardown-error and bridge future.result/executor stack already reproduced on incoming SessionEnd complete exact-base export, with matching archive/log/receipt hashes. Known-baseline disposition only, no unique cause, skipped test, aggregate pass or lifetime fix. All ten latest-dev and fourteen timer-correction receipt files compare equal to normalized raw originals. Fresh combined review has no source findings; final disposition and new exact-head CI remain required. Six AC checked, task stays In Progress; parent retirement/resource/performance/native qualification gaps unwaived.
 
 Fresh independent read-only review of committed 6dc45406 plus the twelve staged QA/task files completed: no Critical, Important or Minor findings. Reviewer confirmed all six helper consumers, preserved latest-dev contracts, ten normalized receipt comparisons and authentic exact-base teardown signature. Known-baseline disposition accepted without aggregate pass or unique-cause claim. Ready to commit and publish with current dev; not merge clearance. Final evidence-only commit preserves tested source. New exact-head CI and bounded task publication closeout remain required; TASK34415 stays In Progress with six AC checked and all parent qualification gaps unwaived.
+
+Bounded task closeout, 2026-10-07: all six acceptance criteria and the documented scoped DoD are satisfied. Published source/evidence head 57fa8b739d3b5def6c105b344ff9e230b454fba1 on current dev 6a08c6a18add254751023387d6e97203552efa2b completed Derived 37573814397 SUCCESS (PR, all four UI lanes and required Derived artifacts reproduce from their sources) and Perf 37573814378 SUCCESS. Fresh independent review accepted for THIS PR has no Critical/Important/Minor findings; actual GitHub reviews and threads are empty. Existing targeted tests, paired static comparisons, eleven artifact guards, retained failures/warnings, lesson and ADR126/120 rationale remain unchanged. Only TASK34415 is marked Done through the current CLI. The final documentation-only closeout must receive its own exact-head CI before protected merge; no merge is claimed here. TASK31966/TASK31245 remain In Progress; full 50ms/native/Windows/participant/whole-app retirement/resource/closed-cursor gaps and the recorded mounted Interrupt baseline teardown error are unwaived. No production, test, script, package, workflow or qualification limit changed for closeout.
 <!-- SECTION:NOTES:END -->

@@ -330,6 +330,25 @@ to originals in `/private/tmp/pr3034-rebase-6a08-U06HKm` after trailing-whitespa
 normalization only. The fourteen new timer-correction receipt files above also
 compare equal to their normalized originals; no warning or failure was omitted.
 
+## Bounded task closeout
+
+Published head `57fa8b739d3b5def6c105b344ff9e230b454fba1` on current dev
+`6a08c6a18add254751023387d6e97203552efa2b` completed
+[Derived Artifacts 37573814397](https://github.com/rmusser01/tldw_chatbook/actions/runs/37573814397)
+and [Perf Guard 37573814378](https://github.com/rmusser01/tldw_chatbook/actions/runs/37573814378)
+successfully. The PR lane, all four UI lanes and required **Derived artifacts
+reproduce from their sources** passed on that exact head. Fresh independent
+scoped review has no Critical/Important/Minor findings; actual GitHub reviews
+and threads were empty at closeout.
+
+All six acceptance criteria and the documented scoped DoD are satisfied.
+Only TASK34415 was marked Done through the current Backlog CLI. The closeout
+changes documentation only; tested source, existing receipts, inherited static
+debt and failures/warnings remain unchanged. This final closeout commit needs
+its own exact-head CI before the authorized protected merge. No merge or
+warning-free full qualification is claimed here; the non-green incoming
+mounted Interrupt teardown receipt remains recorded above.
+
 ## Still open
 
 Busy-lock responsiveness is not full unchanged 50ms activation qualification.
