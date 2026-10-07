@@ -1,11 +1,11 @@
 ---
 id: TASK-33648
 title: Preserve authorized SessionEnd notification during Console host disposal
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 18:48'
-updated_date: '2026-10-07 02:06'
+updated_date: '2026-10-07 03:23'
 labels:
   - console
   - hooks
@@ -27,7 +27,7 @@ An independently reproduced expanded-hooks limitation suppresses a granted stand
 <!-- AC:BEGIN -->
 - [x] #1 Actual saved and granted v2 configuration emits the intended SessionEnd notification once during host disposal, with a successful exact-session-close control.
 - [x] #2 Changed or revoked definitions and ordinary post-disposal tool or model calls remain refused; no general authority is reopened.
-- [x] #3 Real process, ticket and physical cleanup settle through cancellation, with targeted negative controls and canonical ADR assessment.
+- [ ] #3 Real process, ticket and physical cleanup settle through cancellation, with targeted negative controls and canonical ADR assessment.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,6 +42,8 @@ Reason: preserve a narrow, already authorized host-issued teardown delivery whil
 4. Verify targeted lifecycle/permission/cleanup tests, including cancellation, and independent scoped review. Record real process settlement and preserved limits before checking criteria.
 
 Prospective mixed-projection correction after independent source review: reproduce disposal with a real installed/activated native plugin and saved/granted standalone hook. Reuse the exact original host event and engine execution through a minimal private per-delivery projection witness; require callback object identity, active/non-cancelled membership and fixed deadline, with fresh binding/finally reset and no external callback under the memory lock. Preserve public same/copied/ambient-context replay refusal and all existing grant/plugin/effect/model guards. Keep earlier Changes-required package and exact-base inherited teardown evidence; obtain a new frozen source review before closure.
+
+Prospective PR3037 integration: preserving merge of exact dev518277133cc1281e446387b06d59dc54fea9b727 after user authorization. Incoming Console failed-attempt settlement/retry and established-store read changes must compose with the unchanged approved hook/storage source. No directly overlapping production files. Qualify only the affected incoming Console/provider tests and exact disposal/warm-reader boundary controls, obtain immutable independent integration review, retain historical metric and NON-GREEN limitations, and close this reopened verification criterion before publication. ADR required: no new decision; existing ADR126 and ADR163/197 boundaries remain exact. Use protected head-matched merge only after fresh PR Fast Lane, all four UI shards, latency, Derived artifacts and current review conversations pass. No moving-dev update while CI runs, full sweep, original budget replay, retry/dispatch or protection weakening.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

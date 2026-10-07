@@ -85,3 +85,19 @@ Measurement checkpoint: the fresh native bound-profile actual app baseline retai
 Independent hook source review found a blocking supported mixed-native-plugin projection path: trusted projection copies a standalone event before its authority check. Before correction, qualify a real installed/activated native plugin plus saved/granted standalone disposal RED. Retain original host event/execution authenticity through a minimal private per-delivery projected-event witness, with exact callback identity, active/non-cancelled membership, fixed deadline, fresh binding/finally reset and brief memory locking. Public same/copied/ambient-context deliveries must still refuse. The earlier frozen package is Changes required, not Ready; preserve it and all evidence. A new frozen review is required after correction. The mounted executor teardown timeout separately reproduced on complete exact6feb base (one body pass plus teardown error); both selections remain non-green.
 
 Final implementation checkpoint: all four task criteria are checked through CLI and Done. Hook and performance independent source reviews, the combined boundary/doc review and portable evidence authenticate the unchanged approved source. Performance final actual idle rate falls67.64561%; the original1Hz cadence produces actual localpause1.069559s. The related mounted timeout and permission ordering/RMW refusals remain separate non-green limitations. Whitespace and Backlog ID/readability guards pass; no original completed PR budget or broad suite is renewed. The PR body is prepared; publication and its actual URL are recorded after this commit, without fabricating a merged/CI-green result. Incident-backed hook lesson: backlog/docs/lessons-hook-teardown.md.
+
+
+## Authorized PR3037 integration and protected merge
+
+**ADR required:** no new decision.
+**ADR paths:** existing ADR126 and ADR163/197; incoming ADR097 unchanged.
+**Reason:** preserve both independently delivered implementations and all source/evidence history; no new runtime, storage or permission boundary.
+
+User authorized updating against current dev and merging PR3037. Original reviewed/published head is 8d88ababdf83701174fac753283cbd44153262ad. Exact incoming dev is 518277133cc1281e446387b06d59dc54fea9b727 (eleven commits after6feb). Live protection requires strict current-base status, enforced admins and resolved conversations; linear history is not required. Auto-merge is off.
+
+- [ ] Commit this prospective checkpoint after reopening only TASK33648/33560 AC3 verification through CLI.
+- [ ] Merge exact incoming dev into the feature branch, preserving reviewed commits and exact old source/evidence rather than rewriting them. Review Console failed-attempt/retry and established-store read composition.
+- [ ] Run only the bounded integration controls, preserve raw/XML and all inherited limitations, authenticate unchanged owned source/evidence, and obtain independent immutable integration reviews. The prior67.64561% paired measurement remains a historical checkpoint, not a new merged-app measurement.
+- [ ] Close the reopened criteria through CLI with evidence, publish one clean preserving update, and verify actual remote/GitHub head.
+- [ ] Await current-head PR Fast Lane, all four UI shards, latency and Derived artifacts plus clear current review conversations; read live protection/actual refs and perform normal protected head-matched merge.
+- [ ] Verify actual GitHub MERGED state, merge parents/tree and current concurrency before reporting completion. Preserve pinned worktree and all prior raw evidence. No automation operation.
