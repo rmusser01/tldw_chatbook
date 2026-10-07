@@ -1,0 +1,86 @@
+{
+  "base": "4542052fb52c3e6c696bb71a39baab8b13625606",
+  "source_sha256": {
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "9459a4c29210d2d40a24fcaaf6008b2c799e09444e5cecf6a72182c8c4705ffb",
+    "tldw_chatbook/UI/Console_Modules/approval_details.py": "8124d51518855ebb411666e6274a276117222bec992fef71212225ced1eab358",
+    "tldw_chatbook/css/features/_console_approvals.tcss": "528730eb99050cda77fe147e0eced784da4b7d49a3ab9117bccf3498d2130e11",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "5209389a996d2f992af2bb62ab1d7bc4cf7a4af1d1ae104ef01cc10a593d309b",
+    "Tests/UI/test_approval_interaction.py": "208b1522edc8adc7a84a31660cdd77c66a8d5f349565999b5d1c780277fe91e2",
+    "Tests/UI/test_approval_details.py": "e17ded877bc1b1f286f0a110fcaafb030b0d30258a496cb437c06244da16d246",
+    "Tests/UI/test_approval_action_ownership.py": "242a2f3395e3a019e33925993986c7156253a5d7afd56dd4882d1be0fb71a169",
+    "Tests/UI/test_console_approval_compact_layout.py": "2e5b1e90998cd06eafaa0d78c449ce6fb2bed03123870dbb518783fb370cfbc9"
+  },
+  "receipts": {
+    "controls_red": {
+      "private_log": ".superpowers/finalfix_controls_red.log",
+      "sha256": "f8dd24d8f632e00adbb436922da07260850dd55d24d24682875f24eb4bea5984",
+      "summary": "2 failed, 21 deselected, 1 warning in 5.25s"
+    },
+    "targets_red": {
+      "private_log": ".superpowers/finalfix_targets_red.log",
+      "sha256": "3345bd971ff6a2c4deb2ffda3f90b9975afd67705d25a2b11d17f4424174e7bd",
+      "summary": "1 failed, 18 deselected, 1 warning in 4.79s"
+    },
+    "controls_green": {
+      "private_log": ".superpowers/finalfix_controls_green.log",
+      "sha256": "e079dcbef6986a79b04c89d001640cfe8b80a7188f9788c4fe1ebed76b5b6edc",
+      "summary": "2 passed, 21 deselected, 1 warning in 12.05s"
+    },
+    "targets_green": {
+      "private_log": ".superpowers/finalfix_targets_green.log",
+      "sha256": "9d4387c154a81c04b420c5470894f59e25889a77bd18884cea0149e75a30566d",
+      "summary": "1 passed, 18 deselected, 1 warning in 7.31s"
+    },
+    "compact": {
+      "private_log": ".superpowers/finalfix_compact.log",
+      "sha256": "4b17a884627625fac09cd793d9c822b0c0edb826437b47baeac879a2a0f7e6b3",
+      "summary": "1 failed, 2 deselected, 2 warnings in 53.80s"
+    },
+    "interaction_final": {
+      "private_log": ".superpowers/finalfix_interaction_final.log",
+      "sha256": "49be6dbf34f661516874144e46636c43e0fdc2981270db525ce80e303d971f56",
+      "summary": "25 passed, 1 warning in 20.92s"
+    },
+    "details": {
+      "private_log": ".superpowers/finalfix_details.log",
+      "sha256": "13a0da5852d5739edb31c3db94f5a964bdc2c3d8f82480c81ec7257ecad878f8",
+      "summary": "19 passed, 1 warning in 18.68s"
+    },
+    "ownership_final": {
+      "private_log": ".superpowers/finalfix_ownership_final.log",
+      "sha256": "254a291668d948ff54a1c265ea79506fd211efab05be2f8e1fc3d7fec9b92e5e",
+      "summary": "25 passed, 1 warning in 12.50s"
+    },
+    "compact_final": {
+      "private_log": ".superpowers/finalfix_compact_final.log",
+      "sha256": "e1fa28dedeb7677e8880a8e82473842fdbc85576b0b86b24f3e25fb592a3ddad",
+      "summary": "1 passed, 2 deselected, 2 warnings in 60.21s (0:01:00)"
+    },
+    "journeys_final": {
+      "private_log": ".superpowers/finalfix_journeys_final.log",
+      "sha256": "33daec4c34652d82bed006620e689e0e454ec83306aaccfb441ff56d930f808d",
+      "summary": "4 passed, 1 warning in 29.83s"
+    },
+    "budget_final": {
+      "private_log": ".superpowers/finalfix_budget_final.log",
+      "sha256": "9e68eff3d4413eabad003bac22c9093276bc846aaa4d1237401192fb41c97e8f",
+      "summary": "28 passed, 1 warning in 5.51s"
+    },
+    "css_final": {
+      "private_log": ".superpowers/finalfix_css_final.log",
+      "sha256": "a04b82db887f9f31c29b547e310c05bd2ab644ad3b63ca4010d4d2800ea1c6f5",
+      "summary": "5 passed, 1 warning in 43.18s"
+    },
+    "review_final": {
+      "private_log": ".superpowers/finalfix_review_final.log",
+      "sha256": "1ad0812cec07abb2f25a7878acba8bc2222c7c21146f57ecd7ba10634a28bf73",
+      "summary": "1 passed, 24 deselected, 1 warning in 5.66s"
+    },
+    "tokens_final": {
+      "private_log": ".superpowers/finalfix_tokens_final.log",
+      "sha256": "db0fbc8f0835a78563cb84e8d13ff83bf85de7e9ab6494886bde68fa3b4adc42",
+      "summary": "1 passed, 7 deselected, 1 warning in 7.67s"
+    }
+  },
+  "static": "All six owned Python files Ruff clean; five full formatter checks plus changed card helpers; scoped diff check; source CSS rebuilt."
+}

@@ -8,7 +8,7 @@ import threading
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, ContextManager, Iterator, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, ContextManager, Iterator, Mapping, Sequence
 
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
@@ -122,6 +122,10 @@ def _sanitize_result(text: str) -> str:
     return raw[:_MAX_RESULT_BYTES].decode("utf-8", errors="ignore") + "\n… [truncated]"
 
 
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.approval_presentation import ApprovalAuthority
+
+
 class VirtualCliProvider:
     """Expose one schema while resolving command and admitted-root authority."""
 
@@ -144,7 +148,9 @@ class VirtualCliProvider:
         result_redaction_root: Path | None = None,
         workspace_executor: WorkspaceToolExecutor | None = None,
         admitted_roots: Sequence[RunAdmittedWorkspaceRoot] | None = None,
+        presentation_authority: ApprovalAuthority | None = None,
     ) -> None:
+        self._presentation_authority = presentation_authority
         selected_executor = (
             WorkspaceToolExecutor(workspace_root)
             if workspace_executor is None
@@ -404,7 +410,11 @@ class VirtualCliProvider:
             # `_arg_rule_allows_safe` short-circuit) -- non-matching
             # arguments for the same command still ask.
             return None
+        owner = self._presentation_authority
+        if owner is not None and authority is not None:
+            owner = replace(owner, location_label=authority.alias)
         return MCPPendingCall(
+            presentation_authority=owner,
             llm_name=VIRTUAL_CLI_TOOL_NAME,
             server_key=VIRTUAL_CLI_SERVER_KEY,
             tool_name=command,
@@ -418,6 +428,7 @@ class VirtualCliProvider:
                 else "ask"
             ),
             call_id=call.call_id or command,
+            legacy_observation_key=not bool(call.call_id),
             effects=approval_effects_for_tool(hub),
         )
 
@@ -427,6 +438,9 @@ class VirtualCliProvider:
         decisions: dict[str, str],
         pending: Sequence[MCPPendingCall] = (),
     ) -> None:
+        from .approval_observation import remember_approval_contexts
+
+        remember_approval_contexts(self, run_id, decisions)
         with self._stamps_lock:
             self._stamps = {
                 key: value for key, value in self._stamps.items() if key[0] != run_id
@@ -462,23 +476,28 @@ class VirtualCliProvider:
     @contextmanager
     def stamp_scope(self, run_id: str) -> Iterator[None]:
         """Hide and restore this run's pending verdicts around a child run."""
-        with self._stamps_lock:
-            saved = {
-                key: value for key, value in self._stamps.items() if key[0] == run_id
-            }
-            self._stamps = {
-                key: value for key, value in self._stamps.items() if key[0] != run_id
-            }
-        try:
-            yield
-        finally:
+        from .approval_observation import provider_observation_scope
+
+        with provider_observation_scope(self, run_id, clear=True):
             with self._stamps_lock:
-                self._stamps = {
+                saved = {
                     key: value
                     for key, value in self._stamps.items()
-                    if key[0] != run_id
+                    if key[0] == run_id
                 }
-                self._stamps.update(saved)
+                self._stamps = {
+                    key: value for key, value in self._stamps.items() if key[0] != run_id
+                }
+            try:
+                yield
+            finally:
+                with self._stamps_lock:
+                    self._stamps = {
+                        key: value
+                        for key, value in self._stamps.items()
+                        if key[0] != run_id
+                    }
+                    self._stamps.update(saved)
 
     def invoke(self, tool_id: str, args: dict) -> ToolResult:
         name = tool_id.split(":", 1)[-1]
@@ -637,6 +656,9 @@ class VirtualCliProvider:
             decisions = self._approval_callback([pending]) or {}
         except Exception:
             return ApprovalStamp("timeout")
+        from .approval_observation import remember_approval_contexts
+
+        remember_approval_contexts(self, current_run_id(), decisions)
         decision = decisions.get(pending.call_id or pending.llm_name, "timeout")
         if decision in ("approve_session", "always_allow"):
             self._persist(hub, decision)
@@ -720,15 +742,24 @@ class VirtualCliProvider:
             return False
 
     def _persist(self, hub: HubTool, decision: str) -> None:
-        if self._persist_approval is None:
-            return
-        try:
-            self._persist_approval(hub, decision)
-        except Exception as exc:
-            logger.warning(
-                "Virtual CLI approval persistence failed (exception_type={})",
-                type(exc).__name__,
-            )
+        from .approval_observation import (
+            approval_contexts_scope,
+            provider_approval_contexts,
+            publish_grant_application,
+        )
+
+        with approval_contexts_scope(provider_approval_contexts(self, hub.name)):
+            if self._persist_approval is None:
+                publish_grant_application("not_applied", error_code="writer_unavailable")
+                return
+            try:
+                self._persist_approval(hub, decision)
+            except Exception as exc:
+                publish_grant_application("failed", error_code="writer_failed")
+                logger.warning(
+                    "Virtual CLI approval persistence failed (exception_type={})",
+                    type(exc).__name__,
+                )
 
     def _persist_arg_rule_call(self, hub: HubTool, args: Mapping[str, Any]) -> None:
         """Persist an exact-input allow rule for THIS call's exact
@@ -736,15 +767,24 @@ class VirtualCliProvider:
         command enum plus a bounded `argv` array, is stable enough to
         honor the option the approval card already offers; see
         `_ask_verdict()`'s `"allow_matching"` handling below)."""
-        if self._persist_arg_rule is None:
-            return
-        try:
-            self._persist_arg_rule(hub, args)
-        except Exception as exc:
-            logger.warning(
-                "Virtual CLI arg-rule persistence failed (exception_type={})",
-                type(exc).__name__,
-            )
+        from .approval_observation import (
+            approval_contexts_scope,
+            provider_approval_contexts,
+            publish_grant_application,
+        )
+
+        with approval_contexts_scope(provider_approval_contexts(self, hub.name)):
+            if self._persist_arg_rule is None:
+                publish_grant_application("not_applied", error_code="writer_unavailable")
+                return
+            try:
+                self._persist_arg_rule(hub, args)
+            except Exception as exc:
+                publish_grant_application("failed", error_code="writer_failed")
+                logger.warning(
+                    "Virtual CLI arg-rule persistence failed (exception_type={})",
+                    type(exc).__name__,
+                )
 
     def _record(self, hub: HubTool, decision: str) -> None:
         if self._record_decision is None:

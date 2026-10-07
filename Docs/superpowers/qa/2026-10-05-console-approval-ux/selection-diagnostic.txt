@@ -1,0 +1,11 @@
+ENV_SELECTION {"key": "TLDW_TEST_CONFIG_ROOT", "value": ".", "stack": ["Tests\\conftest.py:59"]}
+ENV_SELECTION {"key": "HOME", "value": "home", "stack": ["Tests\\conftest.py:68"]}
+ENV_SELECTION {"key": "USERPROFILE", "value": "home", "stack": ["Tests\\conftest.py:69"]}
+ENV_SELECTION {"key": "TLDW_CONFIG_PATH", "value": "config\\config.toml", "stack": ["Tests\\conftest.py:72"]}
+ENV_SELECTION {"key": "TLDW_TEST_CONFIG_ROOT", "value": "temp\\tldw_test_config_ab7yeu3n", "stack": ["Tests\\UI\\conftest.py:49"]}
+ENV_SELECTION {"key": "TLDW_CONFIG_PATH", "value": "temp\\tldw_test_config_ab7yeu3n\\config\\config.toml", "stack": ["Tests\\UI\\conftest.py:54"]}
+ENV_SELECTION {"key": "HOME", "value": "temp\\tldw_test_config_ab7yeu3n\\home", "stack": ["Tests\\UI\\conftest.py:61"]}
+ENV_SELECTION {"key": "USERPROFILE", "value": "temp\\tldw_test_config_ab7yeu3n\\home", "stack": ["Tests\\UI\\conftest.py:61"]}
+CONFIG_BINDING_REFUSAL {"bound": "temp\\tldw_test_config_ab7yeu3n\\config\\config.toml", "installed": "config\\config.toml", "stack": ["tldw_chatbook\\Backup_Recovery\\raw_participants.py:105", "tldw_chatbook\\Backup_Recovery\\raw_participants.py:293", "tldw_chatbook\\Backup_Recovery\\raw_participants.py:646", "tldw_chatbook\\Backup_Recovery\\config_participants.py:352", "tldw_chatbook\\Backup_Recovery\\config_participants.py:421", "tldw_chatbook\\config.py:2106", "tldw_chatbook\\app.py:686", "Tests\\UI\\app_factory.py:29"]}
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+1 warning, 1 error in 9.03s

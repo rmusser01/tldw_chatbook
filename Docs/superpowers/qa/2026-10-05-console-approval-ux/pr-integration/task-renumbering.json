@@ -1,0 +1,12 @@
+{
+  "mapping": {
+    "34411": "34564",
+    "34412": "34565",
+    "34413": "34566",
+    "34414": "34567",
+    "34415": "34568",
+    "34416": "34569"
+  },
+  "reason": "Older dev tasks retain34411/34412; approval tasks moved together preserving dependency order",
+  "scope": "Only approval-owned records/references, with renumbering provenance in each task"
+}

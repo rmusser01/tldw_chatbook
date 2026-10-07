@@ -1,0 +1,195 @@
+{
+  "base": "828ad450549ea828b37d5b681985088cbf3aaa9d",
+  "environment": {
+    "python": "3.12.10",
+    "textual": "8.2.8",
+    "platform": "Windows",
+    "guard": "existing private_control.py; module origins asserted; original home protected before redirect; startup_allowed"
+  },
+  "receipts": {
+    "observation": {
+      "private_log": ".superpowers/task5_test_approval_observation_isolation_green.log",
+      "sha256": "dc4c3c24b53ca08dad9e7447179be9908d875c2ff3c39fe14ce092734a456c15",
+      "summary": "12 passed, 1 warning in 3.75s"
+    },
+    "feedback": {
+      "private_log": ".superpowers/task5_test_console_approval_feedback_last.log",
+      "sha256": "65bb4aed2c9e19af5f5343f01f2fe80df02b35f918ffa7a5cf94d275c6667b99",
+      "summary": "24 passed, 1 warning in 7.96s"
+    },
+    "ui": {
+      "private_log": ".superpowers/task5_test_approval_feedback_final.log",
+      "sha256": "1ed7a5d116cdc6ea657c2ea7b45d18ceca20996a787738a49b1d2a6fb75401b5",
+      "summary": "9 passed, 1 warning in 9.91s"
+    },
+    "interrupt_host": {
+      "private_log": ".superpowers/task5_regression_console_interrupt_rounds.log",
+      "sha256": "c008f1f6d10381129c4c5085d761359e45ef35843bb4f422ecdd3671bb70cbef",
+      "summary": "29 passed, 1 warning in 6.44s"
+    },
+    "activity": {
+      "private_log": ".superpowers/task5_regression_console_tool_activity.log",
+      "sha256": "385ba3e7eca863dc26bee74cfdff840405607e4e31115384042bf7131f3959a0",
+      "summary": "12 passed, 1 warning in 2.48s"
+    },
+    "raw_revocation": {
+      "private_log": ".superpowers/task5_console_raw_shell_revocation_second.log",
+      "sha256": "b1274c86b67595681afa480a9721f6ed5e108063e3a140352f013210522fd11d",
+      "summary": "7 passed, 1 warning in 5.94s"
+    },
+    "builtin": {
+      "private_log": ".superpowers/task5_regression_builtin_tool_gate.log",
+      "sha256": "c7aa2f1d311222beadf1a61fd1472ac3c51881c28b919ae2dacbf191d1853251",
+      "summary": "74 passed, 1 warning in 18.42s"
+    },
+    "mcp": {
+      "private_log": ".superpowers/task5_mcp_tool_provider_final.log",
+      "sha256": "6293d591f080f2d024b7fd72a6ab12ca91b5384333dac88f0e511f995562f460",
+      "summary": "90 passed, 1 warning in 4.21s"
+    },
+    "local_supported": {
+      "private_log": ".superpowers/task5_local_provider_supported.log",
+      "sha256": "6edf8d17b12df07abdccb4c8c974ffa41378ddadee50bb6f5dff5ca0dedc7ac3",
+      "summary": "46 failed, 224 passed, 1 skipped, 1 warning in 212.08s (0:03:32)"
+    },
+    "local_exact_base": {
+      "private_log": ".superpowers/task5_local_exact_base.log",
+      "sha256": "48eaae0744d13eb939f100cc5c517dc64e1a2646ff52a6b7659ac29b64b5803c",
+      "summary": "46 failed, 9 passed, 216 deselected, 1 warning in 189.16s (0:03:09)"
+    },
+    "raw_provider": {
+      "private_log": ".superpowers/task5_regression_raw_shell_tool_provider.log",
+      "sha256": "a9d307b79607ed0f003545fbfd473ced58be829d970363887bd237f1fd88d1b7",
+      "summary": "32 passed, 1 warning in 1.72s"
+    },
+    "raw_progress": {
+      "private_log": ".superpowers/task5_test_console_raw_shell_progress_last.log",
+      "sha256": "5c10a926aebd91495124e29d56bc67eee96f1442b23fccd364134bcbf5b62942",
+      "summary": "10 passed, 1 warning in 5.38s"
+    },
+    "trace": {
+      "private_log": ".superpowers/task5_regression_trace_approval_capture.log",
+      "sha256": "11b65d149891da58374c89f2c89b76a59a6a958bbc1ee97c82c98397208933c3",
+      "summary": "26 passed, 1 warning in 27.74s"
+    },
+    "denial": {
+      "private_log": ".superpowers/task5_regression_approval_denial_reasons.log",
+      "sha256": "c062621dddb9b703388175356320ddb3e1a59588e34987b28f4a4c7ef4f0766c",
+      "summary": "6 passed, 1 warning in 1.10s"
+    },
+    "activity_persistence": {
+      "private_log": ".superpowers/task5_test_console_activity_presentation_verified.log",
+      "sha256": "232feda31d3378129a50c8eb9de68e18120f8d86d2d7307624eef44435208aca",
+      "summary": "157 passed, 1 warning in 17.82s"
+    },
+    "css_bundle": {
+      "private_log": ".superpowers/task5_test_css_bundle_sync_guard_final.log",
+      "sha256": "880997786cb9440bc6d9ce40b525b0b4712bb42d3750578781bf5ed14cfdea08",
+      "summary": "5 passed, 1 warning in 49.00s"
+    },
+    "design_tokens": {
+      "private_log": ".superpowers/task5_test_design_token_governance_last.log",
+      "sha256": "fb019a276840d676cea363a7771ed3951efef9e0711c71b0e1be03a2ac5b6ff4",
+      "summary": "1 passed, 7 deselected, 1 warning in 11.33s"
+    },
+    "viewless_slots": {
+      "private_log": ".superpowers/task5_test_console_viewless_hooks_final.log",
+      "sha256": "d5307bbe0236f92492f8bcb8a6b6ca7cc9119d0fc1e0292e871de2dbdd4f6ea5",
+      "summary": "2 passed, 16 deselected, 1 warning in 2.65s"
+    },
+    "view_attach_detach": {
+      "private_log": ".superpowers/task5_test_console_runtime_ownership_final.log",
+      "sha256": "3d6a71cf5ea8661029fe7ba25eb4c3d39ef599d25f11d4f4c9a6639a49955bd6",
+      "summary": "1 passed, 69 deselected, 2 warnings in 5.27s"
+    },
+    "stamp_scope": {
+      "private_log": ".superpowers/task5_test_mcp_tool_provider_last.log",
+      "sha256": "6dabf45992ddff795ae41f349f5aa3881d4be4bff143982071d798dcedbe354d",
+      "summary": "2 passed, 88 deselected, 1 warning in 1.47s"
+    },
+    "screen_ratchet": {
+      "private_log": ".superpowers/task5_test_screen_size_ratchet_verified.log",
+      "sha256": "77772a353f9c1c02f45bb44eb2bb793007acb855fc8dc5e89612c3cf8affd9f0",
+      "summary": "2 failed, 2 passed, 1 warning in 2.81s"
+    }
+  },
+  "qualification": {
+    "base": "828ad450549ea828b37d5b681985088cbf3aaa9d",
+    "local_failed_nodeids_equal": true,
+    "current_failed_count": 46,
+    "base_failed_count": 46,
+    "current_only": [],
+    "base_only": [],
+    "source_overlay": "Exact BASE contents for every modified pre-existing product Python module; all other source unchanged. Supported bootstrap_profile marker kept identical. No tracked source/HEAD changes.",
+    "ratchet": {
+      "tldw_chatbook/UI/Screens/chat_screen.py": {
+        "base_lines": 25442,
+        "current_lines": 25449
+      },
+      "tldw_chatbook/UI/Screens/library_screen.py": {
+        "base_lines": 36689,
+        "current_lines": 36689
+      }
+    }
+  },
+  "native_browser_presented_frame_timing": "not measured; not qualified",
+  "full_suite": "not run",
+  "static": "Six new files ruff format/check passed; changed existing Python AST valid and no added Ruff diagnostic relative to exact BASE (line-number references normalized).",
+  "layout": "Headless compositor: full warning visible at80x24,120x40,170x48; textual-dark/light. This is geometry/content evidence, not presented-frame timing.",
+  "fix_round_1": {
+    "base": "6d52fee686f01569b14236a068db2a2e246b99a3",
+    "receipts": {
+      "owners_valid_red": {
+        "private_log": ".superpowers/task5_fix1_owners_valid_red.log",
+        "sha256": "867b711f09418f8e58ad2af5a98cc82993be309be12d221e7a01964445f52086",
+        "summary": "20 failed, 12 deselected, 1 warning in 10.80s"
+      },
+      "feedback_red": {
+        "private_log": ".superpowers/task5_fix1_feedback_red.log",
+        "sha256": "a45a353886708e3d7ade0117024d28bbc9d4fc5b4dfa25d55dae61e40bf8d6bb",
+        "summary": "3 failed, 24 deselected, 1 warning in 2.16s"
+      },
+      "owners_final": {
+        "private_log": ".superpowers/task5_fix1_owners_final.log",
+        "sha256": "1005e6cd0b53efe033fec4c7d99ece56488ad26f64aba387142669b5059cd02d",
+        "summary": "34 passed, 1 warning in 12.10s"
+      },
+      "feedback_final": {
+        "private_log": ".superpowers/task5_fix1_feedback_final.log",
+        "sha256": "f2a255d92ca7f85e610a15b051f7a28cc80354e032ef2ec51dc132ea8172c4f0",
+        "summary": "29 passed, 1 warning in 7.54s"
+      },
+      "mcp_final": {
+        "private_log": ".superpowers/task5_fix1_mcp_final.log",
+        "sha256": "3db0b59dd16c68d08ae78a18bf4c7aa24fdeaed6b3e8e374a5ca3a94ca3ed7c7",
+        "summary": "90 passed, 1 warning in 4.91s"
+      },
+      "trace_final": {
+        "private_log": ".superpowers/task5_fix1_trace_final.log",
+        "sha256": "c03fc7f11675a2a4f139245d1f4fcfe77828fa76818e41346265e9c43a261073",
+        "summary": "26 passed, 1 warning in 39.89s"
+      },
+      "host_final": {
+        "private_log": ".superpowers/task5_fix1_host_final.log",
+        "sha256": "aaf69bf0eddcefa798e9237b167f8f0eec09a0efbb0eff2bdc43bdbb624b266c",
+        "summary": "29 passed, 1 warning in 6.30s"
+      },
+      "ui_final": {
+        "private_log": ".superpowers/task5_fix1_ui_final.log",
+        "sha256": "056bec9f7947da2dce80e7c12aa2487649d3c903eb25bcb22afc2d7c98583154",
+        "summary": "9 passed, 1 warning in 11.52s"
+      },
+      "static": {
+        "private_log": ".superpowers/task5_fix1_static.json",
+        "sha256": "8b8d7ea15ef58b481aba27147019e52835c8b31aaf081877bbbb8f03d28d097f",
+        "summary": "All nine owned Python files parse; no new Ruff diagnostics against FIX_BASE; existing virtual 2, bridge 10, controller 61 remain. Five small modules/tests formatter check passes."
+      },
+      "marker_final": {
+        "private_log": ".superpowers/task5_fix1_marker_final.log",
+        "sha256": "a12be419532d1fb08b5b126300be774eb7bae512b5319e2bf800ae6823bf96e9",
+        "summary": "2 passed, 32 deselected, 1 warning in 1.08s"
+      }
+    },
+    "qualification": "Guard unchanged. Real virtual service-owner writers exercised without native dispatch. Native transport/frame timing remain unqualified."
+  }
+}

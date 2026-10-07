@@ -56,6 +56,11 @@ class ApprovalDecisions(dict[str, str]):
         )
 
         super().__init__(decisions or {})
+        self.observation_contexts = dict(getattr(decisions, "observation_contexts", {}))
+        self.observation_aliases = dict(getattr(decisions, "observation_aliases", {}))
+        self.observation_legacy_keys = frozenset(
+            getattr(decisions, "observation_legacy_keys", ())
+        )
         self.denial_reasons: dict[str, str] = {}
         if isinstance(denial_reasons, Mapping):
             for key, value in denial_reasons.items():

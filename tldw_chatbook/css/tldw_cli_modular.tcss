@@ -339,6 +339,11 @@ $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
 
+
+$ds-approval-decision-width: 28;
+
+$ds-approval-compact-body-height: 6;
+
 /* ===== MODULE: core/_reset.tcss ===== */
 
 
@@ -3707,7 +3712,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 
 .approval-row-reason,.approval-row-scope,.approval-row-raw-label,.approval-row-raw-metadata,.approval-row-raw-warning,.approval-row-raw-scope{width:$ds-width-fill;height:auto;}
 
-.approval-row-decision{width:$ds-agentic-prompt-vars-pane;}
+.approval-row-decision{width:$ds-approval-decision-width;}
 
 .approval-row-fast-approve,.approval-row-fast-deny{width:$ds-size-14;min-width:$ds-size-14;}
 
@@ -3715,7 +3720,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
   padding: $ds-space-0 $ds-space-2;
 }
 .approval-compact #approval-batch-rows {
-  max-height: $ds-size-8;
+  max-height: $ds-approval-compact-body-height;
 }
 .approval-compact .approval-row-controls {
   layout: grid;
@@ -3732,6 +3737,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
   width: $ds-width-fill;
 }
 
+.approval-compact Button#approval-more-options-batch,
 .approval-compact Button#approval-approve-all,
 .approval-compact Button#approval-submit,
 .approval-compact Button#approval-deny-all {
@@ -3745,6 +3751,85 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
   border: solid $ds-status-approval-required;
   background: $ds-status-approval-required 10%;
 }
+
+
+.approval-single #approval-approve-all, .approval-single #approval-deny-all,
+.approval-single #approval-submit, .approval-single #approval-choices-hint {
+  display: none;
+}
+.approval-single.approval-options-open #approval-submit {
+  display: block;
+}
+#approval-request-summary, #approval-choices-hint {
+  height: auto;
+  width: $ds-width-fill;
+}
+#approval-request-summary:focus {
+  background: $ds-focus-bg;
+}
+.approval-more-options {
+  width: $ds-size-14;
+  min-width: $ds-size-14;
+}
+.approval-compact .approval-row-controls, .approval-compact #approval-batch-actions {
+  layout: vertical;
+}
+.approval-compact .approval-row-controls Button {
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+}
+
+#approval-single-actions {
+  height: auto;
+  width: $ds-width-fill;
+}
+#approval-single-actions Button {
+  width: auto;
+  min-width: $ds-size-0;
+  padding: $ds-space-0;
+}
+.approval-stacked #approval-single-actions {
+  layout: vertical;
+}
+.approval-stacked #approval-single-actions Button {
+  width: $ds-width-fill;
+}
+
+#approval-count-scope-summary {
+  height: auto;
+  width: $ds-width-fill;
+}
+
+.approval-single .approval-row-controls {
+  display: none;
+}
+.approval-single.approval-options-open .approval-row-controls {
+  display: block;
+}
+
+
+#approval-details-panel, #approval-details-status, #approval-details-navigation {
+  height: auto;
+  width: $ds-width-fill;
+}
+#approval-details-page {
+  height: $ds-size-3;
+  width: $ds-width-fill;
+}
+#approval-details-navigation Button, .approval-details-open {
+  width: auto;
+  min-width: $ds-size-0;
+  padding: $ds-space-0;
+}
+
+
+.approval-compact.approval-batch #approval-batch-rows {
+  max-height: $ds-size-4;
+}
+.approval-compact.approval-batch.approval-options-open #approval-batch-rows {
+  max-height: $ds-size-2;
+}
+
 
 
 ConsoleScopePickerModal {
@@ -10896,6 +10981,15 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 
 .console-popover-value { width: $ds-size-8; height: $ds-control-height-compact; }
 .console-popover-source { width: $ds-size-18; }
+
+
+.console-approval-feedback {
+    width: $ds-width-full;
+    height: $ds-height-auto;
+    min-width: $ds-size-0;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-primary;
+}
 
 /* ===== MODULE: features/_library.tcss ===== */
 

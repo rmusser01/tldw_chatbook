@@ -1,5 +1,85 @@
 # Lessons: what counts as evidence a change works
 
+
+
+## Verify argument glyphs with the shipping styles, not only the document
+
+**TASK-34567, 2026-10-06.** The small approval harness loaded consolidated
+widget defaults but omitted the app-tier sheets. Document and geometry checks
+passed while its Details screenshot did not show the argument body. Loading
+`APP_STYLESHEETS` and requiring synthetic argument text in the compositor output
+failed at all three sizes. Textual's compact TextArea removed border overhead
+from the bounded three-row viewport and made those checks pass. Keep an actual
+rendered-content assertion alongside read-only, size and hit-test assertions.
+
+## Keep source-bound private profiles selected when testing real config consumers
+
+**TASK-34565 fix round 1, 2026-10-06.** Three local pending cases failed in both
+BASE and HEAD before reaching their gates: the per-test fixture changed the
+config selector after collection had bound its guarded source. Applying the
+existing `bootstrap_profile` marker to exactly those nodes retained the admitted
+private selector and all three passed on both trees. This did not bypass guards:
+a virtual dispatch case still refused its native root pin on both trees because
+Python stat and Windows handle device identities differed. Separate fixture
+selection evidence from the stronger operation capability that remains unverified.
+
+
+## Windows source edits need explicit UTF-8 and a diff review
+
+**TASK-34565, 2026-10-06.** Owner-account Python edits used `Path.read_text()`
+with the Windows default encoding before writing UTF-8. Existing Unicode copy
+became mojibake; the self-review diff showed unrelated source churn. Restoring
+the original characters and using explicit `encoding="utf-8"` reduced the diff
+to the intended approval metadata and copy changes. Preserve repository source
+encoding explicitly and inspect the full diff before treating tests as sufficient.
+
+
+## Preserve stderr without blocking the observed child
+
+**TASK-34408, 2026-10-04.** After replacing unsupported Windows `select(pipe)`,
+uncertainty fixtures still timed out before their first stdout marker. A matched
+child with stderr captured to an owned file completed and preserved 4,992 bytes
+of diagnostics; the original unread stderr pipe blocked that child. The new real
+pipe regression writes 120 KB to stderr before its response and verifies both
+the response and the complete diagnostic output.
+
+Use non-consuming native readiness for stdout and an owned file for stderr when
+a test intentionally leaves diagnostics unread while controlling the child.
+Preserve kill/wait/close cleanup and the original absence assertions. A blocked
+logging channel can look like a product lock failure, even with correct readiness.
+
+## A passed mkdir does not prove its parent barrier completed
+
+**TASK-34408, 2026-10-04.** Native Windows publication tried to flush unchanged
+`C:\Users` and received WinError 5. Removing that ancestor loop passed the ordinary
+path, but review reproduced a creator dying after mkdir and before the parent
+flush: retry would adopt the existing directory without proving the missing
+barrier. A write-rights probe could not distinguish that interruption after
+permissions changed. The final regression kills a real creator at that boundary,
+changes the next attempt's rights, and verifies refusal on its surviving intent.
+
+Durably record intent before mutation and bind mutation, its barrier and intent
+retirement to the same native parent. An identity-bound receipt can narrow later
+barriers only after creation settles. Keep uncertified legacy operations on their
+existing barriers; current permissions are not evidence about a previous write.
+
+## Native Windows private-path tests need a private temporary ancestor
+
+**TASK-34407, 2026-10-04.** The Eval config regression initially failed before
+collection with `recovery_scope_uncertain` in the restricted executor. Running
+as the original user still failed: the ordinary `%TEMP%` directory carried a
+Codex sandbox Modify grant, projected by the native facade as mode `0o766`.
+Pytest's per-test private leaves could not make that ancestor private. A disposable
+directory directly under the original user's home, selected as child `TEMP` and
+`TMP`, allowed the real native checks to run; the final Eval set passed 29 tests.
+The root conftest continued to isolate HOME/USERPROFILE and config selectors.
+
+**What to do.** Check the exact rejected ancestor before diagnosing a private-path
+test failure. Use a disposable private test root and the ordinary test isolation;
+do not replace native admission or relax ACL checks to make collection pass.
+Separate later POSIX-only assertions or native publication failures from the
+evidence for the changed feature, and report those verification limits.
+
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 
 **TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
@@ -18807,3 +18887,25 @@ await and later save a real assistant owner to test custody and settlement
 fingerprints. Retry negatives must include changed system content in both
 single-preamble and distinct-role formats, because unchanged message rows alone
 do not prove unchanged provider input.
+
+## Protect the original Windows home before redirecting a private launcher (TASK-34564, 2026-10-06)
+
+**Incident.** Console approval baseline collection passed the initial startup
+check with an owner-account private profile, then failed at `app.py`'s
+`APP_CONFIG` load with `RecoveryRequired("raw_source_selection_changed")`.
+Content-free call profiling showed that the root conftest bound the private
+`config/config.toml`, but the UI conftest then replaced the supplied root.
+On Windows, `real_profile_guard._real_home()` falls back to `USERPROFILE`
+when no original-home export exists. The launcher had redirected it before
+first guard installation, so the UI conftest correctly rejected a root that
+contained what the guard now identified as the real home.
+
+**What to do.** Install the existing `Tests.real_profile_guard` while the
+original owner home is selected, before redirecting `HOME`/`USERPROFILE`.
+Its existing export preserves the original home for subsequent bootstraps.
+Then select one fresh private config/home/data root and private `TEMP`/`TMP`
+before application imports. The unchanged targeted approval control passed
+25 cases with that ordering; no guard or participant behavior was changed.
+The reproducible launcher and failed selection trace are under
+`Docs/superpowers/qa/2026-10-05-console-approval-ux/`. This collection fix is
+not evidence of native/browser paint latency.

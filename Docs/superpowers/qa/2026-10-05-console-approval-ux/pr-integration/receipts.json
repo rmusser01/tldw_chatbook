@@ -1,0 +1,234 @@
+{
+  "base": "6feb84c1d2203bc3c6d0eecd2823f4e2409b4b4e",
+  "scope": "targeted only, original unqualified metrics retained",
+  "controller_source_and_evidence_verified": 13,
+  "receipts": {
+    "pr-backlog-files.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-backlog-files.log",
+      "sha256": "dfaa723bdc59c16d91824fbcd094eaff14fb7fbe879aad84f5258fe536bdb427",
+      "summary": "All 5041 task files in backlog/tasks, backlog/archive/tasks are readable (frontmatter + owned-section markers).",
+      "startup_admission": false
+    },
+    "pr-backlog-ids.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-backlog-ids.log",
+      "sha256": "037500ba3aef387f90f792afc18dcf21761046718d0bff7d0fe463c84bf59a6f",
+      "summary": "No duplicate task IDs across 5041 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.",
+      "startup_admission": false
+    },
+    "pr-controller-feedback-green.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-controller-feedback-green.log",
+      "sha256": "01cb26aa4b6b80add3dcd7c45016d156229624f12aa8354e255861d6f776af10",
+      "summary": "29 passed, 1 warning in 6.08s",
+      "startup_admission": true
+    },
+    "pr-controller-interrupt-green.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-controller-interrupt-green.log",
+      "sha256": "f2a504ddf8ebf9a57e339aba4cdbeba6c1dc97fe0c412cb7df7741f3b71d9c0b",
+      "summary": "29 passed, 1 warning in 5.28s",
+      "startup_admission": true
+    },
+    "pr-controller-payload-green.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-controller-payload-green.log",
+      "sha256": "0ab9a82774d2e31b8f862050eb6f6de0f7f2ce00b5e8eb499441ff42413557d6",
+      "summary": "5 passed, 1 warning in 1.05s",
+      "startup_admission": true
+    },
+    "pr-controller-red.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-controller-red.log",
+      "sha256": "da5ef81218d3ba0d4c6a91cf09808a2e2492d5990b273277b6fff4dc7ef77c8c",
+      "summary": "5 failed, 24 deselected, 1 warning in 12.42s",
+      "startup_admission": true
+    },
+    "pr-controller-scope-green.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-controller-scope-green.log",
+      "sha256": "989374202ec050ec7e6076e06cb6302e28ef7dbc94de33a18c5561e52d6fbd59",
+      "summary": "9 passed, 1 warning in 39.64s",
+      "startup_admission": true
+    },
+    "pr-controller-static-green.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-controller-static-green.log",
+      "sha256": "0ef6ec23267b84ed51934e9a9e5a33edcc7501f41d46e7907569515c31167449",
+      "summary": "Owned git diff --check: exit 0",
+      "startup_admission": false
+    },
+    "pr-controller-wiring-green.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-controller-wiring-green.log",
+      "sha256": "d1fe2bb3d8bb80579082b8b0c94ad8eae8629c11dd82d7430fe50ae5c42fa6a0",
+      "summary": "12 passed, 1 warning in 1.46s",
+      "startup_admission": true
+    },
+    "pr-css-build.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-css-build.log",
+      "sha256": "4364b4d02f136580a3e61bd59c57e77de2348cd566861e1b0f2c23393a99cc6f",
+      "summary": "2. Run this script whenever you modify any module files",
+      "startup_admission": false
+    },
+    "pr-css-sync.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-css-sync.log",
+      "sha256": "681757503a81305fa84d02228102c2d188f6776666c391e1ea4ecffbdcb6c7cd",
+      "summary": "screen_feature_watchlists.tcss reproduces from its Python sources.",
+      "startup_admission": false
+    },
+    "pr-details-final.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-details-final.log",
+      "sha256": "3402aaf125b2469938fdea20b7931667ffdf987875055e5ba97b1aaf32b44344",
+      "summary": "1 failed, 18 passed, 1 warning in 13.02s",
+      "startup_admission": true
+    },
+    "pr-details-focused-red.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-details-focused-red.log",
+      "sha256": "03a185fb4637065566fafdc0dac18e514a84dd3fd713a08c0f01dd207596d2a5",
+      "summary": "1 passed, 18 deselected, 1 warning in 5.09s",
+      "startup_admission": true
+    },
+    "pr-details-traced-suite.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-details-traced-suite.log",
+      "sha256": "5556bc966ae73259a9362a65d59ee1d2b25bee59f2e13e3b569af26764cdfee9",
+      "summary": "  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))",
+      "startup_admission": true
+    },
+    "pr-details.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-details.log",
+      "sha256": "69906855f8f2cd4a381a6e25ee560aca6a7487c7623e58e34debf89b4ba6f4ba",
+      "summary": "2 failed, 17 passed, 1 warning in 15.71s",
+      "startup_admission": true
+    },
+    "pr-diagnostics-final.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-diagnostics-final.log",
+      "sha256": "aab5b3626a9706f3c967177983dff10891aef545b38411a9ce2366407d331171",
+      "summary": "diagnostic inventory verified: 655 owners, 1445 TASK-492 calls, 56 TASK-31551 calls, 7626 TASK-494 calls, 16 sink files",
+      "startup_admission": false
+    },
+    "pr-diagnostics-refresh.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-diagnostics-refresh.log",
+      "sha256": "80c6216fa384ba3a51f97a8f5ccc8911059ca9684576df30f42d9957b1078ba3",
+      "summary": "wrote Docs\\security\\production-diagnostic-inventory.json",
+      "startup_admission": false
+    },
+    "pr-diagnostics.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-diagnostics.log",
+      "sha256": "6cecf46d08affc8099e987076182ef0641e288e40d8f3a9ef7edf0c089de9214",
+      "summary": "and commit Docs/security/production-diagnostic-inventory.json with the review recorded in the task/PR notes.",
+      "startup_admission": false
+    },
+    "pr-interaction-final.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-interaction-final.log",
+      "sha256": "4c35432b0d1222fc8b83ce1d20f8c291cc70959b0fdd3376b980ef96cd127f18",
+      "summary": "25 passed, 1 warning in 22.33s",
+      "startup_admission": true
+    },
+    "pr-interaction.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-interaction.log",
+      "sha256": "7906ab0f448da41284a52a7f0c3a683438eee6ac1107103d1cacd511cbb66859",
+      "summary": "10 failed, 15 passed, 1 warning in 17.66s",
+      "startup_admission": true
+    },
+    "pr-mcp.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-mcp.log",
+      "sha256": "6549cf67bd8341342efb0190c11f99e0063fd3e24e5a6121736c2bfafffee1b9",
+      "summary": "90 passed, 1 warning in 4.31s",
+      "startup_admission": true
+    },
+    "pr-recorder.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-recorder.log",
+      "sha256": "26e1711f833e3c68ce8f542a5594eac9e79e70735f875dd86fd5a0549373cb37",
+      "summary": "16 passed, 1 warning in 3.20s",
+      "startup_admission": true
+    },
+    "pr-ui-census.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-ui-census.log",
+      "sha256": "7bc9e49f5f74f4536a73837de64618b579ade4fffdba965bc437a2ae80b0a431",
+      "summary": "OK: 152 Tests/UI files in the PR gate (floor 151); every listed path exists.",
+      "startup_admission": false
+    },
+    "pr-ui-journeys.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-ui-journeys.log",
+      "sha256": "a1e443b88189355bbe4821c672ebd77773c042b34f5bcbbdcbcc20ed6fa2bf9c",
+      "summary": "4 passed, 1 warning in 24.56s",
+      "startup_admission": true
+    },
+    "pr-details-focused-green.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-details-focused-green.log",
+      "preserved_artifact": "Docs/superpowers/qa/2026-10-05-console-approval-ux/pr-integration/details-focused-green.log",
+      "sha256": "f139ef6a85fc479bfa8fcede18fcbf6b5f6003450b0eb6401aaca5702acf0c18",
+      "summary": "1 passed, 18 deselected, 1 warning in 4.93s",
+      "startup_admission": true,
+      "git_blob_sha256": "23961f08ed4420d7ed976cc24df6b7aef6856b4fb77d8d474c891ef1fcc381dd"
+    },
+    "pr-details-suite-green.log": {
+      "private_log": ".superpowers/sdd/2026-10-05-console-approval-ux-and-responsiveness/pr-details-suite-green.log",
+      "preserved_artifact": "Docs/superpowers/qa/2026-10-05-console-approval-ux/pr-integration/details-suite-green.log",
+      "sha256": "dcf05022ff5d2475778d8edebb17627b84c6e5f68d88607166f85da705d309f1",
+      "summary": "19 passed, 1 warning in 13.53s",
+      "startup_admission": true,
+      "git_blob_sha256": "95500180c7f05c473b211e22017698427fe9ba27fc27b4bd325823919e0d5403"
+    }
+  },
+  "final_source_reviews": {
+    "automatic_integration": "No material findings",
+    "controller_host": "No material findings",
+    "details_harness": "Independent review clean at exact repaired test hash",
+    "details_test_sha256": "a40a19fdfbc8f46a5571defe95e562e252530a502116dd51b86119185bf4cbb5"
+  },
+  "post_rebase_base": "cddc89d3e780b27392549b58ff9134b64e7d5907",
+  "post_rebase_source_commit_before_metadata_amend": "52eade1238f74b22b06683720ca90baf7ea7c91a",
+  "post_rebase_receipts": {
+    "journeys": {
+      "preserved_artifact": "Docs/superpowers/qa/2026-10-05-console-approval-ux/pr-integration/post-rebase-journeys.log",
+      "worktree_sha256": "1288c4058b682df15ac41e1f4eefa3456f58607d959e06c1f208bc3767d712d1",
+      "git_blob_sha256": "6b90b6c251457a4c71354f5b1608104b7614b82b3722e4e330c8966e1588586f",
+      "summary": "4 passed, 1 warning in 24.52s",
+      "exit_code": 0,
+      "startup_admission": true
+    },
+    "ownership": {
+      "preserved_artifact": "Docs/superpowers/qa/2026-10-05-console-approval-ux/pr-integration/post-rebase-ownership.log",
+      "worktree_sha256": "1f2c616e6168d7adc0ef49dab131c8f345e13264584e5cfc03d17c9a14b4ef17",
+      "git_blob_sha256": "a0d164b85fc506ad6148cfbaeb20fda0602ff0c700b5ed12c8c0262c763138dd",
+      "summary": "25 passed, 1 warning in 12.69s",
+      "exit_code": 0,
+      "startup_admission": true
+    },
+    "css": {
+      "preserved_artifact": "Docs/superpowers/qa/2026-10-05-console-approval-ux/pr-integration/post-rebase-css.log",
+      "worktree_sha256": "681757503a81305fa84d02228102c2d188f6776666c391e1ea4ecffbdcb6c7cd",
+      "git_blob_sha256": "bb0747d4d6dfc6a2c21fc0c8608255ab45f6e6ad0391f007c1bf3a193de1b01d",
+      "summary": "All CSS bundles reproduce from source modules/Python sources",
+      "exit_code": 0,
+      "startup_admission": false
+    },
+    "ids": {
+      "preserved_artifact": "Docs/superpowers/qa/2026-10-05-console-approval-ux/pr-integration/post-rebase-ids.log",
+      "worktree_sha256": "6adc35fe3f798a866c033eb280c3d983be6fb9dac872ca5b772b5feca399b0ce",
+      "git_blob_sha256": "ae5c914c59149c3c14f141cfb1c0316b57b23e061136bc14270171617b288c62",
+      "summary": "No duplicate task IDs across 5049 task files; all paths Windows-compatible",
+      "exit_code": 0,
+      "startup_admission": false
+    },
+    "files": {
+      "preserved_artifact": "Docs/superpowers/qa/2026-10-05-console-approval-ux/pr-integration/post-rebase-files.log",
+      "worktree_sha256": "4f457d6a1c1382ce20b64491abb2872610c593a6630beeb080a7f3a30b0a5358",
+      "git_blob_sha256": "a9802671a89f7b5acd5320dace61e677ec9779e4b19c12f4cf43339728a93830",
+      "summary": "All 5049 task files readable, including frontmatter and owned-section markers",
+      "exit_code": 0,
+      "startup_admission": false
+    },
+    "census": {
+      "preserved_artifact": "Docs/superpowers/qa/2026-10-05-console-approval-ux/pr-integration/post-rebase-census.log",
+      "worktree_sha256": "7bc9e49f5f74f4536a73837de64618b579ade4fffdba965bc437a2ae80b0a431",
+      "git_blob_sha256": "4cdbe59941c45c54bbbb5441a4e03d1491f81b3b93d28d8f78c4868e6d7ed8bb",
+      "summary": "152 Tests/UI files in PR gate, floor 151; every listed path exists",
+      "exit_code": 0,
+      "startup_admission": false
+    },
+    "diagnostics": {
+      "preserved_artifact": "Docs/superpowers/qa/2026-10-05-console-approval-ux/pr-integration/post-rebase-diagnostics.log",
+      "worktree_sha256": "aab5b3626a9706f3c967177983dff10891aef545b38411a9ce2366407d331171",
+      "git_blob_sha256": "a0b405024ad7e50263adb41b8734bf061a8e582d3018e790d322a03185ed40b8",
+      "summary": "655 owners, 1445 TASK-492 calls, 56 TASK-31551 calls, 7626 TASK-494 calls, 16 sink files verified",
+      "exit_code": 0,
+      "startup_admission": false
+    }
+  },
+  "source_hash_provenance": "post-rebase-source-hashes.json distinguishes current checkout bytes from canonical Git source content and historical raw receipts"
+}

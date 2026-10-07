@@ -10,6 +10,7 @@ from collections import UserDict
 from pathlib import Path
 
 import pytest
+
 from jsonschema import Draft202012Validator
 
 import tldw_chatbook.Agents.local_tool_provider as local_tool_provider
@@ -51,6 +52,8 @@ from tldw_chatbook.Tools.workspace_tool_executor import (
 )
 from tldw_chatbook.Tools.workspace_tool_protocol import WorkspaceToolResponse
 from tldw_chatbook.Tools.workspace_tool_worker import run_workspace_worker
+
+pytestmark = pytest.mark.bootstrap_profile
 
 ALLOW = EffectiveToolState(state="allow", origin="tool_override")
 ASK = EffectiveToolState(state="ask", origin="global_default")
@@ -4912,4 +4915,95 @@ def test_localroot_wrapped_authority_behaves_exactly_like_plain_path(
     assert plain_result.content == wrapped_result.content
     assert plain_provider.path_targets("local:fs_read", {"path": "a.txt"}) == (
         wrapped_provider.path_targets("local:fs_read", {"path": "a.txt"})
+    )
+
+
+def test_display_authority_cannot_change_local_gate_or_schema(tmp_path):
+    from tldw_chatbook.Chat.approval_presentation import profile_authority
+
+    owner = profile_authority("local", "captured-profile", str(tmp_path), "call")
+    specs = [
+        LocalToolSpec(
+            "fs_read",
+            "Read",
+            {"type": "object"},
+            lambda args: "read",
+            LocalToolExposure.CONSOLE_ONLY,
+            (LocalApprovalEffect.PRIVATE_READ,),
+        )
+    ]
+    legacy = LocalToolProvider(
+        workspace_root=tmp_path, specs=specs, resolve_state=lambda _hub: ASK
+    )
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        specs=specs,
+        resolve_state=lambda _hub: ASK,
+        presentation_authority=owner,
+    )
+    args = {"path": "a.txt"}
+    before = legacy.pending_gate_for("fs_read", args, "call-a")
+    row = provider.pending_gate_for("fs_read", args, "call-a")
+    assert row.presentation_authority == owner
+    assert (row.options, row.reason, row.arguments, row.call_id) == (
+        before.options,
+        before.reason,
+        before.arguments,
+        before.call_id,
+    )
+    assert provider.load_schema("local:fs_read") == legacy.load_schema("local:fs_read")
+    assert not provider.invoke("local:fs_read", args).ok
+
+
+def test_pending_summary_preserves_original_nested_inputs_outside_legacy_serialization(
+    tmp_path,
+):
+    from tldw_chatbook.Chat.approval_presentation import (
+        capture_approval_view,
+        profile_authority,
+    )
+    from tldw_chatbook.Chat.console_chat_controller import _build_approval_payload
+    from tldw_chatbook.Chat.permission_summary_service import (
+        pending_calls_info_from_payload,
+    )
+
+    owner = profile_authority("local", "captured-profile", str(tmp_path), "call")
+    spec = LocalToolSpec(
+        "save_character",
+        "Save",
+        {"type": "object"},
+        lambda args: "saved",
+        LocalToolExposure.CONSOLE_ONLY,
+        (LocalApprovalEffect.MUTATES_LOCAL,),
+        approval_arguments=lambda args: {"summary": args["character"]["name"].upper()},
+    )
+    provider = LocalToolProvider(
+        workspace_root=tmp_path,
+        specs=[spec],
+        resolve_state=lambda hub: ASK,
+        presentation_authority=owner,
+    )
+    original = {
+        "character": {"name": "Ada", "private_note": "private-original-body"},
+        "tags": ["one", "two"],
+    }
+    row = provider.pending_gate_for("save_character", original, "call-a")
+    assert row.arguments == {"summary": "ADA"}
+    assert row.captured_arguments == original
+    assert row.captured_arguments is not original
+    view = capture_approval_view(
+        [row], round_id="r", session_id="s", run_id="run", revision=1
+    )
+    assert view.rows[0].argument_sets == (original,)
+    assert "private-original-body" not in " ".join(view.rows[0].targets)
+    payload = _build_approval_payload("r", "s", "run", [row], 0, None)
+    assert payload["calls"][0]["arguments"] == {"summary": "ADA"}
+    assert "captured_arguments" not in payload["calls"][0]
+    assert "private-original-body" not in json.dumps(
+        pending_calls_info_from_payload(payload["calls"])
+    )
+    assert "allow_matching" not in row.options
+    original["character"]["private_note"] = "modified"
+    assert (
+        row.captured_arguments["character"]["private_note"] == "private-original-body"
     )

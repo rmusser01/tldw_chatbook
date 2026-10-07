@@ -805,6 +805,16 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+    from .approval_feedback import ApprovalFeedbackController
+    from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+    screen._approval_feedback = ApprovalFeedbackController(
+        read_snapshot=lambda session_id, run_id: screen._ensure_console_chat_controller().approval_feedback.snapshot(session_id, run_id),
+        active_session=lambda: screen._ensure_console_chat_controller().store.active_session_id or "",
+        card_identity=lambda: screen.query_one(ChatApprovalCard).feedback_identity() if screen.query(ChatApprovalCard) else None,
+        paint_card=lambda text: screen.query_one(ChatApprovalCard).paint_feedback(text),
+        refresh_status=lambda: screen._sync_console_mode_bar(),
+    )
     screen._change_review_projection = ConsoleChangeReviewProjection(
         runtime_accessor=lambda: screen._console_runtime(),
         conversation_id_accessor=lambda: screen._current_console_conversation_id(),

@@ -491,3 +491,8 @@ $ds-conversation-action-width: 4;
 $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
+
+/* Console approval scope labels include the complete temporary-grant name. */
+$ds-approval-decision-width: 28;
+
+$ds-approval-compact-body-height: 6;

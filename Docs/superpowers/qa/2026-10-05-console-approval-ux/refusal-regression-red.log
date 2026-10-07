@@ -1,0 +1,69 @@
+{"interpreter": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe", "python": "3.12.10", "private_root": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-approval-ux\\tldw_tui\\.superpowers\\approval-control-private-oacyxn1s", "module_origins_verified": true, "original_home_protected_before_redirection": true}
+{"startup_permission": [true, "startup_allowed"]}
+C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pytest_asyncio\plugin.py:208: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
+The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
+
+  warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
+F                                                                        [100%]
+================================== FAILURES ===================================
+______________ test_denied_startup_stops_before_importing_pytest ______________
+
+tmp_path = WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/console-approval-ux/tldw_tui/.superpowers/approval-control-private-oacyxn1s/pytest/test_denied_startup_stops_befo0')
+
+    def test_denied_startup_stops_before_importing_pytest(tmp_path):
+        private = tmp_path / 'refused-profile'
+        bootstrap = private / 'home/.config/tldw_cli/recovery-bootstrap'
+        bootstrap.mkdir(mode=0o700, parents=True)
+        # Actual invalid recovery evidence exercises the unchanged admission check.
+        (bootstrap / 'pending-invalid.json').write_text('{}', encoding='utf-8')
+        environment = dict(os.environ)
+        environment['APPROVAL_REFUSAL_TEST_ROOT'] = str(private)
+        environment['APPROVAL_REFUSAL_LAUNCHER'] = str(LAUNCHER)
+        child = subprocess.run(
+            [sys.executable, '-c', '''
+    import builtins, os, runpy, sys, tempfile
+    from pathlib import Path
+    root = Path(os.environ['APPROVAL_REFUSAL_TEST_ROOT'])
+    original_import = builtins.__import__
+    def observe_import(name, *args, **kwargs):
+        if name == 'pytest':
+            (root / 'pytest-imported').write_text('unexpected collection import')
+            raise SystemExit(77)
+        return original_import(name, *args, **kwargs)
+    builtins.__import__ = observe_import
+    # Keep the real launcher and admission implementation; supply an owned fixture
+    # root so its existing startup check sees the actual invalid recovery evidence.
+    tempfile.mkdtemp = lambda *args, **kwargs: str(root)
+    sys.argv = [os.environ['APPROVAL_REFUSAL_LAUNCHER']]
+    runpy.run_path(sys.argv[0], run_name='__main__')
+    '''],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert '"startup_permission": [false, "recovery_scope_uncertain"]' in child.stdout
+>       assert not (private / 'pytest-imported').exists(), child.stdout + child.stderr
+E       AssertionError: {"interpreter": "C:\\Users\\GDesktop-1\\Working\\Github\\tldw_tui\\.venv\\Scripts\\python.exe", "python": "3.12.10", "private_root": "C:\\Users\\GDesktop-1\\.codex\\worktrees\\console-approval-ux\\tldw_tui\\.superpowers\\approval-control-private-oacyxn1s\\pytest\\test_denied_startup_stops_befo0\\refused-profile", "module_origins_verified": true, "original_home_protected_before_redirection": true}
+E         {"startup_permission": [false, "recovery_scope_uncertain"]}
+E
+E       assert not True
+E        +  where True = exists()
+E        +    where exists = (WindowsPath('C:/Users/GDesktop-1/.codex/worktrees/console-approval-ux/tldw_tui/.superpowers/approval-control-private-oacyxn1s/pytest/test_denied_startup_stops_befo0/refused-profile') / 'pytest-imported').exists
+
+Tests\Benchmarks\test_console_approval_private_control.py:47: AssertionError
+---------------------------- Captured stderr setup ----------------------------
+2026-10-06 08:04:30.598 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - \u2705 huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-06 08:04:30.723 | INFO     | tldw_chatbook.Audio.recording_service:<module>:49 - PyAudio backend available\n2026-10-06 08:04:30.723 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:65 - Sounddevice not available. Install with: pip install sounddevice\n2026-10-06 08:04:30.724 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:76 - WebRTC VAD not available. Install with: pip install webrtcvad
+============================== warnings summary ===============================
+Tests/Benchmarks/test_console_approval_private_control.py::test_denied_startup_stops_before_importing_pytest
+  C:\Users\GDesktop-1\Working\Github\tldw_tui\.venv\Lib\site-packages\pydantic\fields.py:1076: PydanticDeprecatedSince20: Using extra keyword arguments on `Field` is deprecated and will be removed. Use `json_schema_extra` instead. (Extra keys: 'exclude_if'). Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.11/migration/
+    warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================ slowest 25 durations =============================
+
+(3 durations < 1s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ===========================
+FAILED Tests/Benchmarks/test_console_approval_private_control.py::test_denied_startup_stops_before_importing_pytest
+1 failed, 1 warning in 1.22s

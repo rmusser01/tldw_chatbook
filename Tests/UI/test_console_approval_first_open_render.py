@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import functools
 import re
-import time
 from html import unescape
 
 import pytest
@@ -106,7 +105,7 @@ def _card_paint_state(app) -> str:
     return (
         f"title_painted={'Approval required' in painted} "
         f"tool_painted={'write_file (high risk)' in painted} "
-        f"controls_painted={'Approve all' in painted}"
+        f"controls_painted={'Allow once' in painted}"
     )
 
 
@@ -161,7 +160,7 @@ async def _assert_card_paints_answerable(app, pilot, chat_screen, box) -> None:
         "task-17500's live pane: the card painted TITLE-ONLY -- no tool row, "
         f"no arguments, no controls ({deadline_msg})"
     )
-    assert "Approve all" in painted, (
+    assert "Allow once" in painted, (
         f"the decision controls are not painted ({deadline_msg}); the user "
         "was told to come and answer and cannot"
     )
@@ -173,9 +172,9 @@ async def _assert_card_paints_answerable(app, pilot, chat_screen, box) -> None:
     # Answerable, through the rendered control.
     chat_screen.query_one(".approval-row-fast-approve", Button).press()
     await pilot.pause()
-    assert await _settle(lambda: "decisions" in box, seconds=10.0), (
-        "pressing the painted card's Approve never resolved the round"
-    )
+    assert await _settle(
+        lambda: "decisions" in box, seconds=10.0
+    ), "pressing the painted card's Approve never resolved the round"
     assert box["decisions"] == {"builtin__write_file": "approve_once"}, box["decisions"]
 
 
@@ -185,6 +184,7 @@ async def _assert_card_paints_answerable(app, pilot, chat_screen, box) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_first_open_paints_an_answerable_card_nav_away_path(tmp_path):
     """AC#1: wake armed with Console unmounted (left via real navigation);
     the FIRST open must paint the full card -- no session switch.
@@ -208,9 +208,9 @@ async def test_first_open_paints_an_answerable_card_nav_away_path(tmp_path):
         _drain_from_child_thread(
             wake, _drain(conversation_id, _survivor(run_id, session_id=session_id))
         )
-        assert await _settle(lambda: gateway.entered_stall.is_set(), seconds=10.0), (
-            "harness precondition: the wake turn must be in flight"
-        )
+        assert await _settle(
+            lambda: gateway.entered_stall.is_set(), seconds=10.0
+        ), "harness precondition: the wake turn must be in flight"
 
         await _navigate(app, pilot, "library", expect="LibraryScreen")
         assert chat not in app.screen_stack, "Console must actually unmount"
@@ -249,6 +249,7 @@ async def test_first_open_paints_an_answerable_card_nav_away_path(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_first_ever_open_paints_an_answerable_card_launch_path(tmp_path):
     """AC#2: the round armed before ANY ChatScreen ever existed in the
     process (launch wake, Console never opened); the first-ever open must
@@ -281,9 +282,9 @@ async def test_first_ever_open_paints_an_answerable_card_launch_path(tmp_path):
             lambda: _hydrated_session_id() is not None, seconds=10.0
         ), "harness precondition: the launch never hydrated the owed session"
         session_id = _hydrated_session_id()
-        assert await _settle(lambda: gateway.entered_stall.is_set(), seconds=10.0), (
-            "harness precondition: the launch wake turn must be in flight"
-        )
+        assert await _settle(
+            lambda: gateway.entered_stall.is_set(), seconds=10.0
+        ), "harness precondition: the launch wake turn must be in flight"
         _assert_console_never_mounted(app)
 
         thread, box = _arm(controller, session_id, call=_risk_row())
@@ -369,13 +370,13 @@ async def test_deferred_mount_work_cannot_unrender_a_live_batch():
             state = TaskResumeState(pending_approval=_approval_payload())
             surface.sync_state(state)
             await pilot.pause()
-            assert "write_file (high risk)" in _painted(app), (
-                f"harness precondition: sync must paint first: {_painted(app)!r}"
-            )
+            assert "write_file (high risk)" in _painted(
+                app
+            ), f"harness precondition: sync must paint first: {_painted(app)!r}"
             deferred.deliver()
             await pilot.pause()
             painted = _painted(app)
-            assert "write_file (high risk)" in painted and "Approve all" in painted, (
+            assert "write_file (high risk)" in painted and "Allow once" in painted, (
                 "the card's mount-deferred work unrendered a live batch: "
                 f"painted={painted!r}"
             )
@@ -397,9 +398,9 @@ def test_a_constructed_card_shows_nothing_until_a_batch_is_set():
         "handler runs -- the initial hide is deferred, so it can land after "
         "a sync and unrender it"
     )
-    assert ChatTaskCards().display is False, (
-        "a freshly constructed task surface is visible before its mount handler runs"
-    )
+    assert (
+        ChatTaskCards().display is False
+    ), "a freshly constructed task surface is visible before its mount handler runs"
 
 
 @pytest.mark.asyncio
@@ -415,9 +416,9 @@ async def test_a_mounted_but_never_synced_surface_paints_nothing():
         ), "harness precondition: the card's children must be attached"
         await pilot.pause()
         painted = _painted(app)
-        assert "Approval required" not in painted and "Approve all" not in painted, (
-            f"an empty task surface painted card chrome: {painted!r}"
-        )
+        assert (
+            "Approval required" not in painted and "Allow once" not in painted
+        ), f"an empty task surface painted card chrome: {painted!r}"
         assert app.query_one("#approval-batch-body").display is False
 
 
@@ -438,6 +439,6 @@ def test_set_batch_does_not_half_apply_when_the_body_is_missing():
         "a set_batch that could not reach its containers left the card "
         "visible and empty -- title-only, unanswerable"
     )
-    assert card._batch_round_id is None, (
-        "a failed set_batch stashed the new round id without rendering it"
-    )
+    assert (
+        card._batch_round_id is None
+    ), "a failed set_batch stashed the new round id without rendering it"

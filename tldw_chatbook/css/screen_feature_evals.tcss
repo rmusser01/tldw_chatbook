@@ -280,6 +280,10 @@ $ds-conversation-action-ascii-width: 9;
 $ds-inspector-usage-list-width: 60;
 $ds-conversation-menu-width: 30;
 
+$ds-approval-decision-width: 28;
+
+$ds-approval-compact-body-height: 6;
+
 
 .tldw-agentic-split-preamble-end { }
 

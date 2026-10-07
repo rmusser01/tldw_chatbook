@@ -17,10 +17,14 @@ import time
 from pathlib import Path
 
 import pytest
+
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+# Keep the collection-admitted private profile for these app/config consumers.
+pytestmark = pytest.mark.bootstrap_profile
 
 BUNDLE = (
     Path(__file__).resolve().parents[2]
@@ -247,9 +251,9 @@ async def test_the_scope_line_states_the_selected_decision_and_follows_it():
         app.query_one(".approval-row-decision", Select).value = "always_allow"
         await pilot.pause()
         assert _text(scope) == DECISION_SCOPE_COPY["always_allow"]
-        assert DECISION_SCOPE_COPY["always_allow"] in _painted(app), (
-            "the scope line is not painted at 80 columns"
-        )
+        assert DECISION_SCOPE_COPY["always_allow"] in _painted(
+            app
+        ), "the scope line is not painted at 80 columns"
 
 
 @pytest.mark.asyncio
@@ -259,7 +263,7 @@ async def test_a_high_risk_row_explains_itself_without_hover():
     The literal sentence, not `format_approval_reason(entry)` -- comparing
     the widget to the function that filled it asserts nothing.
     """
-    expected = "High risk: this tool changes local data and always asks first."
+    expected = "High risk: current policy requires approval for this call."
 
     app = _StyledCardHarness()
     async with app.run_test(size=(80, 40)) as pilot:
@@ -286,12 +290,14 @@ async def test_the_longest_decision_label_paints_on_one_line():
     app = _StyledCardHarness()
     async with app.run_test(size=(80, 40)) as pilot:
         await _show_batch(app, pilot, [dict(MCP_ROW)])
+        app.query_one(".approval-more-options").press()
+        await pilot.pause()
         select = app.query_one(".approval-row-decision", Select)
         select.value = value
         await pilot.pause()
-        assert select.region.height <= 3, (
-            f"{longest!r} wraps the closed Select to {select.region.height} lines"
-        )
+        assert (
+            select.region.height <= 3
+        ), f"{longest!r} wraps the closed Select to {select.region.height} lines"
         assert longest in _painted(app), f"{longest!r} is clipped by the closed Select"
 
 

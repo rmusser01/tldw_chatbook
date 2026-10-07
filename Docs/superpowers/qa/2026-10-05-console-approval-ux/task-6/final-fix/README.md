@@ -1,0 +1,27 @@
+# Bundled final-review fix evidence
+
+BASE `4542052fb52c3e6c696bb71a39baab8b13625606`. Scoped verdict: all three final-review findings addressed; targeted checks pass. No permission, stamp, provider, timeout or authority changes.
+
+Batch broader decisions now use one card-owned More options disclosure and the existing legal Select per row. Closing preserves staged choices and the complete scope/count summary; reopening exposes Apply. Ineligible bulk approval says Review individually and opens/focuses an enabled current choice without deciding or reviewing raw default Deny. Deny all remains immediate. The existing generation fence protects More/Review against queued gestures after same-round revision replacement; Escape restores the current opener. Apply is staged, and all submissions still resolve the complete map.
+
+Initial target presentation examines at most three captured identifiers with a 512-character identifier budget. It shows each included identifier completely, then an explicit remaining-target count and Details route. If no identifier fits, omission is explicit rather than showing an ambiguous prefix. No full-list deduplication/join occurs while painting the header. All complete redacted targets remain in the captured view. Details lazily prepends an optional captured_targets record to its bounded 4096-character JSON pages, then preserves complete redacted argument sets. Its default iterator call retains the original argument-array shape; existing reconstruction tests pass. Targets are already display-redacted at capture, and matching continues to use untouched original arguments.
+
+The first actual 80x24 Console check with Inspect open caught the extra batch action clipping behind the composer. The repair uses existing size tokens for a four-row closed/two-row open batch viewport; single-request dimensions are unchanged. The toolbar keeps three active actions: More/Allow-or-Review/Deny while closed, More/Apply/Deny while open. The staged-choice hint appears when the choices are exposed. Complete consent copy remains outside the scrolling request body. Shipping source CSS and generated bundle contain the same scoped changes.
+
+## RED and GREEN
+
+Before product changes, controls: 2 RED: full legal batch Selects already visible and ineligible action still disabled Allow all. Mounted target: 1 RED; 300 distinguishing long paths produced a 38,731-character header. Both control cases and the target case then passed. Additional actual Console layout RED exposed clipping after the disclosure addition; it now passes both dark eligible-bulk and light individual-review states at 80x24 with Inspect open.
+
+Final affected evidence: interaction 25, Details 19, gesture ownership 25, actual compact Console 1, controller-to-provider painted journeys 4, argument budget 28, CSS bundle 5 and token reference 1. A final individual-review check 1 also passes after eligible-focus/tooltip copy refinement. Older staged-choice tests now explicitly open More options; the old disabled-Allow assertion now expects the neutral route. No assertions were lowered to accept a policy change.
+
+Run with the available Python 3.12 interpreter from this isolated checkout:
+`python Docs/superpowers/qa/2026-10-05-console-approval-ux/private_control.py <target> [-k <selection>]`
+Targets are Tests/UI/test_approval_interaction.py, test_approval_details.py, test_approval_action_ownership.py, test_console_approval_compact_layout.py (-k batch_disclosure_actions_fit_real_compact_console), test_console_approval_ux_journeys.py, test_approval_argument_budget.py, test_css_bundle_sync_guard.py, and test_design_token_governance.py (-k all_referenced_ds_tokens_are_defined). Initial RED selections were interaction '-k batch_broader or ineligible_bulk' and Details '-k mounted_grouped_targets'. Every test invocation used the unchanged canonical guard with verified checkout origins and startup_allowed. Private profile processes are headless behavioral evidence, not native frames or timing.
+
+All six owned Python files pass Ruff check and parse. Five helper/test files pass complete Ruff formatter check; changed/new card helpers were formatted individually to avoid unrelated reformatting of the legacy module. Scoped diff whitespace check passes. The CSS rebuild and bundle checks pass; all new references use existing tokens. No shared token value changed. The known broader Windows diagnostic-path governance failures remain attributed to BASE; those unchanged full checks were not rerun or weakened.
+
+## Limits and retained evidence
+
+No native/browser presentation, calibrated paint latency, p95, native Windows virtual dispatch or full size/Inspect matrix qualification is claimed. Previous 40-sample Task4 preparation figures are historical component characterization and do not qualify this target-metadata addition. No speed optimization was selected. Existing controller/provider/host approval, scope, wait, profile and authority receipts are credited unchanged; only affected UI/Details/CSS sets ran.
+
+The mounted target regression reconstructs every target across the actual Details controller pages, asserts per-page bounds and redaction, and verifies no decision. The interaction checks use real gestures and same-value raw Deny review. The actual Console check uses shipping stylesheet/application geometry; its compositor hit checks cannot replace native/browser review. Source/log hashes are in receipts.json; logs stay private and are not committed.

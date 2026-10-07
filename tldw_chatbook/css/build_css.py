@@ -240,6 +240,7 @@ CSS_MODULES = [
     "components/_dialogs.tcss",
     "components/_status.tcss",
     "components/_agentic_terminal.tcss",
+    "features/_console_approvals.tcss",
     "components/_workbench.tcss",
     "components/_widgets.tcss",
     "components/stats_screen.css",
@@ -553,9 +554,7 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # composed only in Widgets/Console/console_message_delete_receipt.py.
     ScreenOwnedSplit(
         modules=("features/_console.tcss",),
-        sheets={
-            "console_delete_receipt": "screen_modal_console_delete_receipt.tcss"
-        },
+        sheets={"console_delete_receipt": "screen_modal_console_delete_receipt.tcss"},
         prefixes={"console_delete_receipt": ("console-delete-receipt",)},
         pinned=frozenset(),
     ),
@@ -654,8 +653,7 @@ def _unit_owner(unit: str, split: ScreenOwnedSplit) -> str | None:
             return None
         for owner, prefixes in split.prefixes.items():
             if any(
-                token == prefix or token.startswith(prefix + "-")
-                for prefix in prefixes
+                token == prefix or token.startswith(prefix + "-") for prefix in prefixes
             ):
                 owners.add(owner)
                 break
@@ -682,16 +680,10 @@ def _unit_selector_set(unit: str) -> set[str]:
     if brace == -1:
         return set()
     selector = stripped[:brace]
-    return {
-        " ".join(part.split())
-        for part in selector.split(",")
-        if part.strip()
-    }
+    return {" ".join(part.split()) for part in selector.split(",") if part.strip()}
 
 
-def _later_module_selectors(
-    css_dir: Path | None, after_module: str
-) -> set[str]:
+def _later_module_selectors(css_dir: Path | None, after_module: str) -> set[str]:
     """Selectors of every ``CSS_MODULES`` entry AFTER ``after_module``.
 
     A moved block parses after the whole bundle, so an equal-specificity
@@ -998,7 +990,17 @@ def build_css(css_dir: Path, output_file: Path) -> None:
 
     for index, module in enumerate(CSS_MODULES, start=1):
         print(f"Processing CSS module {index} of {len(CSS_MODULES)}")
+        if module == "features/_console_approvals.tcss":
+            # Extracted rules retain their original intra-component cascade slot.
+            continue
         content = (css_dir / module).read_text(encoding="utf-8")
+        if module == "components/_agentic_terminal.tcss":
+            content = content.replace(
+                "/* @console-approvals */",
+                (css_dir / "features/_console_approvals.tcss").read_text(
+                    encoding="utf-8"
+                ),
+            )
         if module in split_remainders:
             # TASK-25812/TASK-24459: only the multi-screen remainder rides
             # the boot bundle; the single-owner rules ship as the per-screen

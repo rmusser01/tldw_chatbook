@@ -340,6 +340,7 @@ class ConsoleActivityDisclosure(Vertical):
             raw_cli_presentation=raw_cli_presentation,
             tool_presentation=tool_presentation,
         )
+        self.feedback_notice = Static("", classes="console-approval-feedback", markup=False)
         self.preview = ConsoleToolPreview(activity_message_id)
         self.approval_button = Button(
             "Review approval",
@@ -358,7 +359,7 @@ class ConsoleActivityDisclosure(Vertical):
         )
         super().__init__(
             self.header,
-            *((self.preview, self.approval_button) if tool_presentation else ()),
+            *((self.feedback_notice, self.preview, self.approval_button) if tool_presentation else ()),
             self.action_stack,
             self.detail_stack,
             id=f"console-activity-disclosure-{activity_message_id}",
@@ -370,6 +371,15 @@ class ConsoleActivityDisclosure(Vertical):
         self.set_class(self.selected, "console-activity-disclosure-selected")
         self.set_class(self.expanded, "console-activity-disclosure-expanded")
         tool = self.tool_presentation
+        from tldw_chatbook.Chat.console_approval_feedback import format_approval_feedback
+
+        feedback = (
+            format_approval_feedback(tool.approval_feedback)
+            if tool is not None and tool.approval_feedback is not None
+            else ""
+        )
+        self.feedback_notice.update(feedback)
+        self.feedback_notice.display = bool(feedback)
         self.preview.display = bool(
             tool is not None and tool.result_preview is not None and not self.expanded
         )

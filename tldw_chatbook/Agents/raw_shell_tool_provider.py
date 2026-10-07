@@ -51,8 +51,8 @@ RAW_SHELL_APPROVAL_WARNING = (
 #: the closed Select -- keep the two in step (`_RAW_SHELL_DECISION_OPTIONS`
 #: in `Widgets/Chat_Widgets/chat_approval_card.py`).
 RAW_SHELL_SESSION_SCOPE_NOTICE = (
-    '"All shell · session" covers future raw '
-    "shell commands, not only this displayed command. It clears on Disarm or "
+    '"Until Chatbook exits" covers future raw '
+    "shell commands in this Console chat, not only this displayed command. It clears on Disarm or "
     "when Chatbook exits."
 )
 RAW_SHELL_APPROVAL_OPTIONS = ("approve_once", "approve_session", "deny")
@@ -321,7 +321,12 @@ class RawShellToolProvider:
             return None
         if state != "ask" or session_granted:
             return None
+        from tldw_chatbook.Chat.approval_presentation import ApprovalAuthority
+
         return MCPPendingCall(
+            presentation_authority=ApprovalAuthority("raw_shell", self.console_session_id,
+                "Console chat", str(request.initial_directory), "console_chat", "call", "Disarm or exit"),
+            requires_individual_review=True,
             llm_name=RAW_SHELL_TOOL_NAME,
             server_key=RAW_SHELL_SERVER_KEY,
             tool_name=RAW_SHELL_TOOL_NAME,
@@ -356,41 +361,81 @@ class RawShellToolProvider:
             pending: Approval rows shown to the user.
             authority_generation: Optional generation captured before review.
         """
-        with self._stamps_lock:
-            if (
-                authority_generation is not None
-                and authority_generation != self._authority_generation
-            ):
-                return
-            self._stamps = {
-                key: value for key, value in self._stamps.items() if key[0] != run_id
-            }
-            grant_session = False
-            for row in pending:
-                key = row.call_id or row.llm_name
-                decision = decisions.get(key)
-                if decision not in RAW_SHELL_APPROVAL_OPTIONS:
-                    continue
-                self._stamps[(run_id, key)] = approval_stamp(
-                    decision,
-                    unanswered=approval_key_unanswered(decisions, key),
-                    allowing=("approve_once", "approve_session"),
-                )
-                if decision == "approve_session":
-                    grant_session = True
-            if not grant_session:
-                return
-            try:
-                state = resolve_raw_shell_state(self._resolve_state(self.hub_tool()))
-                if self.catalog_enabled() and state == "ask":
-                    # Keep the provider lock through the runtime write. Disarm
-                    # closes the runtime first and then waits on this same lock
-                    # to advance the generation, so an old approval can land
-                    # either wholly before disarm or wholly before revocation,
-                    # never after a completed disarm/re-arm cycle.
-                    self._runtime.grant_model_session(self.console_session_id)
-            except Exception:
-                return
+        from .approval_observation import (
+            ApprovalObservationContext,
+            approval_contexts_scope,
+            decision_approval_contexts,
+            publish_grant_application,
+        )
+
+        keys = tuple(
+            row.call_id or row.llm_name
+            for row in pending
+            if decisions.get(row.call_id or row.llm_name) == "approve_session"
+        )
+        contexts = decision_approval_contexts(decisions, keys)
+        observations = []
+        buffered = tuple(
+            ApprovalObservationContext(context.identity, observations.append)
+            for context in contexts
+        )
+
+        def apply():
+            with self._stamps_lock:
+                if (
+                    authority_generation is not None
+                    and authority_generation != self._authority_generation
+                ):
+                    publish_grant_application(
+                        "not_applied", error_code="authority_unavailable"
+                    )
+                    return
+                self._stamps = {
+                    key: value for key, value in self._stamps.items() if key[0] != run_id
+                }
+                grant_session = False
+                for row in pending:
+                    key = row.call_id or row.llm_name
+                    decision = decisions.get(key)
+                    if decision not in RAW_SHELL_APPROVAL_OPTIONS:
+                        continue
+                    self._stamps[(run_id, key)] = approval_stamp(
+                        decision,
+                        unanswered=approval_key_unanswered(decisions, key),
+                        allowing=("approve_once", "approve_session"),
+                    )
+                    if decision == "approve_session":
+                        grant_session = True
+                if not grant_session:
+                    return
+                try:
+                    state = resolve_raw_shell_state(self._resolve_state(self.hub_tool()))
+                    if self.catalog_enabled() and state == "ask":
+                        # Keep the provider lock through the runtime write. Disarm
+                        # closes the runtime first and then waits on this same lock
+                        # to advance the generation, so an old approval can land
+                        # either wholly before disarm or wholly before revocation,
+                        # never after a completed disarm/re-arm cycle.
+                        self._runtime.grant_model_session(self.console_session_id)
+                    else:
+                        publish_grant_application(
+                            "not_applied", error_code="authority_unavailable"
+                        )
+                except Exception:
+                    publish_grant_application("failed", error_code="writer_failed")
+                    return
+
+        with approval_contexts_scope(buffered):
+            apply()
+        for observation in observations:
+            for context in contexts:
+                if context.identity == observation.identity:
+                    context.publish(
+                        observation.kind,
+                        observation.outcome,
+                        actual_scope=observation.actual_scope,
+                        error_code=observation.error_code,
+                    )
 
     @property
     def authority_generation(self) -> int:

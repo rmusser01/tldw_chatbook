@@ -47,3 +47,35 @@ def test_payload_defaults_empty_context_without_excuse():
     )
     assert payload["calls"][0]["rationale"] == ""
     assert payload["summary"] is None
+
+
+def test_payload_captures_semantic_revision_without_changing_calls():
+    row = _row()
+    payload = _build_approval_payload("r", "s", "run", [row], 0, None, revision=7)
+    assert payload["presentation_revision"] == payload["view"].revision == 7
+    assert payload["view"].rows[0].argument_sets == (row.arguments,)
+    payload["summary"] = "advisory only"
+    assert payload["presentation_revision"] == 7
+    assert payload["calls"][0]["options"] == list(row.options)
+
+
+def test_settled_finishing_projection_keeps_legacy_changed_call_guard():
+    from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    controller = object.__new__(ConsoleChatController)
+    controller._interrupt_host = make_interrupt_host(controller)
+    payload = _build_approval_payload(
+        "r", "s", "run", [_row(call_id="a"), _row(call_id="b")], 0, None
+    )
+    payload["phase"] = "finishing"
+    controller._approval_state_lock = controller._interrupt_host.lock
+    controller._parked_approval_payloads = controller._interrupt_host.payloads[
+        "approval"
+    ]
+    controller._parked_approval_payloads["r"] = payload
+    controller.set_pending_approval = None
+    controller._remount_head = lambda *args: None
+    controller.complete_definitive_tool("run", "a", "fs_write")
+    assert [row["call_id"] for row in payload["calls"]] == ["b"]
+    assert "view" not in payload and "presentation_revision" not in payload

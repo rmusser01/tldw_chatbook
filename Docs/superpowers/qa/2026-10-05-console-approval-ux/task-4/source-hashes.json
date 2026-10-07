@@ -1,0 +1,7 @@
+{
+  "tldw_chatbook/UI/Console_Modules/approval_details.py": "6c689db3c83d34153a5bb1ec8b84e54d178eb74673605d9f8f8f3bfa4e8713c6",
+  "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "8a4e6cebfe8da2e9b8d7c9af5da37fece7831f0d139379e1364957f0b6645cff",
+  "tldw_chatbook/css/features/_console_approvals.tcss": "ba05de0e87d4baef63c493da0a02935cca10a57bd0a52643ffb8561d349c376e",
+  "tldw_chatbook/css/tldw_cli_modular.tcss": "dabd8bc0f77f8904b9fc07ee8d70e4437e696189e4946d815b4b762f428d5964",
+  "Tests/UI/test_approval_details.py": "cbb5cecacefd3f8bd126c7e74e6c10a705c08c0a5ce28e724d05cc425ab79136"
+}
