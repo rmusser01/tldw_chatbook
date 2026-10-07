@@ -18736,3 +18736,8 @@ During shared Console preparation verification, a private inspector-count test u
 ## Explicit shared inputs can bypass a custom callback's default behavior
 
 TASK-34563.6, 2026-10-06: the first run-log consolidation qualified the containment function and body but supplied a context despite changed function defaults. Review also found that a custom sensitive predicate or resolver could depend on the original context-absent call. Three actual refusal controls failed because the writer became active. Qualifying the directly consumed functions, bodies and defaults restored the ordinary route for custom callbacks; all three controls then passed in the 89-case integrated scope. When adding a supplied-data path, test which defaults and downstream readers it bypasses, not only whether the outer function has been replaced.
+
+
+## Invalid Windows fixture paths can hide the intended gate (TASK-34563.7, 2026-10-06)
+
+Three final MCP/RAG admission checks failed with `config_directory_selection_unavailable` before reaching their permission/pause/cancel bodies. The identical checks on unchanged source failed too; the earlier log showed `TOMLDecodeError: Invalid hex value`. Their hand-built TOML contained an unescaped Windows `C:\Users` path. Using the existing `json.dumps(str(path), ensure_ascii=False)` convention for the two selected fixture values made all three original checks pass. Preserve the first parse error and compare unchanged fixtures before attributing a later fail-closed selection error to an admission refactor. Do not relax the production gate to repair test configuration.
