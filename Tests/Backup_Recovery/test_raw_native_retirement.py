@@ -41,10 +41,16 @@ def configured_source(tmp_path, monkeypatch, local_root):
 
 @contextmanager
 def _original_tracked_closes(source):
-    close_code = private_paths._native_close.__code__
+    close_code = raw._close_descriptor.__code__
+    native_close_code = private_paths._native_close.__code__
+    finite_close_code = next(
+        code
+        for code in private_paths._prepared_parent_walk.__wrapped__.__code__.co_consts
+        if isinstance(code, type(close_code)) and code.co_name == "owned_close"
+    )
     check_code = raw._check.__code__
     parent_code = private_paths._open_verified_parent.__code__
-    active, operations = {}, set()
+    active, native_active, finite_active, operations = {}, set(), set(), set()
     counts = dict(closes=0, checks=0, parent_walk_closes=0)
     closed, removed = [], []
     previous = sys.getprofile()
@@ -52,17 +58,45 @@ def _original_tracked_closes(source):
     def observe(frame, event, result):
         if previous is not None:
             previous(frame, event, result)
-        if frame.f_code is close_code:
+        if frame.f_code is native_close_code:
             if event == "call":
                 operation = getattr(raw._local, "operation", None)
                 state = raw._states.get(operation)
-                fd = frame.f_locals["fd"]
                 if (
-                    state is None
-                    or state.source is not source
-                    or fd not in state.descriptors
+                    state is not None
+                    and state.source is source
+                    and frame.f_locals["fd"] in state.descriptors
                 ):
+                    # Preserve the task17 regression: a full proof before the
+                    # actual native close still counts against retirement.
+                    native_active.add(id(frame))
+            elif event == "return":
+                native_active.discard(id(frame))
+        elif frame.f_code is finite_close_code:
+            if event == "call":
+                state, operation = frame.f_locals["state"], frame.f_locals["operation"]
+                if (
+                    state.source is source
+                    and raw._states.get(operation) is state
+                    and frame.f_locals["fd"] in state.descriptors
+                ):
+                    finite_active.add(id(frame))
+            elif event == "return":
+                finite_active.discard(id(frame))
+        elif frame.f_code is close_code:
+            if event == "call":
+                state, fd = frame.f_locals["state"], frame.f_locals["fd"]
+                if state.source is not source or fd not in state.descriptors:
                     return
+                operation = next(
+                    (
+                        operation
+                        for operation, issued in tuple(raw._states.items())
+                        if issued is state
+                    ),
+                    None,
+                )
+                assert operation is not None, "close must belong to an issued source"
                 active[id(frame)] = state, fd
                 operations.add(operation)
                 counts["closes"] += 1
@@ -86,7 +120,14 @@ def _original_tracked_closes(source):
         elif frame.f_code is check_code and event == "call":
             parent = frame.f_back
             while parent is not None:
-                if parent.f_code is close_code and id(parent) in active:
+                if (
+                    parent.f_code is close_code
+                    and id(parent) in active
+                    or parent.f_code is native_close_code
+                    and id(parent) in native_active
+                    or parent.f_code is finite_close_code
+                    and id(parent) in finite_active
+                ):
                     counts["checks"] += 1
                     break
                 parent = parent.f_back
@@ -96,6 +137,7 @@ def _original_tracked_closes(source):
         yield counts, closed, removed, active, operations
     finally:
         sys.setprofile(previous)
+        assert not native_active and not finite_active
 
 
 def test_original_config_parent_retirement_does_not_repeat_path_checks(

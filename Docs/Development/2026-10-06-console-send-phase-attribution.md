@@ -652,3 +652,152 @@ DoD; the last whole-Send measurement still misses both responsiveness targets.
 Next diagnosis measures only full runtime checks made inside the original
 read-only parent walk, separating that subset from leaf allocation, append/atomic
 bookkeeping and other trusted-directory helpers before any further contraction.
+
+
+### Parent-walk subset before consolidation
+
+The bounded parent-walk attribution run passed its original hook read and all
+payload/member/physical retirement assertions. Twenty original walks entered and
+exited. Only 42 runtime source checks were inside those walks: 18 config checks
+accounted for 108 native opens and 24 hook checks for 192. Their instrumented
+inclusive times were .113958 and .196600 seconds; all corresponding native
+ancestry was outside participant proof. Remaining runtime checks occur at other
+boundaries and are not candidates for removal by a parent-walk contraction.
+
+This sample had 2154 total native opens and four acquisitions, including three
+config acquisitions; the earlier 1341 sample had three acquisitions. The direct
+hook batch still used one acquisition with 56 native opens and confirmed unbound
+selector evidence. Do not infer a whole-read regression or an additive savings
+claim from these differently initialized samples. The specific parent-walk subset
+is the evidence for the next finite-operation change.
+
+Run parent-walk-attribution-1: 1 pass, 14.046 driver / 7.64 pytest seconds. Bucket,
+active/detail overflow and ancestry depth misses were zero, and original bindings
+were unchanged. Normal contained Job exit proved an empty tree; native identity
+and pipes retired, profile removed, no forced termination or PID history overflow
+or lookup race. Observer SHA256:
+0e9e7900949f59eb81d69fe4de25e782c325314f709503085a52eb8db9e015c3.
+Product remained task21 checkpoint256a0f66b2. No performance acceptance follows.
+
+
+Task 34563.22 causal baseline (`parent-preparation-red`) reached all original
+directory-allocation, exact leaf payload, fresh leaf gate, descriptor-close and
+lease-retirement assertions, then failed only its final full-check count:
+six checks per stock parent walk instead of two. Product hashes remained
+78aca0d9d602054f762949b0e3b719d111ff11a6403a66278e80eb50cde5519d
+(raw) and 83fcedb357de00d7613355cc0ecc21c52a7a85618bab39c14f0ea41dba9733b8
+(private paths). The test source was
+a5ecabe8a075ed56e4a6867057485843cfcbb014a0b3fbfdbb4ed78fed57f431.
+Elapsed 7.531 driver / 3.21 pytest seconds; normal contained retirement, private
+profile removal and zero PID overflow/races. Product implementation follows this
+causal failure, not a count-only stub or altered native callback.
+
+
+### Finite parent preparation review and adversarial controls (task 34563.22)
+
+The first integrated draft passed 38 controls and failed one old observer in
+85.672 driver / 80.24 pytest seconds. All 13 new preparation controls passed,
+including source/actor/lease drift, changed callbacks, expired closure use and
+uncertain close retention. The old retirement observer watched only
+private_paths._native_close; finite cleanup reaches the same original
+raw._close_descriptor directly. Its relocated observer follows actual registered
+FD closure and checks EBADF/removal before reuse, while retaining the zero-full-
+check oracle across both original native and finite close callers.
+
+Stock walk validation fell from six to two full checks; five original directory
+allocations, one fresh actual leaf check and seven positive FD closes remained.
+This is operation-count evidence, not whole-Send acceptance. Native containment
+retired normally with empty Job, released identity/pipes and removed profile,
+without force or PID history overflow/race.
+
+Review identified a missing relation between the actual returned parent FD and
+the already retained source pin after a transient rename/restore. Final source
+validation alone does not prove those two descriptors identify the same parent.
+The qualification will require an existing exact parent pin and compare actual
+returned-FD identity with that same retained pin after final source validation;
+unpinned parents keep original per-allocation checks.
+
+The first rename regression stopped before mutation because pathlib.stat and the
+installed Windows stat/fstat interface project different device identities. After
+using the same installed native interface and protected-DACL creation, the native
+rename was refused in this Windows config-scope fixture. Neither run proves the
+rename/restore race. They took 8.063 and 8.156 driver seconds; both retired their
+native Job/identity/pipes and private profiles normally, no force or overflow,
+and respectively zero/one PID lookup races. The exact rename case is retained for
+POSIX, and a portable real descriptor-substitution case now targets the returned
+FD relation directly without changing source/pin/ownership metadata or callbacks.
+
+
+### Final task34563.22 controls and matched no-span timing
+
+The portable original-walker descriptor substitution and real unpinned-parent
+controls both failed their intended oracles before the identity correction.
+The first passed final source proof yet delivered one actual substitute FD;
+the second used finite preparation without an exact parent pin. All owned
+resources retired. That functional run took10.875 driver/5.63pytest seconds and
+was coordinated for possible overlap with the integration chat's final functional
+checks; it is not timing evidence. Source hashes stayed frozen, containment
+retired normally and PID overflow/races were zero.
+
+After pin qualification and returned-FD comparison, integrated controls passed
+41 with one POSIX skip (92.468/86.92 seconds; one PID diagnostic lookup race).
+Final review then exposed native identity reads after the last custody fence.
+The causal control observed exactly two original fstats, closed one actual lease,
+and proved the descriptor was incorrectly delivered before its final refusal
+assertion failed. It took8.547/3.36 seconds, with positive native retirement and
+zero PID overflow/races. The final implementation runs the existing source/custody
+check after those fstats; no extra parent scan or new authority is introduced.
+
+Final integrated selection: **42 pass, one POSIX-only skip**,101.297 driver/
+96.05pytest seconds. The original stock walk retains two full checks, five
+component allocations, one fresh actual leaf gate and seven positive FD closes.
+An unpinned child uses seven original full checks. Both real descriptor
+substitution and late actual lease revocation refuse with zero delivered handles.
+Hook-read attribution remains1125native opens, three total acquisitions/one direct
+member admission, nine balanced walks and zero bounded-observer overflow/depth
+misses. The final contained Job was empty at normal parent exit; identity, pipes
+and private profile retired, no forced termination or PID overflow/lookup race.
+The exact rename/restore test remains unverified here and is skipped on Windows;
+the portable FD test does not claim to reproduce that filesystem race.
+
+Final product SHA256:
+- raw_participants.py:0e6122758ed48527501e47d4d7b606d839b77755045da3aeed738e9c86227911
+- private_paths.py:79944dfa7ca51586eb97e5d17c4ea89d964bb631c0a0f71d02b96e6301e1dd95
+- new parent controls:a38598b3dc4221dd04766745ba1dfab3eafe1f3c1ec2ccb46f7f17e86fbe04f9
+
+The existing `run-native-pair.py` ran baseline task21 (`256a0f66b2`) then final
+candidate without detailed spans/native sampling, preserving its passive stage
+and heartbeat observer. Exact baseline/candidate copies were retained; only the
+two product files were staged, and final candidate bytes were restored after
+positive baseline retirement. All7783Python source hashes were unchanged within
+each run, and exactly those two files differed between samples. Deadlines, guards,
+three saved replies, two nonstreaming plus one streaming reply, three complete
+linked traces and zero dispatch checkpoints were unchanged.
+
+| Sample | Send1 to adapter | Send2 to adapter | Send3 to adapter | Driver elapsed |
+| --- | ---: | ---: | ---: | ---: |
+| Baseline |11.483s|7.107s|10.582s|87.328s|
+| Candidate |11.053s|6.469s|10.622s|86.688s|
+
+Two Sends improved modestly and the third was effectively flat/slower. This one
+pair supports no uniform speed claim and is far outside the one-second target.
+The candidate third Send took the legacy ui_submit route at3.166s, whereas the
+baseline third reached awaiting_review at.009s; retain that route difference
+when interpreting the comparison. Candidate pre-controller intervals were
+2.290/1.958/3.313s; post-durable-commit to trace reservation remained
+6.324/2.853/4.493s. Those are stage intervals, not additive profiler timings.
+
+Candidate Send heartbeat maxima were.345/.142/.277s and typing.403s, versus
+baseline.373/.191/.201s and typing.905s. The100ms responsiveness target remains
+unmet; heartbeat is not proof of terminal paint. Both timing runs retired normally
+with empty Job, released identity/pipes and removed profile, no force or PID
+overflow; baseline had one PID lookup race and candidate zero. These remain
+bounded diagnostic cleanup receipts, not universal ordinary-app cleanup proof.
+
+Scoped product/test lint is unchanged: raw and changed tests pass; private_paths
+retains exactly the same pre-existing E721 at132. Changed functions and tests are
+formatted. No full sweep was run; whole-file format debt and cross-platform
+qualification remain. Existing ADR-222/ADR-126 apply. Task22 stays In Progress
+under the broader DoD, and the next latency diagnostic adds bounded original
+context/version caller purposes and requested-ID counts to the existing opt-in
+observer, while preserving live revalidation across awaits and durable commit.

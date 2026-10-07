@@ -76,6 +76,11 @@ def _original_scope_acquisitions(source):
     reuse_function = storage._reuse_evidence
     reuse_code = reuse_function.__code__
     close_code = raw._close_descriptor.__code__
+    private_module = sys.modules["tldw_chatbook.Utils.private_paths"]
+    parent_function = private_module._open_verified_parent
+    parent_code = parent_function.__code__
+    runtime_function = raw._runtime_operation
+    runtime_code = runtime_function.__code__
     requests, returned, entries, closes = [], [], [], []
     active_acquires, active_closes, active_reuses = {}, {}, {}
     active_checks, active_native = {}, {}
@@ -113,6 +118,9 @@ def _original_scope_acquisitions(source):
         all_acquisition_count=0,
         all_acquisition_callers=[],
         check_callers=[],
+        parent_walk_depth=0,
+        parent_walk_calls=0,
+        parent_walk_exits=0,
         native_open_buckets=[],
         native_open_overflow=native_overflow,
         attribution_overflow=0,
@@ -136,6 +144,7 @@ def _original_scope_acquisitions(source):
         check_caller = check_route = acquisition_caller = fallback = None
         source_proof = participant_seen = truncated = False
         acquisition_kind = "none"
+        parent_walk_runtime_check = False
         parent = frame.f_back
         for _ in range(32):
             if parent is None or id(parent) == measured_read_root:
@@ -154,6 +163,9 @@ def _original_scope_acquisitions(source):
                 state = raw._states.get(parent.f_locals["operation"])
                 check_route = state.route if state is not None else "unissued"
                 source_proof = participant_seen
+                checked = active_checks.get(id(parent))
+                if checked is not None:
+                    parent_walk_runtime_check = checked[0]["parent_walk_runtime_check"]
             if parent.f_code is acquire_code and acquisition_caller is None:
                 acquisition_caller = caller(parent.f_back)
                 acquisition_kind = (
@@ -174,6 +186,7 @@ def _original_scope_acquisitions(source):
             check_caller,
             check_route,
             source_proof,
+            parent_walk_runtime_check,
             acquisition_caller,
             acquisition_kind,
             fallback,
@@ -183,6 +196,15 @@ def _original_scope_acquisitions(source):
     def observe(frame, event, result):
         if previous is not None:
             previous(frame, event, result)
+        # This original synchronous body has one profile return, including unwind.
+        if frame.f_code is parent_code:
+            if event == "call":
+                observed.parent_walk_depth += 1
+                observed.parent_walk_calls += 1
+            elif event == "return":
+                assert observed.parent_walk_depth > 0
+                observed.parent_walk_depth -= 1
+                observed.parent_walk_exits += 1
         # Whole measured-thread read: include surrounding config work for hooks.
         if frame.f_code is native_code:
             if event == "call":
@@ -201,6 +223,7 @@ def _original_scope_acquisitions(source):
                                 "check_caller",
                                 "check_route",
                                 "source_proof",
+                                "parent_walk_runtime_check",
                                 "acquisition_caller",
                                 "acquisition_kind",
                                 "fallback_caller",
@@ -230,12 +253,18 @@ def _original_scope_acquisitions(source):
             if event == "call":
                 state = raw._states.get(frame.f_locals["operation"])
                 route = state.route if state is not None else "unissued"
-                key = route, caller(frame.f_back)
+                parent_walk_runtime_check = (
+                    observed.parent_walk_depth > 0
+                    and frame.f_back is not None
+                    and frame.f_back.f_code is runtime_code
+                )
+                key = route, caller(frame.f_back), parent_walk_runtime_check
                 row = check_rows.get(key)
                 if row is None and len(check_rows) < 64:
                     row = dict(
                         route=route,
                         caller=key[1],
+                        parent_walk_runtime_check=parent_walk_runtime_check,
                         calls=0,
                         exits=0,
                         inclusive_seconds=0.0,
@@ -376,6 +405,15 @@ def _original_scope_acquisitions(source):
         assert raw._check is check_function and check_function.__code__ is check_code
         assert raw._participant_state is participant_function
         assert participant_function.__code__ is participant_code
+        assert sys.modules.get("tldw_chatbook.Utils.private_paths") is private_module
+        assert private_module._open_verified_parent is parent_function
+        assert parent_function.__code__ is parent_code
+        assert parent_function.__globals__ is vars(private_module)
+        assert raw._runtime_operation is runtime_function
+        assert runtime_function.__code__ is runtime_code
+        assert runtime_function.__globals__ is vars(raw)
+        assert observed.parent_walk_depth == 0
+        assert observed.parent_walk_calls == observed.parent_walk_exits
         assert not active_checks and not active_native
         assert all(row["calls"] == row["exits"] for row in check_rows.values())
         assert all(row["calls"] == row["exits"] for row in native_rows.values())
@@ -468,6 +506,8 @@ def _assert_one_original_read_acquisition(case, request):
                 json.dumps(observed.all_acquisition_callers),
             ),
             ("original_check_callers", json.dumps(observed.check_callers)),
+            ("original_parent_walk_calls", observed.parent_walk_calls),
+            ("original_parent_walk_exits", observed.parent_walk_exits),
             ("native_open_ancestry_buckets", json.dumps(observed.native_open_buckets)),
             ("native_open_bucket_overflow", json.dumps(observed.native_open_overflow)),
             ("native_attribution_overflow", observed.attribution_overflow),

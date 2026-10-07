@@ -86,6 +86,7 @@ async def test_native_parent_proof_cannot_return_revoked_custody(
     captured, published, errors = [], [], []
     check_code = raw._check.__code__
     participant_code = raw._participant_state.__code__
+    parent_proof_code = raw._check_parent_pins.__code__
     fstat = raw.os.fstat
     fstat_code = getattr(fstat, "__code__", None)
 
@@ -95,21 +96,25 @@ async def test_native_parent_proof_cannot_return_revoked_custody(
         ) or (event == "c_return" and arg is fstat)
         if not native_return or captured:
             return
-        parent, check = frame, None
+        parent, check, proof = frame, None, None
         while parent is not None:
             if parent.f_code is participant_code:
                 return  # Source proof is earlier than the parent pin proof.
+            if parent.f_code is parent_proof_code:
+                proof = parent
             if parent.f_code is check_code:
                 check = parent
                 break
             parent = parent.f_back
-        if check is None:
+        if check is None or proof is None:
             return
         operation = raw._local.operation
         state = raw._states[operation]
         if (
             state.source is not permission
-            or check.f_locals.get("fd") not in state.pins.values()
+            or check.f_locals.get("operation") is not operation
+            or proof.f_locals.get("state") is not state
+            or proof.f_locals.get("fd") not in state.pins.values()
         ):
             return
         captured.append((operation, state, state.participant, state.leases[0]))

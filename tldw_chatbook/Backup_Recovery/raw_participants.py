@@ -445,7 +445,8 @@ def _mcp_observation(source, canonical):
     return {lexical_path(canonical): lease}
 
 
-def _check(operation, path=None, *, writing=False):
+@contextmanager
+def _source_custody_check(operation, path=None, *, writing=False):
     # No virtual validator dispatch and no mutable caller token fields.
     with storage._lock:
         state = _live_state(operation, path, writing)
@@ -456,31 +457,22 @@ def _check(operation, path=None, *, writing=False):
     participant_state = (
         _participant_state(participant) if participant is not None else None
     )
-    if state.config_anchor is not None and config_files.sibling_selector(
-        state.source, state.route, state.selected
-    ) != state.config_anchor:
+    if (
+        state.config_anchor is not None
+        and config_files.sibling_selector(state.source, state.route, state.selected)
+        != state.config_anchor
+    ):
         raise bootstrap.RecoveryRequired("config_companion_scope_changed")
-    if state.route in {"config_data", "config_default_root", "config_chat_dicts", "config_models"}:
+    if state.route in {
+        "config_data",
+        "config_default_root",
+        "config_chat_dicts",
+        "config_models",
+    }:
         config_files.selection(state.source, state.route, state.selected)
         if state.source._CONFIG_GENERATION != state.config_generation:
             raise bootstrap.RecoveryRequired("config_directory_generation_changed")
-    # Disk checks never occur under the coordinator lock. Native descriptors pin
-    # destinations even if an external nonparticipant renames after this check.
-    # Existing parent aliases are valid only while they resolve to the same
-    # positively checked physical directory; leaf aliases remain refused.
-    for directory, identity in tuple(state.identities.items()):
-        info = os.stat(directory)
-        if (info.st_dev, info.st_ino) != identity or not stat.S_ISDIR(info.st_mode):
-            raise bootstrap.RecoveryRequired("raw_parent_identity_changed")
-    for directory, fd in tuple(state.pins.items()):
-        info = os.stat(directory)
-        pinned = os.fstat(fd)
-        if (info.st_dev, info.st_ino) != (pinned.st_dev, pinned.st_ino):
-            raise bootstrap.RecoveryRequired("raw_parent_identity_changed")
-        if state.companion_guard is not None and (
-            info.st_uid != os.geteuid() or info.st_mode & 0o077
-        ):
-            raise bootstrap.RecoveryRequired("config_companion_parent_unsafe")
+    yield state
     # Revocation/retirement can interleave with either source or parent proof.
     # A valid earlier observation cannot substitute for current issued custody.
     with storage._lock:
@@ -498,12 +490,71 @@ def _check(operation, path=None, *, writing=False):
             or _source_participants.get(source) is not participant
         ):
             raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+
+
+def _check_parent_pins(state):
+    # Disk checks never occur under the coordinator lock. Native descriptors pin
+    # destinations even if an external nonparticipant renames after this check.
+    # Existing parent aliases are valid only while they resolve to the same
+    # positively checked physical directory; leaf aliases remain refused.
+    for directory, identity in tuple(state.identities.items()):
+        info = os.stat(directory)
+        if (info.st_dev, info.st_ino) != identity or not stat.S_ISDIR(info.st_mode):
+            raise bootstrap.RecoveryRequired("raw_parent_identity_changed")
+    for directory, fd in tuple(state.pins.items()):
+        info = os.stat(directory)
+        pinned = os.fstat(fd)
+        if (info.st_dev, info.st_ino) != (pinned.st_dev, pinned.st_ino):
+            raise bootstrap.RecoveryRequired("raw_parent_identity_changed")
+        if state.companion_guard is not None and (
+            info.st_uid != os.geteuid() or info.st_mode & 0o077
+        ):
+            raise bootstrap.RecoveryRequired("config_companion_parent_unsafe")
+
+
+def _check(operation, path=None, *, writing=False):
+    with _source_custody_check(operation, path, writing=writing) as state:
+        _check_parent_pins(state)
+    return state
+
+
+def _parent_walk_operation():
+    """Select an installed stock owner without repeating native preparation."""
+    operation = getattr(_local, "operation", None)
+    with storage._lock:
+        state = _states.get(operation)
+        if state is None or state.participant is None:
+            return None
+        participant = _participant_identity(state.participant)
+        if participant.owner not in {"config", "hooks.permissions", "mcp.history"}:
+            return None
+        _live_state(operation, None, True)
+        return operation, state, state.source, state.participant
+
+
+def _check_directory_allocation(operation, expected_state, source, participant):
+    """Keep source/custody gates while the caller checks the directory walk."""
+    if getattr(_local, "operation", None) is not operation:
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    with _source_custody_check(operation, writing=True) as state:
+        if (
+            state is not expected_state
+            or state.source is not source
+            or state.participant is not participant
+        ):
+            raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    if getattr(_local, "operation", None) is not operation:
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
     return state
 
 
 def _owned_descriptor_retirement_state(fd: int) -> _State | None:
     """Find exact creator custody for cleanup without re-admitting an effect."""
-    operation = getattr(_local, "operation", None)
+    return _descriptor_retirement_state(getattr(_local, "operation", None), fd)
+
+
+def _descriptor_retirement_state(operation, fd: int) -> _State | None:
+    """Validate exact creator custody for ambient or finite-walk cleanup."""
     if operation is None:
         return None
     with storage._lock:
@@ -1503,3 +1554,10 @@ def _runtime_operation(path=None):
         return None
     _check(operation, path, writing=True)
     return operation
+
+
+_RUNTIME_OPERATION_BINDING = (
+    _runtime_operation,
+    _runtime_operation.__code__,
+    _runtime_operation.__defaults__,
+)
