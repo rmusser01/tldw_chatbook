@@ -7,11 +7,15 @@ import logging
 import random
 import re
 import sqlite3
+import threading
 import warnings
+import weakref
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Any, Tuple, Set
+from typing import Dict, List, Optional, Union, Any, Tuple, Set, Sequence
 from loguru import logger
 
 # Local Imports
@@ -27,6 +31,122 @@ from ..config import get_cli_config_path
 #######################################################################################################################
 #
 # Chat Dictionary Classes and Functions
+
+# Attribute name for the per-db store-generation cell (ADR-221, dictionary
+# half). The cell lives on the CharactersRAGDB instance — not on any service —
+# because the send path (``_resolve_active_dictionaries``) holds only the raw
+# db handle and constructs no service; a per-service counter would be
+# invisible across sends and could never invalidate anything.
+_CHAT_DICTIONARY_GENERATION_ATTR = "_chat_dictionary_store_generation_cell"
+
+
+def _generation_cell(db: Any) -> List[int]:
+    """Return the db's mutable dictionary-store generation cell (0 at start).
+
+    A one-element list keeps reads and bumps single attribute lookups; the
+    cell is per-db-object so the send path, the local service, and the lib's
+    own write functions all observe the same monotonic counter over the same
+    connection (mirrors ``world_book_manager._generation_cell``).
+    """
+    cell = getattr(db, _CHAT_DICTIONARY_GENERATION_ATTR, None)
+    if cell is None:
+        cell = [0]
+        setattr(db, _CHAT_DICTIONARY_GENERATION_ATTR, cell)
+    return cell
+
+
+def dictionary_store_generation(db: Any) -> int:
+    """Monotonic dictionary-store generation for ``db``; 0 until the first
+    successful write (ADR-221). Every dictionary mutation — row writes in
+    this module, conversation attachments and character embedded-snapshot
+    writes in ``LocalChatDictionaryService`` — bumps the shared counter
+    exactly once on success; reads and failed writes never bump."""
+    return _generation_cell(db)[0]
+
+
+def _bump_generation(db: Any) -> None:
+    """Record that this store's chat-dictionary content or attachments changed."""
+    _generation_cell(db)[0] += 1
+
+
+# --- Resolved-bundle cache (ADR-221, dictionary half) -----------------------
+#
+# Bounded LRU: at most this many conversations keep a cached resolved bundle
+# (ADR-221). Memory is bounded by 8 x the active dictionary set. The cache
+# stores ONLY the resolved rows -- the two consumers (the send-path collect
+# and the summarize read model) read exactly those, nothing else.
+
+_DICTIONARY_BUNDLE_CACHE_MAX_CONVERSATIONS = 8
+
+
+class _DictionaryBundleCacheEntry:
+    """One cached cold start (ADR-221). Never holds the db object itself --
+    only a weakref, so a re-opened database never inherits another
+    connection's bundle."""
+
+    __slots__ = ("generation", "db_ref", "rows")
+
+    def __init__(
+        self, generation: int, db_ref: weakref.ref, rows: List[Dict[str, Any]]
+    ) -> None:
+        self.generation = generation
+        self.db_ref = db_ref
+        self.rows = rows
+
+
+# Module-level because the send path reaches this library as free functions
+# from asyncio.to_thread workers (Console) and Textual workers -- lock-guarded,
+# with the lock held only for dict access, never during the DB fetch or build.
+_dictionary_bundle_cache: "OrderedDict[Tuple[str, Any], _DictionaryBundleCacheEntry]" = (
+    OrderedDict()
+)
+_dictionary_bundle_cache_lock = threading.Lock()
+
+
+def _clear_dictionary_bundle_cache() -> None:
+    """Drop every cached bundle (test seam; the cache is otherwise
+    self-invalidating via the store generation)."""
+    with _dictionary_bundle_cache_lock:
+        _dictionary_bundle_cache.clear()
+
+
+def _bundle_cache_key(conversation_id: Any, char_data: Any) -> Tuple[str, Any]:
+    character_id = char_data.get("id") if isinstance(char_data, dict) else None
+    return (str(conversation_id), character_id)
+
+
+def _bundle_cache_get(
+    db: Any, key: Tuple[str, Any], generation: int
+) -> Optional[List[Dict[str, Any]]]:
+    try:
+        with _dictionary_bundle_cache_lock:
+            entry = _dictionary_bundle_cache.get(key)
+            if entry is None:
+                return None
+            if entry.generation != generation or entry.db_ref() is not db:
+                # Store mutated (or the db object changed): stale by contract.
+                del _dictionary_bundle_cache[key]
+                return None
+            _dictionary_bundle_cache.move_to_end(key)  # LRU touch
+            return entry.rows
+    except Exception:
+        return None
+
+
+def _bundle_cache_put(
+    db: Any, key: Tuple[str, Any], generation: int, rows: List[Dict[str, Any]]
+) -> None:
+    try:
+        entry = _DictionaryBundleCacheEntry(generation, weakref.ref(db), rows)
+    except TypeError:  # db does not support weak references
+        return
+    with _dictionary_bundle_cache_lock:
+        _dictionary_bundle_cache[key] = entry
+        _dictionary_bundle_cache.move_to_end(key)
+        while (
+            len(_dictionary_bundle_cache) > _DICTIONARY_BUNDLE_CACHE_MAX_CONVERSATIONS
+        ):
+            _dictionary_bundle_cache.popitem(last=False)
 
 
 def _default_dictionary_import_directory() -> Path:
@@ -119,6 +239,19 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     return bool(value)
 
 
+@lru_cache(maxsize=4096)
+def _compiled_whole_word(key: str, flags: int) -> re.Pattern:
+    """Compile the whole-word literal pattern ``\\b<key>\\b`` once (ADR-221).
+
+    Shared by :func:`match_whole_words` and :func:`apply_replacement_once` --
+    previously both rebuilt this pattern per entry per send (and per
+    replacement iteration), thrashing ``re``'s 512-slot internal cache on
+    dictionaries with many distinct literal keys. Module-level LRU bound of
+    4096 distinct ``(key, flags)`` pairs, mirroring the world-info key cache.
+    """
+    return re.compile(rf"\b{re.escape(key)}\b", flags)
+
+
 class ChatDictionary:
     def __init__(
         self,
@@ -158,10 +291,21 @@ class ChatDictionary:
         """
         self.raw_key = key  # Store the original key string
         self.content = content
-        self.is_regex = False
+        self._is_regex = False
         self.key_pattern_str = ""  # Store pattern string for regex for debugging
         self.key_flags = 0  # Store flags for regex for debugging
-        self.key = self._compile_key_internal(key)  # key will store re.Pattern or str
+        # Compiled match key (re.Pattern) or literal string -- built lazily on
+        # first access (ADR-221): constructing entries for save/round-trip
+        # paths never pays the regex-validation + compile cost; with the
+        # bundle cache keeping instances alive across sends, it is paid once
+        # per entry per generation, not per send.
+        self._compiled_key: Optional[Union[re.Pattern, str]] = None
+        # Cheap slash-form classification runs eagerly: key_flags/
+        # key_pattern_str are read without matching (debugging, round-trips).
+        # Whether the key is *successfully* a regex stays lazy (see the
+        # ``is_regex`` property) because it is only knowable after the
+        # validation+compile that ``key`` defers.
+        self._classify_key(key)
 
         self.probability = probability
         self.group = group
@@ -172,8 +316,41 @@ class ChatDictionary:
         self.case_sensitive = _coerce_bool(case_sensitive, False)
         self.priority = _coerce_int(priority, 0)
 
-    def _compile_key_internal(self, key_str: str) -> Union[re.Pattern, str]:
-        self.is_regex = False  # Reset for this compilation
+    @property
+    def is_regex(self) -> bool:
+        """Whether the key is (successfully) a compiled regex.
+
+        Reflects the POST-validation state, exactly as the eager build did:
+        reading it materializes :attr:`key`, so a ``/regex/`` key that fails
+        the ReDoS/syntax screen reads ``False`` (downgraded to a literal).
+        The send path never reads this attribute (it dispatches on
+        ``isinstance(key, re.Pattern)``), so its laziness never costs a send.
+        """
+        _ = self.key  # materialize the compiled state (idempotent)
+        return self._is_regex
+
+    @property
+    def key(self) -> Union[re.Pattern, str]:
+        """The match key: a compiled ``re.Pattern`` for ``/regex/`` keys, the
+        raw string for literal keys.
+
+        Lazily compiled exactly once per entry instance via
+        :meth:`_compile_key_internal` (ADR-221): regex validation and
+        ``re.compile`` run on first use, then the result is stored on this
+        instance and reused -- across sends while the bundle cache keeps the
+        instance alive, and for every ``max_replacements`` iteration.
+        """
+        if self._compiled_key is None:
+            self._compiled_key = self._compile_key_internal(self.raw_key)
+        return self._compiled_key
+
+    def _classify_key(self, key_str: str) -> None:
+        """Detect the ``/pattern/flags`` form (cheap string operations only).
+
+        Sets ``_is_regex`` / ``key_flags`` / ``key_pattern_str``; idempotent,
+        so the lazy compile path can safely re-run it.
+        """
+        self._is_regex = False  # Reset for this compilation
         self.key_flags = 0
         pattern_to_compile = key_str
 
@@ -192,24 +369,27 @@ class ChatDictionary:
                 if "s" in flag_chars:
                     self.key_flags |= re.DOTALL
                 # Add other common flags if needed (e.g., 'x' for VERBOSE, 'u' for UNICODE automatically on in Py3)
-                self.is_regex = True
+                self._is_regex = True
             elif (
                 key_str.endswith("/") and len(key_str) > 2
             ):  # Only /pattern/, no flags after last /
                 pattern_to_compile = key_str[1:-1]
-                self.is_regex = True
+                self._is_regex = True
             # else: it's like "/foo" or just "/" which are not valid regex delimiters here
 
         self.key_pattern_str = pattern_to_compile  # Store for debugging
 
-        if self.is_regex:
+    def _compile_key_internal(self, key_str: str) -> Union[re.Pattern, str]:
+        self._classify_key(key_str)
+
+        if self._is_regex:
             try:
-                # If pattern_to_compile is empty after stripping slashes (e.g. "//i"), it's an error
-                if not pattern_to_compile:
+                # If key_pattern_str is empty after stripping slashes (e.g. "//i"), it's an error
+                if not self.key_pattern_str:
                     logging.warning(
                         f"Empty regex pattern from raw key '{self.raw_key}'. Treating as literal."
                     )
-                    self.is_regex = False
+                    self._is_regex = False
                     return self.raw_key
                 # ReDoS screen -- best-effort, NOT a backstop. A dictionary
                 # key is user-supplied (editor, imported file, or DB row) and
@@ -222,14 +402,14 @@ class ChatDictionary:
                 # not a longer heuristic. Same fail-closed downgrade
                 # world_info_processor applies, and the same one this function
                 # already applies to a bad pattern.
-                validate_regex_pattern(pattern_to_compile)
-                return re.compile(pattern_to_compile, self.key_flags)
+                validate_regex_pattern(self.key_pattern_str)
+                return re.compile(self.key_pattern_str, self.key_flags)
             except (re.error, ValueError) as e:
                 logging.warning(
-                    f"Invalid regex '{pattern_to_compile}' with flags '{self.key_flags}' (from raw key '{self.raw_key}'): {e}. "
+                    f"Invalid regex '{self.key_pattern_str}' with flags '{self.key_flags}' (from raw key '{self.raw_key}'): {e}. "
                     f"Treating as literal string."
                 )
-                self.is_regex = False  # Fallback
+                self._is_regex = False  # Fallback
                 return self.raw_key  # Return the original key string on error
         else:  # Not a /regex/ or /regex/flags pattern, treat as plain string
             return key_str  # Return the original string
@@ -632,16 +812,18 @@ def match_whole_words(entries: List[ChatDictionary], text: str) -> List[ChatDict
     """
     matched_entries = []
     for entry in entries:
-        if isinstance(entry.key, re.Pattern):  # Compiled regex
+        if isinstance(entry.key, re.Pattern):  # Compiled regex (once per entry)
             if entry.key.search(text):
                 matched_entries.append(entry)
                 logging.debug(
                     f"Chat Dictionary: Matched regex entry: {entry.key.pattern}"
                 )
         elif isinstance(entry.key, str):  # Plain string key
-            # Ensure whole word match for plain strings; case per entry.case_sensitive
+            # Ensure whole word match for plain strings; case per entry.case_sensitive.
+            # Pattern comes from the module-level LRU (ADR-221): compiled once
+            # per (key, flags), not per entry per send.
             flags = 0 if getattr(entry, "case_sensitive", False) else re.IGNORECASE
-            if re.search(rf"\b{re.escape(entry.key)}\b", text, flags):
+            if _compiled_whole_word(entry.key, flags).search(text):
                 matched_entries.append(entry)
                 logging.debug(f"Chat Dictionary: Matched string entry: {entry.key}")
     return matched_entries
@@ -671,6 +853,12 @@ def apply_replacement_once(text: str, entry: ChatDictionary) -> Tuple[str, int]:
     - If `entry.key` is a string, a whole-word regex is constructed respecting
       entry.case_sensitive and used with `re.subn()` with `count=1`.
 
+    The whole-word pattern comes from the module-level LRU helper shared with
+    :func:`match_whole_words` (ADR-221): the pipeline calls this once per
+    replacement iteration (up to ``entry.max_replacements`` times per entry),
+    and previously each call paid its own ``re.compile`` -- now the first call
+    compiles once per (key, flags) and every iteration reuses it.
+
     Args:
         text: The input text where replacement should occur.
         entry: The `ChatDictionary` entry providing the key and content.
@@ -687,8 +875,8 @@ def apply_replacement_once(text: str, entry: ChatDictionary) -> Tuple[str, int]:
         replaced_text, replaced_count = entry.key.subn(entry.content, text, count=1)
     else:  # Plain string key
         flags = 0 if getattr(entry, "case_sensitive", False) else re.IGNORECASE
-        pattern = re.compile(
-            rf"\b{re.escape(str(entry.key))}\b", flags
+        pattern = _compiled_whole_word(
+            str(entry.key), flags
         )  # Ensure entry.key is str
         replaced_text, replaced_count = pattern.subn(entry.content, text, count=1)
     return replaced_text, replaced_count
@@ -1165,6 +1353,7 @@ def save_chat_dictionary(
 
         dict_id = cursor.lastrowid
         db.get_connection().commit()
+        _bump_generation(db)  # ADR-221: store changed
 
         logger.info(f"Saved chat dictionary '{name}' with ID {dict_id}")
         return dict_id
@@ -1332,7 +1521,30 @@ def _resolve_active_dictionaries(
     same-named character dict is not shadowed. This is the single source of truth
     for both :func:`collect_active_chatdict_entries` (send path) and
     :func:`summarize_active_dictionaries` (read model).
+
+    Cold starts are cached per ``(conversation_id, character_id)`` and
+    invalidated by the store generation (ADR-221): with an unchanged
+    dictionary set, repeated sends reuse one resolved bundle -- the same
+    ``ChatDictionary`` instances, with no per-dictionary DB loads, no entry
+    JSON parsing and no ``from_dict`` re-instantiation. Character-card
+    content is keyed by ``character_id`` only (same residual class as the
+    world-info resolver): card edits that bypass the dictionary write paths
+    do not invalidate until the next dictionary-store bump.
     """
+    cacheable = bool(conversation_id) and db is not None
+    generation: Optional[int] = None
+    key: Optional[Tuple[str, Any]] = None
+    if cacheable:
+        try:
+            generation = dictionary_store_generation(db)
+        except Exception:
+            generation = None
+        if generation is not None:
+            key = _bundle_cache_key(conversation_id, char_data)
+            cached = _bundle_cache_get(db, key, generation)
+            if cached is not None:
+                return cached
+
     rows: List[Dict[str, Any]] = []
     enabled_conversation_names: set = set()
     if conversation_id and db is not None:
@@ -1380,6 +1592,10 @@ def _resolve_active_dictionaries(
                 "shadowed": block.get("name") in enabled_conversation_names,
             }
         )
+    if cacheable and generation is not None and rows:
+        # An empty bundle is not cached -- the next resolve repeats only the
+        # (cheap) empty fetch, same as the world-info resolver.
+        _bundle_cache_put(db, key, generation, rows)
     return rows
 
 
@@ -1427,6 +1643,7 @@ def apply_active_chatdicts_to_text(
     *,
     max_tokens: int = 500,
     strategy: str = "sorted_evenly",
+    entries: Optional[Sequence[ChatDictionary]] = None,
 ) -> str:
     """Apply the active chat dictionaries to ``text`` for a send (never raises).
 
@@ -1435,15 +1652,34 @@ def apply_active_chatdicts_to_text(
     standard ``process_user_input`` substitution. Returns ``text`` unchanged
     when it is not a string, no dictionaries apply, or anything fails -- a
     dictionary problem must never break a chat send.
+
+    Args:
+        db: Database handle used to resolve the conversation's attached
+            dictionary ids. May be ``None`` (conversation dictionaries are
+            skipped in that case).
+        conversation_id: The active conversation's id, or ``None`` if there
+            is no conversation context (conversation dictionaries are
+            skipped).
+        char_data: The active character record dict, whose embedded
+            dictionaries are parsed via :func:`load_character_dictionaries`.
+        text: The message text to transform.
+        max_tokens: Maximum token budget for the substitution pipeline.
+        strategy: Replacement-ordering strategy.
+        entries: Pre-collected dictionary entries (ADR-221 console seam).
+            When given, collection (and the bundle cache) is skipped
+            entirely -- the caller owns collection, e.g. a Console turn's
+            frozen inputs already hold ``collect_active_chatdict_entries``'s
+            result. ``None`` (default) collects from the store as before.
     """
     if not isinstance(text, str):
         return text
     try:
-        entries = collect_active_chatdict_entries(db, conversation_id, char_data)
+        if entries is None:
+            entries = collect_active_chatdict_entries(db, conversation_id, char_data)
         if not entries:
             return text
         return process_user_input(
-            text, entries, max_tokens=max_tokens, strategy=strategy
+            text, list(entries), max_tokens=max_tokens, strategy=strategy
         )
     except Exception:
         logger.opt(exception=True).warning(
@@ -1681,6 +1917,7 @@ def update_chat_dictionary(
             return False
 
         conn.commit()
+        _bump_generation(db)  # ADR-221: store changed
         logger.info(f"Updated chat dictionary {dict_id}")
         return True
 
@@ -1734,6 +1971,7 @@ def delete_chat_dictionary(
             return False
 
         db.get_connection().commit()
+        _bump_generation(db)  # ADR-221: store changed
         logger.info(f"Deleted chat dictionary {dict_id}")
         return True
 

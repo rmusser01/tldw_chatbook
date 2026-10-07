@@ -201,6 +201,21 @@ class LocalChatDictionaryService:
             raise ValueError("Local chat dictionary backend is unavailable.")
         return self.db
 
+    @property
+    def generation(self) -> int:
+        """Monotonic dictionary-store generation (ADR-221); 0 until the first
+        successful write.
+
+        Reads the shared per-db counter (``cdl.dictionary_store_generation``)
+        so the service, the lib's write functions and the send path all agree;
+        every successful dictionary write — row CRUD via :mod:`Chat_Dictionary_Lib`
+        and this service's conversation-attachment / character-embedded-snapshot
+        writes — bumps it. Failed writes and reads never bump. In-memory cell
+        read only; deliberately not a guarded DB operation."""
+        if self.db is None:
+            raise ValueError("Local chat dictionary backend is unavailable.")
+        return cdl.dictionary_store_generation(self.db)
+
     @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -934,6 +949,9 @@ class LocalChatDictionaryService:
             {"metadata": json.dumps(meta)},
             expected_version=record["version"],
         )
+        # ADR-221: the attachment set is part of the dictionary store the
+        # send-path bundle cache keys on -- bump so cached bundles invalidate.
+        cdl._bump_generation(self._require_db())
 
     @_chat_sources.guarded
     def attach_to_conversation(
@@ -1129,6 +1147,9 @@ class LocalChatDictionaryService:
         self._require_db().update_character_card(
             int(character_id), {"extensions": ext}, expected_version=record["version"]
         )
+        # ADR-221: embedded-snapshot writes change what the send path resolves
+        # for this character -- bump (mirrors the world-book attach/detach bump).
+        cdl._bump_generation(self._require_db())
 
     @_chat_sources.guarded
     def attach_to_character(
