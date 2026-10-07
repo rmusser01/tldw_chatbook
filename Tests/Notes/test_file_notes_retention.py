@@ -152,8 +152,67 @@ def test_checkpoint_cap_evicts_the_oldest_beyond_the_bound(replica: FileNotesRep
         f"session-{index:03d}"
         for index in range(total - MAX_REVISIONS_PER_NOTE, total)
     ][::-1]
-    # Protected paths are exempt from every eviction (AC #3).
-    assert _revision_count(replica, root, "kept.md") == total
+    # PR #3016 review finding 14: protected paths are capped too (they are
+    # the only checkpoint writer), keeping the NEWEST sessions like any
+    # other path; only the 30-day expiry exempts them (pinned below).
+    assert _revision_count(replica, root, "kept.md") == MAX_REVISIONS_PER_NOTE
+    kept_survivors = replica.list_revisions(root, "kept.md", limit=total)
+    assert [entry.session_key for entry in kept_survivors] == [
+        f"session-{index:03d}"
+        for index in range(total - MAX_REVISIONS_PER_NOTE, total)
+    ][::-1]
+
+
+def test_protected_checkpoints_are_capped_but_never_expire(replica: FileNotesReplica) -> None:
+    """The cap applies to protected paths; the age cutoff never does.
+
+    PR #3016 review finding 14: exempting protected paths from the cap left
+    exactly the unbounded growth ADR-218 describes, because protected saves
+    are the only writer of ``pre_edit`` revisions. The Consequences line
+    ("up to 50 sessions") is the contract; this pins both halves of it:
+    the cap counts a protected path's fresh checkpoints, while stale ones
+    on a path below the cap never expire by age.
+    """
+    root = "/notes"
+    replica.protect(root, "growing.md")
+    # Fresh checkpoints beyond the cap: capped like any other path.
+    for index in range(MAX_REVISIONS_PER_NOTE + 10):
+        _checkpoint(
+            replica,
+            root,
+            "growing.md",
+            f"fresh body {index}".encode(),
+            f"session-{index:03d}",
+            NOW - timedelta(days=1) + timedelta(minutes=index),
+        )
+    # A protected path below the cap with only stale checkpoints: the
+    # 30-day expiry never touches protected revisions.
+    replica.protect(root, "archived.md")
+    for index in range(3):
+        _checkpoint(
+            replica,
+            root,
+            "archived.md",
+            f"ancient protected {index}".encode(),
+            f"ancient-{index}",
+            NOW - timedelta(days=90),
+        )
+
+    replica.enforce_retention(root, now=NOW)
+
+    assert (
+        _revision_count(replica, root, "growing.md", kind="pre_edit")
+        == MAX_REVISIONS_PER_NOTE
+    )
+    sessions = {
+        entry.session_key
+        for entry in replica.list_revisions(root, "growing.md", limit=100)
+    }
+    # The cap kept the newest sessions; the oldest gave way.
+    assert f"session-{MAX_REVISIONS_PER_NOTE + 9:03d}" in sessions
+    assert "session-000" not in sessions
+    # Age-based expiry still never evicts a protected path's revisions.
+    assert _revision_count(replica, root, "archived.md", kind="pre_edit") == 3
 
 
 def test_delete_revisions_do_not_consume_the_checkpoint_cap(
@@ -250,6 +309,63 @@ def test_the_most_recent_tombstone_is_never_evicted_even_when_old(
     _tombstone(replica, solo, "lone.md", NOW - timedelta(days=60))
     replica.enforce_retention(solo, now=NOW)
     assert replica.list_deleted(solo) == ["lone.md"]
+
+
+def test_tied_expired_tombstones_keep_exactly_one(replica: FileNotesReplica) -> None:
+    """PR #3016 review finding 6: a tied greatest stamp exempts ONE row.
+
+    Two long-expired tombstones share the same ``deleted_at``; the sweep
+    must preserve exactly one most-recent deletion (deterministic
+    tie-break), not every peer that ties the maximum.
+    """
+    root = "/notes"
+    tied = NOW - timedelta(days=40)
+    _tombstone(replica, root, "first-tied.md", tied)
+    _tombstone(replica, root, "second-tied.md", tied)
+
+    replica.enforce_retention(root, now=NOW)
+
+    survivors = replica.list_deleted(root)
+    assert len(survivors) == 1
+    survivor = survivors[0]
+    assert survivor in {"first-tied.md", "second-tied.md"}
+    # The survivor's exact bytes remain restorable.
+    assert (
+        replica.get_restore_bytes(root, survivor)
+        == f"final bytes of {survivor}".encode()
+    )
+
+
+def test_preserved_tombstone_keeps_its_delete_revision_when_stamps_differ(
+    replica: FileNotesReplica,
+) -> None:
+    """PR #3016 review finding 7: the exemption is by identity.
+
+    ``prepare_deletion`` stores ``created_at`` and ``deleted_at``
+    independently; when they differ, timestamp equality cannot identify the
+    tombstone's own delete revision. The preserved (here: only) tombstone
+    must keep its bytes even though the two stamps disagree.
+    """
+    root = "/notes"
+    payload = b"bytes the tombstone still holds"
+    _upsert(replica, root, "kept.md", payload)
+    replica.prepare_deletion(
+        root,
+        "kept.md",
+        payload,
+        content_hash=_digest(payload),
+        decoded_text=payload.decode("utf-8"),
+        deleted_at=(NOW - timedelta(days=40)).isoformat(),
+        created_at=(NOW - timedelta(days=40) - timedelta(hours=1)).isoformat(),
+    )
+
+    replica.enforce_retention(root, now=NOW)
+
+    assert replica.list_deleted(root) == ["kept.md"]
+    assert (
+        replica.get_revision(root, "kept.md", kind="delete", session_key=None)
+        == (payload, _digest(payload))
+    )
 
 
 def test_retention_never_touches_other_roots(replica: FileNotesReplica) -> None:

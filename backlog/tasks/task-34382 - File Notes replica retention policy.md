@@ -126,3 +126,91 @@ cutoff; exactly-30-days survives (`test_expiry_boundary_keeps_exactly_thirty_day
 `backlog/decisions/README.md`,
 `Tests/Notes/test_file_notes_retention.py` (new),
 `Tests/UI/test_library_file_notes_retention.py` (new).
+
+## Qodo review round (PR #3016) — 2026-10-06
+
+Disposition of the retention findings against this task's code
+(`enforce_retention` + invocation seams).
+
+- **HIGH 1 — the checkpoint cap could evict the NEWEST checkpoint.** Fixed.
+  Rule 1 chose its 50 survivors with SQL `ORDER BY created_at DESC` — text
+  order, not time order, for the mixed `Z`/`+00:00`/offset spellings the
+  replica stores (the module's own docstring already promised parsed-UTC
+  comparison; Rule 1 was the one place still sorting in SQL). Survivors are
+  now ranked in Python by `_revision_row_rank` (parsed UTC instant, rowid
+  tie-break); unparseable stamps rank newest and are kept (ADR-218
+  fail-safe). Red pin (pre-fix):
+  `test_checkpoint_cap_ranks_mixed_timestamp_spellings_by_instant` evicted
+  exactly the newest recovery copy whose `-09:00` spelling sorts lexically
+  lowest.
+- **M6 — tied greatest `deleted_at` exempted every peer.** Fixed. Rule 2
+  now preserves exactly ONE most-recent tombstone, chosen by
+  `(parsed instant, files rowid)`; tied peers expire. Red pin (pre-fix):
+  `test_tied_expired_tombstones_keep_exactly_one` kept both (2 != 1).
+- **M7 — a retained tombstone could lose its bytes.** Fixed. Rule 3 exempted
+  a delete revision by `created_at == newest deleted_at`, but
+  `prepare_deletion` records the two stamps independently. The preserved
+  tombstone's delete revision is now identified by row identity (the newest
+  `delete` row of the preserved path — the same row a NULL-session lookup
+  serves), never by timestamp equality. Red pin (pre-fix):
+  `test_preserved_tombstone_keeps_its_delete_revision_when_stamps_differ`.
+- **M14 — protected notes never hit the cap.** Fixed (policy corrected).
+  Only protected saves write `pre_edit` checkpoints, so Rule 1's protected
+  exemption left exactly the ADR-218 growth scenario unbounded and
+  contradicted the ADR's own Consequences ("up to 50 sessions"). The cap
+  now applies to every path; protected paths stay exempt from the 30-day
+  expiry only. ADR-218 Decision items 1/3/4 and the rejected-alternative
+  bullet were corrected to match the Consequences. Pins: updated
+  `test_checkpoint_cap_evicts_the_oldest_beyond_the_bound` (kept.md now
+  capped) and new
+  `test_protected_checkpoints_are_capped_but_never_expire`.
+- **M10 — shutdown retention failures went unreported.** Fixed. `shutdown()`
+  now inspects the returned `OperationResult` and logs the message/status
+  when the sweep did not succeed (exceptions were already logged); the
+  seam stays non-blocking. Both shutdown log paths use the module-level
+  loguru logger: the first cut used the DOM `self.log` and regressed 16
+  workspace tests that call `shutdown()` after the app exits
+  (`NoActiveAppError` — the DOM logger needs the `active_app` context var);
+  recorded in `backlog/docs/lessons-textual.md` and caught by the
+  workspace-battery A/B below before anything was pushed.
+- **M11 — retention `fetchall()` collections.** Rejected with
+  justification. The three collections are metadata-only tuples (no BLOB
+  is ever loaded in retention) and are bounded by the schema and the
+  policy itself: tombstones ≤ one per path (`UNIQUE(root, relative_path)`),
+  checkpoints ≤ cap + ε per path after this round, and the tombstone pass
+  is an inherently full-scan reduction (the single most-recent tombstone
+  must be known before anything is evicted, so batching cannot bound it).
+  Collect-then-delete is also the SQLite-safe pattern — modifying a table
+  while a SELECT cursor iterates it is undefined behavior — and ADR-218
+  deliberately runs the three rules in one transaction. Keyset batching
+  would add failure modes to a correctness-critical transaction without a
+  measurable memory win; the durable answer to pathological volume is the
+  retention policy itself, not pagination inside its sweep.
+
+Evidence: `python -m pytest Tests/Notes/test_file_notes_replica.py
+Tests/Notes/test_file_notes_retention.py
+Tests/Notes/test_file_notes_service.py
+Tests/Notes/test_file_notes_delete_safety.py
+Tests/Notes/test_file_notes_session_owner.py
+Tests/UI/test_library_file_notes_history.py
+Tests/UI/test_library_file_notes_delete_safety.py
+Tests/UI/test_library_file_notes_retention.py -q` → **206 passed** with
+this round's changes (new red pins verified failing against pre-fix HEAD
+first, via `git show HEAD:` file swaps — never `git stash`).
+
+Regression A/B, `Tests/UI/test_library_file_notes_workspace.py`
+(`--tb=no`, sequential same-machine runs): HEAD baseline **54 FAILED**, all
+pre-existing (the config-admission `RecoveryRequired` reds recorded in the
+pre-review notes). The first fixed run showed **70 FAILED** — the diff
+isolated 16 names to this round's `self.log` shutdown regression (fixed as
+above; bisected by single-file swap, red pin `NoActiveAppError`). The
+final full-fix run's FAILED list is **byte-identical to the HEAD baseline**
+(54 names, zero new, zero gone). One intermediate post-fix run additionally
+showed `test_initial_root_scan_projects_checking_authority_while_actions_a
+re_gated`, a ~1-in-6 paint-timing flake whose failure mode is a middle-
+elided `#file-notes-root-status` string (`'Chec…otes'`) — reproduced 1-in-6
+on the fixed tree AND 0-in-4 at HEAD in calm single runs, with no code-path
+overlap (this round touches neither root-status painting nor the scan
+gating), i.e. the same pre-existing `_wait_until` flake family the
+pre-review notes already record for this battery; it did not appear in the
+final A/B run.

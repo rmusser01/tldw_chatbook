@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import types
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
 
@@ -752,3 +753,222 @@ def test_database_path_expands_user_home(
     assert Path(database_path) == expected_path
     assert expected_path.is_file()
     assert not (tmp_path / "~").exists()
+
+
+def test_list_revisions_orders_by_parsed_instant_not_text(
+    replica: FileNotesReplica,
+) -> None:
+    """PR #3016 review finding 12: a bounded listing must not drop the newest.
+
+    The chronologically newest revision carries an offset spelling whose
+    wall-clock text sorts BELOW the older revision's ``Z`` text, so a
+    ``ORDER BY created_at DESC ... LIMIT`` window would show the older one
+    and silently omit the newest from the bounded listing.
+    """
+    root = "/notes"
+    # 09:30 UTC -- the NEWEST instant, but its text ("09:30...") ...
+    _checkpoint_at(
+        replica,
+        root,
+        "ordered.md",
+        b"the newest checkpoint",
+        "session-newest",
+        "2026-10-01T09:30:00Z",
+    )
+    # ... sorts BELOW this older row: 11:00 at +02:00 is 09:00 UTC, older,
+    # yet its wall-clock text ("11:00...") sorts above the newest's.
+    _checkpoint_at(
+        replica,
+        root,
+        "ordered.md",
+        b"the older checkpoint",
+        "session-older",
+        "2026-10-01T11:00:00+02:00",
+    )
+
+    listed = replica.list_revisions(root, "ordered.md", limit=1)
+
+    assert [entry.session_key for entry in listed] == ["session-newest"]
+    assert listed[0].created_at == "2026-10-01T09:30:00Z"
+    assert listed[0].size == len(b"the newest checkpoint")
+
+
+def test_history_page_size_is_clamped_to_the_shared_ceiling(
+    replica: FileNotesReplica,
+) -> None:
+    """PR #3016 review finding 3: a huge ``limit`` cannot fetch the world."""
+    from tldw_chatbook.Notes.file_notes_replica import (
+        REVISION_HISTORY_DEFAULT_LIMIT,
+        REVISION_HISTORY_MAX_LIMIT,
+    )
+
+    assert REVISION_HISTORY_MAX_LIMIT > REVISION_HISTORY_DEFAULT_LIMIT
+    root = "/notes"
+    base = datetime(2026, 10, 1, 10, 0, 0, tzinfo=timezone.utc)
+    for index in range(REVISION_HISTORY_MAX_LIMIT + 50):
+        _checkpoint_at(
+            replica,
+            root,
+            "busy.md",
+            f"body {index}".encode(),
+            f"session-{index:04d}",
+            (base + timedelta(seconds=index)).isoformat().replace("+00:00", "Z"),
+        )
+
+    unclamped = replica.list_revisions(root, "busy.md", limit=1_000_000)
+    assert len(unclamped) == REVISION_HISTORY_MAX_LIMIT
+    # The default page size stays the shared named constant (finding 5).
+    defaulted = replica.list_revisions(root, "busy.md")
+    assert len(defaulted) == REVISION_HISTORY_DEFAULT_LIMIT
+
+
+def test_checkpoint_cap_ranks_mixed_timestamp_spellings_by_instant(
+    replica: FileNotesReplica,
+) -> None:
+    """PR #3016 review finding 1: the cap must not evict the newest row.
+
+    Fifty checkpoints carry ``Z``-spelled stamps around 09:00-09:49 UTC; the
+    chronologically NEWEST checkpoint instead carries a ``-09:00`` offset
+    spelling whose wall-clock text ("02:00") sorts lexically BELOW every
+    other row. A ``ORDER BY created_at DESC`` text cap would evict exactly
+    that newest recovery copy; ranking by parsed UTC instant must keep it
+    and evict the oldest instant instead.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from tldw_chatbook.Notes.file_notes_replica import MAX_REVISIONS_PER_NOTE
+
+    root = "/notes"
+    base = datetime(2026, 10, 1, 9, 0, 0, tzinfo=timezone.utc)
+    for index in range(MAX_REVISIONS_PER_NOTE):
+        _checkpoint_at(
+            replica,
+            root,
+            "mixed.md",
+            f"body {index}".encode(),
+            f"session-{index:03d}",
+            (base + timedelta(minutes=index)).isoformat().replace("+00:00", "Z"),
+        )
+    # 11:00 UTC, the newest instant, spelled with a -09:00 offset so its
+    # text sorts first (lexically oldest) of all fifty-one rows.
+    newest_stamp = datetime(2026, 10, 1, 2, 0, 0, tzinfo=timezone(timedelta(hours=-9)))
+    _checkpoint_at(
+        replica,
+        root,
+        "mixed.md",
+        b"the newest recovery copy",
+        "session-newest",
+        newest_stamp.isoformat(),
+    )
+
+    replica.enforce_retention(
+        root,
+        now=datetime(2026, 10, 4, 12, 0, 0, tzinfo=timezone.utc),
+    )
+
+    survivors = {
+        entry.session_key
+        for entry in replica.list_revisions(root, "mixed.md", limit=100)
+    }
+    assert "session-newest" in survivors
+    assert "session-000" not in survivors
+    assert (
+        replica.get_revision(
+            root,
+            "mixed.md",
+            kind="pre_edit",
+            session_key="session-newest",
+        )
+        == (b"the newest recovery copy", _digest(b"the newest recovery copy"))
+    )
+
+
+def _checkpoint_at(
+    replica: FileNotesReplica,
+    root: str,
+    relative_path: str,
+    payload: bytes,
+    session_key: str,
+    created_at: str,
+) -> None:
+    replica.checkpoint(
+        root,
+        relative_path,
+        payload,
+        content_hash=_digest(payload),
+        session_key=session_key,
+        created_at=created_at,
+    )
+
+
+def test_each_deletion_cycle_serves_its_own_bytes(
+    replica: FileNotesReplica,
+) -> None:
+    """PR #3016 review finding 2: repeated deletions are distinct rows.
+
+    ``prepare_deletion`` inserts one NULL-session ``delete`` row per cycle
+    (NULLs do not collide under the UNIQUE index), so a lookup without an
+    explicit revision identity must serve the NEWEST deletion -- the row the
+    current tombstone's delete wrote -- while ``list_revisions`` row ids let
+    a History entry select any older deletion exactly.
+    """
+    root = "/notes"
+    first_bytes = b"deleted in the first cycle"
+    second_bytes = b"different bytes deleted in the second cycle"
+    for payload in (first_bytes, second_bytes):
+        _upsert(replica, root, "cycled.md", payload)
+        replica.prepare_deletion(
+            root,
+            "cycled.md",
+            payload,
+            content_hash=_digest(payload),
+            decoded_text=payload.decode("utf-8"),
+        )
+        # Restore clears the tombstone; the delete revision row remains.
+        replica.clear_tombstone(root, "cycled.md")
+
+    # Without an identity: the CURRENT tombstone's deletion, never the
+    # first cycle's bytes.
+    assert (
+        replica.get_revision(root, "cycled.md", kind="delete", session_key=None)
+        == (second_bytes, _digest(second_bytes))
+    )
+
+    listed = replica.list_revisions(root, "cycled.md", limit=10)
+    deletions = [entry for entry in listed if entry.kind == "delete"]
+    assert len(deletions) == 2
+    # Newest first, and each listed row id selects exactly its own bytes.
+    assert deletions[0].session_key is None
+    older_id = deletions[1].revision_id
+    assert older_id != deletions[0].revision_id
+    assert (
+        replica.get_revision(
+            root,
+            "cycled.md",
+            kind="delete",
+            session_key=None,
+            revision_id=older_id,
+        )
+        == (first_bytes, _digest(first_bytes))
+    )
+    assert (
+        replica.verify_revision(
+            root,
+            "cycled.md",
+            kind="delete",
+            session_key=None,
+            revision_id=older_id,
+        )
+        is True
+    )
+    # A row id that does not exist refuses rather than falling back.
+    assert (
+        replica.get_revision(
+            root,
+            "cycled.md",
+            kind="delete",
+            session_key=None,
+            revision_id=deletions[0].revision_id + 10_000,
+        )
+        is None
+    )

@@ -114,3 +114,28 @@ service test pins the same shape directly.
 `tldw_chatbook/Widgets/Library/library_file_notes_workspace.py`,
 `Tests/Notes/test_file_notes_delete_safety.py` (new),
 `Tests/UI/test_library_file_notes_delete_safety.py` (new).
+
+## Qodo review round (PR #3016) — 2026-10-06
+
+Disposition of the delete-safety findings against this task's code
+(restore refusals + the Export deleted copy fallback).
+
+- **M8 — a refused-restore marker survived root changes.** Fixed.
+  `_restore_refusal_path` was cleared only by a successful restore or by
+  selecting a DIFFERENT relative path, so after adopting a new root the
+  Export deleted copy fallback stayed visible for a same-named tombstone
+  whose restore was never refused. `_commit_root_candidate.publish()` now
+  clears the marker whenever a root candidate is adopted (the marker is
+  scoped to the refusing root's session). UI pin (red pre-fix):
+  `test_restore_refusal_marker_does_not_survive_a_root_change` — the
+  fallback stayed hidden on the new root's same-named tombstone and
+  reappeared only after that root's own refusal.
+- **HIGH 2's fallback half.** The Export deleted copy action calls
+  `export_revision_file(kind="delete", session_key=None)`, which now
+  serves the newest deletion's bytes (see 34381's section); the
+  "Exported the deleted bytes exactly" receipt can no longer be produced
+  from an earlier deletion cycle's bytes, and the receipt appends any
+  durability warning (M9).
+
+Evidence: `Tests/UI/test_library_file_notes_delete_safety.py` (3 tests,
+including the new root-change pin) green after the fixes.

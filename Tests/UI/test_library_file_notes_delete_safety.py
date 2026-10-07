@@ -161,3 +161,78 @@ async def test_missing_parent_restore_refusal_offers_the_fallback(
         )
         assert (root / "flat.md").read_bytes() == DELETED_BYTES
     replica.close()
+
+
+@pytest.mark.asyncio
+async def test_restore_refusal_marker_does_not_survive_a_root_change(
+    tmp_path: Path,
+) -> None:
+    """PR #3016 review finding 8: the fallback marker is root-scoped.
+
+    Root A's tombstone restore is refused and offers Export deleted copy;
+    adopting root B -- which carries a SAME-NAMED tombstone -- must retire
+    the marker: B's tombstone never had a refused restore, so the fallback
+    stays hidden until B's own restore is refused.
+    """
+    replica = FileNotesReplica(":memory:")
+    first = tmp_path / "refused-root"
+    second = tmp_path / "next-root"
+    first.mkdir()
+    second.mkdir()
+    (first / "note.md").write_bytes(b"root A deleted bytes\n")
+    setup = FileNotesService(first, replica)
+    opened = setup.open_file("note.md")
+    assert (
+        setup.delete_file("note.md", expected_hash=opened.content_hash).status
+        == "ok"
+    )
+    # Root B arrives with its own same-named tombstone.
+    (second / "note.md").write_bytes(b"root B deleted bytes\n")
+    setup_b = FileNotesService(second, replica)
+    opened_b = setup_b.open_file("note.md")
+    assert (
+        setup_b.delete_file("note.md", expected_hash=opened_b.content_hash).status
+        == "ok"
+    )
+
+    workspace = LibraryFileNotesWorkspace(
+        root=first,
+        replica=replica,
+        poll_interval=60,
+    )
+    async with _WorkspaceHarness(workspace).run_test(size=WIDE) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        # Someone occupies root A's deleted path; the restore is refused.
+        (first / "note.md").write_bytes(b"a replacement now lives here\n")
+        assert workspace.select_deleted("note.md")
+        await _press_restore(pilot, workspace)
+        await _wait_until(
+            pilot,
+            lambda: "Restore refused" in _action_status(workspace),
+            f"refusal never reported: {_action_status(workspace)!r}",
+        )
+        assert workspace.query_one("#file-notes-export-deleted", Button).display
+
+        # Adopting root B retires the marker even though B lists a
+        # same-named tombstone.
+        assert await workspace.set_root(second, persist=False)
+        await _wait_until(
+            pilot,
+            lambda: workspace.root == second.resolve(),
+            "second root was not adopted",
+        )
+        assert workspace._deleted_paths == ("note.md",)
+        assert workspace.select_deleted("note.md")
+        fallback = workspace.query_one("#file-notes-export-deleted", Button)
+        assert not fallback.display
+
+        # The mechanism itself still works: refusing B's own restore
+        # (the deleted path is occupied again) re-offers the fallback.
+        (second / "note.md").write_bytes(b"a root B replacement now lives here\n")
+        await _press_restore(pilot, workspace)
+        await _wait_until(
+            pilot,
+            lambda: fallback.display,
+            "fallback never reappeared for root B's own refusal",
+        )
+    replica.close()

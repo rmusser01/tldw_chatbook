@@ -123,3 +123,66 @@ every existing w4 test — not a change this task introduced.
 `Tests/Notes/test_file_notes_replica.py`,
 `Tests/Notes/test_file_notes_service.py`,
 `Tests/UI/test_library_file_notes_history.py` (new).
+
+## Qodo review round (PR #3016) — 2026-10-06
+
+Disposition of the review findings against this task's read-path code
+(listing, verify, export, restore). All dispositions verified against the
+code before acting; red pins were confirmed against the pre-fix HEAD
+(`git show HEAD:` file swap, no stash) before the fixes landed.
+
+- **HIGH 2 — deleted-copy export could write an older deletion's bytes.**
+  Fixed. `get_revision` served an arbitrary NULL-session `delete` row
+  (fetchone without ordering; NULLs are distinct under the UNIQUE index, so
+  every delete cycle inserts another row). Delete revisions now carry a
+  stable `revision_id` (rowid) surfaced through `ReplicaRevisionInfo` and
+  the service's verify/export/restore; identity-less NULL-session lookups
+  serve the NEWEST deletion by parsed instant (the current tombstone's own
+  snapshot). Red pin (pre-fix): `test_each_deletion_cycle_serves_its_own_bytes`
+  served the FIRST cycle's bytes; service-level
+  `test_deleted_copy_export_writes_the_current_tombstones_bytes` and
+  `test_history_revision_ids_select_each_deletion_exactly` pin the
+  delete→restore→re-delete sequence end to end.
+- **M3 — unbounded history page size.** Fixed. `REVISION_HISTORY_MAX_LIMIT
+  = 200` is clamped in both the service (`list_revision_history`) and the
+  replica (`list_revisions`). Pin:
+  `test_history_page_size_is_clamped_to_the_shared_ceiling` (red pre-fix:
+  the constant did not exist) and
+  `test_revision_history_limit_is_clamped_to_the_shared_ceiling`.
+- **M5 — two independent `10` defaults.** Fixed. The default lives once in
+  the replica module (`REVISION_HISTORY_DEFAULT_LIMIT`); the service's
+  `REVISION_HISTORY_LIMIT` aliases it.
+- **M12 — bounded history could omit the newest revision.** Fixed.
+  `list_revisions` no longer sorts `created_at` as SQL text; rows rank by
+  `_revision_row_rank` (parsed UTC instant, rowid tie-break), and the
+  listing reads `length(raw_bytes)` instead of loading the blobs. Red pin
+  (pre-fix): `test_list_revisions_orders_by_parsed_instant_not_text`
+  returned the older revision at the limit boundary.
+- **M4 — History dialog destination skipped shared validation.** Fixed.
+  `FileNotesHistoryDialog._destination()` applies the same
+  `validate_text_input(..., max_length=4096, allow_html=True)` the
+  `#file-notes-path` input gets; service path-safety checks unchanged. UI
+  pin: `test_history_destination_input_rejects_unsupported_text` (red
+  pre-fix: the dialog dismissed with the request).
+- **M13 — history actions could act on another root.** Fixed. Every
+  `_HistoryActionRequest` carries the `service` and `root_generation` that
+  supplied the dialog's listing plus the `revision_id`; execution refuses
+  when either identity changed, and `_show_history` re-checks the opened
+  file after its await. UI pin:
+  `test_history_action_is_rejected_after_the_root_changes` (red pre-fix:
+  the type did not carry the identity).
+- **M9 — export could report failure after publishing.** Fixed. After the
+  `os.link` publishes verified bytes, a parent-fsync failure is a
+  post-publication durability warning: the destination is recorded
+  (`SessionChange("created")`), the result is `ok` with
+  `replica_warning`, and the workspace receipts append the warning.
+  Retrying no longer meets a bogus `exists` for an unrecorded file. Pin:
+  `test_revision_export_reports_durability_warning_after_publishing`
+  (injected parent-fsync OSError; red pre-fix: status `error` with the
+  file published but unrecorded). The parallel pre-existing shape in
+  `export_exact_file` (task-32896, outside this PR) was left untouched.
+
+Evidence: `Tests/Notes/test_file_notes_replica.py`
+`Tests/Notes/test_file_notes_service.py`
+`Tests/UI/test_library_file_notes_history.py` green after the fixes;
+full-battery A/B below in 34382's section.

@@ -21,6 +21,8 @@ from tldw_chatbook.Notes.file_notes_replica import (
     FileNotesReplica,
     ReplicaFileInfo,
     ReplicaRevisionInfo,
+    REVISION_HISTORY_DEFAULT_LIMIT,
+    REVISION_HISTORY_MAX_LIMIT,
 )
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
@@ -42,8 +44,10 @@ INTERACTIVE_FILE_CHARS = 200_000
 LARGE_FILE_EXCERPT_CHARS = 100_000
 EXACT_EXPORT_CHUNK_BYTES = 64 * 1024
 SUPPORTED_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".text"})
-#: How many revisions one bounded history read returns, newest first.
-REVISION_HISTORY_LIMIT = 10
+#: How many revisions one bounded history read returns, newest first. The
+#: default and its ceiling are defined once beside the replica's listing
+#: API so the two layers cannot drift (PR #3016 review finding 5).
+REVISION_HISTORY_LIMIT = REVISION_HISTORY_DEFAULT_LIMIT
 _ACTIVATION_WARNING = "Recovery activation required; replica refresh is inactive"
 UTF8_BOM = b"\xef\xbb\xbf"
 
@@ -1198,6 +1202,7 @@ class FileNotesService:
         *,
         kind: str,
         session_key: str | None,
+        revision_id: int | None = None,
     ) -> tuple[OperationResult | None, bytes, str]:
         """Load one verified revision for publication.
 
@@ -1206,7 +1211,9 @@ class FileNotesService:
             destination_path: Publication target, for refusal results.
             kind: Revision kind (``pre_edit`` or ``delete``).
             session_key: Coalescing session identifier; ``None`` selects the
-                deletion revision.
+                newest deletion revision.
+            revision_id: Exact revision row selecting one specific deletion
+                among several (PR #3016 review finding 2).
 
         Returns:
             A refusal result, or ``None`` plus the revision's exact bytes and
@@ -1235,6 +1242,7 @@ class FileNotesService:
                 relative_path,
                 kind=kind,
                 session_key=session_key,
+                revision_id=revision_id,
             )
         except Exception as error:
             return (
@@ -1291,7 +1299,9 @@ class FileNotesService:
 
         Args:
             relative_path: File path relative to the notes root.
-            limit: Maximum number of entries returned.
+            limit: Maximum number of entries returned; clamped to at most
+                :data:`REVISION_HISTORY_MAX_LIMIT` before the replica is
+                asked (PR #3016 review finding 3).
 
         Returns:
             Bounded revision entries and any replica warning.
@@ -1299,13 +1309,14 @@ class FileNotesService:
         if self._replica is None or limit <= 0:
             warning = None if self._replica is not None else "Replica unavailable"
             return RevisionHistoryResult(replica_warning=warning)
+        bounded_limit = min(limit, REVISION_HISTORY_MAX_LIMIT)
         try:
             return RevisionHistoryResult(
                 entries=tuple(
                     self._replica.list_revisions(
                         self.root_key,
                         relative_path,
-                        limit=limit,
+                        limit=bounded_limit,
                     )
                 )
             )
@@ -1319,6 +1330,7 @@ class FileNotesService:
         *,
         kind: str,
         session_key: str | None,
+        revision_id: int | None = None,
     ) -> OperationResult:
         """Compare one revision's stored bytes with its recorded digest.
 
@@ -1327,6 +1339,9 @@ class FileNotesService:
             kind: Revision kind (``pre_edit`` or ``delete``).
             session_key: Coalescing session identifier; ``None`` selects the
                 deletion revision.
+            revision_id: Exact revision row (from ``list_revision_history``)
+                selecting one specific deletion among several (PR #3016
+                review finding 2).
 
         Returns:
             Verification status with a reason for every refusal.
@@ -1343,6 +1358,7 @@ class FileNotesService:
                 relative_path,
                 kind=kind,
                 session_key=session_key,
+                revision_id=revision_id,
             )
         except Exception as error:
             return _result(
@@ -1369,6 +1385,7 @@ class FileNotesService:
         *,
         kind: str,
         session_key: str | None,
+        revision_id: int | None = None,
     ) -> OperationResult:
         """Exact-export one revision to an absent path, never replacing it.
 
@@ -1382,10 +1399,15 @@ class FileNotesService:
             destination_path: New path relative to the notes root.
             kind: Revision kind (``pre_edit`` or ``delete``).
             session_key: Coalescing session identifier; ``None`` selects the
-                deletion revision.
+                newest deletion revision -- the current tombstone's own
+                snapshot (PR #3016 review finding 2).
+            revision_id: Exact revision row (from ``list_revision_history``)
+                selecting one specific deletion among several.
 
         Returns:
-            Export status and the exact exported content hash.
+            Export status, the exact exported content hash, and a
+            durability warning when the published folder entry could not be
+            fsync-confirmed (the file itself is published and recorded).
         """
         if not self._root_is_online():
             return _result("offline", destination_path)
@@ -1394,6 +1416,7 @@ class FileNotesService:
             destination_path,
             kind=kind,
             session_key=session_key,
+            revision_id=revision_id,
         )
         if refusal is not None:
             return refusal
@@ -1405,6 +1428,7 @@ class FileNotesService:
 
         temporary_descriptor = -1
         temporary_path: str | None = None
+        durability_warning: str | None = None
         digest = hashlib.sha256()
         try:
             try:
@@ -1443,8 +1467,24 @@ class FileNotesService:
                     return _result("unsafe", destination_path, str(error))
                 return _result("error", destination_path, str(error))
             # Every handler above returns, so reaching here means the link
-            # published; persist the directory entry that names it.
-            fsync_parent_directory(destination.parent)
+            # PUBLISHED: the destination now exists with verified bytes. A
+            # parent-fsync failure past this point is therefore a durability
+            # warning about a published file, not a failed export (PR #3016
+            # review finding 9): reporting it as an error would leave an
+            # unrecorded file behind and a retry that can only return
+            # ``exists``.
+            try:
+                fsync_parent_directory(destination.parent)
+            except OSError as error:
+                durability_warning = (
+                    "Exported exactly, but the folder entry is not "
+                    f"fsync-confirmed: {error}"
+                )
+                logger.warning(
+                    "File Notes revision export published without a confirmed "
+                    "parent fsync: {}",
+                    error,
+                )
         except OSError as error:
             return _result("error", destination_path, str(error))
         finally:
@@ -1464,6 +1504,7 @@ class FileNotesService:
             status="ok",
             relative_path=destination_path,
             content_hash=content_hash,
+            replica_warning=durability_warning,
         )
 
     @_serialized
@@ -1474,15 +1515,19 @@ class FileNotesService:
         *,
         kind: str,
         session_key: str | None,
+        revision_id: int | None = None,
     ) -> OperationResult:
         """Restore one revision to an absent path with an exclusive create.
 
         Args:
-            relative_path: Revision's file path relative to the notes root.
+            relative_path: File path relative to the notes root.
             destination_path: New path relative to the notes root.
             kind: Revision kind (``pre_edit`` or ``delete``).
             session_key: Coalescing session identifier; ``None`` selects the
-                deletion revision.
+                newest deletion revision -- the current tombstone's own
+                snapshot (PR #3016 review finding 2).
+            revision_id: Exact revision row (from ``list_revision_history``)
+                selecting one specific deletion among several.
 
         Returns:
             Restore status, resulting hash, and any replica warning.
@@ -1494,6 +1539,7 @@ class FileNotesService:
             destination_path,
             kind=kind,
             session_key=session_key,
+            revision_id=revision_id,
         )
         if refusal is not None:
             return refusal

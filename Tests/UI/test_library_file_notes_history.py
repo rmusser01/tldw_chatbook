@@ -201,3 +201,126 @@ async def test_history_restore_refuses_an_occupied_destination(
         )
         assert (root / "restored.md").read_bytes() == checkpoint_bytes
     replica.close()
+
+
+@pytest.mark.asyncio
+async def test_history_destination_input_rejects_unsupported_text(
+    tmp_path: Path,
+) -> None:
+    """PR #3016 review finding 4: the shared text validator, not just trim.
+
+    The workspace's path input refuses text beyond the shared length bound
+    before dispatch; the History dialog's destination must apply the same
+    check instead of carrying any nonempty string onto a service call.
+    """
+    replica = FileNotesReplica(":memory:")
+    root, _checkpoint_bytes, _current_bytes = _protected_file_with_checkpoint(
+        tmp_path,
+        replica,
+    )
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica)
+    async with _WorkspaceHarness(workspace).run_test(size=WIDE) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        assert await workspace.open_path("important.md")
+        await _wait_until(
+            pilot,
+            lambda: workspace.current_path == "important.md",
+            "important.md did not open",
+        )
+
+        dialog = await _open_history_dialog(pilot, workspace)
+        _select_first_revision(dialog)
+        destination = dialog.query_one("#file-notes-history-destination")
+        # Far beyond the shared 4096-character bound the workspace path
+        # input enforces.
+        destination.value = "x" * 5000
+        dialog.query_one("#file-notes-history-export").press()
+        await pilot.pause()
+
+        # The dialog refuses locally: it stays open with the reason shown,
+        # and no request reached the workspace.
+        assert pilot.app.screen is dialog
+        assert "not supported" in _dialog_status(dialog)
+        assert "History export" not in _action_status(workspace)
+    replica.close()
+
+
+def _dialog_status(dialog: FileNotesHistoryDialog) -> str:
+    return _static_text(dialog, "#file-notes-history-status")
+
+
+@pytest.mark.asyncio
+async def test_history_action_is_rejected_after_the_root_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR #3016 review finding 13: no acting on another root.
+
+    A History dialog's request carries the service and root generation that
+    supplied its listing; if the root changed before the dismissed dialog's
+    action runs, the action is refused before any service call.
+    """
+    from tldw_chatbook.Notes.file_notes_service import FileNotesService
+    from tldw_chatbook.Widgets.Library.library_file_notes_workspace import (
+        _HistoryActionRequest,
+    )
+
+    replica = FileNotesReplica(":memory:")
+    root, _checkpoint_bytes, _current_bytes = _protected_file_with_checkpoint(
+        tmp_path,
+        replica,
+    )
+    other = tmp_path / "other-vault"
+    other.mkdir()
+    (other / "important.md").write_bytes(b"another root same name\n")
+    replica.protect(str(other.resolve()), "important.md")
+
+    calls: list[str] = []
+    real_verify = FileNotesService.verify_revision
+
+    def recording_verify(service_self, *args: object, **kwargs: object) -> object:
+        calls.append(service_self.root_key)
+        return real_verify(service_self, *args, **kwargs)
+
+    monkeypatch.setattr(FileNotesService, "verify_revision", recording_verify)
+
+    workspace = LibraryFileNotesWorkspace(root=root, replica=replica)
+    async with _WorkspaceHarness(workspace).run_test(size=WIDE) as pilot:
+        await _wait_until(pilot, lambda: workspace.initialized, "scan did not finish")
+        current_service = workspace._service
+        assert current_service is not None
+
+        stale_request = _HistoryActionRequest(
+            action="verify",
+            relative_path="important.md",
+            kind="pre_edit",
+            session_key="session-1",
+            service=object(),  # The service that supplied the listing.
+            root_generation=workspace._root_generation + 5,
+            revision_id=1,
+        )
+        await workspace._execute_history_action(stale_request)
+        await pilot.pause()
+
+        assert "root changed" in _action_status(workspace)
+        assert calls == []
+
+        # A current request still runs against the live service.
+        fresh_request = _HistoryActionRequest(
+            action="verify",
+            relative_path="important.md",
+            kind="pre_edit",
+            session_key="session-1",
+            service=current_service,
+            root_generation=workspace._root_generation,
+            revision_id=1,
+        )
+        await workspace._execute_history_action(fresh_request)
+        await pilot.pause()
+        await _wait_until(
+            pilot,
+            lambda: "Revision verified" in _action_status(workspace),
+            f"verify status never arrived: {_action_status(workspace)!r}",
+        )
+        assert calls == [current_service.root_key]
+    replica.close()
