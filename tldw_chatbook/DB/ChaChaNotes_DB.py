@@ -18694,12 +18694,20 @@ DELETE FROM keywords
         like_pattern = f"%{self._escape_library_conversation_like(query)}%"
         fts_query = self._library_conversation_fts_query(query)
 
+        # Message-content substring matching stays a LIKE (substring
+        # semantics, mid-word included, are the Library contract) but the
+        # subquery is deliberately UNCORRELATED, mirroring the Console seam
+        # (see _conversation_search_filter): one bounded pass over
+        # ``messages`` per search -- shared by the COUNT, the page query,
+        # and the per-row hit_N projections via this branches list --
+        # instead of a per-candidate correlated scan (task-249's rule:
+        # never a leading-wildcard LIKE inside a correlated EXISTS; ~70 s
+        # for a common term at 150k messages on the correlated form).
         branches = [
             "LOWER(title) = LOWER(?)",
             "title LIKE ? ESCAPE '\\'",
-            "EXISTS (SELECT 1 FROM messages m "
-            "WHERE m.conversation_id = conversations.id AND m.deleted = 0 "
-            "AND m.content LIKE ? ESCAPE '\\')",
+            "id IN (SELECT m.conversation_id FROM messages m "
+            "WHERE m.deleted = 0 AND m.content LIKE ? ESCAPE '\\')",
         ]
         params: List[Any] = [query, like_pattern, like_pattern]
         title_hit_indexes = [0, 1]
