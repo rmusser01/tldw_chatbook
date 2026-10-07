@@ -202,19 +202,24 @@ def validate_regex_pattern(pattern: str) -> None:
         )
 
 
-def regex_search(pattern: str, text: str, ignore_case: bool) -> bool:
+def regex_search(pattern: "str | re.Pattern", text: str, ignore_case: bool) -> bool:
     """Search ``text`` for ``pattern``; never raises (bad pattern → False).
 
     Args:
-        pattern: The regex pattern.
+        pattern: The regex pattern — a string, or a precompiled
+            ``re.Pattern`` (ADR-221) whose flags were baked in at entry
+            processing time; ``ignore_case`` is ignored for patterns.
         text: The text to search.
-        ignore_case: Whether to match case-insensitively.
+        ignore_case: Whether to match case-insensitively (string patterns
+            only).
 
     Returns:
         True if the pattern matches anywhere in the text, else False (also False
         on any error — a bad pattern simply does not fire).
     """
     try:
+        if isinstance(pattern, re.Pattern):
+            return bool(pattern.search(text))
         return bool(re.search(pattern, text, re.IGNORECASE if ignore_case else 0))
     except Exception:
         return False

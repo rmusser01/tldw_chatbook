@@ -23,6 +23,26 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
 # read side (resolver, editor sync) can never drift into a typo mismatch.
 CHARACTER_WORLD_BOOKS_KEY = "character_world_books"
 
+# Attribute name for the per-db store-generation cell (ADR-221). The cell
+# lives on the CharactersRAGDB instance — not on this manager — because the
+# send path constructs a ``WorldBookManager`` per call; a per-instance counter
+# would be invisible across calls and could never invalidate anything.
+_WORLD_BOOK_GENERATION_ATTR = "_world_book_store_generation_cell"
+
+
+def _generation_cell(db: Any) -> List[int]:
+    """Return the db's mutable generation counter cell, creating it at 0.
+
+    A one-element list keeps reads and bumps single attribute lookups; the
+    cell is per-db-object so every ``WorldBookManager`` over the same
+    connection observes the same monotonic counter.
+    """
+    cell = getattr(db, _WORLD_BOOK_GENERATION_ATTR, None)
+    if cell is None:
+        cell = [0]
+        setattr(db, _WORLD_BOOK_GENERATION_ATTR, cell)
+    return cell
+
 
 def _coerce_int(value: Any, default: int = 0) -> int:
     """Best-effort int coercion for loosely-typed entry fields.
@@ -145,6 +165,25 @@ class WorldBookManager:
         """
         self.db = db
 
+    # --- Store generation (ADR-221) ---
+
+    @property
+    def generation(self) -> int:
+        """Monotonic store generation; 0 until the first successful write.
+
+        Every mutating method of this manager (book/entry CRUD, conversation
+        and character associations, imports through their underlying creates)
+        bumps the shared per-db counter exactly once on a successful write.
+        Reads and failed writes never bump. The send path keys its
+        prompt-injection processor cache on this value, so any bump
+        invalidates every cached processor for this store.
+        """
+        return _generation_cell(self.db)[0]
+
+    def _bump_generation(self) -> None:
+        """Record that this store's world-book content changed."""
+        _generation_cell(self.db)[0] += 1
+
     # --- World Book CRUD Operations ---
 
     def create_world_book(
@@ -198,6 +237,7 @@ class WorldBookManager:
                     ),
                 )
                 world_book_id = cursor.lastrowid
+                self._bump_generation()
                 logger.info(f"Created world book '{name}' with ID {world_book_id}")
                 return world_book_id
         except sqlite3.IntegrityError as e:
@@ -411,6 +451,7 @@ class WorldBookManager:
                             f"Version mismatch updating world book {world_book_id}"
                         )
                     return False
+                self._bump_generation()
                 return True
         except sqlite3.IntegrityError as e:
             if "UNIQUE constraint failed" in str(e):
@@ -453,6 +494,7 @@ class WorldBookManager:
                         f"Version mismatch deleting world book {world_book_id}"
                     )
                 return False
+            self._bump_generation()
             return True
 
     # --- World Book Entry CRUD Operations ---
@@ -532,6 +574,7 @@ class WorldBookManager:
                 ),
             )
             entry_id = cursor.lastrowid
+            self._bump_generation()
             logger.info(f"Created world book entry {entry_id} for book {world_book_id}")
             return entry_id
 
@@ -639,6 +682,8 @@ class WorldBookManager:
 
         with self.db.transaction() as cursor:
             cursor.execute(query, params)
+            if cursor.rowcount > 0:
+                self._bump_generation()
             return cursor.rowcount > 0
 
     def delete_world_book_entry(self, entry_id: int) -> bool:
@@ -655,6 +700,8 @@ class WorldBookManager:
 
         with self.db.transaction() as cursor:
             cursor.execute(query, (entry_id,))
+            if cursor.rowcount > 0:
+                self._bump_generation()
             return cursor.rowcount > 0
 
     # --- Conversation Association Functions ---
@@ -680,6 +727,7 @@ class WorldBookManager:
 
         with self.db.transaction() as cursor:
             cursor.execute(query, (conversation_id, world_book_id, priority))
+            self._bump_generation()
             return True
 
     def disassociate_world_book_from_conversation(
@@ -702,6 +750,8 @@ class WorldBookManager:
 
         with self.db.transaction() as cursor:
             cursor.execute(query, (conversation_id, world_book_id))
+            if cursor.rowcount > 0:
+                self._bump_generation()
             return cursor.rowcount > 0
 
     def get_world_books_for_conversation(
@@ -817,6 +867,10 @@ class WorldBookManager:
             {"extensions": ext},
             expected_version=record["version"],
         )
+        # Embedded-snapshot writes change what the send path injects for the
+        # character, so they age the store like any other book mutation
+        # (single seam for attach + detach).
+        self._bump_generation()
 
     def attach_world_book_to_character(
         self, world_book_id: int, character_id: int

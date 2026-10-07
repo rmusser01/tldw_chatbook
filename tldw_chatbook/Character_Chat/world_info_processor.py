@@ -4,6 +4,7 @@ Handles keyword matching and injection of world info entries into conversations.
 """
 
 import re
+from functools import lru_cache
 from typing import TYPE_CHECKING, Dict, List, Any, Optional, Tuple
 
 from loguru import logger
@@ -18,6 +19,19 @@ if TYPE_CHECKING:
 
 _TRUE_STRINGS = {"true", "1", "yes", "on"}
 _FALSE_STRINGS = {"false", "0", "no", "off"}
+
+
+@lru_cache(maxsize=4096)
+def _compiled_keyword(keyword: str) -> "re.Pattern[str]":
+    """Compile a literal keyword into a word-boundary pattern (ADR-221).
+
+    Called once per key at ``_process_entry`` time (the result is stored on
+    the processed entry) and for ad-hoc raw-string lookups. Module-level so a
+    rebuilt processor skips recompilation entirely and so books with more
+    distinct keys than ``re``'s 512-slot module cache no longer recompile
+    every key on every send.
+    """
+    return re.compile(r"\b" + re.escape(keyword) + r"\b")
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -127,14 +141,15 @@ class WorldInfoProcessor:
         raw_entries = self.character_book.get("entries", [])
         character_book_name = self.character_book.get("name", "Character book")
         for entry in raw_entries:
-            if entry.get("enabled", True):
-                processed_entry = self._process_entry(entry)
-                if processed_entry:
-                    self.entries.append(processed_entry)
+            # One _process_entry per raw entry (ADR-221): the enabled-list and
+            # the diagnostics-candidate list share the same processed dict.
+            processed = self._process_entry(entry)
+            if processed is not None and entry.get("enabled", True):
+                self.entries.append(processed)
 
             # Diagnostics: candidate list carries EVERY entry (enabled or not).
             # Does not affect self.entries / the plain path.
-            candidate = self._make_candidate(entry, None, character_book_name)
+            candidate = self._make_candidate(processed, entry, None, character_book_name)
             if candidate is not None:
                 self._candidate_entries.append(candidate)
 
@@ -168,20 +183,24 @@ class WorldInfoProcessor:
             book_name = book.get("name", "")
 
             for entry in book_entries:
-                if entry.get("enabled", True):
-                    processed_entry = self._process_entry(entry)
-                    if processed_entry:
-                        # Adjust insertion order based on book priority
-                        processed_entry["insertion_order"] += priority_offset
-                        self.entries.append(processed_entry)
+                # One _process_entry per raw entry (ADR-221): the enabled-list
+                # and the diagnostics-candidate list share the same processed
+                # dict. The candidate copies it BEFORE the priority offset is
+                # applied below, then applies the offset to its own copy.
+                processed = self._process_entry(entry)
 
                 # Diagnostics: candidate list carries EVERY entry (enabled or not).
                 # Does not affect self.entries / the plain path.
                 candidate = self._make_candidate(
-                    entry, book_id, book_name, priority_offset
+                    processed, entry, book_id, book_name, priority_offset
                 )
                 if candidate is not None:
                     self._candidate_entries.append(candidate)
+
+                if processed is not None and entry.get("enabled", True):
+                    # Adjust insertion order based on book priority
+                    processed["insertion_order"] += priority_offset
+                    self.entries.append(processed)
 
         # Re-sort all entries by insertion order
         self.entries.sort(key=lambda x: x.get("insertion_order", 0))
@@ -226,9 +245,26 @@ class WorldInfoProcessor:
                     validate_regex_pattern(pat)
             except ValueError:
                 regex_flag = False
+
+        # Compile each key once per processed entry (ADR-221): literal keys as
+        # word-boundary patterns over the exact case-variant the matcher uses
+        # (lowercased key for case-insensitive entries — preserving the
+        # lowered-key-on-lowered-text semantics), regex keys as the raw
+        # validated pattern with the entry's IGNORECASE flag baked in.
+        case_sensitive = bool(entry.get("case_sensitive", False))
+
+        def _compile_all(raw_keys: List[str]) -> Tuple[re.Pattern, ...]:
+            if regex_flag:
+                flags = 0 if case_sensitive else re.IGNORECASE
+                return tuple(re.compile(k, flags) for k in raw_keys)
+            variant = (lambda k: k) if case_sensitive else (lambda k: k.lower())
+            return tuple(_compiled_keyword(variant(k)) for k in raw_keys)
+
         return {
             "keys": keys,
             "secondary_keys": secondary_keys,
+            "compiled_primary_keys": _compile_all(keys),
+            "compiled_secondary_keys": _compile_all(secondary_keys),
             "content": entry.get("content", ""),
             "selective": entry.get("selective", False),
             "position": entry.get("position", "before_char"),
@@ -241,6 +277,7 @@ class WorldInfoProcessor:
 
     def _make_candidate(
         self,
+        processed: Optional[Dict[str, Any]],
         entry: Dict[str, Any],
         book_id: Optional[Any],
         book_name: str,
@@ -248,19 +285,22 @@ class WorldInfoProcessor:
     ) -> Optional[Dict[str, Any]]:
         """Build a diagnostics candidate for ANY entry (enabled or not), carrying
         source-book + id + enabled metadata. Does NOT affect self.entries / the
-        plain path. Returns None only if the entry has no usable keys."""
-        processed = self._process_entry(entry)
+        plain path. Returns None only if the entry has no usable keys.
+
+        ``processed`` is the entry's already-built processed dict (ADR-221:
+        the caller processes each raw entry exactly once); this method only
+        copies it and attaches candidate metadata."""
         if processed is None:
             return None
-        processed = dict(processed)
-        processed["insertion_order"] = (
-            processed.get("insertion_order", 0) + priority_offset
+        candidate = dict(processed)
+        candidate["insertion_order"] = (
+            candidate.get("insertion_order", 0) + priority_offset
         )
-        processed["_entry_id"] = entry.get("id")
-        processed["_book_id"] = book_id
-        processed["_book_name"] = book_name
-        processed["_enabled"] = bool(entry.get("enabled", True))
-        return processed
+        candidate["_entry_id"] = entry.get("id")
+        candidate["_book_id"] = book_id
+        candidate["_book_name"] = book_name
+        candidate["_enabled"] = bool(entry.get("enabled", True))
+        return candidate
 
     def process_messages(
         self,
@@ -531,25 +571,54 @@ class WorldInfoProcessor:
                 additional_text, _recursion_depth + 1
             )
 
-            # Add new matches that aren't already in the list
+            # Add new matches that aren't already in the list. Dedup keys on
+            # the entry dict's identity (ADR-221): the recursion returns
+            # references to the same self.entries objects, never copies, so
+            # identity membership is exact — and O(1) per check instead of
+            # the old list-of-dicts equality scan (O(matched^2)).
+            seen = {id(e) for e in matched}
             for match in additional_matches:
-                if match not in matched:
+                if id(match) not in seen:
+                    seen.add(id(match))
                     matched.append(match)
 
         return matched
 
+    @staticmethod
+    def _zip_key_patterns(
+        keys: List[str], compiled: Optional[Tuple[re.Pattern, ...]]
+    ) -> Any:
+        """Pair each key with its stored compiled pattern (``None`` when the
+        entry predates pattern storage or the tuple is not parallel — the
+        matcher then falls back to the module-level key cache)."""
+        if compiled is not None and len(compiled) == len(keys):
+            return zip(keys, compiled)
+        return ((k, None) for k in keys)
+
     def _key_hits(
-        self, entry: Dict[str, Any], key: str, scan_text: str, scan_text_lower: str
+        self,
+        entry: Dict[str, Any],
+        key: str,
+        pattern: Optional[re.Pattern],
+        scan_text: str,
+        scan_text_lower: str,
     ) -> bool:
         """Does one key match the scan text? Single branch point for literal vs
-        regex so _entry_matches and _classify_entry_match cannot drift."""
+        regex so _entry_matches and _classify_entry_match cannot drift.
+        ``pattern`` is the key's precompiled pattern when available (ADR-221)."""
         if entry.get("regex", False):
             return regex_search(
-                key, scan_text, ignore_case=not entry.get("case_sensitive", False)
+                pattern if pattern is not None else key,
+                scan_text,
+                ignore_case=not entry.get("case_sensitive", False),
             )
         if entry.get("case_sensitive", False):
-            return self._keyword_in_text(key, scan_text)
-        return self._keyword_in_text(key.lower(), scan_text_lower)
+            return self._keyword_in_text(
+                pattern if pattern is not None else key, scan_text
+            )
+        return self._keyword_in_text(
+            pattern if pattern is not None else key.lower(), scan_text_lower
+        )
 
     def _entry_matches(
         self, entry: Dict[str, Any], scan_text: str, scan_text_lower: str
@@ -557,8 +626,10 @@ class WorldInfoProcessor:
         """Check if an entry matches the scan text."""
         # Check primary keys
         primary_match = False
-        for key in entry["keys"]:
-            if self._key_hits(entry, key, scan_text, scan_text_lower):
+        for key, pattern in self._zip_key_patterns(
+            entry["keys"], entry.get("compiled_primary_keys")
+        ):
+            if self._key_hits(entry, key, pattern, scan_text, scan_text_lower):
                 primary_match = True
                 break
 
@@ -573,8 +644,10 @@ class WorldInfoProcessor:
         if not entry["secondary_keys"]:
             return True  # No secondary keys means primary match is enough
 
-        for key in entry["secondary_keys"]:
-            if self._key_hits(entry, key, scan_text, scan_text_lower):
+        for key, pattern in self._zip_key_patterns(
+            entry["secondary_keys"], entry.get("compiled_secondary_keys")
+        ):
+            if self._key_hits(entry, key, pattern, scan_text, scan_text_lower):
                 return True
 
         return False
@@ -586,10 +659,19 @@ class WorldInfoProcessor:
         (primary_hit, primary_key, secondary_required, secondary_hit, secondary_key).
         Mirrors _entry_matches' logic exactly but reports WHICH key matched / why not."""
 
-        def hit(key):
-            return self._key_hits(entry, key, scan_text, scan_text_lower)
+        def hit(key, pattern=None):
+            return self._key_hits(entry, key, pattern, scan_text, scan_text_lower)
 
-        primary_key = next((k for k in (entry.get("keys") or []) if hit(k)), None)
+        primary_key = next(
+            (
+                k
+                for k, p in self._zip_key_patterns(
+                    entry.get("keys") or [], entry.get("compiled_primary_keys")
+                )
+                if hit(k, p)
+            ),
+            None,
+        )
         primary_hit = primary_key is not None
         if not primary_hit:
             return (False, None, False, False, None)
@@ -599,15 +681,28 @@ class WorldInfoProcessor:
         if not secondary_required:
             return (True, primary_key, False, False, None)
         secondary_key = next(
-            (k for k in (entry.get("secondary_keys") or []) if hit(k)), None
+            (
+                k
+                for k, p in self._zip_key_patterns(
+                    entry.get("secondary_keys") or [],
+                    entry.get("compiled_secondary_keys"),
+                )
+                if hit(k, p)
+            ),
+            None,
         )
         return (True, primary_key, True, secondary_key is not None, secondary_key)
 
-    def _keyword_in_text(self, keyword: str, text: str) -> bool:
-        """Check if a keyword appears in text with word boundary matching."""
-        # Use word boundary regex for more accurate matching
-        pattern = r"\b" + re.escape(keyword) + r"\b"
-        return bool(re.search(pattern, text))
+    def _keyword_in_text(self, keyword: Any, text: str) -> bool:
+        """Check if a keyword appears in text with word boundary matching.
+
+        Accepts the entry's precompiled pattern (searched directly — no
+        per-send compilation) or a raw string (compiled through the
+        module-level cached ``_compiled_keyword``).
+        """
+        if isinstance(keyword, re.Pattern):
+            return bool(keyword.search(text))
+        return bool(_compiled_keyword(keyword).search(text))
 
     def _organize_by_position(
         self, entries: List[Dict[str, Any]]
