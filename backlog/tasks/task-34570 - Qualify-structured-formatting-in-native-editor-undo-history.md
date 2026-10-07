@@ -5,13 +5,13 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-10-07 02:16
-updated_date: 2026-10-07 09:14
+updated_date: 2026-10-07 09:32
 labels:
 - notes
 - structured-editing
 dependencies: []
 documentation:
-- /Users/macbook-dev/.codex/worktrees/structured-document-editing/tldw_chatbook/Docs/superpowers/plans/2026-09-27-structured-document-editors.md
+- /Users/macbook-dev/.codex/worktrees/structured-document-editing/tldw_chatbook/Docs/superpowers/plans/2026-09-27-structured-document-editing.md
 ---
 
 ## Description
@@ -43,19 +43,13 @@ Monaco qualification approved by human option1 on 2026-10-07. ADR required: yes;
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-Qualified Textual8.2.8 bridge: 5 passing mounted tests, Ruff check/format pass. Browser gate fails WebKit26 first Undo D -> A. Original candidate repeated twice; one authorized synchronous blur/focus boundary on both sides of insertText also fails, preserving guards and selection. No additional native experiment after failure; temporary product wiring removed. Evidence: Docs/superpowers/reviews/2026-09-27-document-editor-history.md. Existing ADR194 applies; In Progress pending review/revised web approval.
-2026-10-07 I1 Monaco option-1 candidate qualified in S real Notes page: 36 Chromium/Firefox/WebKit controls plus 3 strengthened viewport controls pass, exact LF/CRLF native history; unsupported representations retained read-only. Temporary product wiring removed; installed local assets exercised in Next and WXT MV3 asset/CSP smoke. C bridge/code/tests unchanged and not rerun. Existing textarea remains unqualified; actual OS IME, extension Notes/history and production loader integration remain limits. ADR194/existing ADR065 experiment extension apply. See Docs/superpowers/reviews/2026-09-27-document-editor-history.md and task-11-report dated Monaco section for commands, failures, static evidence and self-review. Keep In Progress/no AC closure pending controller review.
+Textual8.2.8 native bridge independently reviewed after literal-space fix: 8 mounted controls; unchanged by this candidate. Installed Monaco test-only candidate independently approved for exact LF/CRLF native history and guarded source editing: 36 all-browser controls plus 3 strengthened viewport controls, units2+2, frontend typecheck exit0 with12GB heap and actual MV3 local-assets/CSP smoke. Temporary product wiring/assets removed; Markdown ownership retained. BOM/mixed/lone-CR sources are refused read-only. Existing textarea remains unqualified. ADR194(C)/ADR065(S) apply. Overall I1 remains In Progress: I3 owns shared loader ordering, production packaging and refresh/currentness; I5 owns real OS IME/accessibility/narrow-layout release evidence. Missing attachment paths and unbaselined warning/heap limits are retained for final review. See durable editor-history report and scoped review/scope-resolution artifacts.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Candidate qualification independently approved; overall I1 remains In Progress until explicit production/IME/accessibility gates are verified. Native LF/CRLF history and source preservation are evidenced; no production formatter adoption claim.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
-<!-- SECTION:FINAL_SUMMARY:END -->
-
-<!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
