@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-07 07:18'
+updated_date: '2026-10-07 07:25'
 labels: []
 dependencies: []
 ---
@@ -494,6 +494,8 @@ AC31 W source-current original11 workspace-provisioning cases PASS92.03s/97.437d
 Human explicitly requested coordination with Reduce Console Send overhead in thread01a107fc-5504-7b82-a134-ee7a716f978d; direct authorized messages exchanged with thread01a10fff-d063-7810-bebc-65f55409bcec. That session verified the human record before replying. Its console-send-preparation branch remains product-uncommitted under review: baseline107 valid controls PASS,3→1 permission-load count confirmed, oversized-schema loop JSON/hash risk being fixed with bounded stock sharing and ordinary fallback. Root will review scoped qualified commits before integration, never take unfinished/older raw-member candidates or edit the other worktree/primary. Root native/UAT/server/timing processes are retired; Native/timing stays paused during that session active checks until an exact mutually agreed window. Its planned observer-free baseline/candidate/baseline/candidate timing pairs retain3 replies false/false/true streaming, actual adapter entry, original trace/checkpoint and current-source/physical-process assertions. No100ms paint or1s Send target is accepted yet. Root rawV3 source-reviewed independent76 inert controls PASS32.734s, diagnostic installed but Native/commit acceptance remains pending coordinated window. PR3023 remains draft at6e61; finalmatrix limits recorded in its body with exact readback, and minimal provisioning checkpoint remains uncommitted pending source review/static resolution/clean verification.
 
 AC31 scoped checkpoint source review approves the existing inactive-guard-before-lazy-permission-read reorder and one appended regression. Whole candidate Ruff check passes after one exact-bool E721 explanation comment; production AST unchanged by comment, existing formatting untouched. Stage only this minimal production patch, original11-case test file and truthful task notes; preserve all other investigation changes. Clean committed-source verification follows in the mutually agreed native window. Coordinating peer now reports ordered locally committed preparation work and closed timing windows; its latest actual adapter samples10.304/9.710/8.964s remain above target, so no speedup or overall performance acceptance follows.
+
+AC31 clean committed162a6b86c3 original11 provisioning cases PASS89.98s/95.781driver; exact clean sources andHEAD unchanged, normal containedJob emptyatparentexit/nativeidentity/pipes retired,noforce. Bounded sampler overflow252/races0 disclosed; Job emptiness independentlyproved. Receipt root-clean-provisioning-162a-acceptance.json pinsXML/log/source/custody. Wholestartup/Send/App-native-cleanup acceptance remainsopen. Coordinated exclusive slot closed after sequential original startup rawV3 pair normal0/60.125s with current unchangedWsource+HEAD, normalJob/nativeidentity/pumps and0overflow/races; diagnostic scalar interpretation pending. Plan: add only original11 provisioning cases and savedXML to existing Linux/macOS/Windows nativeCI matrix, leaving all original jobs/guards/deadlines intact; routine verification, ADR required:no,path:N/A.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up

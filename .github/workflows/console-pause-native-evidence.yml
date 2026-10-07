@@ -183,6 +183,9 @@ jobs:
       - name: Verify original browser and annotation native callback lifetimes
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_browser_worker_native_lifetime.py Tests/UI/test_console_annotation_preview_native_lifetime.py -q --timeout=300 --junitxml=${{ runner.temp }}/query-lifetimes.xml
+      - name: Verify cold workspace provisioning on the actual platform
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/UI/test_workspace_cold_provisioning.py -q --timeout=300 --junitxml=${{ runner.temp }}/workspace-provisioning.xml
       - name: Verify Workspace run-log cleanup and declared query freshness
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_finite_workspace_workers.py Tests/Backup_Recovery/test_console_subagent_query_custody.py Tests/UI/test_console_agent_controller.py::test_drilldown_row_click_retargets_the_full_log_to_that_run "Tests/MCP/test_external_catalog_worker_ownership.py::test_accepted_catalog_retains_producer_and_native_custody[False]" -q --timeout=240 --junitxml=${{ runner.temp }}/workspace-query-lifetimes.xml
@@ -211,6 +214,7 @@ jobs:
             ${{ runner.temp }}/finite-callback-controls.xml
             ${{ runner.temp }}/query-lifetimes.xml
             ${{ runner.temp }}/workspace-query-lifetimes.xml
+            ${{ runner.temp }}/workspace-provisioning.xml
             ${{ runner.temp }}/mounted-restores.xml
           if-no-files-found: error
   trace-settlement-diagnostic:
