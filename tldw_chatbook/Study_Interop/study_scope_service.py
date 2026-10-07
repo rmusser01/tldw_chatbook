@@ -1057,9 +1057,17 @@ class StudyScopeService:
         q: str | None = None,
         limit: int = 100,
         offset: int = 0,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
     ) -> list[dict[str, Any]]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=False))
+        normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
+        if (
+            normalized_mode == StudyBackend.LOCAL
+            and normalized_scope_type == "workspace"
+        ):
+            raise ValueError("Workspace Study is unavailable in local mode")
         service = self._service_for_mode(normalized_mode)
         raw_records = await self._maybe_await(
             service.list_flashcards(deck_id=deck_id, q=q, limit=limit, offset=offset)
@@ -1079,9 +1087,17 @@ class StudyScopeService:
         tags: list[str] | None = None,
         notes: str | None = None,
         extra: str | None = None,
+        scope_type: str | None = None,
+        workspace_id: str | None = None,
     ) -> dict[str, Any]:
         normalized_mode = self._normalize_mode(mode)
         self._enforce_policy(self._flashcard_action_id(normalized_mode, mutation=True))
+        normalized_scope_type, _ = self._normalize_scope(scope_type, workspace_id)
+        if (
+            normalized_mode == StudyBackend.LOCAL
+            and normalized_scope_type == "workspace"
+        ):
+            raise ValueError("Workspace Study is unavailable in local mode")
         record = await self._maybe_await(
             self._service_for_mode(normalized_mode).create_flashcard(
                 deck_id=deck_id,
