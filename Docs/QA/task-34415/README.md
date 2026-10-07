@@ -284,8 +284,51 @@ and `ci-projection-bootstrap-driver.txt`. Originals remain in
 `/private/tmp/pr3034-projection-timer-probe-DNpme6` and the failed hosted log in
 `/private/tmp/pr3034-fd-origins.bGYAOJ/ui1-current-head.log`. Only trailing
 whitespace was normalized; no failure, warning or assertion was omitted.
-Fresh scoped review, preserving integration with newer dev and new exact-head
-CI remain required before protected merge.
+Fresh scoped review and latest-dev integration are recorded below. New
+exact-head CI remains required before protected merge.
+
+## Latest-dev dependency integration
+
+Rebased all five authored patches onto dev
+`6a08c6a18add254751023387d6e97203552efa2b` (PR3037). Every range-diff entry is
+identical, and all authored production/test/script/package/workflow inputs are
+byte-identical to tested timer-correction commit
+`77c075f9a318eb7bdc4fd421ec38ea235734a8f7`. Upstream raw/storage admission and
+saved SessionEnd dependencies did change; this is not a whole-tree identity
+claim. The checked sync owner still retains native REBUILD then FILE locks and
+fresh source/admission checks; this PR adds no cache or lifecycle policy.
+
+On the combined source, the original affected selection passed **61 tests in
+174.90s, no pytest warnings**. The original private-profile geometry node passed
+again (child one in 9.98s), and the other five original helper consumers passed
+in separate existing bootstrap-profile processes. All eleven artifact guards
+passed. No full sweep, performance qualification or warning suppression ran.
+
+The extra incoming raw/native-pause/SessionEnd and hook teardown selection is
+**non-green: 29 passed, one teardown error in 487.88s**. Its mounted Interrupt
+body passed, but the unchanged 300-second timeout fired during pytest-asyncio
+executor shutdown; a worker remained in the real agent bridge's
+`future.result`. The same node, body-pass/teardown-error outcome and blocked
+bridge/executor stack are already reproduced on a complete exact-base export in
+[the incoming SessionEnd report](../../superpowers/qa/2026-10-06-task33648-session-end/report.md).
+The existing archive and its exact-base log/receipt hashes match that manifest.
+This supplies a known-baseline disposition, not a unique-cause attribution,
+passing aggregate certificate or lifetime fix. Full retirement and resource
+warnings remain open; neither this test nor its timeout was changed or skipped.
+
+Fresh independent scoped review of `6dc45406bd8c3470fb49a83d45d6a3c81169c870`
+found no Critical/Important/Minor source findings, including the helper's six
+consumers and relevant incoming contracts. The reviewer also accepted the
+documented known-baseline disposition after comparing authentic retained
+evidence. The non-green integration receipt is not credited as a pass. Source
+and reviewed evidence are ready to publish, not cleared to merge without new CI.
+
+Receipts: `rebase-latest-affected.log`, `rebase-latest-geometry.log`, its child
+log, `rebase-latest-control-1.log` through `rebase-latest-control-5.log`,
+`rebase-latest-incoming.log` and `rebase-latest-preflight.log`. They compare equal
+to originals in `/private/tmp/pr3034-rebase-6a08-U06HKm` after trailing-whitespace
+normalization only. The fourteen new timer-correction receipt files above also
+compare equal to their normalized originals; no warning or failure was omitted.
 
 ## Still open
 
