@@ -340,7 +340,6 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
     _estimate_tokens_locally,
-    _summary_row_value,
     build_console_context_estimate,
     build_console_rail_system_line,
     build_default_console_session_settings,
@@ -14753,19 +14752,6 @@ class ChatScreen(BaseAppScreen):
         return widget
 
     @staticmethod
-    def _collapse_console_hidden_control_bar(
-        widget: ConsoleControlBar,
-    ) -> ConsoleControlBar:
-        """Keep the legacy Console control seam mounted without layout cost."""
-        widget.styles.display = "none"
-        widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
-        widget.set_styles(height=None)
-        widget.add_class("h-0")
-        widget.styles.min_height = 0
-        widget.styles.max_height = 0
-        return widget
-
-    @staticmethod
     def _compact_console_workbench_widget(widget: Any, height: int = 1) -> Any:
         """Keep Console Workbench primitives visible without shrinking the grid."""
         widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
@@ -21416,22 +21402,6 @@ class ChatScreen(BaseAppScreen):
             message_id, direction=direction
         )
 
-    def _get_shell_bar(self):
-        """Get the mounted combined chat shell bar.
-
-        ``ChatWindowEnhanced`` is retired (``self.chat_window`` is
-        permanently ``None``), so this always returns ``None`` now; kept as
-        a stable seam for its remaining live callers' fallback branches.
-        """
-        return None
-
-    def _get_compact_model_bar(self) -> Optional[CompactModelBar]:
-        """Get the native Console compact control bar."""
-        try:
-            return self.query_one("#console-compact-model-bar", CompactModelBar)
-        except QueryError:
-            return None
-
     def _request_console_control_bar_sync(self, *, delayed: bool = False) -> None:
         """Coalesce control-bar syncs into one trailing run (task-3010).
 
@@ -23319,7 +23289,10 @@ class ChatScreen(BaseAppScreen):
                 f"Unable to sync compact controls into Console session settings: {e}"
             )
 
-        compact_bar = self._get_compact_model_bar()
+        try:
+            compact_bar = self.query_one("#console-compact-model-bar", CompactModelBar)
+        except QueryError:
+            compact_bar = None
         if compact_bar:
             compact_bar.sync_from_sidebar(**updates)
         else:

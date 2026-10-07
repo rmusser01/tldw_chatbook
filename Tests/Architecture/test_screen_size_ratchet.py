@@ -88,8 +88,10 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: against its own 25363 row): the combined tree measures 25218/759,
     #: still under dev's 25363/762, so nothing rises.
     #: TASK-34415 moves checked config refresh into Console_Modules: the
-    #: combined tree measures 25204/759; lower only the earned line ceiling.
-    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25204, 759),
+    #: original tree measures 25204/759. The latest-dev replay also retires
+    #: two unreferenced control helpers and the one-use widget lookup:
+    #: combined tree measures 25204/756; no ceiling rises.
+    "tldw_chatbook/UI/Screens/chat_screen.py": ("ChatScreen", 25204, 756),
     #: Added 2026-09 by the Library decomposition plan (PR 0b): this row was
     #: missing for the entire month in which library_screen.py tripled from
     #: 15,819 to 46,109 lines while chat_screen.py shrank under its budget.
