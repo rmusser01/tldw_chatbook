@@ -71,70 +71,82 @@ def activation_permission(
         root = lexical_path(bootstrap_root or bootstrap.default_bootstrap_root())
         if not bootstrap.startup_permission(selected, root)[0]:
             return False
-        _, profiles, associations = bootstrap._control_records(root)
+        pending, profiles, associations = bootstrap._control_records(root)
         registry = bootstrap._registry(root)
-        names = set()
-        if namespaces is not None:
-            names.update(Admission._names(namespaces))
-            if registry is None or not names <= registry.keys():
-                return False
-        selected_profile = next(
-            (p for p in profiles if p["selector"] == str(selected)), None
+        return _activation_permission_from_records(
+            owner,
+            selected,
+            root,
+            namespaces,
+            ordinary_only,
+            (pending, profiles, associations),
+            registry,
         )
-        if selected_profile:
-            names.update(selected_profile["namespaces"])
-        candidates = {
-            record["selector"]
-            for record in profiles + associations
-            if record["selector"] == str(selected)
-            or names.intersection(record.get("activation", {}).get("namespaces", []))
-            or any(
-                bootstrap._overlap(selected, Path(p)) for p in record.get("roots", [])
-            )
-        }
-        seen = {}
-        for selector in candidates:
-            profile = next((p for p in profiles if p["selector"] == selector), None)
-            association = next(
-                (a for a in associations if a["selector"] == selector), None
-            )
-            witness = profile.get("activation") if profile else None
-            if witness is None and association is None:
-                continue
-            if ordinary_only:
-                return False
-            if association is None or witness != association["activation"]:
-                return False
-            if registry is None or any(
-                n not in registry for n in witness["namespaces"]
-            ):
-                return False
-            roots = sorted(
-                {p for n in witness["namespaces"] for p in registry[n]["roots"]}
-            )
-            if roots != profile["roots"]:
-                return False
-            for namespace in witness["namespaces"]:
-                if namespace in seen and not bootstrap._same_activation_generation(
-                    seen[namespace], witness
-                ):
-                    return False
-                seen[namespace] = witness
-            store = ActivationStore(Path(witness["store_root"]))
-            with (
-                _private(store.root),
-                _private(store._generation(witness["generation"])) as parent,
-            ):
-                if (
-                    store._required(parent, witness["generation"]).owners
-                    != witness["owners"]
-                ):
-                    return False
-            if not store.allowed(witness["generation"], owner):
-                return False
-        return True
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, AttributeError):
         return False
+
+
+def _activation_permission_from_records(
+    owner, selected, root, namespaces, ordinary_only, records, registry
+) -> bool:
+    """Apply the original selector-based owner rules to this finite observation.
+
+    Startup and source admission remain caller-owned. Required-owner and
+    approval files are still read live for each owner; no verdict is cached.
+    """
+    _, profiles, associations = records
+    names = set()
+    if namespaces is not None:
+        names.update(Admission._names(namespaces))
+        if registry is None or not names <= registry.keys():
+            return False
+    selected_profile = next(
+        (p for p in profiles if p["selector"] == str(selected)), None
+    )
+    if selected_profile:
+        names.update(selected_profile["namespaces"])
+    candidates = {
+        record["selector"]
+        for record in profiles + associations
+        if record["selector"] == str(selected)
+        or names.intersection(record.get("activation", {}).get("namespaces", []))
+        or any(bootstrap._overlap(selected, Path(p)) for p in record.get("roots", []))
+    }
+    seen = {}
+    for selector in candidates:
+        profile = next((p for p in profiles if p["selector"] == selector), None)
+        association = next((a for a in associations if a["selector"] == selector), None)
+        witness = profile.get("activation") if profile else None
+        if witness is None and association is None:
+            continue
+        if ordinary_only:
+            return False
+        if association is None or witness != association["activation"]:
+            return False
+        if registry is None or any(n not in registry for n in witness["namespaces"]):
+            return False
+        roots = sorted({p for n in witness["namespaces"] for p in registry[n]["roots"]})
+        if roots != profile["roots"]:
+            return False
+        for namespace in witness["namespaces"]:
+            if namespace in seen and not bootstrap._same_activation_generation(
+                seen[namespace], witness
+            ):
+                return False
+            seen[namespace] = witness
+        store = ActivationStore(Path(witness["store_root"]))
+        with (
+            _private(store.root),
+            _private(store._generation(witness["generation"])) as parent,
+        ):
+            if (
+                store._required(parent, witness["generation"]).owners
+                != witness["owners"]
+            ):
+                return False
+        if not store.allowed(witness["generation"], owner):
+            return False
+    return True
 
 
 def _source_scope_admitted(root: Path, names: tuple[str, ...], path: Path) -> bool:
@@ -190,6 +202,76 @@ def _source_scope_admitted_from_records(names, path, records, registry):
     return True
 
 
+def _activation_preparation_current() -> bool:
+    """Use shared inputs only for the unchanged, directly consumed stock route."""
+    for namespace, bindings in (
+        (globals(), _ACTIVATION_PREPARATION_CALLBACKS),
+        (vars(bootstrap), bootstrap._ACTIVATION_PREPARATION_CALLBACKS),
+    ):
+        for name, original, code, defaults, keywords, items in bindings:
+            if (
+                namespace.get(name) is not original
+                or original.__code__ is not code
+                or original.__defaults__ is not defaults
+                or original.__kwdefaults__ is not keywords
+                or (
+                    keywords is not None
+                    and (
+                        dict.__len__(keywords) != len(items)
+                        or any(
+                            dict.get(keywords, key, _MISSING_CALLBACK_INPUT)
+                            is not value
+                            for key, value in items
+                        )
+                    )
+                )
+            ):
+                return False
+    factory, factory_code, body, body_code, closure = (
+        bootstrap._CONTROL_OBSERVATION_ORIGINAL
+    )
+    return (
+        bootstrap._control_observation is factory
+        and factory.__code__ is factory_code
+        and factory.__wrapped__ is body
+        and body.__code__ is body_code
+        and body.__defaults__ is None
+        and body.__kwdefaults__ is None
+        and factory.__defaults__ is None
+        and factory.__kwdefaults__ is None
+        and factory.__closure__ is closure
+        and len(closure) == 1
+        and closure[0].cell_contents is body
+    )
+
+
+def _prepare_execution_permission(owners, path, lease, selected, root, names) -> bool:
+    """Retire one checked control observation before returning admission data."""
+    with bootstrap._control_observation(root) as (records, registry):
+        allowed = path is None or _source_scope_admitted_from_records(
+            names or (), path, records, registry
+        )
+        if allowed:
+            for owner in owners:
+                _identifier(owner)
+                # This projection can check enrolled roots: keep it per owner.
+                if not bootstrap._startup_permission_from_records(
+                    selected, root, records[0], records[1], registry
+                )[0] or not _activation_permission_from_records(
+                    owner, selected, root, names, names is None, records, registry
+                ):
+                    allowed = False
+                    break
+    # Complete native observation before checking the final source selection.
+    if (
+        selected != bootstrap.effective_config_path()
+        or lease.execution_context(path) != (root, names)
+        or not _activation_preparation_current()
+    ):
+        raise ValueError("execution_preparation_source_changed")
+    return allowed
+
+
 @contextmanager
 def execution_scope(
     owners: tuple[str, ...], path: Path | None = None, *, retained=None
@@ -209,10 +291,26 @@ def execution_scope(
         if type(lease) is not StorageLease:
             raise ValueError("execution_lease_invalid")
         root, names = lease.execution_context(path)
-        allowed = (
-            selected == bootstrap.effective_config_path()
-            and (path is None or _source_scope_admitted(root, names or (), path))
+        if selected != bootstrap.effective_config_path():
+            allowed = False
+        elif (
+            type(owners) is tuple  # noqa: E721 -- custom iterables retain ordinary order
+            and 0 < len(owners) <= _MAX_SHARED_ACTIVATION_OWNERS
             and all(
+                type(owner) is str  # noqa: E721 -- custom identifiers use the ordinary route
+                and 0 < len(owner) <= 256
+                and "\0" not in owner
+                for owner in owners
+            )
+            and _activation_preparation_current()
+        ):
+            allowed = _prepare_execution_permission(
+                owners, path, lease, selected, root, names
+            )
+        else:
+            allowed = (
+                path is None or _source_scope_admitted(root, names or (), path)
+            ) and all(
                 activation_permission(
                     owner,
                     config_selector=selected,
@@ -222,7 +320,6 @@ def execution_scope(
                 )
                 for owner in owners
             )
-        )
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, AttributeError):
         allowed = False
     try:
@@ -497,3 +594,27 @@ def _rollback_installation_id(selector, root, witness, profiles, rows, prepared)
         if store._required(parent, witness["generation"]).owners != witness["owners"]:
             raise bootstrap.RecoveryRequired("rollback_identity_unverified")
     return entry["installation_id"]
+
+
+# Direct callback inputs for the finite pre-yield branch; no permission/data cache.
+_MAX_SHARED_ACTIVATION_OWNERS = 64
+_MISSING_CALLBACK_INPUT = object()
+_ACTIVATION_PREPARATION_CALLBACKS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple(dict.items(function.__kwdefaults__ or {})),
+    )
+    for name in (
+        "activation_permission",
+        "_source_scope_admitted",
+        "_source_scope_admitted_from_records",
+        "_activation_permission_from_records",
+        "_identifier",
+        "_prepare_execution_permission",
+    )
+    for function in (globals()[name],)
+)

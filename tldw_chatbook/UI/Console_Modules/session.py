@@ -169,18 +169,14 @@ from ...Chat.console_chat_store import (
 )
 from ...Chat.console_chat_controller import (
     ProjectInstructionBindingRecovery,
-    capture_character_authority,
-    capture_mcp_definition_maximum,
-    capture_prompt_transform_inputs,
     capture_project_instruction_authority,
-    capture_skill_context_maximum,
     resolve_project_instruction_binding,
 )
+from ...Chat.console_configuration_capture import capture_console_turn_configuration
 from ...Chat.console_context_policy import (
     ConsoleContextPolicyOverrides,
     ContextPolicyError,
 )
-from ...Chat.console_dispatch_checkpoint import ConsoleLibraryItemScopeSnapshot
 from ...Chat.console_expression_state import (
     CharacterEmoteHistoryIdentity,
     resolve_console_expression_state,
@@ -237,7 +233,6 @@ from ...Chat.thinking_blocks import normalize_thinking_history_policy
 from ...Chat.console_scratch_space import ConsoleScratchSnapshot
 from ...Chat.console_turn_context import (
     ConsoleTurnConfigurationSnapshot,
-    capture_change_review_admission,
     resolve_turn_persona_policy_rules,
     resolve_turn_tool_policy_profile_id,
 )
@@ -4399,26 +4394,119 @@ class ConsoleSessionController:
             "assistant_default_notice": startup.notice,
         }
 
+    def _build_console_turn_capture_selection(self, session_id: str, *, scratch_owner):
+        """Select detached view values only for the qualified stock capture route."""
+        from types import MethodType
+        from ...Chat.console_configuration_preparation import (
+            ConsoleTurnCaptureSelection,
+        )
+        from ..Console_Modules.wiring import _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+        from ..Screens.settings_library_rag_defaults import load_direct_library_tools
+
+        scratch = self._scratch_snapshot_provider
+        scratch_function, scratch_code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+        if (
+            type(scratch) is not partial
+            or scratch.func is not scratch_function
+            or scratch_function.__code__ is not scratch_code
+            or len(scratch.args) != 1
+            or scratch.keywords
+        ):
+            return None
+        for name, original, code in _CONSOLE_CAPTURE_POLICY_ADAPTERS:
+            callback = getattr(self, name, None)
+            if not (
+                isinstance(callback, MethodType)
+                and callback.__self__ is self
+                and callback.__func__ is original
+                and original.__code__ is code
+            ):
+                return None
+        screen = scratch.args[0]
+        if (
+            getattr(screen, "_session", None) is not self
+            or screen.app_instance is not self.app_instance
+        ):
+            return None
+        runtime = screen._console_runtime()
+        if runtime._scratch_spaces is not scratch_owner:
+            return None
+        app_config = self._provider_readiness_app_config()
+        selection = self._build_provider_selection_fn(session_id)
+        console_config = (
+            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+        )
+        if not isinstance(console_config, Mapping):
+            console_config = {}
+        store = self._ensure_console_chat_store()
+        session = next((row for row in store.sessions() if row.id == session_id), None)
+        if session is None:
+            raise KeyError(session_id)
+        agent_runtime_enabled = coerce_bool_setting(
+            console_config.get("agent_runtime", True), True
+        )
+        return ConsoleTurnCaptureSelection(
+            provider_selection=selection,
+            presentation_context=store.presentation_context(
+                session_id, _console_global_user_display_name(app_config)
+            ),
+            rag_defaults={
+                "source_types": tuple(self._rag_source_types_accessor()),
+                "top_k": self._rag_top_k_accessor(),
+            },
+            tool_configuration={
+                "session_ephemeral": bool(session.ephemeral),
+                "agent_runtime_enabled": agent_runtime_enabled,
+                "native_tool_calls_enabled": coerce_bool_setting(
+                    console_config.get("native_tool_calls", True), True
+                ),
+                "local_tools_enabled": coerce_bool_setting(
+                    console_config.get("local_tools_enabled", False), False
+                ),
+                "direct_library_tools": load_direct_library_tools(app_config),
+                "project_instructions_startup_max_bytes": coerce_int_setting(
+                    console_config.get(
+                        "project_instructions_startup_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                "project_instructions_nested_max_bytes": coerce_int_setting(
+                    console_config.get(
+                        "project_instructions_nested_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                "exchange_capture_enabled": coerce_bool_setting(
+                    console_config.get("exchange_capture", True), True
+                ),
+            },
+            skill_workspace_id=None,
+            project_bindings_eligible=bool(
+                agent_runtime_enabled
+                and not store.session_one_shot_prefill(session_id)
+                and session.assistant_kind != "character"
+            ),
+            agent_runtime_enabled=agent_runtime_enabled,
+        )
+
     def _build_console_turn_execution_context(
         self,
         session_id: str,
         *,
         mcp_definition_maximum: Mapping[str, str] | None = None,
     ) -> ConsoleTurnConfigurationSnapshot:
-        """Capture one detached configuration snapshot for an owning session."""
-        from ...Chat.attachment_core import max_history_images
-        from ...model_capabilities import is_vision_capable
+        """Resolve mounted inputs for the shared configuration producer."""
         from ...Chat.console_agent_bridge import console_run_budget
-        from ..Screens.settings_library_rag_defaults import (
-            load_direct_library_tools,
-        )
+        from ..Screens.settings_library_rag_defaults import load_direct_library_tools
 
         app_config = self._provider_readiness_app_config()
         selection = self._build_provider_selection_fn(session_id)
-        settings = self._ensure_console_chat_store().effective_session_settings(
-            session_id
-        )
-        model = selection.explicit_model or selection.configured_model
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
         )
@@ -4426,95 +4514,22 @@ class ConsoleSessionController:
             console_config = {}
         store = self._ensure_console_chat_store()
         workspace_id = store.session_workspace_id(session_id)
-        presentation_context = store.presentation_context(
-            session_id,
-            _console_global_user_display_name(app_config),
-        )
         session = next(item for item in store.sessions() if item.id == session_id)
         app_instance = getattr(self, "app_instance", None)
         agent_dispatch_eligible = bool(
-            coerce_bool_setting(
-                console_config.get("agent_runtime", True),
-                True,
-            )
+            coerce_bool_setting(console_config.get("agent_runtime", True), True)
             and not store.session_one_shot_prefill(session_id)
             and session.assistant_kind != "character"
         )
-        project_authority = capture_project_instruction_authority(
-            session,
-            getattr(app_instance, "workspace_registry_service", None),
-            include_bindings=agent_dispatch_eligible,
-        )
-        held_scope = session.rag_scope_holder.scope
-        library_scope = ConsoleLibraryItemScopeSnapshot(
-            note_ids=tuple(
-                str(item.source_id)
-                for item in held_scope.items
-                if item.source_type == "note"
-            )
-            if held_scope is not None
-            else (),
-            media_ids=tuple(
-                str(item.source_id)
-                for item in held_scope.items
-                if item.source_type == "media"
-            )
-            if held_scope is not None
-            else (),
-            conversations_allowed=held_scope is None,
-        )
-        workspace_roots, ready_review_aliases, skipped_review_roots = (
-            capture_change_review_admission(app_instance, workspace_id)
-        )
-        # Workspace assistant defaults (Task 7): this turn's tool posture --
-        # the workspace's named permission profile (absent/Default/global
-        # defaults degrade to "default") and the owning session's persona
-        # policy rules. Every failure degrades to the identity posture
-        # rather than blocking the send; posture is narrowing-only, so a
-        # degraded read can never widen access.
-        tool_policy_profile_id = self._resolve_turn_tool_policy_profile_id(workspace_id)
-        persona_policy_rules = self._resolve_turn_persona_policy_rules(session_id)
-
-        if mcp_definition_maximum is None:
-            mcp_definition_maximum = capture_mcp_definition_maximum(app_instance)
-        return ConsoleTurnConfigurationSnapshot.capture(
-            session_id=session_id,
+        return capture_console_turn_configuration(
+            app_instance,
+            store,
+            session_id,
             provider_selection=selection,
             scratch_space=self._scratch_snapshot_provider(session_id),
-            session_settings=settings,
-            workspace_roots=workspace_roots,
-            change_review_root_aliases=ready_review_aliases,
-            change_review_skipped_roots=skipped_review_roots,
-            persona_policy_rules=persona_policy_rules,
-            tool_policy_profile_id=tool_policy_profile_id,
-            presentation_context=presentation_context,
-            library_policy_maximum=session.library_policy_holder.snapshot,
-            library_scope_maximum=library_scope,
-            project_authority=project_authority,
-            character_authority=capture_character_authority(
-                session,
-                getattr(
-                    (
-                        self._ensure_console_chat_controller()
-                        if hasattr(self, "_ensure_console_chat_controller_fn")
-                        else None
-                    ),
-                    "_visual_identity_repository",
-                    None,
-                ),
+            presentation_context=store.presentation_context(
+                session_id, _console_global_user_display_name(app_config)
             ),
-            prompt_transform_inputs=capture_prompt_transform_inputs(
-                app_instance,
-                session,
-            ),
-            skill_context_maximum=capture_skill_context_maximum(app_instance),
-            mcp_tool_maximum=mcp_definition_maximum,
-            mcp_definition_maximum=mcp_definition_maximum,
-            capabilities={
-                "vision": bool(model)
-                and is_vision_capable(selection.provider, model or ""),
-                "max_history_images": max_history_images(selection.provider, model),
-            },
             rag_defaults={
                 "source_types": tuple(self._rag_source_types_accessor()),
                 "top_k": self._rag_top_k_accessor(),
@@ -4557,22 +4572,26 @@ class ConsoleSessionController:
                     console_config.get("exchange_capture", True), True
                 ),
             },
-            provider_payload_settings={
-                "streaming": selection.streaming,
-                "temperature": selection.temperature,
-                "top_p": selection.top_p,
-                "min_p": selection.min_p,
-                "top_k": selection.top_k,
-                "max_tokens": selection.max_tokens,
-                "seed": selection.seed,
-                "presence_penalty": selection.presence_penalty,
-                "frequency_penalty": selection.frequency_penalty,
-                "reasoning_effort": selection.reasoning_effort,
-                "reasoning_summary": selection.reasoning_summary,
-                "verbosity": selection.verbosity,
-                "thinking_effort": selection.thinking_effort,
-                "thinking_budget_tokens": selection.thinking_budget_tokens,
-            },
+            project_authority=capture_project_instruction_authority(
+                session,
+                getattr(app_instance, "workspace_registry_service", None),
+                include_bindings=agent_dispatch_eligible,
+            ),
+            skill_workspace_id=None,
+            character_repository=getattr(
+                (
+                    self._ensure_console_chat_controller()
+                    if hasattr(self, "_ensure_console_chat_controller_fn")
+                    else None
+                ),
+                "_visual_identity_repository",
+                None,
+            ),
+            tool_policy_profile_id=self._resolve_turn_tool_policy_profile_id(
+                workspace_id
+            ),
+            persona_policy_rules=self._resolve_turn_persona_policy_rules(session_id),
+            mcp_definition_maximum=mcp_definition_maximum,
         )
 
     #: Cross-pass memo for `_default_console_session_settings`, as
@@ -6680,4 +6699,21 @@ class ConsoleSessionController:
 # Preserve the concrete builder contract before any custom class replacement.
 _CONSOLE_TURN_CONTEXT_BUILDER = (
     ConsoleSessionController._build_console_turn_execution_context
+)
+
+
+_CONSOLE_TURN_CAPTURE_SELECTOR = (
+    ConsoleSessionController._build_console_turn_capture_selection,
+    ConsoleSessionController._build_console_turn_capture_selection.__code__,
+)
+_CONSOLE_CAPTURE_POLICY_ADAPTERS = tuple(
+    (
+        name,
+        getattr(ConsoleSessionController, name),
+        getattr(ConsoleSessionController, name).__code__,
+    )
+    for name in (
+        "_resolve_turn_tool_policy_profile_id",
+        "_resolve_turn_persona_policy_rules",
+    )
 )

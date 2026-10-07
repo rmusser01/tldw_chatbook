@@ -48,6 +48,7 @@ do not reintroduce a re-export in `chat_screen.py` to patch through.
 import asyncio
 import threading
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from types import MethodType
 from typing import TYPE_CHECKING, Any
@@ -145,7 +146,22 @@ async def request_console_hooks_review(
     waiting: bool,
     cancel: Callable[[], None],
 ) -> "HookReviewResult":
-    """Open the existing modal with the current screen and permission owner."""
+    """Route an initial Send to runtime custody; keep manual review local."""
+    if waiting:
+        from uuid import uuid4
+
+        from tldw_chatbook.Chat.console_hook_review import HookReviewResult
+
+        identity = screen._hooks.pending_send_identity
+        if identity is None:
+            return HookReviewResult("cancel")
+        session_id, generation = identity
+        runtime = screen._console_runtime()
+        screen._ensure_console_chat_controller()
+        return await runtime.request_initial_hook_review(
+            session_id, str(uuid4()), generation, snapshot
+        )
+
     from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
         request_hook_review,
     )
@@ -279,6 +295,17 @@ def _displayed_console_composer_draft(screen: Any) -> str | None:
     if composer is None:
         composer = screen._console_composer_or_none()
     return composer.draft_text() if composer is not None else None
+
+
+def _stock_console_scratch_snapshot(screen: Any, session_id: str):
+    """Keep the original scratch callback lazy while exposing stock provenance."""
+    return screen._console_runtime().scratch_spaces.snapshot(session_id)
+
+
+_STOCK_CONSOLE_SCRATCH_SNAPSHOT = (
+    _stock_console_scratch_snapshot,
+    _stock_console_scratch_snapshot.__code__,
+)
 
 
 def _raw_cli_run_log_root() -> Path:
@@ -1783,11 +1810,7 @@ def build_console_controllers(
         build_provider_selection=(
             lambda session_id: screen._build_console_provider_selection(session_id)
         ),
-        scratch_snapshot_provider=(
-            lambda session_id: screen._console_runtime().scratch_spaces.snapshot(
-                session_id
-            )
-        ),
+        scratch_snapshot_provider=partial(_stock_console_scratch_snapshot, screen),
         rag_source_types_accessor=rag_source_types_accessor,
         rag_top_k_accessor=rag_top_k_accessor,
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),

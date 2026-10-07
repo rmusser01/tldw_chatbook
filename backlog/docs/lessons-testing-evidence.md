@@ -19005,3 +19005,48 @@ do not prove unchanged provider input.
 PR2995 Qodo finding4182699992 claimed that agents could never request provider/model/preset because NEW_CHAT_TOOL_SCHEMA listed only five fields. An independent review traced the actual Console first-request plan: build_chat_create_schema adds routed presets and opted-in overrides, and native/text serializers retain those dynamic properties. Unconditionally adding the fields would violate ADR147/219 disclosure gates.
 
 For a tool-discovery claim, inspect the runtime schema builder, its live call-site inputs and the provider serializer before editing a static constant. The false-positive disposition and source links are recorded in https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4183161209 and the final Task27 review. No executed provider matrix or new test run was claimed.
+
+## Private dispatch tests can be skipped by a parameter named live (TASK-34563.3, 2026-10-06)
+
+During shared Console preparation verification, a private inspector-count test used the parameter ID `live`. `Tests/conftest.py` checks `"live" in item.keywords` when `--run-live` is absent; pytest includes parameter IDs there, so this local test was skipped as though it required a paid API. Renaming that ID to `dispatch` preserves the external-API opt-in gate and allows the actual local assertion to run. Review skip reasons and collected parameter IDs before treating a successful process exit as passing evidence. The first runner attempt also loaded the `pytest_asyncio` package rather than `pytest_asyncio.plugin` with plugin autoload disabled; coroutine tests were skipped. Explicit plugin arguments and an observed async case are required before launching a larger targeted batch. Neither skipped run counts as acceptance.
+
+
+## Explicit shared inputs can bypass a custom callback's default behavior
+
+TASK-34563.6, 2026-10-06: the first run-log consolidation qualified the containment function and body but supplied a context despite changed function defaults. Review also found that a custom sensitive predicate or resolver could depend on the original context-absent call. Three actual refusal controls failed because the writer became active. Qualifying the directly consumed functions, bodies and defaults restored the ordinary route for custom callbacks; all three controls then passed in the 89-case integrated scope. When adding a supplied-data path, test which defaults and downstream readers it bypasses, not only whether the outer function has been replaced.
+
+
+## Invalid Windows fixture paths can hide the intended gate (TASK-34563.7, 2026-10-06)
+
+Three final MCP/RAG admission checks failed with `config_directory_selection_unavailable` before reaching their permission/pause/cancel bodies. The identical checks on unchanged source failed too; the earlier log showed `TOMLDecodeError: Invalid hex value`. Their hand-built TOML contained an unescaped Windows `C:\Users` path. Using the existing `json.dumps(str(path), ensure_ascii=False)` convention for the two selected fixture values made all three original checks pass. Preserve the first parse error and compare unchanged fixtures before attributing a later fail-closed selection error to an admission refactor. Do not relax the production gate to repair test configuration.
+
+
+## A hook continuation wait can be unreachable on the host (TASK-34563.8, 2026-10-07)
+
+Two original continuation tests waited 30 seconds for a machine acceptance that never arrived, on both the candidate and unchanged pre-change source. The stock hook command executor deliberately returns `unsupported_platform` on Windows before launch; the tests required that command to emit the continuation proposal. This was an unreachable producer, not a slow commit. A focused host-boundary control parsed one declared Stop result while retaining the real lifecycle, scheduler, live authority, one-use gate and SQLite rollback; actual revocation and physical owner retirement passed. Keep command execution qualification separate, preserve the production refusal and original deadlines, and prove the intended producer reached the boundary before interpreting a timeout.
+
+
+## Shielding a Task is not ownership of its native worker
+
+**TASK-34563.10, 2026-10-07.** Hook-review lifetime tests initially cancelled only the outer action waiter and passed. Cancelling every action-created Task while the original HookPermissions write held real storage leases let its `to_thread` Task report cancellation and Close complete before native retirement. Two further controls exposed an executor that queued before raising and a driver cancelled before its first coroutine step. The final implementation retains a private executor Future, seals callback entry until submission succeeds, and retires an unstarted driver through an exact-host done callback. Capture the issuing owner before scheduling; replacement-controller cleanup had incorrectly targeted the successor. The real held-write and submission/pre-entry tests in `Tests/Chat/test_console_initial_hook_review.py` cover these distinct boundaries. Scope task cancellation to the operation's cohort: the first broad fixture attempt also cancelled an unrelated Canvas policy reader and produced an additional teardown error.
+
+
+### Scheduling failure may already have started the native operation
+
+TASK-34563.10 follow-up, 2026-10-07: a custom task factory created an eager stdlib Task for the consent driver, then raised before returning it. The startup error path closed the entered coroutine and declared retirement while the original HookPermissions write still held storage leases. A direct lazy stdlib Task for this private finite driver prevents that partially started factory boundary. The held-original-body regression proves the distinction; a factory that only raises before starting would not have caught it.
+
+### A remounted modal needs a new presentation token before old Unmount finishes
+
+TASK-34563.10 follow-up, 2026-10-07: a mounted Cancel check failed because Textual resumed the Console and projected a replacement review before the popped modal's Unmount released its token. Both modals shared a token, so late old cleanup invalidated the visible replacement. A deterministic original-projector control reproduced the reused token. New presentation creation now rotates the token; updates to the same presentation retain it. Testing only unmount-then-remount serially had missed the actual framework ordering.
+
+
+## Python 3.12 native observers need global unwind events and setup cleanup
+
+TASK-34563.13, 2026-10-07: the first integrated hook-preparation run had 45 passes and one observer setup failure before Send. Python 3.12 rejected `sys.monitoring.set_local_events(..., PY_RETURN | PY_UNWIND)` with `ValueError: invalid local event set 0x1004`; PY_UNWIND is global-only. Setup was outside the observer context manager's try/finally, so partial registration also survived that failed setup. Keep PY_RETURN local, register PY_UNWIND globally with exact code and owner filtering, and put all registration/event setup under cleanup immediately after reserving the tool ID. The corrected original WorkspaceDB producer test then passed through disposal cancellation with actual connection/lease retirement. A clean integrated rerun is required after an observer setup leak; the original 45 passes alone do not qualify the corrected observer.
+
+
+## Native test sources must use the configured profile, not just stock classes
+
+TASK-34563.14, 2026-10-07: both mounted configuration-worker controls initially fell back before reaching new configuration eligibility. Passive diagnostics found exact stock LocalMCPStore/control classes and original catalog methods, but no native source binding. The app factory independently redirected its data directory while bootstrap config retained another profile; native binding correctly rejected the mismatched source path. An optional caller-owned canonical data directory fixed the fixture without weakening production guards or prewarming services. Its exact factory-created DB/lock handles still retire, while its directory is left to the profile owner. The corrected mounted test then exposed a separate real cold-plugin fallback. Verify native source membership as well as Python types before interpreting an apparent worker-affinity failure.
+
+The same slice's first worker-qualified mounted run accepted driver input in 4.13 ms but observed no natural text frame. A bounded original-display diagnostic found draft region `(18, 42, 120, 1)` below the 120x40 viewport, with normal refresh callbacks and no batching. The navigation harness loaded component sheets but omitted the production app bundle required by ChatScreen. Use the real bundled stylesheet and assert the observed widget is visible before timing; a successful input mutation alone does not prove a painted frame, and an offscreen fixture cannot establish render latency.

@@ -365,6 +365,28 @@ def _disabled_builtin_skills(config: Any) -> frozenset[str]:
     return disabled_builtins_from_config(config)
 
 
+def _read_app_disabled_builtin_skills(app: object) -> frozenset[str]:
+    """Read the current stock app config without invoking a UI callback."""
+    return _disabled_builtin_skills(getattr(app, "app_config", None))
+
+
+_STOCK_DISABLED_BUILTINS_READER = (
+    _read_app_disabled_builtin_skills,
+    _read_app_disabled_builtin_skills.__code__,
+)
+
+
+def _read_app_published_plugin_service(app: object) -> Any:
+    """Return only the already resident plugin metadata owner."""
+    return getattr(app, "_plugin_service", None)
+
+
+_STOCK_PUBLISHED_PLUGIN_READER = (
+    _read_app_published_plugin_service,
+    _read_app_published_plugin_service.__code__,
+)
+
+
 def _build_terminal_backend() -> "TerminalBackend":
     """Build the supported platform backend without eager platform imports."""
     if os.name != "posix":
@@ -1218,8 +1240,8 @@ class ServiceWiringMixin:
                 plugin_service_factory=self._build_plugin_service,
                 # In-memory config read: this runs on every skills read,
                 # including the Console's per-send capture.
-                builtin_disabled_loader=lambda: _disabled_builtin_skills(
-                    getattr(self, "app_config", None)
+                builtin_disabled_loader=partial(
+                    _read_app_disabled_builtin_skills, self
                 ),
             )
         if self._skills_scope_service is None:
@@ -3701,3 +3723,10 @@ class ServiceWiringMixin:
     def llamacpp_snapshot_service(self, service: Any) -> None:
         """Preserve the public injection seam used by screens and tests."""
         self._llamacpp_snapshot_service = service
+
+
+# Stock Console capture reads only this factory's already resident facade.
+_STOCK_PLUGIN_SERVICE_FACTORY = (
+    ServiceWiringMixin._build_plugin_service,
+    ServiceWiringMixin._build_plugin_service.__code__,
+)

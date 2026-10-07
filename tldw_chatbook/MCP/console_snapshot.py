@@ -507,9 +507,12 @@ async def capture_console_effective_states(
 async def capture_console_definition_maximum(
     service: UnifiedMCPControlPlaneService,
     exclusions: frozenset[str],
+    *,
+    _run_native=None,
 ) -> dict[str, str]:
     """Prepare one narrowing maximum; dispatch still uses its fresh live gates."""
     captured = _CapturedSources(service)
+    run_native = _owned_worker if _run_native is None else _run_native
 
     def read_sources():
         payload = captured.permission_call(lambda owner: captured.permission_reader())
@@ -529,7 +532,7 @@ async def capture_console_definition_maximum(
     with service._producer_lifetime.operation():
         try:
             captured.local._require_allowed("mcp.external_profiles.list.local")
-            payload, bundle = await _owned_worker(read_sources)
+            payload, bundle = await run_native(read_sources)
             captured.require_current()
             if bool(payload.get("kill_switch", False)):
                 return {}
@@ -572,7 +575,7 @@ async def capture_console_definition_maximum(
                             _captured_execution_log=captured.log_owner,
                         )
 
-                await _owned_worker(audit_changes)
+                await run_native(audit_changes)
             captured.require_current()
             return {
                 tool.tool_id: definition_hash(tool.description, tool.input_schema)

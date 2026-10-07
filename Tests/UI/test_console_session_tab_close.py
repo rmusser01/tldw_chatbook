@@ -1051,12 +1051,37 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
 
                 run_task = asyncio.create_task(waiting_run())
                 try:
-                    assert await _settle(
+                    armed = await _settle(
                         pilot,
                         lambda kind=kind, controller=controller, doomed=doomed: (
                             kind in controller.pending_round_kinds(doomed.id)
                             and doomed.id in controller._active_stream_tasks
                         ),
+                    )
+                    if not armed:
+                        import faulthandler
+
+                        print(
+                            "pending round timeout:",
+                            kind,
+                            "request done:",
+                            round_task.done(),
+                            "request cancelled:",
+                            round_task.cancelled(),
+                            "run done:",
+                            run_task.done(),
+                            flush=True,
+                        )
+                        if round_task.done() and not round_task.cancelled():
+                            # Surface a real request exception before cleanup
+                            # can replace it with a secondary ownership error.
+                            print(
+                                "pending round result:", round_task.result(), flush=True
+                            )
+                        else:
+                            faulthandler.dump_traceback(file=2)
+                    assert (
+                        armed
                     ), "the actual pending round and its owning run did not arm"
                     await _show_tabs(console, pilot, {keeper, doomed.id})
                     assert (
@@ -1653,7 +1678,9 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         await _await_tabs(console, pilot, {keeper})
                         assert calls == [doomed.id, doomed.id]
                         generation = controller._session_close_generations[doomed.id]
-                        assert bridge._fleet_fence_generations == {doomed.id: generation}
+                        assert bridge._fleet_fence_generations == {
+                            doomed.id: generation
+                        }
                         assert controller._fleet_wake._conversation_fences == {
                             doomed.id: generation
                         }
@@ -1740,7 +1767,9 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         assert reopened.id in (
                             console._console_runtime()._admission_fenced_sessions
                         )
-                        assert bridge._fleet_fence_generations == {doomed.id: generation}
+                        assert bridge._fleet_fence_generations == {
+                            doomed.id: generation
+                        }
                         assert controller._fleet_wake._conversation_fences == {
                             doomed.id: generation
                         }

@@ -813,3 +813,32 @@ def require_startup_permission() -> None:
     )
     if not allowed:
         raise SystemExit("Recovery required: " + reason)
+
+
+# Only direct activation-preparation readers are qualified; public readers keep
+# their ordinary signatures and source order when any callback input changes.
+_ACTIVATION_PREPARATION_CALLBACKS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple(dict.items(function.__kwdefaults__ or {})),
+    )
+    for name in (
+        "startup_permission",
+        "_records",
+        "_control_records",
+        "_registry",
+        "_startup_permission_from_records",
+    )
+    for function in (globals()[name],)
+)
+_CONTROL_OBSERVATION_ORIGINAL = (
+    _control_observation,
+    _control_observation.__code__,
+    _control_observation.__wrapped__,
+    _control_observation.__wrapped__.__code__,
+    _control_observation.__closure__,
+)

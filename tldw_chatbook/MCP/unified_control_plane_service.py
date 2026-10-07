@@ -8,7 +8,7 @@ import secrets
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -295,6 +295,21 @@ def _refusal_decision_for_hub_test(reason: str | None, final_gate: str | None) -
     # or crashed test): nothing resolved, so neither a person nor a setting
     # refused this.
     return UNRESOLVED_DENIED_DECISION
+
+
+def _resolve_tool_states_from_payload(
+    payload: dict[str, Any],
+    tools: Sequence[HubTool],
+    *,
+    profile_id: str,
+) -> dict[tuple[str, str], EffectiveToolState]:
+    """Project policy from one observation without source reads or mutations."""
+    return {
+        (tool.server_key, tool.name): resolve_effective_state(
+            payload, tool, profile_id=profile_id
+        )
+        for tool in tools
+    }
 
 
 class UnifiedMCPControlPlaneService:
@@ -5457,7 +5472,11 @@ class UnifiedMCPControlPlaneService:
         payload = store.load()
         results: dict[tuple[str, str], EffectiveToolState] = {}
         for tool in tools:
-            effective = resolve_effective_state(payload, tool, profile_id=profile_id)
+            # Retain per-tool audit order for the public/custom route. Stock
+            # shared preparation projects the whole catalog from its one payload.
+            effective = _resolve_tool_states_from_payload(
+                payload, (tool,), profile_id=profile_id
+            )[(tool.server_key, tool.name)]
             results[(tool.server_key, tool.name)] = effective
             if effective.config_changed:
                 if _captured_execution_log is None:
@@ -5851,4 +5870,27 @@ _CONSOLE_CONTROLLER_SWITCH_METHODS = tuple(
     for name in ("get_kill_switch", "permission_store")
     for descriptor in (vars(UnifiedMCPControlPlaneService)[name],)
     for function in (descriptor.fget if type(descriptor) is property else descriptor,)
+)
+
+
+# Definition-time provenance for pure policy projection moved to the owner loop.
+# Replaced helpers keep the public worker route; this table carries no authority.
+_CONSOLE_TOOL_STATE_RESOLVER_BINDINGS = tuple(
+    (
+        function.__globals__, name, function, function.__code__,
+        _capture_controller_inputs(function),
+    )
+    for name, function in (
+        ("_resolve_tool_states_from_payload", _resolve_tool_states_from_payload),
+        *(
+            (name, vars(sys.modules[resolve_effective_state.__module__])[name])
+            for name in (
+                "resolve_effective_state", "_as_mapping", "_profile_chain",
+                "_profile_chain_ids", "_lifecycle_resolution_block",
+                "profile_lifecycle_disposition", "_has_exact_keys", "_is_sha256",
+                "_is_positive_int", "_is_nonnegative_int", "_is_utc_timestamp",
+                "definition_hash",
+            )
+        ),
+    )
 )
