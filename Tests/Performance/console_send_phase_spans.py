@@ -51,6 +51,8 @@ class SendSpanObserver(CompositionCounter):
         self.admission_code = inspect.unwrap(RecoveryAdmissionGuard.execution).__code__
         self.admission_starts = {}
         self.admission_entries = []
+        self.entry_starts = {self.admission_code: self.admission_starts}
+        self.entry_pairs = {self.admission_code: self.admission_entries}
         self.callbacks = (self.on_start, self.on_return, self.on_yield)
         self.events = (
             self.monitor.events.PY_START,
@@ -168,14 +170,14 @@ class SendSpanObserver(CompositionCounter):
             )
             from tldw_chatbook.MCP import console_snapshot
             from tldw_chatbook.UI.Console_Modules import wiring
-            from tldw_chatbook.Utils import sensitive_paths
+            from tldw_chatbook.Utils import private_paths, sensitive_paths
 
             targets += (
-                (hook_permissions.HookPermissions, ("_current",)),
+                (hook_permissions.HookPermissions, ("_current", "_read_state")),
                 (hook_permissions, ("default_hook_permissions_path",)),
-                (config, ("get_user_data_dir",)),
+                (config, ("get_user_data_dir", "locked_hooks_config_snapshot")),
                 (config_participants, ("verified_user_data_directory",)),
-                (raw_participants, ("_check",)),
+                (raw_participants, ("_check", "_scope")),
                 (wiring, ("receive_console_visible_intent",)),
                 (sensitive_paths, ("_stock_sensitive_config_bundle",)),
                 (private_paths, ("create_private_text",)),
@@ -194,6 +196,13 @@ class SendSpanObserver(CompositionCounter):
                     ("capture_console_turn_configuration",),
                 ),
             )
+            for generator in (
+                raw_participants._scope,
+                config.locked_hooks_config_snapshot,
+            ):
+                code = inspect.unwrap(generator).__code__
+                self.entry_starts[code] = {}
+                self.entry_pairs[code] = []
             self.hook_current_code = inspect.unwrap(
                 hook_permissions.HookPermissions._current
             ).__code__
@@ -303,6 +312,18 @@ class SendSpanObserver(CompositionCounter):
             (AgentService, "_make_call_model"): {"call_model"},
             (bridge_source._StreamingModelAdapter, "_chat_call_impl"): {"_consume"},
         }
+        if self.preparation_detail:
+            nested_targets.update(
+                {
+                    (
+                        console_configuration_preparation,
+                        "capture_console_turn_configuration_owned",
+                    ): {"capture"},
+                    (console_snapshot, "capture_console_definition_maximum"): {
+                        "read_sources"
+                    },
+                }
+            )
         for owner, names in targets:
             for name in names:
                 descriptor = inspect.getattr_static(owner, name)
@@ -338,19 +359,22 @@ class SendSpanObserver(CompositionCounter):
     def start(self):
         super().start()
         try:
-            self.monitor.set_local_events(
-                self.tool, self.admission_code, self.mask | self.events[2]
-            )
+            for code in self.entry_starts:
+                self.monitor.set_local_events(
+                    self.tool, code, self.mask | self.events[2]
+                )
         except BaseException:
-            self.monitor.set_local_events(self.tool, self.admission_code, self.mask)
+            for code in self.entry_starts:
+                self.monitor.set_local_events(self.tool, code, self.mask)
             super().stop()
             raise
 
     def stop(self):
-        assert self.monitor.get_local_events(self.tool, self.admission_code) == (
-            self.mask | self.events[2]
-        )
-        self.monitor.set_local_events(self.tool, self.admission_code, self.mask)
+        for code in self.entry_starts:
+            assert self.monitor.get_local_events(self.tool, code) == (
+                self.mask | self.events[2]
+            )
+            self.monitor.set_local_events(self.tool, code, self.mask)
         super().stop()
 
     def _record(self, kind, code):
@@ -520,10 +544,10 @@ class SendSpanObserver(CompositionCounter):
                         raw_caller_overflow=0,
                     )
                 )
-        if code is self.admission_code and index is not None:
+        if code in self.entry_starts and index is not None:
             frame = sys._getframe(1)
             assert frame.f_code is code
-            self.admission_starts[id(frame)] = index
+            self.entry_starts[code][id(frame)] = index
 
     def on_return(self, code, offset, value):
         if code is self.raw_check_code:
@@ -574,19 +598,19 @@ class SendSpanObserver(CompositionCounter):
             self.sensitive_bundle_returns.append(
                 (index, self._line(code, offset), offset, value is None)
             )
-        if code is self.admission_code:
+        if code in self.entry_starts:
             frame = sys._getframe(1)
             assert frame.f_code is code
-            self.admission_starts.pop(id(frame), None)
+            self.entry_starts[code].pop(id(frame), None)
 
     def on_yield(self, code, offset, value):
-        assert code is self.admission_code
+        assert code in self.entry_starts
         frame = sys._getframe(1)
         assert frame.f_code is code
-        start = self.admission_starts.pop(id(frame), None)
+        start = self.entry_starts[code].pop(id(frame), None)
         index = self._record("yield", code)
         if start is not None and index is not None:
-            self.admission_entries.append(
+            self.entry_pairs[code].append(
                 (start, index, self.rows[index][2] - self.rows[start][2])
             )
 
@@ -603,7 +627,7 @@ class SendSpanObserver(CompositionCounter):
             overflow=self.overflow,
             event_limit=4096,
             events=self.rows,
-            yield_code_count=1,
+            yield_code_count=len(self.entry_starts),
             yield_code_label=self.selected[self.admission_code],
             admission_entry_pairs=self.admission_entries,
             admission_pair_fields=(
