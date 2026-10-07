@@ -18807,3 +18807,10 @@ await and later save a real assistant owner to test custody and settlement
 fingerprints. Retry negatives must include changed system content in both
 single-preamble and distinct-role formats, because unchanged message rows alone
 do not prove unchanged provider input.
+
+
+## A static tool schema can be only the gated base
+
+PR2995 Qodo finding4182699992 claimed that agents could never request provider/model/preset because NEW_CHAT_TOOL_SCHEMA listed only five fields. An independent review traced the actual Console first-request plan: build_chat_create_schema adds routed presets and opted-in overrides, and native/text serializers retain those dynamic properties. Unconditionally adding the fields would violate ADR147/219 disclosure gates.
+
+For a tool-discovery claim, inspect the runtime schema builder, its live call-site inputs and the provider serializer before editing a static constant. The false-positive disposition and source links are recorded in https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4183161209 and the final Task27 review. No executed provider matrix or new test run was claimed.
