@@ -37,6 +37,7 @@ except (ImportError, TypeError, Exception):
 #
 # Local Imports
 from tldw_chatbook.Utils.file_extraction import FileExtractor
+from tldw_chatbook.Widgets.Chat_Widgets import tts_widget_index
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 #
 #######################################################################################################################
@@ -175,6 +176,9 @@ class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
     # Internal state
     message_id_internal: reactive[Optional[str]] = reactive(None)
     message_version_internal: reactive[Optional[int]] = reactive(None)
+    # task-14 TTS widget index: the key this instance is currently
+    # registered under (None while unmounted or id-less).
+    _tts_index_key: Optional[str] = None
     timestamp: reactive[Optional[str]] = reactive(None)
     image_data: reactive[Optional[bytes]] = reactive(None)
     image_mime_type: reactive[Optional[str]] = reactive(None)
@@ -460,10 +464,33 @@ class ChatMessageEnhanced(RecomposeCaptureGuard, Widget):
 
     def on_mount(self) -> None:
         """Render image when widget is mounted."""
+        # task-14: register with the TTS message-widget index so speech
+        # events reach this widget without full-DOM query walks.
+        self._tts_index_key = self.message_id_internal
+        tts_widget_index.register_message_widget(self._tts_index_key, self)
         if self.image_data and self._image_widget:
             self._render_image()
         # Ensure initial state of buttons
         self.watch__generation_complete_internal(self._generation_complete_internal)
+
+    def on_unmount(self) -> None:
+        """Remove this widget from the TTS message-widget index."""
+        tts_widget_index.unregister_message_widget(self._tts_index_key, self)
+        self._tts_index_key = None
+
+    def watch_message_id_internal(self, new_value: Optional[str]) -> None:
+        """Keep the TTS index key tracking the current message id.
+
+        Pre-mount assignments (``__init__``) are skipped; ``on_mount``
+        performs the initial registration with the then-current id.
+        """
+        if not self.is_mounted:
+            return
+        if new_value == self._tts_index_key:
+            return
+        tts_widget_index.unregister_message_widget(self._tts_index_key, self)
+        self._tts_index_key = new_value
+        tts_widget_index.register_message_widget(new_value, self)
 
     def _render_image(self) -> None:
         """Render image based on current mode."""

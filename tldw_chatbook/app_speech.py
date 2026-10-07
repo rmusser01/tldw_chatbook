@@ -66,11 +66,13 @@ from tldw_chatbook.TTS.audio_cpp_guided_config import (
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.profile_errors import ProfileRepositoryError
 from tldw_chatbook.TTS.TTS_Generation import close_tts_resources
-from tldw_chatbook.Widgets.Chat_Widgets.chat_message import ChatMessage
+from tldw_chatbook.Widgets.Chat_Widgets import tts_widget_index
 
-# chat_message_enhanced is deliberately NOT imported at module scope
-# (TASK-21103): it pulls PIL and the textual_image package at import time.
-# The two TTS event handlers that query it import it function-locally.
+# chat_message_enhanced is deliberately NOT imported anywhere in this
+# module (TASK-21103): it pulls PIL and the textual_image package at import
+# time, and the TTS event handlers reach mounted widgets through the
+# ``tts_widget_index`` registry instead of DOM queries (task-14) -- which
+# also keeps ``ChatMessage`` itself off this module's imports.
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 # TASK-21108: the payload class only -- importing it from
@@ -270,10 +272,6 @@ async def handle_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> No
 
 async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> None:
     """Handle TTS generation completion."""
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
-        ChatMessageEnhanced,
-    )
-
     app.loguru_logger.info(f"TTS complete for message {event.message_id}")
     playback_lifecycle = getattr(event, "playback_lifecycle", None)
 
@@ -310,22 +308,17 @@ async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> 
         try:
             if event.message_id:
                 # Find the message widget and update state
-                for message_widget in list(app.query(ChatMessage)) + list(
-                    app.query(ChatMessageEnhanced)
+                for message_widget in tts_widget_index.get_message_widgets(
+                    event.message_id
                 ):
-                    if (
-                        getattr(message_widget, "message_id_internal", None)
-                        == event.message_id
-                    ):
-                        # Update TTS state to idle on error
-                        if hasattr(message_widget, "update_tts_state"):
-                            message_widget.update_tts_state("idle")
-                        # Remove TTS generating class
-                        text_widget = message_widget.query_one(
-                            ".message-text", Markdown
-                        )
-                        text_widget.remove_class("tts-generating")
-                        break
+                    # Update TTS state to idle on error
+                    if hasattr(message_widget, "update_tts_state"):
+                        message_widget.update_tts_state("idle")
+                    # Remove TTS generating class
+                    text_widget = message_widget.query_one(
+                        ".message-text", Markdown
+                    )
+                    text_widget.remove_class("tts-generating")
         except Exception as e:
             app.loguru_logger.error(f"Error updating message UI: {e}")
         # The Console transcript's action row renders from the screen's
@@ -363,31 +356,26 @@ async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> 
             ):
                 return
             try:
-                widget_found = False
-                if event.message_id:
-                    # Find the message widget and update state
-                    for message_widget in list(app.query(ChatMessage)) + list(
-                        app.query(ChatMessageEnhanced)
-                    ):
-                        if (
-                            getattr(message_widget, "message_id_internal", None)
-                            == event.message_id
-                        ):
-                            widget_found = True
-                            # Update TTS state to ready with audio file
-                            if hasattr(message_widget, "update_tts_state"):
-                                message_widget.update_tts_state(
-                                    "ready", event.audio_file
-                                )
-                            # Remove TTS generating class
-                            try:
-                                text_widget = message_widget.query_one(
-                                    ".message-text", Markdown
-                                )
-                                text_widget.remove_class("tts-generating")
-                            except Exception:
-                                pass
-                            break
+                message_widgets = (
+                    tts_widget_index.get_message_widgets(event.message_id)
+                    if event.message_id
+                    else ()
+                )
+                widget_found = bool(message_widgets)
+                for message_widget in message_widgets:
+                    # Update TTS state to ready with audio file
+                    if hasattr(message_widget, "update_tts_state"):
+                        message_widget.update_tts_state(
+                            "ready", event.audio_file
+                        )
+                    # Remove TTS generating class
+                    try:
+                        text_widget = message_widget.query_one(
+                            ".message-text", Markdown
+                        )
+                        text_widget.remove_class("tts-generating")
+                    except Exception:
+                        pass
                 if widget_found:
                     # A legacy ChatMessage/ChatMessageEnhanced widget owns
                     # this message and exposes its own play control - let
@@ -426,28 +414,19 @@ async def _deliver_tts_complete_event(app: TldwCli, event: TTSCompleteEvent) -> 
         # Remove TTS generating class from message
         try:
             if event.message_id:
-                for message_widget in list(app.query(ChatMessage)) + list(
-                    app.query(ChatMessageEnhanced)
+                for message_widget in tts_widget_index.get_message_widgets(
+                    event.message_id
                 ):
-                    if (
-                        getattr(message_widget, "message_id_internal", None)
-                        == event.message_id
-                    ):
-                        text_widget = message_widget.query_one(
-                            ".message-text", Markdown
-                        )
-                        text_widget.remove_class("tts-generating")
-                        break
+                    text_widget = message_widget.query_one(
+                        ".message-text", Markdown
+                    )
+                    text_widget.remove_class("tts-generating")
         except Exception as e:
             app.loguru_logger.error(f"Error updating message UI: {e}")
 
 
 async def handle_tts_progress_event(app: TldwCli, event: TTSProgressEvent) -> None:
     """Handle TTS generation progress updates."""
-    from tldw_chatbook.Widgets.Chat_Widgets.chat_message_enhanced import (  # noqa: PLC0415 - keeps PIL/textual_image off the boot path (TASK-21103)
-        ChatMessageEnhanced,
-    )
-
     app.loguru_logger.debug(
         f"TTS progress for message {event.message_id}: {event.progress:.0%} - {event.status}"
     )
@@ -455,19 +434,14 @@ async def handle_tts_progress_event(app: TldwCli, event: TTSProgressEvent) -> No
     try:
         if event.message_id:
             # Find the message widget and update progress
-            for message_widget in list(app.query(ChatMessage)) + list(
-                app.query(ChatMessageEnhanced)
+            for message_widget in tts_widget_index.get_message_widgets(
+                event.message_id
             ):
-                if (
-                    getattr(message_widget, "message_id_internal", None)
-                    == event.message_id
-                ):
-                    # Update TTS progress
-                    if hasattr(message_widget, "update_tts_progress"):
-                        message_widget.update_tts_progress(
-                            event.progress, event.status
-                        )
-                    break
+                # Update TTS progress
+                if hasattr(message_widget, "update_tts_progress"):
+                    message_widget.update_tts_progress(
+                        event.progress, event.status
+                    )
     except Exception as e:
         app.loguru_logger.error(f"Error updating TTS progress: {e}")
 

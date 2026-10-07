@@ -18,6 +18,7 @@ from textual.reactive import reactive
 #
 # Local Imports
 from tldw_chatbook.Utils.file_extraction import FileExtractor
+from tldw_chatbook.Widgets.Chat_Widgets import tts_widget_index
 #
 #######################################################################################################################
 #
@@ -58,6 +59,9 @@ class ChatMessage(Widget):
     # -- Internal state for message metadata ---
     message_id_internal: reactive[Optional[str]] = reactive(None)
     message_version_internal: reactive[Optional[int]] = reactive(None)
+    # task-14 TTS widget index: the key this instance is currently
+    # registered under (None while unmounted or id-less).
+    _tts_index_key: Optional[str] = None
     # Store timestamp if provided, e.g. when loading from DB
     timestamp: reactive[Optional[str]] = reactive(None)  # Store as ISO string
     # Store image data if message has an image
@@ -279,8 +283,31 @@ class ChatMessage(Widget):
 
     def on_mount(self) -> None:
         """Ensure initial state of continue button and actions bar is correct after mounting."""
+        # task-14: register with the TTS message-widget index so speech
+        # events reach this widget without full-DOM query walks.
+        self._tts_index_key = self.message_id_internal
+        tts_widget_index.register_message_widget(self._tts_index_key, self)
         # Trigger the watcher logic based on the initial state.
         self.watch__generation_complete_internal(self._generation_complete_internal)
+
+    def on_unmount(self) -> None:
+        """Remove this widget from the TTS message-widget index."""
+        tts_widget_index.unregister_message_widget(self._tts_index_key, self)
+        self._tts_index_key = None
+
+    def watch_message_id_internal(self, new_value: Optional[str]) -> None:
+        """Keep the TTS index key tracking the current message id.
+
+        Pre-mount assignments (``__init__``) are skipped; ``on_mount``
+        performs the initial registration with the then-current id.
+        """
+        if not self.is_mounted:
+            return
+        if new_value == self._tts_index_key:
+            return
+        tts_widget_index.unregister_message_widget(self._tts_index_key, self)
+        self._tts_index_key = new_value
+        tts_widget_index.register_message_widget(new_value, self)
 
     def update_message_chunk(self, chunk: str):
         """Appends a chunk of text to an AI message during streaming."""
