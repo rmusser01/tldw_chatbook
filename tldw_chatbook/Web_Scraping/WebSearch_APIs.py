@@ -47,7 +47,7 @@ import threading
 import time
 from functools import wraps
 from html import unescape
-from typing import Any, Callable, Dict, List, NotRequired, Optional, TypedDict, Union
+from typing import Any, Callable, Dict, List, NamedTuple, NotRequired, Optional, TypedDict, Union
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse
 
 #
@@ -1173,6 +1173,29 @@ def _reset_dns_guard_executor_for_tests() -> None:
 
 
 # FIXME - Ensure edge cases are handled properly / Structured outputs?
+#: B16: upper bound on concurrently in-flight scrape+summarize pipelines in
+#: ``search_result_relevance``. The relevance GATE itself stays strictly
+#: sequential (it feeds spend decisions and the ``gate_rejected`` fallback
+#: order); only the scrape+summarize phase of gate-PASSED results overlaps.
+_RESEARCH_GATE_MAX_CONCURRENT_PIPELINES = 3
+
+
+class _RelevantSlot(NamedTuple):
+    """A gate-passed result awaiting its scrape+summarize pipeline (B16).
+
+    Captured by the sequential gate loop in result order; consumed by the
+    overlapped phase below. ``sleep_time`` carries the per-result jitter the
+    serial loop reused for its pre-summarization rate-limit sleep.
+    """
+
+    idx: int
+    result: Dict[str, Any]
+    content: str
+    reasoning: str
+    result_id: str
+    sleep_time: float
+
+
 async def search_result_relevance(
     search_results: List[Dict],
     original_question: str,
@@ -1238,6 +1261,9 @@ async def search_result_relevance(
     # skipped via timeout/cancel/no-content were never judged, and promoting
     # them would launder unevaluated evidence.
     gate_rejected: List[tuple] = []
+    # B16: gate-passed results awaiting their scrape+summarize pipeline, in
+    # result order. The overlapped phase after the gate loop consumes these.
+    relevant_slots: List[_RelevantSlot] = []
 
     for idx, result in enumerate(search_results):
         if cancel_event and cancel_event.is_set():
@@ -1354,215 +1380,20 @@ async def search_result_relevance(
                         logger.debug("Relevant result found.")
                         # Use the 'id' from the result if available, otherwise use idx
                         result_id = result.get("id", str(idx))
-                        source_content = content
-
-                        try:
-                            # Pre-scrape SSRF guard (task-1356): scrape_article's
-                            # own validation (input_validation.validate_url) is
-                            # well-formedness only -- no DNS resolution, no
-                            # private-range blocking. This phase browses arbitrary
-                            # search-result URLs with Playwright, so a result
-                            # pointing at e.g. http://169.254.169.254/ must be
-                            # refused BEFORE navigation, not after. A refusal is
-                            # counted exactly like a scrape failure -- never an
-                            # exception -- and falls through to the existing
-                            # snippet/title/url fallback below.
-                            #
-                            # is_public_http_url does synchronous DNS resolution
-                            # (socket.getaddrinfo) -- its own docstring chain
-                            # (evaluate_url_policy) warns never to call that kind
-                            # of check directly from an event loop. Offload it,
-                            # bounded by the same timeout used for the scrape
-                            # itself; a guard timeout raises asyncio.TimeoutError,
-                            # which is an Exception (unlike CancelledError) so it
-                            # falls straight into the `except Exception` below and
-                            # is handled exactly like a scrape failure -- no
-                            # separate code path.
-                            #
-                            # Routed through the dedicated `_get_dns_guard_executor`
-                            # pool (task-3220), NOT `asyncio.to_thread`'s shared
-                            # default executor: on a wait_for timeout the abandoned
-                            # getaddrinfo thread keeps occupying its slot until the
-                            # OS resolver gives up, and the default executor is
-                            # also where this loop's own chat_api_call/summarize
-                            # offloads run -- a run of slow-DNS hosts must not be
-                            # able to queue those paid LLM calls behind dead
-                            # resolvers. This bounds the BLAST RADIUS, not the
-                            # symptom for THIS call: under full saturation of the
-                            # dedicated pool (all `_DNS_GUARD_EXECUTOR_MAX_WORKERS`
-                            # slots already occupied by abandoned threads), a new
-                            # guard call submitted here queues unstarted behind
-                            # them, and `wait_for` below still fires once
-                            # `scrape_timeout_s` elapses -- it has no way to tell
-                            # "queued" from "running slow" apart. That still
-                            # correctly skips the scrape fail-safe (falls through
-                            # to the snippet/title/url fallback exactly like a
-                            # real guard timeout), it just does so without this
-                            # particular call ever having gotten a real DNS
-                            # answer -- the isolation guarantee above is about
-                            # protecting OTHER offloads, not about this call
-                            # getting to run promptly.
-                            is_public = await asyncio.wait_for(
-                                asyncio.get_running_loop().run_in_executor(
-                                    _get_dns_guard_executor(),
-                                    is_public_http_url,
-                                    result["url"],
-                                ),
-                                timeout=scrape_timeout_s,
+                        # B16: the scrape+summarize pipeline for this gate-
+                        # passed result moves to the overlapped phase after
+                        # the gate loop; the gate itself stays strictly
+                        # sequential (verdicts -- and the ``gate_rejected``
+                        # order -- keep following result order).
+                        relevant_slots.append(
+                            _RelevantSlot(
+                                idx=idx,
+                                result=result,
+                                content=content,
+                                reasoning=reasoning,
+                                result_id=result_id,
+                                sleep_time=sleep_time,
                             )
-                            if not is_public:
-                                logger.warning(
-                                    f"Refusing to scrape non-public URL for result "
-                                    f"{result_id}: {result.get('url')!r}; falling "
-                                    "back to search snippet/title/url"
-                                )
-                            else:
-                                # robots.txt parity (task-3260): checked here,
-                                # between the SSRF guard above and the scrape
-                                # below -- same guard-class offload discipline
-                                # (dedicated DNS-guard executor, bounded by
-                                # scrape_timeout_s) as the SSRF check, since a
-                                # robots.txt fetch does its own network I/O.
-                                # Function-local import: no module-level cycle
-                                # (web_tool_impls already imports WebSearch_APIs
-                                # function-locally in the OTHER direction).
-                                robots_ok = True
-                                if respect_robots_txt:
-                                    from tldw_chatbook.Tools.web_tool_impls import (
-                                        robots_allows_for_scrape,
-                                    )
-
-                                    try:
-                                        robots_ok = await asyncio.wait_for(
-                                            asyncio.get_running_loop().run_in_executor(
-                                                _get_dns_guard_executor(),
-                                                robots_allows_for_scrape,
-                                                result["url"],
-                                            ),
-                                            timeout=scrape_timeout_s,
-                                        )
-                                    except asyncio.CancelledError:
-                                        raise
-                                    except Exception as robots_error:
-                                        # Fail-OPEN on a robots-check error or
-                                        # timeout (deliberately the opposite of
-                                        # the SSRF guard just above, whose own
-                                        # timeout/refusal still refuses) --
-                                        # matches _fetch_robots_parser's
-                                        # existing fail-open for web_fetch/
-                                        # web_crawl.
-                                        logger.debug(
-                                            f"robots.txt check failed for result "
-                                            f"{result_id}, failing open (will "
-                                            f"scrape): {robots_error}"
-                                        )
-                                        robots_ok = True
-
-                                if not robots_ok:
-                                    # Disallowed -> same path as an SSRF
-                                    # refusal: skip the scrape, keep the
-                                    # result via its existing fallback
-                                    # content (never discard). Log names the
-                                    # HOST only, never the query.
-                                    host = (
-                                        urlparse(result.get("url") or "").hostname
-                                        or "unknown"
-                                    )
-                                    logger.debug(
-                                        f"Skipping scrape for result {result_id}: "
-                                        f"robots.txt disallows {host!r}; falling "
-                                        "back to search snippet/title/url"
-                                    )
-                                else:
-                                    scraped_content = await asyncio.wait_for(
-                                        scrape_article(result["url"]),
-                                        timeout=scrape_timeout_s,
-                                    )
-                                    scraped_text = ""
-                                    if isinstance(scraped_content, dict):
-                                        scraped_text = str(
-                                            scraped_content.get("content") or ""
-                                        ).strip()
-                                    elif isinstance(scraped_content, str):
-                                        scraped_text = scraped_content.strip()
-                                    if scraped_text:
-                                        source_content = scraped_text
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as scrape_error:
-                            logger.warning(
-                                f"Scrape failed for relevant result {result_id}; "
-                                f"falling back to search snippet/title/url: {scrape_error}"
-                            )
-
-                        # Create Summarization prompt
-                        logger.debug(
-                            f"Creating Summarization Prompt for result idx={idx}"
-                        )
-                        summary_prompt = render_internal_prompt(
-                            "websearch.result_summarization",
-                            question=original_question,
-                            content=source_content,
-                        )
-
-                        # Add delay before summarization
-                        await asyncio.sleep(sleep_time)
-
-                        # `analyze` (LLM_Calls.Summarization_General_Lib) is imported
-                        # lazily here (chatbook precedent, see module docstring)
-                        # so a plain import of this module doesn't eagerly pull in
-                        # the summarization stack.
-                        from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
-                            analyze,
-                        )
-
-                        logger.info(f"Summarizing relevant result: ID={result_id}")
-
-                        async def _summ_call(_sc=source_content, _sp=summary_prompt):
-                            return await asyncio.to_thread(
-                                lambda: analyze(
-                                    input_data=_sc,
-                                    custom_prompt_arg=_sp,
-                                    api_name=api_endpoint,
-                                    api_key=None,
-                                    temp=0.7,
-                                    system_message=None,
-                                    streaming=False,
-                                )
-                            )
-
-                        summary = None
-                        try:
-                            summary = await asyncio.wait_for(
-                                _summ_call(), timeout=llm_timeout_s
-                            )
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as summ_error:
-                            logger.error(f"Summary generation failed: {summ_error}")
-
-                        # `analyze()` reports failure by RETURNING one of its
-                        # providers' error strings rather than raising -- treat
-                        # that the same way the port source treats a raised
-                        # exception: fall back to the (scraped or fallback)
-                        # source content itself. Detection cannot be a bare
-                        # "Error:" prefix test: a llama.cpp failure returns
-                        # "Llama: Error occurred while ..." and used to be
-                        # stored here AS the evidence (task-17382).
-                        if _is_summary_failure(summary) or not summary:
-                            summary = (
-                                source_content[:2000] or "Summary generation failed"
-                            )
-
-                        relevant_results[result_id] = {
-                            "content": summary,  # Store the summary instead of full content
-                            "original_content": source_content,  # Keep original content if needed
-                            "reasoning": reasoning,
-                            "url": result.get("url"),
-                            "title": result.get("title"),
-                        }
-                        logger.info(
-                            f"Relevant result found and summarized: ID={result_id}; Reasoning={reasoning}"
                         )
                     else:
                         logger.info(f"Irrelevant result: {reasoning}")
@@ -1581,6 +1412,273 @@ async def search_result_relevance(
             logger.error(
                 f"Error during relevance evaluation/summarization for result idx={idx}: {e}"
             )
+
+    # --- B16: overlapped scrape+summarize phase --------------------------------
+    # The gate loop above judged every result IN ORDER (spend decisions and
+    # the gate_rejected order depend on that). Only the scrape+summarize
+    # pipelines of gate-PASSED results run concurrently here, bounded by
+    # ``_RESEARCH_GATE_MAX_CONCURRENT_PIPELINES``. Each slot reproduces the
+    # serial loop's per-result error handling exactly: scrape failures fall
+    # back to the snippet content, summarize failures fall back to the source
+    # content, and any OTHER unexpected error skips just that slot -- siblings
+    # are never affected.
+    async def _process_relevant_slot(
+        slot: _RelevantSlot,
+    ) -> Optional[tuple[str, Dict[str, Any]]]:
+        idx = slot.idx
+        result = slot.result
+        result_id = slot.result_id
+        reasoning = slot.reasoning
+        source_content = slot.content
+
+        async with _gate_semaphore:
+            try:
+                try:
+                    # Pre-scrape SSRF guard (task-1356): scrape_article's
+                    # own validation (input_validation.validate_url) is
+                    # well-formedness only -- no DNS resolution, no
+                    # private-range blocking. This phase browses arbitrary
+                    # search-result URLs with Playwright, so a result
+                    # pointing at e.g. http://169.254.169.254/ must be
+                    # refused BEFORE navigation, not after. A refusal is
+                    # counted exactly like a scrape failure -- never an
+                    # exception -- and falls through to the existing
+                    # snippet/title/url fallback below.
+                    #
+                    # is_public_http_url does synchronous DNS resolution
+                    # (socket.getaddrinfo) -- its own docstring chain
+                    # (evaluate_url_policy) warns never to call that kind
+                    # of check directly from an event loop. Offload it,
+                    # bounded by the same timeout used for the scrape
+                    # itself; a guard timeout raises asyncio.TimeoutError,
+                    # which is an Exception (unlike CancelledError) so it
+                    # falls straight into the `except Exception` below and
+                    # is handled exactly like a scrape failure -- no
+                    # separate code path.
+                    #
+                    # Routed through the dedicated `_get_dns_guard_executor`
+                    # pool (task-3220), NOT `asyncio.to_thread`'s shared
+                    # default executor: on a wait_for timeout the abandoned
+                    # getaddrinfo thread keeps occupying its slot until the
+                    # OS resolver gives up, and the default executor is
+                    # also where this loop's own chat_api_call/summarize
+                    # offloads run -- a run of slow-DNS hosts must not be
+                    # able to queue those paid LLM calls behind dead
+                    # resolvers. This bounds the BLAST RADIUS, not the
+                    # symptom for THIS call: under full saturation of the
+                    # dedicated pool (all `_DNS_GUARD_EXECUTOR_MAX_WORKERS`
+                    # slots already occupied by abandoned threads), a new
+                    # guard call submitted here queues unstarted behind
+                    # them, and `wait_for` below still fires once
+                    # `scrape_timeout_s` elapses -- it has no way to tell
+                    # "queued" from "running slow" apart. That still
+                    # correctly skips the scrape fail-safe (falls through
+                    # to the snippet/title/url fallback exactly like a
+                    # real guard timeout), it just does so without this
+                    # particular call ever having gotten a real DNS
+                    # answer -- the isolation guarantee above is about
+                    # protecting OTHER offloads, not about this call
+                    # getting to run promptly.
+                    is_public = await asyncio.wait_for(
+                        asyncio.get_running_loop().run_in_executor(
+                            _get_dns_guard_executor(),
+                            is_public_http_url,
+                            result["url"],
+                        ),
+                        timeout=scrape_timeout_s,
+                    )
+                    if not is_public:
+                        logger.warning(
+                            f"Refusing to scrape non-public URL for result "
+                            f"{result_id}: {result.get('url')!r}; falling "
+                            "back to search snippet/title/url"
+                        )
+                    else:
+                        # robots.txt parity (task-3260): checked here,
+                        # between the SSRF guard above and the scrape
+                        # below -- same guard-class offload discipline
+                        # (dedicated DNS-guard executor, bounded by
+                        # scrape_timeout_s) as the SSRF check, since a
+                        # robots.txt fetch does its own network I/O.
+                        # Function-local import: no module-level cycle
+                        # (web_tool_impls already imports WebSearch_APIs
+                        # function-locally in the OTHER direction).
+                        robots_ok = True
+                        if respect_robots_txt:
+                            from tldw_chatbook.Tools.web_tool_impls import (
+                                robots_allows_for_scrape,
+                            )
+
+                            try:
+                                robots_ok = await asyncio.wait_for(
+                                    asyncio.get_running_loop().run_in_executor(
+                                        _get_dns_guard_executor(),
+                                        robots_allows_for_scrape,
+                                        result["url"],
+                                    ),
+                                    timeout=scrape_timeout_s,
+                                )
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as robots_error:
+                                # Fail-OPEN on a robots-check error or
+                                # timeout (deliberately the opposite of
+                                # the SSRF guard just above, whose own
+                                # timeout/refusal still refuses) --
+                                # matches _fetch_robots_parser's
+                                # existing fail-open for web_fetch/
+                                # web_crawl.
+                                logger.debug(
+                                    f"robots.txt check failed for result "
+                                    f"{result_id}, failing open (will "
+                                    f"scrape): {robots_error}"
+                                )
+                                robots_ok = True
+
+                        if not robots_ok:
+                            # Disallowed -> same path as an SSRF
+                            # refusal: skip the scrape, keep the
+                            # result via its existing fallback
+                            # content (never discard). Log names the
+                            # HOST only, never the query.
+                            host = (
+                                urlparse(result.get("url") or "").hostname
+                                or "unknown"
+                            )
+                            logger.debug(
+                                f"Skipping scrape for result {result_id}: "
+                                f"robots.txt disallows {host!r}; falling "
+                                "back to search snippet/title/url"
+                            )
+                        else:
+                            scraped_content = await asyncio.wait_for(
+                                scrape_article(result["url"]),
+                                timeout=scrape_timeout_s,
+                            )
+                            scraped_text = ""
+                            if isinstance(scraped_content, dict):
+                                scraped_text = str(
+                                    scraped_content.get("content") or ""
+                                ).strip()
+                            elif isinstance(scraped_content, str):
+                                scraped_text = scraped_content.strip()
+                            if scraped_text:
+                                source_content = scraped_text
+                except asyncio.CancelledError:
+                    raise
+                except Exception as scrape_error:
+                    logger.warning(
+                        f"Scrape failed for relevant result {result_id}; "
+                        f"falling back to search snippet/title/url: {scrape_error}"
+                    )
+
+                # Create Summarization prompt
+                logger.debug(
+                    f"Creating Summarization Prompt for result idx={idx}"
+                )
+                summary_prompt = render_internal_prompt(
+                    "websearch.result_summarization",
+                    question=original_question,
+                    content=source_content,
+                )
+
+                # Add delay before summarization (the serial loop reused the
+                # per-result jitter drawn before the relevance call -- kept,
+                # per-slot, unchanged).
+                await asyncio.sleep(slot.sleep_time)
+
+                # `analyze` (LLM_Calls.Summarization_General_Lib) is imported
+                # lazily here (chatbook precedent, see module docstring)
+                # so a plain import of this module doesn't eagerly pull in
+                # the summarization stack.
+                from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                    analyze,
+                )
+
+                logger.info(f"Summarizing relevant result: ID={result_id}")
+
+                async def _summ_call(_sc=source_content, _sp=summary_prompt):
+                    return await asyncio.to_thread(
+                        lambda: analyze(
+                            input_data=_sc,
+                            custom_prompt_arg=_sp,
+                            api_name=api_endpoint,
+                            api_key=None,
+                            temp=0.7,
+                            system_message=None,
+                            streaming=False,
+                        )
+                    )
+
+                summary = None
+                try:
+                    summary = await asyncio.wait_for(
+                        _summ_call(), timeout=llm_timeout_s
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as summ_error:
+                    logger.error(f"Summary generation failed: {summ_error}")
+
+                # `analyze()` reports failure by RETURNING one of its
+                # providers' error strings rather than raising -- treat
+                # that the same way the port source treats a raised
+                # exception: fall back to the (scraped or fallback)
+                # source content itself. Detection cannot be a bare
+                # "Error:" prefix test: a llama.cpp failure returns
+                # "Llama: Error occurred while ..." and used to be
+                # stored here AS the evidence (task-17382).
+                if _is_summary_failure(summary) or not summary:
+                    summary = (
+                        source_content[:2000] or "Summary generation failed"
+                    )
+
+                logger.info(
+                    f"Relevant result found and summarized: ID={result_id}; Reasoning={reasoning}"
+                )
+                return result_id, {
+                    "content": summary,  # Store the summary instead of full content
+                    "original_content": source_content,  # Keep original content if needed
+                    "reasoning": reasoning,
+                    "url": result.get("url"),
+                    "title": result.get("title"),
+                }
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                # Mirrors the serial loop's per-result outer handler: this
+                # slot is skipped, sibling slots are unaffected.
+                logger.error(
+                    f"Error during relevance evaluation/summarization for result idx={idx}: {e}"
+                )
+                return None
+
+    if relevant_slots:
+        _gate_semaphore = asyncio.Semaphore(
+            _RESEARCH_GATE_MAX_CONCURRENT_PIPELINES
+        )
+        outcomes = await asyncio.gather(
+            *(_process_relevant_slot(slot) for slot in relevant_slots),
+            return_exceptions=True,
+        )
+        # Assemble strictly in slot (== result) order, mirroring the serial
+        # loop's dict insertion order (later duplicates overwrite earlier,
+        # exactly as sequential assignment used to).
+        for slot, outcome in zip(relevant_slots, outcomes):
+            if isinstance(outcome, asyncio.CancelledError):
+                # Cooperative cancellation must keep propagating.
+                raise outcome
+            if isinstance(outcome, BaseException):
+                # Belt-and-braces: _process_relevant_slot handles its own
+                # exceptions; this guard keeps the serial loop's
+                # "one result's failure never kills the gate" contract.
+                logger.error(
+                    f"Error during relevance evaluation/summarization for result idx={slot.idx}: {outcome}"
+                )
+                continue
+            if outcome is not None:
+                entry_result_id, entry = outcome
+                relevant_results[entry_result_id] = entry
 
     # task-16333 zero-relevant fallback: the live baseline showed a strict
     # gate silently producing NO report at all. When every EVALUATED result
