@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-07 21:47'
+updated_date: '2026-10-07 22:16'
 labels: []
 dependencies: []
 ---
@@ -578,6 +578,8 @@ Checkpoint8395c52dfb integrates the reviewed Send receipt633e4faee1. Original co
 Integrated peer immutable057fae7bbe as97b641d859 after independent source review. Root nine owned-close tests pass23.172s. Original combined three-Send probe completes all replies, three trace links and zero checkpoints but still fails:19.335/16.070/14.092s; first-Send heartbeat1.236s and idle4.128s. Source and HEAD stable; contained tree retires normally with no force/identity overflow/races. Evidence combined-97b641-native-pause-1.measurement.json. Budgets and ACs remain open. Latest59dac Windows supplemental run127/128: navigation and retry now pass; pending approval arming still fails. Its passive Close receipts are source-current with zero overflow/unmatched frames, so this run does not reproduce the stale-tab defect. Original Linux trace-settlement diagnostic at216588 records3complete traces/0checkpoints but fails36 private SQLite helpers versus16; timings are diagnostic-only.
 
 2026-10-07 generic trust-builder lifetime repair: original inner-cancellation RED (trust-inner-cancel-red-2) proved the ensure issuer terminal and singleflight lock released while its exact original executor Future remained running. Normal source/native/fixture retirement passed. The initial two-loop-turn trial sampled too early and is excluded as a causal regression result. Replaced the detachable inner Task/to_thread wrapper with existing run_preparation_read; direct custom builder, exception, ready winner and lock contracts remain. Five original native controls (normal, cancellation, repeated cancellation, former-inner-cancellation route, injected winner) plus fifteen existing physical-read controls passed (trust-physical-lifetime-green-1:20 PASS,38.90s pytest/49.078s driver,source and HEAD unchanged). Independent bounded review found no remaining blockers. App/Runtime observation and stock Console UI preparation remain AC29 work; no whole-app performance or platform completion is claimed.
+
+Generated remote-worker follow-up: CI37691945159 reproduced a stale bundle after the prepared userdata-path change. Regenerated only Tools/remote_worker_bundle.py through the unchanged builder; a second --check matches byte-for-byte. Windows targeted module collection is unavailable because its original test imports POSIX fcntl (remote-bundle-regenerated-a21-1: collection error, source/HEAD unchanged, normal process retirement). The unchanged Ubuntu remote-bundle CI control remains required after push. No startup or Send performance acceptance follows; task remains In Progress.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up
