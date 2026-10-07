@@ -103,3 +103,19 @@ current evidence only rules out the tested retained-focus insertText transaction
 
 Task34570 remains In Progress. The web gate is not complete and no broader
 programme completion is claimed.
+
+## Single synchronous native-boundary follow-up
+
+The controller authorized one minimal correction experiment before replacement:
+synchronous blur/focus before insertText and again afterward, retaining guards,
+rechecking source/attachment/composition/editability after focus events, and
+restoring mapped selection/scroll. Actual controlled Notes/WebKit26.0 again
+produced A/B/C/D then **A on the first native Meta+z**, not C. The focused-editor
+assertion had passed. No delays, artificial keystrokes, programmatic undo, or
+snapshot history were added. The six candidate guard tests and targeted tsc pass;
+the live gate still fails. See the server report's appended exact variant/trace.
+
+Further experiments stopped under the one-experiment instruction. Temporary
+product wiring removed and owned server processes33547/32968 stopped. The earlier
+native focus-boundary hypothesis has now been tested and failed in this concrete
+form. Monaco remains unimplemented; the smallest proposal still awaits approval.

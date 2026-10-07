@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-07 02:16'
-updated_date: '2026-10-07 02:48'
+updated_date: '2026-10-07 02:53'
 labels:
   - notes
   - structured-editing
@@ -44,15 +44,15 @@ Reason: native history qualification implements the approved reversible-edit rul
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Qualified native Textual8.2.8 bridge and mounted tests: 5 passing; Ruff check/format pass. Captured request/source guards, inherited disabled/read-only/no-op admission, linear caret mapping and scroll retention verified. Browser production controlled Notes gate fails WebKit26 (first Undo returns A instead of C), reproduced twice; Chromium145/Firefox146 pass. Web candidate is test-only and temporary product wiring removed. Evidence: Docs/superpowers/reviews/2026-09-27-document-editor-history.md; existing ADR194 applies, no new ADR. Keep In Progress pending review and revised web qualification approval.
+Qualified Textual8.2.8 bridge: 5 passing mounted tests, Ruff check/format pass. Browser gate fails WebKit26 first Undo D -> A. Original candidate repeated twice; one authorized synchronous blur/focus boundary on both sides of insertText also fails, preserving guards and selection. No additional native experiment after failure; temporary product wiring removed. Evidence: Docs/superpowers/reviews/2026-09-27-document-editor-history.md. Existing ADR194 applies; In Progress pending review/revised web approval.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
 <!-- SECTION:FINAL_SUMMARY:END -->
+
 <!-- SECTION:FINAL_SUMMARY:END -->
 
 <!-- SECTION:FINAL_SUMMARY:END -->
