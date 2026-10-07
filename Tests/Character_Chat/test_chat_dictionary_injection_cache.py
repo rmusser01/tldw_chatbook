@@ -22,6 +22,7 @@ Three layers of evidence, mirroring the world-info cache tests:
 import asyncio
 import json
 import re
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -914,3 +915,76 @@ def test_second_send_zero_loads_zero_parses_zero_reinstantiation_zero_compiles(
     )
     assert (load.count, fd.count, jl.count, len(compiles)) == (0, 0, 0, 0)
     assert text3 == "nothing at all matches here"
+
+
+# ---------------------------------------------------------------------------
+# Fix round 1 — timed-effect state across sends (sanctioned, now pinned)
+# ---------------------------------------------------------------------------
+
+
+def test_timed_effect_cooldown_persists_across_sends_and_resets_on_generation_bump(
+    dict_db, monkeypatch
+):
+    """Pin the bundle cache's cross-send timed-effect semantics.
+
+    Cached ``ChatDictionary`` instances persist ``last_triggered`` within a
+    generation, so ``apply_timed_effects`` cooldowns actually suppress
+    subsequent sends inside the window -- pre-change, per-send ``from_dict``
+    re-instantiation reset the state and made cooldowns/delays inert across
+    sends. A generation bump rebuilds the instances and resets the timing
+    state. Asserted on replacement output (and the load spy proving one
+    bundle rode both sends), never on ``last_triggered`` internals."""
+    conv_id = dict_db.add_conversation({"title": "cooldown"})
+    dict_id = cdl.save_chat_dictionary(
+        dict_db,
+        "Cooldown",
+        entries=[
+            cdl.ChatDictionary(
+                key="boom",
+                content="BANG",
+                timed_effects={"sticky": 0, "cooldown": 60, "delay": 0},
+            )
+        ],
+    )
+    LocalChatDictionaryService(dict_db).attach_to_conversation(dict_id, conv_id)
+
+    class _Clock:
+        """Replaces cdl.datetime for the send path (only user: the
+        pipeline's ``current_time = datetime.now()``); no sleeping."""
+
+        def __init__(self):
+            self.value = datetime(2026, 1, 1, 12, 0, 0)
+
+        def now(self):
+            return self.value
+
+    clock = _Clock()
+    monkeypatch.setattr(cdl, "datetime", clock)
+    load = _spy_load(monkeypatch)
+    message = "the boom fires"
+
+    # Send 1 at t0: fires and stamps the entry's timing state.
+    assert apply_active_chatdicts_to_text(dict_db, conv_id, None, message) == (
+        "the BANG fires"
+    )
+    # Send 2 at t0+1s: SAME cached instances (still one bundle), the
+    # cooldown suppresses the replacement entirely.
+    clock.value += timedelta(seconds=1)
+    assert apply_active_chatdicts_to_text(dict_db, conv_id, None, message) == message
+    assert load.count == 1  # both sends rode one bundle -- cooldown is cross-send
+
+    # Send 3 at t0+61s: cooldown elapsed, fires again.
+    clock.value += timedelta(seconds=60)
+    assert apply_active_chatdicts_to_text(dict_db, conv_id, None, message) == (
+        "the BANG fires"
+    )
+
+    # Send 4 at t0+62s would be inside the fresh 60s cooldown -- but a
+    # dictionary edit bumps the generation: instances rebuild with the
+    # timing state reset, so the entry fires immediately.
+    clock.value += timedelta(seconds=1)
+    cdl.update_chat_dictionary(dict_db, dict_id, description="bump")  # generation bump
+    assert apply_active_chatdicts_to_text(dict_db, conv_id, None, message) == (
+        "the BANG fires"
+    )
+    assert load.count == 2  # the bump rebuilt the bundle

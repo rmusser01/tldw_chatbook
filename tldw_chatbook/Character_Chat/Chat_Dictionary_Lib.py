@@ -1530,6 +1530,12 @@ def _resolve_active_dictionaries(
     content is keyed by ``character_id`` only (same residual class as the
     world-info resolver): card edits that bypass the dictionary write paths
     do not invalidate until the next dictionary-store bump.
+
+    Cached instances persist ``last_triggered`` across sends within a
+    generation, so :func:`apply_timed_effects` cooldowns/delays are
+    effective across sends exactly as documented there (pre-cache, per-send
+    re-instantiation reset that state every send); a generation bump
+    rebuilds the instances and resets the per-entry timing state.
     """
     cacheable = bool(conversation_id) and db is not None
     generation: Optional[int] = None
