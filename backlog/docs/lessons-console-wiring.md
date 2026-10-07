@@ -527,3 +527,15 @@ that nominally ten-second loop. Use a remaining-budget-capped asyncio yield,
 not another unbounded-to-this-phase drain. A call-path guard is RED on the
 initial poll and GREEN with real native/worker replay; all original controls
 and the frozen-replay rejection pass their intended outcomes afterward.
+
+## Refusal text in controls is not transcript publication
+
+**TASK-34415, PR3034 final-head UI3, 2026-10-07.** The refused-send Resend
+journey saw provider refusal text anywhere on screen, then selected an echo not
+yet in the transcript. A 250ms call-through publication delay reproduced the
+exact missing-button failure: selection of an absent row is intentionally a
+no-op, and later publication does not retry it. Scope the existing text wait
+to the actual transcript before selection, retaining its bounds and assertions.
+The same delayed original node and thirteen affected cases pass; no production
+selection semantics or timeout change is needed. This controlled proof does
+not attribute unrecorded hosted ordering or certify full qualification.

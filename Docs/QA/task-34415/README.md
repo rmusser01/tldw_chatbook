@@ -427,6 +427,24 @@ remain applicable through exact authored-input identity. The final evidence
 commit preserves reviewed/tested source. Publication is ready; new exact-head
 CI and bounded task closeout remain required, not merge or qualification clearance.
 
+## Final-head UI3 refused-echo publication correction
+
+Published head `15912073f0f4f39fbf9c29984dc0ec133bda2e07` failed UI3's original
+refused-echo Resend selector; required Derived37583445896 failed despite all
+other lanes and Perf passing. The [audited receipt](ci-resend-receipt.md) retains
+the exact controlled publication RED/GREEN, thirteen affected module passes,
+both original private-profile children and static evidence. A screen-wide
+refusal banner is not a receipt that the echo has reached the transcript.
+Scope only the existing refusal-text wait to the actual transcript before
+selection; all original bounds and assertions remain. No production, profile,
+admission or CI change. Exact probe and raw hashes are published, while full
+new dumps stay local. All eleven current artifact guards pass. Fresh independent
+scoped review of all seven paths found no Critical/Important/Minor issues and
+verified all thirty hashes, preserved bounds and assertions. TASK34415 remains
+In Progress; new exact-head CI is required before bounded closeout and protected
+merge. Earlier source review applicability is preserved by unchanged production
+and other test inputs.
+
 ## Still open
 
 Busy-lock responsiveness is not full unchanged 50ms activation qualification.
