@@ -1940,7 +1940,9 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path, monkey
 
     # This scripted local/hook case has no user prompt overrides.
     monkeypatch.setattr(
-        bridge_module, "get_internal_prompt", lambda prompt_id: CATALOG[prompt_id].default
+        bridge_module,
+        "get_internal_prompt",
+        lambda prompt_id: CATALOG[prompt_id].default,
     )
     # Declare the documented ENV-first default; keep the real watchdog ceiling.
     monkeypatch.setenv(
@@ -1985,69 +1987,96 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path, monkey
             ["done."],
         ]
     )
-    db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
-    store = ConsoleChatStore()
-    session = store.ensure_session()
-    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
-    assistant = store.append_message(
-        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
-    )
-    dispatched = []
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Tools import workspace_file_roots
+    from tldw_chatbook.Workspaces import LocalWorkspaceRegistryService
 
-    def execute(operation, arguments, *, intent):
-        dispatched.append(operation)
-        return "clean working tree"
+    # The original turn lazily reads the default file-tools registry as well
+    # as this fixture's run store. Retire only handles this fixture acquires.
+    registry_before = workspace_file_roots._default_registry_instance
+    with contextlib.ExitStack() as cleanup:
+        if type(registry_before) is LocalWorkspaceRegistryService:
+            cleanup.enter_context(operation_owned_connection(registry_before.db))
+        elif registry_before is None:
 
-    local = LocalToolProvider(
-        workspace_root=tmp_path,
-        specs=[
-            spec
-            for spec in _default_specs(
-                tmp_path, workspace_executor=SimpleNamespace(execute=execute)
-            )
-            if spec.name in {"fs_read", "git_status"}
-        ],
-        resolve_state=lambda _hub: ASK,
-    )
-    rounds = []
+            def close_created_registry():
+                registry = workspace_file_roots._default_registry_instance
+                if (
+                    type(registry) is LocalWorkspaceRegistryService
+                    and type(registry.db) is WorkspaceDB
+                ):
+                    registry.db.close()
 
-    def approvals(pending):
-        rounds.append([call.tool_name for call in pending])
-        return {call.tool_name: "approve_once" for call in pending}
+            cleanup.callback(close_created_registry)
+        db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
+        cleanup.callback(db.close)
+        store = ConsoleChatStore()
+        session = store.ensure_session()
+        store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
+        assistant = store.append_message(
+            session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        dispatched = []
 
-    bridge = ConsoleAgentBridge(
-        agent_runs_db=db,
-        store=store,
-        provider_gateway=gateway,
-        ensure_run_hooks=lambda: engine,
-    )
-    _run_id, outcome = bridge.run_reply(
-        conversation_id="conv-1",
-        session_id=session.id,
-        resolution=ConsoleProviderResolution(
-            provider="Groq", execution_key="groq", base_url="", model=None, ready=True
-        ),
-        assistant_message_id=assistant.id,
-        model="test-model",
-        session_system_prompt="",
-        agent_messages=[{"role": "user", "content": "hi"}],
-        should_cancel=lambda: False,
-        local_provider=local,
-        review_tool_calls=build_local_review_hook(local, approvals),
-    )
+        def execute(operation, arguments, *, intent):
+            dispatched.append(operation)
+            return "clean working tree"
 
-    assert outcome.status == "done", outcome.steps
-    # The hook denied fs_read BEFORE the review chain: the one approval
-    # round carried only the non-matching call.
-    assert rounds == [["git_status"]]
-    results = {
-        step.tool_name: step.result
-        for step in outcome.steps
-        if step.kind == STEP_TOOL_RESULT
-    }
-    assert results["fs_read"].startswith("hook: ")
-    assert "git_status" in results  # ran the normal chain and dispatched
-    assert dispatched == ["git_status"]
+        local = LocalToolProvider(
+            workspace_root=tmp_path,
+            specs=[
+                spec
+                for spec in _default_specs(
+                    tmp_path, workspace_executor=SimpleNamespace(execute=execute)
+                )
+                if spec.name in {"fs_read", "git_status"}
+            ],
+            resolve_state=lambda _hub: ASK,
+        )
+        rounds = []
+
+        def approvals(pending):
+            rounds.append([call.tool_name for call in pending])
+            return {call.tool_name: "approve_once" for call in pending}
+
+        bridge = ConsoleAgentBridge(
+            agent_runs_db=db,
+            store=store,
+            provider_gateway=gateway,
+            ensure_run_hooks=lambda: engine,
+        )
+        _run_id, outcome = bridge.run_reply(
+            conversation_id="conv-1",
+            session_id=session.id,
+            resolution=ConsoleProviderResolution(
+                provider="Groq",
+                execution_key="groq",
+                base_url="",
+                model=None,
+                ready=True,
+            ),
+            assistant_message_id=assistant.id,
+            model="test-model",
+            session_system_prompt="",
+            agent_messages=[{"role": "user", "content": "hi"}],
+            should_cancel=lambda: False,
+            local_provider=local,
+            review_tool_calls=build_local_review_hook(local, approvals),
+        )
+
+        assert outcome.status == "done", outcome.steps
+        # The hook denied fs_read BEFORE the review chain: the one approval
+        # round carried only the non-matching call.
+        assert rounds == [["git_status"]]
+        results = {
+            step.tool_name: step.result
+            for step in outcome.steps
+            if step.kind == STEP_TOOL_RESULT
+        }
+        assert results["fs_read"].startswith("hook: ")
+        assert "git_status" in results  # ran the normal chain and dispatched
+        assert dispatched == ["git_status"]
 
 
 # -- ApprovalRequested at the approval-round registration (run hooks Task 8) --

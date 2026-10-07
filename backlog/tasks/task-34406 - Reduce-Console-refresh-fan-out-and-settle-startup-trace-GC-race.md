@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-07 17:55'
+updated_date: '2026-10-07 18:07'
 labels: []
 dependencies: []
 ---
@@ -61,6 +61,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #41 Scheduled trace maintenance retains each issued database callback through cancellation; runtime shutdown waits for its actual callback and newly owned native resources to retire before creator close.
 - [x] #42 Change Review transcript marker reads preserve primary-run order, assistant anchors and durable snapshot contents without fetching or decoding unrelated legacy/child step logs; existing custom database callbacks retain their preceding contract.
 - [x] #43 Character picker reads on the exact retained file-backed Characters database retire their newly opened worker connection before publishing or propagating cancellation; original profile-selection fences and borrowed, memory and custom behavior remain. Actual handles and registered resource ownership are checked, without weakening the original global storage drain.
+- [x] #44 The original real Hook wiring fixture retires its creator-owned runs database and newly acquired default Workspace connection before returning, while retaining all original behavior assertions and preserving previously borrowed connections.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -403,6 +404,10 @@ Picker regression prerequisite: the first held-original native run proves new wo
 Picker platform verification: add the five original-reader native lifetime cases and three original profile-switch cases as a separate early step in the existing Ubuntu/macOS/Windows matrix, retaining an immediate artifact and unchanged 180-second timeout. Source review confirms only _apply_console_character_choice_async changes; its previous custom/memory and unbound branches remain. New actual native tests and changed method pass Ruff/format; original module has zero lint findings.
 
 Picker compatibility prerequisite: five actual native cases pass, but the seven original controller/profile-switch nodes error during generic fixture setup before body entry because configuration selected at collection is redirected after binding. Add the existing bootstrap_profile marker to exactly the original parameterized profile-switch test and four no-mount controller tests; preserve every body, guard and deadline. Verify AST reversal and rerun only these seven originals. This follows the same collection-bound config prerequisite already qualified for the original marker-rendering case; no production bypass.
+
+Original Hook fixture cleanup investigation: run only test_run_reply_wraps_the_review_chain_with_pretooluse_hooks with a bounded read-only pytest witness. Record ordinary lease owner, selected filename, thread and participant registration before/after its unchanged body to identify the two resource increments seen in the original Linux cohort. Do not close or mutate any participant in the witness. If the test creates the leaked resources, use creator-owned finally cleanup and retain its original behavior assertions; no application/global drain change. ADR required: no; routine test-owned resource cleanup under existing ADR126.
+
+Hook fixture confirmed: unchanged original test passes but leaves exactly two registered MainThread native resources, AgentRunsDB runs.db and the default file-tools WorkspaceDB; both survive session finish with zero active operations. Scope cleanup with ExitStack around the original fixture body. Register db.close immediately after its own successful construction. For an existing stock default registry, enter the established operation_owned_connection context to preserve an existing borrower. If this test lazily constructs the default registry, close only its newly created stock database on this same thread at exit. Do not reset the global registry, mutate leases, alter any behavior assertion or weaken global drain. Re-run unchanged original case with the same passive witness and require zero new retained resources.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -551,6 +556,8 @@ Change Review marker payload repair: the actual SQLite authorizer observed unuse
 Marker projection platform evidence at committed 16e7606f3b: all seven focused cases pass on actual Ubuntu24.04 (12.126s), macOS15 (8.965s), and Windows2022 (20.825s), zero failures/errors/skips. Artifacts: workflow run37659848292, change-review-marker-reads per platform. This confirms this query correction across OSes; the whole workflow and performance budgets remain open.
 
 Retained Character picker native ownership fixed. Causal original tests observed the exact freshly opened worker SQLite handle still registered after normal return and early parent completion on single/repeated cancellation; the original borrowed transaction remains live as required. Only the exact retained file-backed CharactersRAGDB branch now uses the existing owned DB callback and drains its standard Task through repeated cancellation before propagating cancellation. Custom/memory and unbound picker branches and all original profile fences are unchanged. All five native lifetime controls pass; all seven original profile-switch/controller cases pass in 9.60s after the explicitly documented bootstrap-profile prerequisites. Both completed runs retain unchanged HEAD/sources and normal process-tree retirement with zero identity overflow/races. Lint and changed-method/new-test format checks pass; AST review confirms one product method changed and original test bodies are unchanged. Existing ADR126 documents this finite callback completion; eight targeted controls added to the existing three-OS workflow with early artifacts. This retires the positively reproduced picker worker resources; separate Hook fixture/global-drain and broader performance acceptance remain open.
+
+Original Hook wiring fixture cleanup: actual unchanged case passed while retaining two registered MainThread native leases after its body and through session finish: creator AgentRunsDB runs.db and lazy default WorkspaceDB tldw_chatbook_workspaces.db. ExitStack now closes the creator run store and newly acquired default-registry connection, using existing operation_owned_connection for a pre-existing registry to preserve borrowed handles. Original test/body/assertion AST is unchanged after removing cleanup scaffolding. The same original test passes with zero retained ordinary resources and zero core/raw operations after body and session finish (9.890s contained driver); sources/HEAD remained unchanged, no forced retirement, zero overflow/races. Passive diagnostic is retained in local evidence only. Differential Ruff retains exactly the five pre-existing findings, adds none; selected function formatting preserves AST. No production or global drain behavior changed. Separately all eight focused picker lifetime/profile tests pass at committed967b90a785 on Ubuntu40.253s, macOS31.199s and Windows54.938s, zero failures/errors/skips in workflow37662857541. Status remains In Progress for remaining whole performance, Workspace owner integration, and final combined UAT.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up
