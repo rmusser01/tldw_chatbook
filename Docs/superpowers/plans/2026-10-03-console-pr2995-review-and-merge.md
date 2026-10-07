@@ -969,3 +969,11 @@ PR2995 merged through normal GitHub protections at2026-10-05T10:52:49Z, mergecom
 Allrequired source tasks and independent reviews are complete. Earlier unchecked historical Task8 integration rows are closed by their preserved Task8/fix and later scoped integration reports; they are not new runs or relabeled QA. Final Task25 qualifies111distinct cases by102unchanged original-phase passes plus9corrected final passes. Historical strictXFAIL/exclusions/optional/resource warnings remain explicit; no full suite/install/suppression/gate/cap change was performed.
 
 Backlog34215.2 criteria/status close only after actualmerge. Postmerge documentation/status/lesson/QA changes are committed locally on the existing featurebranch and do not alter the merged source or pushdev/createanotherPR. Ruling109 records this limit and preservation of the managedworktree/SDD/privatebundle/shared dirtycheckout. Final QA includes all109orderedrulings and current merge/feedback/actual-gate proofs. Disable the existingheartbeat only after this bookkeeping finishes.
+
+## Bookkeeping publication — 2026-10-06
+
+The user authorized publishing the two preserved postmerge documentation commits through a follow-up PR against `dev`. This supersedes the local-only publication choice in Ruling 109. The final QA archive and historical ledger remain exact snapshots of the original merge; this follow-up changes no production code or tests.
+
+Cleanup is complete: the worktree is archived, private recovery evidence is preserved, the merged remote feature branch was deleted after explicit approval, and the heartbeat is PAUSED. The local branch retains the original bookkeeping commits.
+
+ADR required: no. This documents completed work under ADR-219 and changes no architectural decision.
