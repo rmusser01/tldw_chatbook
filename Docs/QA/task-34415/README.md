@@ -247,6 +247,46 @@ review of the twelve staged files found no Critical/Important/Minor findings;
 the original production and MCP reviews remain applicable by byte identity.
 New exact-head CI remains required before protected merge.
 
+## Exact-head CI completed-startup-timer correction
+
+On `ee51e0b1e762463b38f7b5144161458c02d60702`, Derived run 37569263239's
+UI1 lane failed before its approval geometry assertions: the shared readiness
+helper asserted that the startup projection timer still existed. The lane
+recorded 650 passed/one failed/two warnings in 520.06s. PR, UI2/3/4 and Perf
+passed; this is not a passing aggregate CI claim. Installed Textual keeps timers
+in a WeakSet, so a normally completed one-shot can disappear before lookup.
+
+A call-through, weak-reference probe observed the real successful projections
+and natural timer retirement, then ran the original private-profile geometry
+node. It reproduced the exact None assertion (child one failed in 8.78s). The
+minimal test-helper correction awaits a timer only if still present, retaining
+the existing call_next drain and every readiness/layout/focus assertion and
+timeout. The identical probe passed (child one in 9.58s). A separate gate on the
+actual timer tick proved the helper still waits while that timer is pending,
+then passed the same geometry assertions (child one in 9.66s). Neither probe
+substitutes a projection result, profile, config getter or recovery admission.
+
+The ordinary six-consumer selection passed geometry but the five other cases
+refused changed config selection before mounting, before reaching this helper.
+Those failures are retained, not repaired by bypassing admission. Each original
+remaining control then passed in a separate process using the existing
+bootstrap_profile fixture mode. The shared helper file is format clean; its
+four inherited Ruff findings remain unchanged. No production/script/package/
+workflow changes; resource warnings and qualification limits remain unwaived.
+
+Receipts: `ci-projection-ui1-failed.log`, `ci-projection-red-child.log`,
+`ci-projection-green-child.log`, `ci-projection-pending-child.log`, their parent
+logs, `ci-projection-targeted.log` (the initial profile refusals),
+`ci-projection-bootstrap-controls.log`, `ci-projection-lint-comparison.json`
+and `ci-projection-preflight.log` (all eleven guards pass). Exact disposable
+sources: `ci-projection-retired-probe.txt`, `ci-projection-pending-probe.txt`
+and `ci-projection-bootstrap-driver.txt`. Originals remain in
+`/private/tmp/pr3034-projection-timer-probe-DNpme6` and the failed hosted log in
+`/private/tmp/pr3034-fd-origins.bGYAOJ/ui1-current-head.log`. Only trailing
+whitespace was normalized; no failure, warning or assertion was omitted.
+Fresh scoped review, preserving integration with newer dev and new exact-head
+CI remain required before protected merge.
+
 ## Still open
 
 Busy-lock responsiveness is not full unchanged 50ms activation qualification.

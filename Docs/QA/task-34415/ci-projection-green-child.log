@@ -1,0 +1,11 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+PR3034 probe: real projection succeeded; 1 startup timer(s) naturally retired; 5 real projection(s)
+.                                                                        [100%]
+- generated xml file: /private/tmp/pr3034-projection-timer-probe-DNpme6/green-pytest/test_batch_row_widgets_have_no0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+7.31s call     Tests/UI/test_approval_batch_geometry.py::test_batch_row_widgets_have_nonzero_geometry_and_do_not_overlap_under_bundled_css
+
+(2 durations < 1s hidden.)
+1 passed in 9.58s

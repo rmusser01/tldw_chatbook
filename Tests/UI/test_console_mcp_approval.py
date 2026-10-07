@@ -1370,11 +1370,10 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
         ):
             projection_task = timer._task
             break
-    assert projection_task is not None
-
-    # The one-shot timer queues its projection with call_next; queue an event
-    # behind it so completion means the production projection itself has run.
-    await asyncio.wait_for(asyncio.shield(projection_task), timeout=10.0)
+    # Textual keeps timers weakly: a completed one-shot may already be gone.
+    # Await any pending timer, then drain its call_next projection in either case.
+    if projection_task is not None:
+        await asyncio.wait_for(asyncio.shield(projection_task), timeout=10.0)
     projection_drained = asyncio.Event()
     screen.call_next(projection_drained.set)
     await asyncio.wait_for(projection_drained.wait(), timeout=10.0)

@@ -498,3 +498,14 @@ entry/retirement, so a writer cannot win between probe and entry. Release a
 partial REBUILD acquisition when FILE is busy. Real-holder, fresh-source and
 cleanup assertions establish this repair; they do not prove the full 50ms
 activation matrix or native terminal qualification.
+
+## A completed one-shot timer need not remain discoverable
+
+**TASK-34415, PR3034 UI1, 2026-10-07.** Approval geometry failed before its
+layout assertions because the readiness helper required a startup timer object.
+Installed Textual's timer registry is a WeakSet. Observing real successful
+projection and natural timer retirement reproduced the exact None assertion.
+Await a still-present timer, then drain its queued callback in either case and
+retain actual readiness/rendered-state assertions. The same retired-timer probe
+and a genuinely held pending-timer control passed without extending deadlines
+or changing production startup/profile behavior.
