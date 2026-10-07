@@ -1,8 +1,9 @@
 ---
 id: TASK-34417
 title: Strip hosted-streaming deepcopy chain
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:40
+updated_date: 2026-10-07 05:47
 ---
 
 ## Description
