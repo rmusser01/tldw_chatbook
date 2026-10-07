@@ -639,12 +639,24 @@ async def search_semantic(
 
 
 def deduplicate_results(results: List[SearchResult]) -> List[SearchResult]:
-    """Remove duplicate results based on content similarity."""
+    """Remove duplicate results based on content similarity.
+
+    TASK-407: the key is ``(source, content[:200])`` -- NOT a bare content
+    prefix. A bare prefix had two failure modes: content-less results (every
+    media hit before the media leg attached snippets, since search_media_db's
+    broad row omits ``content``) all shared the empty-string key and collapsed
+    into one; and once media hits carried real snippets, a media item and a
+    note that happen to share text (same transcript ingested as both) also
+    collapsed, eating a distinct result. Identical content within ONE source
+    is still a true duplicate -- the same document found by two legs (e.g.
+    FTS and the vector leg both report ``source="media"``) -- while identical
+    content across sources is two distinct results for the user.
+    """
     seen = {}
 
     for result in results:
-        # Use first 200 chars of content as key
-        key = result.content[:200]
+        # Use source + first 200 chars of content as key
+        key = (result.source, result.content[:200])
 
         if key not in seen or result.score > seen[key].score:
             seen[key] = result
