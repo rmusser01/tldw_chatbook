@@ -445,6 +445,31 @@ In Progress; new exact-head CI is required before bounded closeout and protected
 merge. Earlier source review applicability is preserved by unchanged production
 and other test inputs.
 
+## Current bounded task closeout
+
+Source/evidence head `8e21216303269721615fd592c525676d49f3d276` on live/fetched
+dev `5a607a14bffe9f9d52ec348985819e2c927a1fdd` completed
+[Derived Artifacts 37589108877](https://github.com/rmusser01/tldw_chatbook/actions/runs/37589108877)
+and [Perf Guard 37589109027](https://github.com/rmusser01/tldw_chatbook/actions/runs/37589109027)
+SUCCESS. The PR lane, all four UI lanes and required **Derived artifacts
+reproduce from their sources** passed on that exact head; both workflow
+aggregates completed on their first automatic attempt. Earlier failed heads
+are historical evidence, not substituted for these checks.
+
+All eight acceptance criteria and the documented bounded DoD are satisfied.
+Only TASK34415 is marked Done through the current Backlog CLI. Independent
+review confirmed this exact source/evidence head with no Critical, Important
+or Minor findings; actual GitHub reviews and threads were empty at closeout.
+Existing targeted verification, paired static comparisons, eleven artifact
+guards, lessons, ADR126/120 rationale and retained failure/warning records remain
+unchanged. This two-file documentation-only closeout changes no production,
+test, script, package, workflow, diagnostic source or retained receipt.
+
+The final closeout commit still needs its own latest exact-head CI before the
+authorized protected merge. No merge or warning-free full qualification is
+claimed; all parent qualification and baseline teardown/resource gaps below
+remain open and unwaived.
+
 ## Still open
 
 Busy-lock responsiveness is not full unchanged 50ms activation qualification.

@@ -1,11 +1,11 @@
 ---
 id: TASK-34415
 title: Console control refresh defers busy native config locks
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-06 15:47'
-updated_date: '2026-10-07 07:39'
+updated_date: '2026-10-07 08:22'
 labels:
   - console
   - performance
@@ -99,4 +99,6 @@ Current published159120 UI3 failed the original refused-echo Resend selector:1fa
 AC8 correction verified: existing refusal-text wait is scoped to actual transcript, with original80attempts and2s action-selector bound and every original assertion retained. Identical250ms call-through GREEN1passed7.38s; final formatted-source GREEN1passed7.16s. Ordinary affected module13passed37.81s, original private-profile children1passed8.16s and1passed7.46s without pytest warnings. Mechanical from-import sorting and one whitespace-only formatter collapse leave other AST nodes and all assertions/call arguments unchanged except declared wait scope; final original-node GREEN pins final source. Changed file Ruff/format and all eleven current artifact guards pass. Safe receipt/probe plus new raw-hash manifest retained; no dump publication. All8AC now checked; task remains In Progress for fresh independent scoped review, publication and new exact-head CI. Earlier failure/warning/qualification records remain unchanged.
 
 Fresh independent read-only review of all seven staged correction/evidence paths against15912073 found no Critical, Important or Minor issues. Reviewer confirmed actual controller/control/transcript ordering, all five original journey assertions, preserved80attempts/pause/2s selector bound, keyboard dispatch and unchanged neighboring/private-profile behavior. Independent AST check confirms the complete semantic diff; exact probe and all30manifest hashes match. Source/evidence are ready to commit and publish, not merge clearance; unchanged production/other tests preserve prior review applicability. TASK34415 remains In Progress with all8AC checked, pending new exact-head CI and bounded publication closeout. No parent qualification or warning gap is waived.
+
+Bounded closeout after source/evidence head 8e21216303269721615fd592c525676d49f3d276 on live/fetched dev 5a607a14bffe9f9d52ec348985819e2c927a1fdd completed latest Derived Artifacts 37589108877 and Perf Guard 37589109027 SUCCESS, first automatic attempts: PR, all four UI lanes and strict required Derived artifacts reproduce from their sources passed on this exact head. All eight acceptance criteria and documented bounded DoD are satisfied; only TASK34415 is Done through the current Backlog CLI. Exact-head independent review has no Critical/Important/Minor findings, actual GitHub reviews/threads empty, current base and clean source verified. Existing targeted tests, paired static evidence, eleven guards, safe receipts/manifests, lessons and ADR126/120 rationale remain unchanged. This two-file task/QA closeout changes no source or retained evidence and requires its own fresh exact-head CI before normal protected head-matched merge; no merge claim or full local sweep. Historical failed heads and prior Done/reopening remain preserved. TASK31966/TASK31245 stay In Progress; full 50ms/native viewport/ordinary quit/actual Windows Terminal/three unfamiliar participants/whole-app retirement/aggregate FD/closed-cursor and mounted Interrupt baseline teardown gaps are unwaived.
 <!-- SECTION:NOTES:END -->
