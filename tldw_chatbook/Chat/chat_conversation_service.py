@@ -302,6 +302,11 @@ class ChatConversationService:
             Path(rag_context_store_path) if rag_context_store_path else None
         )
         self._rag_context_store: dict[str, Any] | None = None
+        # Recovery-mode batching: records staged by stage_rag_context_record()
+        # await one flush_rag_context_store() instead of rewriting the whole
+        # JSON store per message (import-path writes used to be O(N x
+        # store-bytes) serialize+write per N-message import).
+        self._staged_rag_context_records: dict[tuple[str, str], dict[str, Any]] = {}
         self.citation_legacy_migration = citation_legacy_migration
         self.organization_sync_service = organization_sync_service
 
@@ -350,6 +355,59 @@ class ChatConversationService:
             self,
             json.dumps(self._rag_context_store, indent=2, sort_keys=True),
         )
+
+    @_chat_sources.guarded
+    def stage_rag_context_record(
+        self,
+        conversation_id: str,
+        message_id: str,
+        record: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Stage one legacy RAG-context record for a single batched flush.
+
+        Recovery-mode batching counterpart of the deprecated immediate
+        writer: the prepared ``record`` is held in memory (under the same
+        per-path operation guard as the store itself) and only reaches the
+        file when :meth:`flush_rag_context_store` runs. Staging the same
+        ``(conversation_id, message_id)`` twice overwrites, exactly as
+        consecutive immediate writes would. Callers staging records directly
+        are responsible for message-row validation; the validating entry
+        point is :meth:`record_message_rag_context`.
+
+        Raises:
+            RuntimeError: when the canonical citation migration has writes
+                enabled -- staging must not bypass the legacy-write
+                prohibition.
+        """
+        migration = self.citation_legacy_migration
+        if migration is not None and migration.writes_enabled:
+            raise RuntimeError("legacy_rag_context_writes_disabled")
+        stored = dict(record)
+        self._staged_rag_context_records[
+            (str(conversation_id), str(message_id))
+        ] = stored
+        return dict(stored)
+
+    @_chat_sources.guarded
+    def flush_rag_context_store(self) -> None:
+        """Persist every staged record with one whole-store serialize+write.
+
+        Merges the staged records into the memoized store exactly as the
+        per-message writer would (final content is identical) and clears the
+        staging area only after the write succeeds, so a failed flush leaves
+        the records staged for a retry. No-op when nothing is staged.
+        """
+        if not self._staged_rag_context_records:
+            return
+        store = self._load_rag_context_store()
+        conversations = store.setdefault("conversations", {})
+        for (
+            conversation_id,
+            message_id,
+        ), record in self._staged_rag_context_records.items():
+            conversations.setdefault(conversation_id, {})[message_id] = record
+        self._save_rag_context_store()
+        self._staged_rag_context_records.clear()
 
     def derive_conversation_title(
         self, conversation_row: Mapping[str, Any] | None
@@ -1365,8 +1423,16 @@ class ChatConversationService:
         *,
         rag_context: Mapping[str, Any] | None = None,
         citations: Iterable[Mapping[str, Any]] | None = None,
+        stage: bool = False,
     ) -> dict[str, Any]:
-        """Deprecated compatibility writer available only in recovery mode."""
+        """Deprecated compatibility writer available only in recovery mode.
+
+        Flushes immediately (stage + one flush) by default so genuine one-off
+        recovery callers keep their exact pre-batching behavior; pass
+        ``stage=True`` to accumulate records for a single
+        :meth:`flush_rag_context_store` per batch (the chatbook importer's
+        recovery fallback does exactly that).
+        """
 
         migration = self.citation_legacy_migration
         if migration is not None and migration.writes_enabled:
@@ -1391,12 +1457,9 @@ class ChatConversationService:
             "citations": normalized_citations,
             "last_modified": self._now(),
         }
-        store = self._load_rag_context_store()
-        conversation_store = store.setdefault("conversations", {}).setdefault(
-            str(conversation_id), {}
-        )
-        conversation_store[str(message_id)] = record
-        self._save_rag_context_store()
+        self.stage_rag_context_record(conversation_id, message_id, record)
+        if not stage:
+            self.flush_rag_context_store()
         return dict(record)
 
     @_chat_sources.guarded
@@ -1407,8 +1470,15 @@ class ChatConversationService:
         *,
         rag_context: Mapping[str, Any] | None = None,
         citations: Iterable[Mapping[str, Any]] | None = None,
+        stage: bool = False,
     ) -> dict[str, Any]:
-        """Persist package-era citations without portable-import semantics."""
+        """Persist package-era citations without portable-import semantics.
+
+        ``stage`` only affects the recovery-mode fallback (the legacy JSON
+        store): with it, the record waits for one
+        :meth:`flush_rag_context_store` per import batch. The canonical
+        migration path ignores it entirely.
+        """
 
         normalized_citations = [dict(item) for item in citations or ()]
         migration = self.citation_legacy_migration
@@ -1418,6 +1488,7 @@ class ChatConversationService:
                 message_id,
                 rag_context=rag_context,
                 citations=normalized_citations,
+                stage=stage,
             )
         record = {
             "conversation_id": conversation_id,
