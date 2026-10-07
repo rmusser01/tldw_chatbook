@@ -276,10 +276,21 @@ class PreparedCloseOwnedResources:
             if already_retired:
                 continue
             if not _close_settled_core_cache(database):
+                failure = RuntimeError("prepared_close_database_not_retired")
                 # Failure-only evidence; neither census nor print grants retirement.
                 try:
                     with storage._lock:
                         post_close = census(participant, expected_path, detailed=True)
+                    failure.add_note(
+                        "prepared_close_resource_census: "
+                        + json.dumps(
+                            {
+                                "database_type": expected_type.__name__,
+                                "resources": post_close,
+                            },
+                            sort_keys=True,
+                        )
+                    )
                     print(
                         json.dumps(
                             {
@@ -299,7 +310,7 @@ class PreparedCloseOwnedResources:
                 except Exception:
                     # Optional facts must not replace the original negative oracle.
                     pass
-                raise RuntimeError("prepared_close_database_not_retired")
+                raise failure
             with storage._lock:
                 participant.close_admission()
                 if not settled(participant, expected_path):
