@@ -42,6 +42,8 @@ from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
 )
+from tldw_chatbook.Chat.session_usage import session_usage
+from tldw_chatbook.Widgets.session_summary_dialog import SessionSummaryDialog
 from tldw_chatbook.config import (
     get_cli_config_path,
     get_cli_setting,
@@ -2101,6 +2103,29 @@ class LifecycleMixin:
             return 3
         return max(1, min(30, value))
 
+    async def _show_session_summary_before_exit(self) -> None:
+        """Show the optional quit-time usage summary, hard-capped so exit
+        always proceeds (issue #365; spec "Quit-Flow Integration")."""
+        duration = self._session_summary_duration_seconds()
+        dialog = SessionSummaryDialog(
+            session_usage().snapshot(),
+            started_at=self._startup_start_time,
+            duration_seconds=duration,
+        )
+        try:
+            await asyncio.wait_for(
+                self.push_screen_wait(dialog), timeout=duration + 2.0
+            )
+        except asyncio.TimeoutError:
+            loguru_logger.warning(
+                "Session summary dialog did not dismiss in time; exiting anyway."
+            )
+        except Exception:
+            # Deliberately narrow beyond TimeoutError for robustness, but
+            # CancelledError is BaseException on 3.12 -- it propagates and
+            # must never be swallowed on the quit path (lessons-textual).
+            loguru_logger.warning("Session summary display failed; exiting anyway.")
+
     async def _run_approved_quit_cleanup(self) -> None:
         """Preserve quit ordering without blocking the Textual event loop."""
 
@@ -2118,6 +2143,17 @@ class LifecycleMixin:
                 await asyncio.to_thread(self._run_blocking_quit_persistence)
             except Exception:
                 loguru_logger.warning("Blocking quit persistence failed")
+            # Fail closed: a config-read failure on the quit path must
+            # degrade to "no summary", never to a failed quit (issue #365).
+            summary_enabled = False
+            try:
+                summary_enabled = bool(
+                    get_cli_setting("session_summary", "enabled", False)
+                )
+            except Exception:
+                summary_enabled = False
+            if summary_enabled:
+                await self._show_session_summary_before_exit()
         finally:
             self.exit()
 
