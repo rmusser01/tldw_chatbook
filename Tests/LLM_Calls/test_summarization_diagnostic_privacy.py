@@ -5225,7 +5225,9 @@ def test_openrouter_stream_hides_returned_content_and_consumes_lines(
     assert post_calls[0][1]["stream"] is True
     assert OPENROUTER_STREAM_CANARY not in captured.text
     assert OPENROUTER_PRIVATE_STREAMING_VALUE not in captured.text
-    assert "OpenRouter Stream: Content received" in captured.text
+    # review-B B26 removed the per-chunk "Content received" INFO log; the
+    # streaming loop must not log per chunk at all.
+    assert "OpenRouter Stream: Content received" not in captured.text
 
 
 def test_openrouter_stream_non_string_content_preserves_historical_error_contract(
@@ -5264,7 +5266,7 @@ def test_openrouter_stream_non_string_content_preserves_historical_error_contrac
     )
     assert post_calls[0][1]["stream"] is True
     assert post_calls[0][1]["json"]["stream"] is True
-    assert "OpenRouter Stream: Content received" in captured.text
+    assert "OpenRouter Stream: Content received" not in captured.text
     assert "OpenRouter Stream: Processing failed; exception_type=TypeError" in (
         captured.text
     )

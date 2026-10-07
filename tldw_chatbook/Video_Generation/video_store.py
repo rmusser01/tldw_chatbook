@@ -338,17 +338,27 @@ class VideoStore:
         First choice is :func:`slugify_prompt`; collisions (an earlier video
         file with the same name still present) get ``-2``, ``-3`` …
 
+        The recovery catalog handle (when one exists) is built once per
+        allocation and reused across collision attempts -- rebuilding it per
+        resolve repeated the privacy-setup/migration cost linearly in the
+        number of colliding slugs.
+
         Raises:
             ValueError: If no suffix below ``_SLUG_MAX_SUFFIX_ATTEMPTS`` is free.
         """
         base = slugify_prompt(prompt)
-        for attempt in range(1, _SLUG_MAX_SUFFIX_ATTEMPTS + 1):
-            slug = base if attempt == 1 else f"{base}-{attempt}"
-            if all(
-                self.resolve(message_id, slug, extension=extension) is None
-                for _container, _mime, extension in SUPPORTED_VIDEO_FORMATS
-            ):
-                return slug
+        with participant.operation((self._recovered_root,)):
+            recovered = self._open_recovered_media()
+            for attempt in range(1, _SLUG_MAX_SUFFIX_ATTEMPTS + 1):
+                slug = base if attempt == 1 else f"{base}-{attempt}"
+                if all(
+                    self._resolve_with(
+                        message_id, slug, extension=extension, recovered=recovered
+                    )[1]
+                    is None
+                    for _container, _mime, extension in SUPPORTED_VIDEO_FORMATS
+                ):
+                    return slug
         raise ValueError(f"no free slug for base {base!r} under message {message_id!r}")
 
     def save(
@@ -505,37 +515,64 @@ class VideoStore:
         """
         return self.resolve_state(message_id, slug, extension=extension)[1]
 
+    def _open_recovered_media(self):
+        """Build one recovery-catalog handle for the current operation.
+
+        Returns ``None`` when no catalog exists yet, so read paths never
+        create one as a side effect. The handle is scoped to a single public
+        operation and never cached across calls: the catalog can change
+        underneath via other processes.
+        """
+        from tldw_chatbook.Backup_Recovery.recovered_media import RecoveredMedia
+
+        if not (self._recovered_root / "catalog.sqlite3").exists():
+            return None
+        return RecoveredMedia(self._recovered_root)
+
+    def _resolve_with(
+        self,
+        message_id: str,
+        slug: str,
+        *,
+        extension: str,
+        recovered=None,
+    ):
+        """Resolve one slug against a pre-built (optional) recovery handle.
+
+        Shared core of :meth:`resolve_state` and :meth:`allocate_slug` so a
+        multi-attempt allocation reuses one ``RecoveredMedia`` instance.
+        """
+        from tldw_chatbook.Backup_Recovery.recovered_media import current_profile_id
+
+        if recovered is not None:
+            status, path = recovered.resolve_reference(
+                profile=self._recovered_profile or current_profile_id(),
+                message=message_id,
+                slug=slug,
+                media_type="video/" + extension,
+            )
+            if status != "unknown":
+                return (
+                    "ready" if status == "ready" else "recovered_" + status
+                ), path
+        try:
+            path = self._video_path(message_id, slug, extension)
+        except (ValueError, VideoStoreSaveError):
+            return "expired", None
+        with participant.operation((self._root,)):
+            return (
+                ("ready", path)
+                if self._is_safe_regular_file(path)
+                else ("expired", None)
+            )
+
     def resolve_state(self, message_id: str, slug: str, *, extension: str):
         """Resolve durable recovery identity before the ephemeral filename."""
-        from tldw_chatbook.Backup_Recovery.recovered_media import (
-            RecoveredMedia,
-            current_profile_id,
-        )
-
         with participant.operation((self._recovered_root,)):
-            catalog = self._recovered_root / "catalog.sqlite3"
-            if catalog.exists():
-                store = RecoveredMedia(self._recovered_root)
-                status, path = store.resolve_reference(
-                    profile=self._recovered_profile or current_profile_id(),
-                    message=message_id,
-                    slug=slug,
-                    media_type="video/" + extension,
-                )
-                if status != "unknown":
-                    return (
-                        "ready" if status == "ready" else "recovered_" + status
-                    ), path
-            try:
-                path = self._video_path(message_id, slug, extension)
-            except (ValueError, VideoStoreSaveError):
-                return "expired", None
-            with participant.operation((self._root,)):
-                return (
-                    ("ready", path)
-                    if self._is_safe_regular_file(path)
-                    else ("expired", None)
-                )
+            recovered = self._open_recovered_media()
+            return self._resolve_with(
+                message_id, slug, extension=extension, recovered=recovered
+            )
 
     def iter_stored(self) -> Iterator[StoredVideo]:
         """Return an iterator over one completed non-following snapshot."""
@@ -850,6 +887,15 @@ class VideoStore:
             raise VideoStoreSaveError("managed video rollback verification failed")
 
     def _enforce_save_capacity(self, new_target: Path) -> None:
+        """Verify publication, evict to the cap, and verify the final state.
+
+        One inventory walk serves the whole transaction: the post-eviction
+        state is derived from the snapshot instead of a second full walk.
+        Each ``_checked_unlink`` either raises or removed its file, and the
+        caller holds the transaction lock plus the exclusive root lease, so
+        nothing else can change the store between the snapshot and the
+        derived verification.
+        """
         snapshot = self._snapshot()
         if not any(video.path == new_target for video in snapshot):
             raise VideoStoreSaveError("managed video publication verification failed")
@@ -857,12 +903,14 @@ class VideoStore:
         victims = self._sorted_oldest(
             [video for video in snapshot if video.path != new_target]
         )
+        evicted: set[Path] = set()
         for victim in victims:
             if total <= self.capacity_bytes:
                 break
             self._checked_unlink(victim)
+            evicted.add(victim.path)
             total -= victim.size_bytes
-        final = self._snapshot()
+        final = tuple(video for video in snapshot if video.path not in evicted)
         if (
             not any(video.path == new_target for video in final)
             or sum(video.size_bytes for video in final) > self.capacity_bytes

@@ -1788,9 +1788,10 @@ def summarize_with_openrouter(
         try:
             # TASK-32853: transport, bounded retries (capped Retry-After),
             # and exactly-once resource closure moved to the hosted engine.
-            # The consume-then-return-string contract, the per-chunk
-            # "Content received" log, and every frozen reviewed-safe
-            # statement below are preserved verbatim.
+            # The consume-then-return-string contract and every frozen
+            # reviewed-safe statement below are preserved verbatim; the
+            # former per-chunk "Content received" INFO log was removed
+            # (review-B B26: one log line per streamed chunk).
             retry_count = int(get_cli_setting("openrouter_api", "api_retries", 3))
             retry_delay = int(get_cli_setting("openrouter_api", "api_retry_delay", 5))
             transport_config = HostedHTTPTransportConfig(
@@ -1827,9 +1828,7 @@ def summarize_with_openrouter(
                         if "choices" in json_data and len(json_data["choices"]) > 0:
                             delta = json_data["choices"][0].get("delta", {})
                             if "content" in delta:
-                                content = delta["content"]
-                                logging.info("OpenRouter Stream: Content received")
-                                full_response += content
+                                full_response += delta["content"]
                     except json.JSONDecodeError:
                         continue
 
