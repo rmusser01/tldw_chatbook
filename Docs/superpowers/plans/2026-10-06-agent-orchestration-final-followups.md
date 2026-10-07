@@ -31,9 +31,9 @@
 - [x] Reproduce with real saved/granted config and actual controller Send: exact close passes; both host-disposal paths refuse authority and fail the real marker assertion.
 - [x] Record the bounded policy prospectively in ADR-163/197.
 - [x] Review the design: retain the lifecycle's exact SessionEnd event and existing engine-issued execution state; carry that witness through current worker context. Public teardown calls, copied events and even replay of the same event must not acquire the original state.
-- [ ] Implement the smallest shared fix. Only the effect-free standalone command may use the private teardown launch guard; canonical config, profile/section, fingerprint and exact grant epoch are re-read under existing launch locks. Ordinary targets remain closed; managed-plugin/MCP/model authority remains unchanged.
-- [ ] Verify once-only process execution, late revoke/reapproval/definition/missing-store refusal, forged deliveries, cancelled disposal and actual process/ticket/reap settlement under the original three-second notification and cleanup allowance.
-- [ ] Obtain independent scoped source review, append evidence/limits, then check all criteria through CLI.
+- [x] Implement the smallest shared fix. Only the effect-free standalone command may use the private teardown launch guard; canonical config, profile/section, fingerprint and exact grant epoch are re-read under existing launch locks. Ordinary targets remain closed; managed-plugin/MCP/model authority remains unchanged.
+- [x] Verify once-only process execution, late revoke/reapproval/definition/missing-store refusal, forged deliveries, cancelled disposal and actual process/ticket/reap settlement under the original three-second notification and cleanup allowance.
+- [x] Obtain independent scoped source review, append evidence/limits, then check all criteria through CLI.
 
 ## Task 2: TASK-34353 — hosted UI capacity evidence
 

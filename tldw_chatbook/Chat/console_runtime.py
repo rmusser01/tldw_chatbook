@@ -3271,6 +3271,19 @@ class ConsoleRuntime:
                 return None
             captured = {target.spec.id: target for target in targets}
 
+            def session_end_current(handler, event):
+                owner = getattr(engine, "lifecycle_owner", None)
+                return bool(
+                    self._disposed
+                    and handler.type == "command"
+                    and handler.event == "SessionEnd"
+                    and not handler.effects
+                    and not handler.required
+                    and owner is not None
+                    and self.get_hooks_v2(session_id) is engine
+                    and owner._session_end_current(event)
+                )
+
             def authority(handler, _event, _stage):
                 if native is not None and handler.id in native.owners:
                     return (
@@ -3281,8 +3294,15 @@ class ConsoleRuntime:
                     )
                 target = captured.get(handler.id)
                 return bool(
-                    target is not None and not self._disposed
-                    and permissions.target_current(target)
+                    target is not None
+                    and (
+                        not self._disposed
+                        and permissions.target_current(target)
+                        or session_end_current(handler, _event)
+                        and permissions._session_end_current(
+                            review, target, lambda: session_end_current(handler, _event)
+                        )
+                    )
                 )
 
             def effects_current(handler, _event, _stage):
@@ -3312,7 +3332,15 @@ class ConsoleRuntime:
                             raise PermissionError("plugin_hook_authority_changed")
                         yield
                 else:
-                    with permissions.launch_guard(captured[handler.id], tool_name=None):
+                    target = captured[handler.id]
+                    guard = (
+                        permissions._session_end_launch_guard(
+                            review, target, lambda: session_end_current(handler, event)
+                        )
+                        if session_end_current(handler, event)
+                        else permissions.launch_guard(target, tool_name=None)
+                    )
+                    with guard:
                         yield
 
             engine = self.ensure_hooks_v2(

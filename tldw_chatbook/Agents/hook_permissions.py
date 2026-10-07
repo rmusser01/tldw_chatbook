@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from collections import Counter
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -1076,3 +1076,83 @@ class HookPermissions:
     def close(self) -> None:
         """Fence every later launch without waiting for existing processes."""
         self._closed.set()
+
+    def _session_end_current(
+        self,
+        expected: HookReviewSnapshot,
+        target: HookTarget,
+        current: Callable[[], bool],
+    ) -> bool:
+        """Re-read the original grant for an authentic bounded host delivery."""
+        try:
+            with self._session_end_launch_guard(expected, target, current):
+                return True
+        except HookLaunchRefused:
+            return False
+
+    @contextmanager
+    def _session_end_launch_guard(
+        self,
+        expected: HookReviewSnapshot,
+        target: HookTarget,
+        current: Callable[[], bool],
+    ) -> Iterator[None]:
+        """Validate teardown under the existing locks without reopening targets."""
+        entered = False
+        try:
+            if (
+                not current()
+                or isinstance(target.spec, HookSpec)
+                or target.spec.event != "SessionEnd"
+                or target.spec.type != "command"
+                or target.spec.effects
+                or target.spec.required
+            ):
+                raise HookLaunchRefused("Host teardown delivery is unavailable.")
+            with self._current() as (snapshot, state, _precondition):
+                row = next(
+                    (
+                        row.entry
+                        for row in snapshot.rows
+                        if row.entry
+                        and row.entry.key == target.key
+                        and row.state == "approved"
+                    ),
+                    None,
+                )
+                grant = (
+                    state["configs"]
+                    .get(target.config_scope, {})
+                    .get("grants", {})
+                    .get(target.key)
+                    if state
+                    else None
+                )
+                if (
+                    snapshot.config.config_path != expected.config.config_path
+                    or snapshot.config.profile_data_dir
+                    != expected.config.profile_data_dir
+                    or snapshot.config.section_stamp != expected.config.section_stamp
+                    or snapshot.store_path != expected.store_path
+                    or target.config_scope != str(snapshot.config.config_path)
+                    or row is None
+                    or row.spec != target.spec
+                    or grant is None
+                    or grant["fingerprint"] != target.fingerprint
+                    or state["store_id"] + ":" + grant["token"] != target.approval_token
+                    or self._is_sealed(
+                        snapshot.store_path, target.config_scope, target.key
+                    )
+                    or not current()
+                ):
+                    raise HookLaunchRefused("Captured teardown hook authority changed.")
+                entered = True
+                yield
+        except HookLaunchRefused:
+            raise
+        except Exception:
+            if entered:
+                raise
+            raise HookLaunchRefused(
+                "Teardown hook authority unavailable at launch."
+            ) from None
