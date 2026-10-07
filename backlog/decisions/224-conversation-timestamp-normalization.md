@@ -175,7 +175,8 @@ mixed (audit result; readers of those columns keep ADR-173's tolerant rules).
   against frozen installed catalogs and migrates under a set-authorizer
   connection. This change extends that machinery the way the v77→v78 fleet
   bump did: `CHACHANOTES_V79_SCHEMAS` (+`CORE_SCHEMAS` head at 79, dictionary
-  variant rebased, full v78 lineage accepted at version 78 with a
+  variant rebased, full v78 lineage accepted at version 78 AND every
+  v78-lineage variant given its v79 successor at the head, with a
   `(78, 79)` stamp step), the shared-file Subscriptions hybrid tier
   (`_SUBSCRIPTIONS_SARGABLE_SCHEMAS`, stamp 79), the canvas frozen-catalog
   list, and a `sargable_migration` authorizer branch admitting exactly the

@@ -470,6 +470,7 @@ class _CoreAdapter:
             CHACHANOTES_V78_SCHEMAS,
             CHACHANOTES_FLEET_V77_TO_V78_SQL,
             CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
+            CHACHANOTES_V79_SCHEMAS,
             CORE_SCHEMAS,
             PROMPTS_V4_SCHEMA,
             PROMPTS_V4_TO_V5_SQL,
@@ -493,8 +494,11 @@ class _CoreAdapter:
             schemas += tuple((77, schema) for schema in CHACHANOTES_V77_SCHEMAS)
             # ADR-224: the full v78 lineage stays acceptable at version 78
             # (its [0]/[1] used to ride the pre-v79 head entries); the
-            # v78->v79 step migrates such candidates up to the v79 head.
+            # v78->v79 step migrates such candidates up to the v79 head,
+            # where every v78-lineage variant has its own v79 successor
+            # (head + dictionary cover V79[0]/[1]; these are V79[2:]).
             schemas += tuple((78, schema) for schema in CHACHANOTES_V78_SCHEMAS)
+            schemas += tuple((79, schema) for schema in CHACHANOTES_V79_SCHEMAS[2:])
             versions += (78, 77, 76, 75)
             migrations = (
                 (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
