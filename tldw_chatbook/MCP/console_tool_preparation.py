@@ -14,6 +14,7 @@ from loguru import logger
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
 from . import console_snapshot as snapshot
+from . import hub_tool_catalog as hub_catalog
 from . import unified_control_plane_service as control
 from .client import (
     MAX_DESCRIPTOR_NAME_LENGTH,
@@ -408,12 +409,75 @@ async def prepare_console_tools(
 _PREPARATION_MODULE = sys.modules[__name__]
 _PREPARATION_CLASSES = (PreparedConsoleTool, ConsoleToolPreparation)
 
+_PREPARATION_SLOT_MISSING = object()
+_PREPARATION_CLASS_SHAPES = tuple(
+    (
+        cls,
+        cls.__bases__,
+        cls.__mro__,
+        _PREPARATION_SLOT_MISSING,
+        tuple((name, vars(cls).get(name, _PREPARATION_SLOT_MISSING)) for name in names),
+    )
+    for cls, names in (
+        (
+            PreparedConsoleTool,
+            (
+                "__new__",
+                "__getattribute__",
+                "__getattr__",
+                "server_key",
+                "server_label",
+                "source",
+                "name",
+                "description",
+                "tags",
+                "stale",
+                "executable",
+                "schema_json",
+                "effective",
+            ),
+        ),
+        (
+            ConsoleToolPreparation,
+            (
+                "__new__",
+                "__getattribute__",
+                "__getattr__",
+                "__hash__",
+                "__eq__",
+                "profile_id",
+                "kill_switch",
+                "tools",
+                "_captured_sources",
+                "_builtin_raw_name_exclusions",
+                "_owned_profile_ids",
+            ),
+        ),
+    )
+)
+_HUB_CATALOG_MODULE = hub_catalog
+_HUB_CONSTRUCTION_ANCHOR = hub_catalog._HUB_TOOL_CONSTRUCTION_ANCHOR
+
+
+def _class_shape_current(shape) -> bool:
+    """Check only these three declared classes, without invoking descriptors."""
+    cls, bases, mro, missing, slots = shape
+    if type(cls) is not type or cls.__bases__ is not bases or cls.__mro__ is not mro:
+        return False
+    namespace = vars(cls)
+    return all(namespace.get(name, missing) is original for name, original in slots)
+
 
 def preparation_pipeline_current() -> bool:
     """Qualify original helpers before invoking result or converter methods."""
     if (
         sys.modules.get(__name__) is not _PREPARATION_MODULE
-        or (PreparedConsoleTool, ConsoleToolPreparation) != _PREPARATION_CLASSES
+        or PreparedConsoleTool is not _PREPARATION_CLASSES[0]
+        or ConsoleToolPreparation is not _PREPARATION_CLASSES[1]
+        or sys.modules.get(hub_catalog.__name__) is not _HUB_CATALOG_MODULE
+        or hub_catalog._HUB_TOOL_CONSTRUCTION_ANCHOR is not _HUB_CONSTRUCTION_ANCHOR
+        or hub_catalog.HubTool is not _HUB_CONSTRUCTION_ANCHOR[0]
+        or HubTool is not _HUB_CONSTRUCTION_ANCHOR[0]
     ):
         return False
     for owner, name, original, code, namespace, inputs in _PREPARATION_BINDINGS:
@@ -422,6 +486,19 @@ def preparation_pipeline_current() -> bool:
             or original.__code__ is not code
             or original.__globals__ is not namespace
             or not snapshot._controller_inputs_current(original, inputs)
+        ):
+            return False
+    if not all(
+        _class_shape_current(shape)
+        for shape in (*_PREPARATION_CLASS_SHAPES, _HUB_CONSTRUCTION_ANCHOR[:5])
+    ):
+        return False
+    for function, code, namespace, inputs in _HUB_CONSTRUCTION_ANCHOR[5]:
+        if (
+            function.__code__ is not code
+            or function.__globals__ is not namespace
+            or namespace is not vars(_HUB_CATALOG_MODULE)
+            or not snapshot._controller_inputs_current(function, inputs)
         ):
             return False
     return True
@@ -440,6 +517,7 @@ _PREPARATION_BINDINGS = tuple(
         (globals(), "prepare_console_tools"),
         (globals(), "preparation_pipeline_current"),
         (globals(), "_resolver_current"),
+        (globals(), "_class_shape_current"),
         (globals(), "_schema_json"),
         (globals(), "_shared_normalization_eligible"),
         (vars(PreparedConsoleTool), "__init__"),

@@ -131,3 +131,21 @@ Self-review: this plan has one shared type/API consumed by the integration, no u
 The shared preparation and controller/provider lanes are implemented and reviewed. Root ran the final integrated checks after both lanes were ready: 187 targeted checks passed. All four matched native timing runs ran sequentially. The full-app count diagnostic confirms one permission load in each of three stock compositions.
 
 Latency acceptance remains open: candidate Send-to-adapter samples span 7.374–11.669 seconds, the original native regression is red, actual 100 ms terminal feedback is unqualified, and candidate Linux/macOS native checks are missing. Unchecked qualification items above remain requirements, not inferred passes. See [the verification report](../../Development/2026-10-06-console-shared-preparation-verification.md) for results and limitations. Tasks remain In Progress.
+
+
+## Constructor provenance correction (2026-10-07)
+
+ADR required: yes, existing ADR-222 applies.
+ADR path: backlog/decisions/222-console-send-preparation-and-io-ownership.md.
+Reason: repairs the already agreed stock/custom preparation boundary; no new architecture or permission authority.
+
+Independent review found that callable-body checks omit in-place constructor and field-lookup changes on the shared result classes and the HubTool constructor used by conversion. Verify with bounded real substitutions before changing product code. A changed stock dependency must decline sharing before native reads, and an issued result must refuse adoption before invoking the replacement. The ordinary custom route remains available; this is not general Python tamper protection.
+
+1. Verification lane owns only Tests/MCP/test_console_preparation_constructors.py. Cover directly consumed allocation, lookup and conversion slots, including replacement before first preparation import. Keep allocator mutation isolated from later cases and normal fixture cleanup.
+2. Shared lane owns MCP/console_tool_preparation.py and the minimal defining-module HubTool anchor in MCP/hub_tool_catalog.py. Reuse static, definition-time qualification and existing failure paths; add no native work, cache or generic guard framework.
+3. Root integrates after reviewing the plan and observing meaningful REDs. Review all consumed slots, then run focused constructor, preparation and controller/provider controls through the existing contained runner. Native runs are sequential and coordinated with UAT.
+4. Compare scoped lint/format to the committed base, record actual normal retirement and source state, update task 34563.2 and commit the correction. Resume task 34563.9 after this narrow repair. No latency or cross-host claim follows from these controls.
+
+Constructor RED evidence: on unchanged product 0a0582, `preparation-constructors-red` failed all 13 new allocation/lookup/conversion controls at their actual boundary assertions (including the before-first-import HubTool constructor). `preparation-hash-red` failed both additional result-hash controls. Foreign allocation/lookup/hash callbacks ran, initial attempts performed native reads, or issued results were adopted instead of refused. Both batches retired their owned process trees normally, released identities/pumps, removed private profiles, and recorded zero diagnostic overflow/races. These are meaningful failing controls, not passing acceptance; final correction evidence follows after implementation.
+
+Constructor correction complete for this scope: final 92 targeted controls pass (15 new + 77 original); all normal retirement/source receipts and scoped Ruff/format/diff checks pass. Independent review found no actionable issue. TASK-34563.2 retains its wider integration/performance qualification status. Full evidence and limitations are recorded in Docs/Development/2026-10-06-console-shared-preparation-verification.md.
