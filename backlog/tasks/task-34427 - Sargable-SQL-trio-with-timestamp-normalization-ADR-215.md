@@ -1,11 +1,11 @@
 ---
 id: TASK-34427
 title: Sargable SQL trio with timestamp normalization ADR-215
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:42
 dependencies:
 - TASK-34419
-updated_date: 2026-10-07 02:44
+updated_date: 2026-10-07 13:54
 ---
 
 ## Description
