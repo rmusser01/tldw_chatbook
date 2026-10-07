@@ -36,9 +36,11 @@ Two facts about the current codebase shape this design:
 - After a confirmed in-app quit (`Ctrl+Q` → quit flow), if enabled, show a
   brief modal: total session tokens and elapsed session time.
 - Full token coverage: every completed LLM response contributes exact
-  provider-reported usage when the payload contains it, else a char-based
-  estimate. Covers Console, legacy Enhanced Chat, Evals, research,
-  sub-agent fleets, voice/realtime.
+  provider-reported usage when the payload contains it; non-streaming
+  responses without usage contribute a char-based estimate. (The rare
+  stream that ends with no usage payload undercounts — see the
+  degradation ladder.) Covers Console, legacy Enhanced Chat, Evals,
+  research, sub-agent fleets, voice/realtime.
 - Auto-dismiss after a configurable duration; any keypress skips; shutdown
   can never hang on the summary.
 - Graceful degradation at every level; missing data shows a neutral line,
@@ -54,10 +56,10 @@ Two facts about the current codebase shape this design:
   invisible counts; including them would swamp the "how much did I do"
   signal. The ledger API supports adding an embeddings bucket later.
 - Idle-excluded "active" time. Elapsed time is wall clock since launch.
-- Idle-tracking, per-provider exactness fixes beyond what falls out of the
-  shared helper (e.g. adding `stream_options.include_usage` to
-  OpenAI-compatible streaming requests is a plan-time option, not a
-  requirement).
+- Idle-tracking and per-provider exactness fixes beyond what falls out of
+  the tap points. (Nothing to add for OpenAI chat-completions streams:
+  `stream_options.include_usage` is already requested by
+  `chat_with_openai`.)
 
 ## Design Overview
 
@@ -120,8 +122,10 @@ Rules:
   `reset_for_tests()` — console-internal services can record without App
   access. `Chat/__init__.py` is light and `LLM_API_Calls` already imports
   from `tldw_chatbook.Chat.*`, so no import cycle.
-- Display formatting reuses `format_token_count`
-  (`Chat/cost_display.py:84`) for consistency with the Console cost chip.
+- Display formatting: full comma digits (`f"{n:,}"`) — a farewell line
+  wants exact digits at a glance. `format_token_count`
+  (`Chat/cost_display.py:84`) is chip-oriented (k-rounds, raises on None)
+  and does not fit here.
 
 ## Tap Points and the Boundary Rule
 
@@ -136,10 +140,10 @@ Known boundary taps (plan phase re-verifies with a
 
 | Site | Kind | Notes |
 | --- | --- | --- |
-| `LLM_API_Calls.py` ×9 non-streaming blocks | exact, else estimate | Consolidate each duplicated log block into one shared `record_response_usage(...)` helper (logs existing histograms + records). Estimate via prompt/response texts already in scope. |
-| `LLM_API_Calls.py` Anthropic SSE accumulator (≈1834–1994) | exact | Usage already accumulated at stream end. |
-| `LLM_API_Calls.py` OpenAI Responses stream (`completed_usage` ≈331) | exact | Injected into final chunk; tap where consumed. |
-| Other streaming loops in `LLM_API_Calls.py` | estimate, at the consumer | The generators yield raw SSE lines and hold no full texts (verified in `chat_with_openai`'s `stream_generator`, ≈844–920), so the estimate fallback lives in the **consumer** that assembles the streamed response (legacy `Chat/Chat_Functions.py` path; exact site enumerated at plan time). Optional exactness win: request `stream_options.include_usage` and capture the final usage chunk with a cheap `'"usage"' in line` guard inside the generator. |
+| `LLM_API_Calls.py` ×9 non-streaming blocks | exact, else estimate | One `session_usage().record_provider_payload(...)` line added after each existing histogram block; the histogram blocks stay byte-identical (a consolidation helper was considered and rejected — zero metric-drift risk wins). The request parameter is `input_data` at all nine sites; estimate texts are `json.dumps(input_data)` plus a defensive completion-text extractor. |
+| `LLM_API_Calls.py` Anthropic SSE accumulator (≈1834–1994) | exact | Hook at the `if output_captured:` seam (≈1993) **before** the usage yield — never in `finally` (GeneratorExit hazard, documented in-code at the `[DONE]` sentinel). Cancelled/partial streams undercount. |
+| `LLM_API_Calls.py` OpenAI Responses stream (`completed_usage` ≈331) | exact | Tap where `completed_usage` is extracted inside `_responses_stream_to_chat_sse`. |
+| `LLM_API_Calls.py` OpenAI chat-completions stream | exact | Streams **already request** `stream_options.include_usage` (≈709, with a drop-and-retry fallback on HTTP 400) — final usage chunks flow through the pass-through `iter_lines` loop untapped. Capture with a cheap `'"usage"' in line` guard in that loop. Streams that end with no usage payload (retry-downgraded endpoints, cancelled streams) undercount — documented degraded case. |
 | `Chat/console_provider_gateway.py` `record_usage_payload` (≈6997) | exact | Console + its streams. |
 | `Agents/agent_service.py` (≈1594) | exact | Sub-agent fleets do their own HTTP — parsed from their own `resp`, not gateway data (verified: no double count). |
 | `Library/library_rag_answer_service.py` (≈654) | exact | Own HTTP response. |
@@ -263,7 +267,10 @@ duration_seconds = 3     # auto-dismiss delay, clamped to 1..30
 ## Error Handling / Degradation Ladder
 
 1. Exact provider usage present → exact total.
-2. No usage in payload → estimate from texts (`includes estimates` marker).
+2. Non-streaming response without usage → estimate from texts
+   (`includes estimates` marker). A stream that ends with no usage payload
+   (rare: retry-downgraded endpoints, cancelled streams) contributes
+   nothing — undercount, never an error.
 3. Nothing recorded all session → `No usage recorded this session`.
 4. Ledger/record path raises internally → swallowed (never breaks a call);
    worst case the summary shows (3).
@@ -275,10 +282,11 @@ duration_seconds = 3     # auto-dismiss delay, clamped to 1..30
 - **Ledger unit tests** (`Tests/Chat/`): exact accumulation, estimate
   fallback, exact-wins-over-estimate, malformed payloads never raise,
   concurrent `record` from threads, `reset_for_tests` isolation.
-- **Shared helper tests:** the nine consolidated sites produce identical
-  histograms as before plus a ledger record; estimate path when usage
-  absent; the streaming-consumer estimate tap records when a stream
-  completes without usage.
+- **Tap tests** (mocked-HTTP idiom of `Tests/Chat/test_openai_streaming_usage.py`):
+  the nine sites record exact usage when present, estimates when absent,
+  and the existing histograms stay byte-identical; streaming taps record
+  exactly once per response (ledger `calls` advanced by exactly 1 — the
+  double-counting invariant).
 - **Config defaults** (`tomllib.loads(CONFIG_TOML_CONTENT)` pattern,
   `Tests/test_config_model_catalog_defaults.py`): section present, values,
   clamp behavior.
