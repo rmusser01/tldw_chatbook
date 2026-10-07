@@ -1,8 +1,9 @@
 ---
 id: TASK-34423
 title: File Notes poll signature gate bound and backoff
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:41
+updated_date: 2026-10-07 10:44
 ---
 
 ## Description
