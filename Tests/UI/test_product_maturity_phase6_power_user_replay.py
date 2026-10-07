@@ -7,11 +7,11 @@ import re
 import time
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Home.dashboard_state import HomeDashboardInput
 from tldw_chatbook.UI.Navigation.shell_destinations import SHELL_DESTINATION_ORDER
@@ -142,7 +142,7 @@ async def test_phase6_power_user_release_replay_exposes_fast_repeat_paths() -> N
         active_work_items=[],
     )
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,

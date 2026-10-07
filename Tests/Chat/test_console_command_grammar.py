@@ -103,9 +103,20 @@ def test_default_console_registry_registers_prompt_system_skills_prefill_and_gen
         "stream-video",
         "steer",
         "redirect",
+        "stop",
         "emergency-stop",
         "rewind",
         "research",
+        "help",
+        "doctor",
+        "model",
+        "sessions",
+        "workspace",
+        "new",
+        "temp",
+        "settings",
+        "context",
+        "endpoint",
     )
     assert registry.parse("/prompt") == CommandParse("command", "prompt", "")
     assert registry.parse("/system") == CommandParse("command", "system", "")

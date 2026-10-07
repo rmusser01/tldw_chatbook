@@ -1,0 +1,122 @@
+model Button                       id=console-settings-view-model region=(19, 5, 33, 3) h=3 footer=False visible=False
+model Button                       id=console-settings-view-context region=(52, 5, 20, 3) h=3 footer=False visible=False
+model ConsoleProviderPickerInput   id=console-settings-provider-picker-input region=(42, 13, 129, 3) h=3 footer=False visible=True
+model ConsoleSettingsInput         id=console-settings-base-url region=(42, 29, 129, 3) h=3 footer=False visible=True
+model Button                       id=console-settings-endpoint-new region=(171, 29, 17, 3) h=3 footer=False visible=True
+model ModelPickerInput             id=model-search-picker-input region=(42, 32, 149, 3) h=3 footer=False visible=True
+model Button                       id=console-settings-model-custom region=(42, 41, 18, 3) h=3 footer=False visible=False
+model Button                       id=console-settings-model-discover region=(60, 41, 31, 3) h=3 footer=False visible=False
+model Button                       id=console-settings-test-generation region=(19, 51, 17, 3) h=3 footer=False visible=False
+model Button                       id=console-settings-cancel region=(98, 39, 12, 1) h=1 footer=True visible=False
+model Button                       id=console-settings-save-default region=(110, 39, 27, 1) h=1 footer=True visible=False
+model Button                       id=console-settings-make-default region=(137, 39, 28, 1) h=1 footer=True visible=False
+model Button                       id=console-settings-save region=(165, 39, 27, 1) h=1 footer=True visible=False
+model LABEL 'Provider'                   y=13 h=3 row_h=16 tallest_ctrl=16 ctrl_y=[13]
+model LABEL 'Endpoint'                   y=29 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[29, 29]
+model LABEL 'Model'                      y=32 h=3 row_h=8 tallest_ctrl=8 ctrl_y=[32]
+model LABEL ''                           y=41 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[41, 41]
+model SUMMARY #console-settings-readiness region=(19, 45, 172, 6)
+model SUMMARY #console-settings-scope region=(19, 8, 173, 3)
+model SUMMARY #console-settings-view-tabs region=(19, 5, 173, 3)
+model SUMMARY #console-settings-default-recovery-actions region=(0, 0, 0, 0)
+model EDITABLE_VISIBLE_WITHOUT_SCROLL=3
+model-settled Button                       id=console-settings-view-model region=(19, 5, 33, 3) h=3 footer=False visible=False
+model-settled Button                       id=console-settings-view-context region=(52, 5, 20, 3) h=3 footer=False visible=False
+model-settled ConsoleProviderPickerInput   id=console-settings-provider-picker-input region=(42, 13, 129, 3) h=3 footer=False visible=True
+model-settled ConsoleSettingsInput         id=console-settings-base-url region=(42, 17, 129, 3) h=3 footer=False visible=True
+model-settled Button                       id=console-settings-endpoint-new region=(171, 17, 17, 3) h=3 footer=False visible=True
+model-settled ModelPickerInput             id=model-search-picker-input region=(42, 20, 149, 3) h=3 footer=False visible=True
+model-settled Button                       id=console-settings-model-custom region=(42, 29, 18, 3) h=3 footer=False visible=True
+model-settled Button                       id=console-settings-model-discover region=(60, 29, 31, 3) h=3 footer=False visible=True
+model-settled Button                       id=console-settings-test-generation region=(19, 39, 17, 3) h=3 footer=False visible=False
+model-settled Button                       id=console-settings-cancel region=(98, 39, 12, 1) h=1 footer=True visible=False
+model-settled Button                       id=console-settings-save-default region=(110, 39, 27, 1) h=1 footer=True visible=False
+model-settled Button                       id=console-settings-make-default region=(137, 39, 28, 1) h=1 footer=True visible=False
+model-settled Button                       id=console-settings-save region=(165, 39, 27, 1) h=1 footer=True visible=False
+model-settled LABEL 'Provider'                   y=13 h=3 row_h=4 tallest_ctrl=4 ctrl_y=[13]
+model-settled LABEL 'Endpoint'                   y=17 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[17, 17]
+model-settled LABEL 'Model'                      y=20 h=3 row_h=8 tallest_ctrl=8 ctrl_y=[20]
+model-settled LABEL ''                           y=29 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[29, 29]
+model-settled SUMMARY #console-settings-readiness region=(19, 33, 172, 6)
+model-settled SUMMARY #console-settings-scope region=(19, 8, 173, 3)
+model-settled SUMMARY #console-settings-view-tabs region=(19, 5, 173, 3)
+model-settled SUMMARY #console-settings-default-recovery-actions region=(0, 0, 0, 0)
+model-settled EDITABLE_VISIBLE_WITHOUT_SCROLL=3
+model-expanded Button                       id=console-settings-view-model region=(19, 5, 33, 3) h=3 footer=False visible=False
+model-expanded Button                       id=console-settings-view-context region=(52, 5, 20, 3) h=3 footer=False visible=False
+model-expanded ConsoleProviderPickerInput   id=console-settings-provider-picker-input region=(42, 13, 129, 3) h=3 footer=False visible=True
+model-expanded ConsoleSettingsInput         id=console-settings-base-url region=(42, 17, 129, 3) h=3 footer=False visible=True
+model-expanded Button                       id=console-settings-endpoint-new region=(171, 17, 17, 3) h=3 footer=False visible=True
+model-expanded ModelPickerInput             id=model-search-picker-input region=(42, 20, 149, 3) h=3 footer=False visible=True
+model-expanded Button                       id=console-settings-model-custom region=(42, 29, 18, 3) h=3 footer=False visible=True
+model-expanded Button                       id=console-settings-model-discover region=(60, 29, 31, 3) h=3 footer=False visible=True
+model-expanded Button                       id=console-settings-test-generation region=(19, 39, 17, 3) h=3 footer=False visible=False
+model-expanded ConsoleSettingsInput         id=console-settings-temperature region=(43, 45, 127, 3) h=3 footer=False visible=False
+model-expanded ConsoleSettingsInput         id=console-settings-top-p region=(43, 48, 127, 3) h=3 footer=False visible=False
+model-expanded ConsoleSettingsInput         id=console-settings-min-p region=(43, 51, 127, 3) h=3 footer=False visible=False
+model-expanded ConsoleSettingsInput         id=console-settings-top-k region=(43, 54, 127, 3) h=3 footer=False visible=False
+model-expanded ConsoleSettingsInput         id=console-settings-max-tokens region=(43, 57, 127, 3) h=3 footer=False visible=False
+model-expanded ConsoleSettingsInput         id=console-settings-seed region=(43, 60, 127, 3) h=3 footer=False visible=False
+model-expanded ConsoleSettingsInput         id=console-settings-presence-penalty region=(43, 63, 127, 3) h=3 footer=False visible=False
+model-expanded ConsoleSettingsInput         id=console-settings-frequency-penalty region=(43, 66, 127, 3) h=3 footer=False visible=False
+model-expanded Button                       id=console-settings-streaming region=(43, 69, 12, 3) h=3 footer=False visible=False
+model-expanded Select                       id=console-settings-reasoning-effort region=(43, 72, 1, 1) h=1 footer=False visible=False
+model-expanded ConsoleSettingsInput         id=console-settings-thinking-budget-tokens region=(43, 75, 127, 3) h=3 footer=False visible=False
+model-expanded Button                       id=console-settings-cancel region=(98, 39, 12, 1) h=1 footer=True visible=False
+model-expanded Button                       id=console-settings-save-default region=(110, 39, 27, 1) h=1 footer=True visible=False
+model-expanded Button                       id=console-settings-make-default region=(137, 39, 28, 1) h=1 footer=True visible=False
+model-expanded Button                       id=console-settings-save region=(165, 39, 27, 1) h=1 footer=True visible=False
+model-expanded LABEL 'Provider'                   y=13 h=3 row_h=4 tallest_ctrl=4 ctrl_y=[13]
+model-expanded LABEL 'Endpoint'                   y=17 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[17, 17]
+model-expanded LABEL 'Model'                      y=20 h=3 row_h=8 tallest_ctrl=8 ctrl_y=[20]
+model-expanded LABEL ''                           y=29 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[29, 29]
+model-expanded LABEL 'Temperature'                y=45 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[45]
+model-expanded LABEL 'Top P'                      y=48 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[48]
+model-expanded LABEL 'Min P'                      y=51 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[51]
+model-expanded LABEL 'Top K'                      y=54 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[54]
+model-expanded LABEL 'Max tokens'                 y=57 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[57]
+model-expanded LABEL 'Seed'                       y=60 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[60]
+model-expanded LABEL 'Presence penalty'           y=63 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[63]
+model-expanded LABEL 'Frequency penalty'          y=66 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[66]
+model-expanded LABEL 'Streaming'                  y=69 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[69]
+model-expanded LABEL 'Reasoning effort'           y=72 h=3 row_h=3 tallest_ctrl=1 ctrl_y=[72, 72]
+model-expanded LABEL 'Thinking budget'            y=75 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[75]
+model-expanded SUMMARY #console-settings-readiness region=(19, 33, 172, 6)
+model-expanded SUMMARY #console-settings-scope region=(19, 8, 173, 3)
+model-expanded SUMMARY #console-settings-view-tabs region=(19, 5, 173, 3)
+model-expanded SUMMARY #console-settings-default-recovery-actions region=(0, 0, 0, 0)
+model-expanded EDITABLE_VISIBLE_WITHOUT_SCROLL=3
+context Button                       id=console-settings-view-model region=(19, 5, 22, 3) h=3 footer=False visible=False
+context Button                       id=console-settings-view-context region=(41, 5, 31, 3) h=3 footer=False visible=False
+context Select                       id=console-context-budget-mode region=(42, 12, 129, 1) h=1 footer=False visible=True
+context ConsoleSettingsInput         id=console-context-custom-budget region=(42, 15, 129, 3) h=3 footer=False visible=True
+context Select                       id=console-context-compaction-mode region=(42, 23, 129, 1) h=1 footer=False visible=True
+context Select                       id=console-context-compaction-representation region=(42, 26, 129, 1) h=1 footer=False visible=True
+context ConsoleSettingsInput         id=console-context-trigger-percent region=(42, 30, 129, 3) h=3 footer=False visible=True
+context ConsoleSettingsInput         id=console-context-target-percent region=(42, 33, 129, 3) h=3 footer=False visible=True
+context ConsoleSettingsInput         id=console-context-summary-max region=(42, 36, 129, 3) h=3 footer=False visible=False
+context Select                       id=console-context-failure-behavior region=(42, 40, 129, 1) h=1 footer=False visible=False
+context Select                       id=console-context-carry-forward region=(42, 43, 129, 1) h=1 footer=False visible=False
+context Select                       id=console-context-thinking-history-policy region=(42, 49, 129, 1) h=1 footer=False visible=False
+context Button                       id=console-context-thinking-history-save-default region=(19, 53, 39, 3) h=3 footer=False visible=False
+context Button                       id=console-context-compact-now region=(19, 61, 16, 3) h=3 footer=False visible=False
+context Button                       id=console-context-reset-current region=(35, 61, 29, 3) h=3 footer=False visible=False
+context Button                       id=console-context-reset-overrides region=(19, 64, 17, 3) h=3 footer=False visible=False
+context Button                       id=console-context-reset-all region=(36, 64, 32, 3) h=3 footer=False visible=False
+context Button                       id=console-settings-cancel region=(153, 39, 12, 1) h=1 footer=True visible=False
+context Button                       id=console-settings-save region=(165, 39, 27, 1) h=1 footer=True visible=False
+context LABEL 'Budget strategy'            y=12 h=3 row_h=3 tallest_ctrl=1 ctrl_y=[12]
+context LABEL 'Conversation max tokens'    y=15 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[15]
+context LABEL 'When limit nears'           y=23 h=3 row_h=3 tallest_ctrl=1 ctrl_y=[23]
+context LABEL 'Representation'             y=26 h=3 row_h=3 tallest_ctrl=1 ctrl_y=[26]
+context LABEL 'Compact at (%)'             y=30 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[30]
+context LABEL 'Reduce context to (%)'      y=33 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[33]
+context LABEL 'Summary response max'       y=36 h=3 row_h=3 tallest_ctrl=3 ctrl_y=[36]
+context LABEL 'If compaction fails'        y=40 h=3 row_h=3 tallest_ctrl=1 ctrl_y=[40]
+context LABEL 'Keep after compaction'      y=43 h=3 row_h=3 tallest_ctrl=1 ctrl_y=[43]
+context LABEL 'History policy'             y=49 h=3 row_h=3 tallest_ctrl=1 ctrl_y=[49]
+context SUMMARY #console-settings-readiness region=(0, 0, 0, 0)
+context SUMMARY #console-settings-scope region=(19, 8, 173, 3)
+context SUMMARY #console-settings-view-tabs region=(19, 5, 173, 3)
+context SUMMARY #console-settings-default-recovery-actions region=(0, 0, 0, 0)
+context EDITABLE_VISIBLE_WITHOUT_SCROLL=6

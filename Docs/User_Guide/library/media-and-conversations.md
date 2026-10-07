@@ -714,6 +714,13 @@ conversation into a pane headed **"Conversation reader"** with:
 - the transcript itself, one block per message, each headed
   `user` / `assistant` and the message's timestamp.
 
+**The reader stays in step with Console.** Each time the Conversations list
+reads again — when you come back to Library from Console, page, or filter —
+the open conversation's saved transcript is checked. If messages were deleted
+(or brought back with Undo), edited, or added in Console since the reader
+loaded it, the reader reloads it in place, so its message count matches the
+list. Read/Info and your Find text are kept.
+
 One rough edge is known and tracked separately: the status line shows the
 raw conversation UUID and each message shows a full ISO timestamp rather
 than an age string. ("Open in Console" moved into the reader header,

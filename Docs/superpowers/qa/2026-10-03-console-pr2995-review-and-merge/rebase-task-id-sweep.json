@@ -1,0 +1,33 @@
+{
+  "time": 1791080197.2591932,
+  "argv": [
+    "git",
+    "for-each-ref",
+    "--format=%(objectname)"
+  ],
+  "unique_ref_trees": 469,
+  "worktrees": 93,
+  "head": "f843ca811f01da6c39d903b6cd7328d68d50416f",
+  "origin_dev": "0001eba40419859ce39ed4952f0f8df7b40639bd",
+  "max_task_id_all_refs_worktrees": 34352,
+  "max_historical_task_id": 34352,
+  "provisional_block": [
+    34353,
+    34354,
+    34355
+  ],
+  "duplicates": {},
+  "selected_roots": [
+    34213,
+    34214,
+    34215
+  ],
+  "selected_expected_filenames": [
+    "task-34213 - Design-Console-chat-destinations-and-bounded-agent-starts.md",
+    "task-34214 - Console-shared-automatic-allowances-and-chat-start-attempts.md",
+    "task-34215 - Console-workspace-or-casual-chats-with-bounded-background-starts.md",
+    "task-34215.1 - Clear-recorded-Console-baseline-test-failures-before-PR.md",
+    "task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md"
+  ],
+  "selected_foreign_filenames": []
+}

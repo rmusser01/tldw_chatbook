@@ -1,0 +1,52 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                                          Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Reply with exactly three sh...                                                                                                           │
+                       Context ◂  │  ● Reply with exactly… ✕    New tab     Temporary                                                                                                       │  ▸ Inspect
+   Terminal                       │                                                                                                                                                         │           Choose folder · Project
+ ───────────────────────────────  │                                                                                                                                                         │  What happens if I send now?
+ Workspaces                  ▸    │                                                                                                                                                         │  Where: Default › Reply with exactly three…
+ ───────────────────────────────  │                                                                                                                                                         │  Scope: Everything available
+ Conversations               ▾    │                                                                                                                                                         │  Run: Blocked
+       Archive this chat          │                                                                                                                                                         │  Sources: None staged
+         Archived chats           │                                                                                                                                                         │  Approvals: None pending
+       Search all chats…          │                                                                                                                                                         │ Environment                              ▾
+   Reply with exactly three       │                                                                                                                                                         │   Changes aren't tracked for this workspa…
+   sh...                          │                                                                                                                                                         │   Bind a folder and enable Change Review …
+                                  │                                                                                                                                                         │                   Refresh
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                         │
+  ▊  Filter visible   ▎           │                                                                                                                                                         │ Agents                       Run history ▸
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                         │                View all runs
+                                  │                                                                                                                                                         │
+  Chats                      ▾    │                                                                                                                                                         │  Sources — next send                  none
+   Reply with exactly thr…  ⟳     │                                                                                                                                                         │  No sources attached. Stage sources from
+                                  │                                                                                                                                                         │  Library.
+ ───────────────────────────────  │                                                                                                                                                         │
+ Character · No chats        ▸    │                                                                                                                                                         │  Sources: Notes, Media, Conversations
+ ───────────────────────────────  │                                                                                                                                                         │  (Prompts off)
+ Model                       ▸    │                                                                                                                                                         │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ ───────────────────────────────  │                                                                                                                                                         │  ▊  Ask Library sources before sending   ▎
+ Agent                       ▸    │                                                                                                                                                         │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+ ───────────────────────────────  │                                                                                                                                                         │    Search Library
+ Details                     ▸    │                                                                                                                                                         │
+                                  │                                                                                                                                                         │  Scope: everything                Narrow…
+                                  │                                                                                                                                                         │
+                                  │                                                                                                                                                         │ Run
+                                  │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ Run recipe: Anthropic / claude-haiku-4-5 /
+                                  │   User                                                                                                                                                  │ sources not staged / tools 6 / approvals 0
+                                  │   Reply with exactly three short bullet points about tea.                                                                                               │ Live work: Generating…
+                                  │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ Provider: blocked - Provider setup needed:
+                                  │  ▊ Assistant  Connecting tools… · 8s                                                                                                                    │ current run is active
+                                  │  ▊                                                                                                                                                      │
+                                  │  ▊                                                                                                                                                      │ Source Readiness
+                                  │  ▊                                                                                                                                                      │ ▼ more sections — scroll
+                                  │  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Agent running.     Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Co
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                                                                                                      Send disabled: type a message      Queue         Dictate   Redir
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit

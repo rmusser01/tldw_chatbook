@@ -143,7 +143,6 @@ async def test_settings_theme_editor_user_edit_still_marks_modified(request):
         assert editor.is_modified is True
 
 
-
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_theme_editor_dark_mode_checkbox_tracks_real_changes_only(
@@ -253,8 +252,7 @@ async def test_settings_theme_editor_delete_blocks_shipped_themes(request, tmp_p
 def _write_user_theme(themes_dir, theme_name: str):
     theme_file = themes_dir / f"{theme_name}.toml"
     theme_file.write_text(
-        f'[theme]\nname = "{theme_name}"\ndark = true\n'
-        '[colors]\nprimary = "#0099FF"\n',
+        f'[theme]\nname = "{theme_name}"\ndark = true\n[colors]\nprimary = "#0099FF"\n',
         encoding="utf-8",
     )
     return theme_file
@@ -744,7 +742,6 @@ async def test_settings_theme_editor_tabbing_does_not_move_preset_target(
         assert editor.color_inputs["error"].value == before_error
 
 
-
 @pytest.mark.asyncio
 @private_profile_test
 async def test_settings_theme_editor_new_copies_current_palette(request, tmp_path):
@@ -981,13 +978,17 @@ async def test_settings_theme_editor_launch_default_write_failure_is_reported(
     app = _isolated_editor_app(editor)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        monkeypatch.setattr(config_module, "get_cli_setting", lambda section, key, default=None: "ocean")
+        monkeypatch.setattr(
+            config_module, "get_cli_setting", lambda section, key, default=None: "ocean"
+        )
         monkeypatch.setattr(
             config_module,
             "apply_settings_mutation_to_cli_config",
             lambda *a, **k: ConfigMutationResult(False, False, "before_replace"),
         )
-        await editor._fall_back_after_delete("ocean")  # the deleted theme was the launch default
+        await editor._fall_back_after_delete(
+            "ocean"
+        )  # the deleted theme was the launch default
         await pilot.pause()
         message, kwargs = app.notify.call_args.args[0], app.notify.call_args.kwargs
         assert "could not save the launch default" in message
@@ -1084,7 +1085,9 @@ async def test_settings_theme_editor_clone_save_reload_keeps_shipped_variables(
 
         [saved] = [t for t in load_user_themes(tmp_path) if t.name == "apricot_copy"]
         assert {k: saved.variables.get(k) for k in expected} == expected
-        assert {k: app.available_themes["apricot_copy"].variables.get(k) for k in expected} == expected
+        assert {
+            k: app.available_themes["apricot_copy"].variables.get(k) for k in expected
+        } == expected
 
         editor.load_theme("textual-dark")
         await editor.load_user_theme("apricot_copy")
@@ -1154,10 +1157,6 @@ async def test_settings_theme_editor_survives_backup_recovery_pause(
         assert editor.is_mounted
         with pytest.raises(RecoveryRequired):
             editor.list_user_theme_names()
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -1257,9 +1256,7 @@ async def test_settings_theme_editor_palette_edit_drops_carried_variables(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_theme_editor_clone_keeps_hand_set_status_hue(
-    request, tmp_path
-):
+async def test_settings_theme_editor_clone_keeps_hand_set_status_hue(request, tmp_path):
     """Review #3: pastel_dreams sets text-error by hand (kept); its
     text-primary was pinned by the AA fix (re-derived, not carried)."""
     editor = SettingsThemeEditor()

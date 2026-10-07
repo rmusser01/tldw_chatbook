@@ -142,7 +142,9 @@ async def test_quick_note_load_preview_clear_and_undo_patch_in_place() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cleared_existing_note_saves_as_untitled_without_losing_dirty_retry() -> None:
+async def test_cleared_existing_note_saves_as_untitled_without_losing_dirty_retry() -> (
+    None
+):
     from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
         ResearchQuickNotesSection,
     )
@@ -512,13 +514,18 @@ async def test_capability_refresh_from_full_to_empty_resets_every_control_fail_c
             "research-quick-note-delete",
         ):
             assert section.query_one(f"#{widget_id}").disabled
-        assert "unavailable" in str(
-            section.query_one("#research-quick-note-owner-limits", Static).render()
-        ).lower()
+        assert (
+            "unavailable"
+            in str(
+                section.query_one("#research-quick-note-owner-limits", Static).render()
+            ).lower()
+        )
 
 
 @pytest.mark.asyncio
-async def test_capability_refresh_exception_immediately_disables_previous_actions() -> None:
+async def test_capability_refresh_exception_immediately_disables_previous_actions() -> (
+    None
+):
     from tldw_chatbook.UI.Research_Workspace_Modules.quick_notes_section import (
         ResearchQuickNotesSection,
     )
@@ -549,9 +556,12 @@ async def test_capability_refresh_exception_immediately_disables_previous_action
             "research-quick-note-delete",
         ):
             assert section.query_one(f"#{widget_id}").disabled
-        assert "retry" in str(
-            section.query_one("#research-quick-note-status", Static).render()
-        ).lower()
+        assert (
+            "retry"
+            in str(
+                section.query_one("#research-quick-note-status", Static).render()
+            ).lower()
+        )
 
 
 @pytest.mark.asyncio
@@ -623,9 +633,9 @@ async def test_navigation_flush_retries_exact_original_ref_even_if_editor_ref_ch
                 break
         section = screen.query_one(ResearchQuickNotesSection)
         section.sync_note(local.row)
-        section.query_one("#research-quick-note-body", TextArea).text = (
-            "Exact original draft"
-        )
+        section.query_one(
+            "#research-quick-note-body", TextArea
+        ).text = "Exact original draft"
         flush = asyncio.create_task(screen.flush_pending_work())
         for _ in range(30):
             await pilot.pause(0.02)
@@ -665,9 +675,9 @@ async def test_catalog_fallback_cancel_preserves_dirty_editor_and_selected_works
                 break
         section = screen.query_one(ResearchQuickNotesSection)
         section.sync_note(local.row)
-        section.query_one("#research-quick-note-body", TextArea).text = (
-            "Catalog must not destroy this"
-        )
+        section.query_one(
+            "#research-quick-note-body", TextArea
+        ).text = "Catalog must not destroy this"
         state = ResearchWorkspaceCatalogState(
             data_source=WorkspaceDataSource.LOCAL,
             context_revision=controller.context_revision,

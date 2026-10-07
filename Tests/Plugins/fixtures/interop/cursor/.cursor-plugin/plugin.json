@@ -1,0 +1,24 @@
+{
+  "name": "cursor-demo",
+  "skills": [
+    "picked/"
+  ],
+  "commands": [
+    "commands/note.md"
+  ],
+  "rules": [
+    "rules/always.mdc",
+    "rules/conditional.mdc"
+  ],
+  "agents": [
+    "agents/empty.md"
+  ],
+  "mcpServers": {
+    "mcpServers": {
+      "peer": {
+        "command": "python3",
+        "args": []
+      }
+    }
+  }
+}

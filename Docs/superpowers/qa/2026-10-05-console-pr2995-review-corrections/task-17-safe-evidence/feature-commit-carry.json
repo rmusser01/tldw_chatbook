@@ -1,0 +1,466 @@
+{
+  "all_incoming_10_commits_exact_ancestors": true,
+  "feature_commit_count": 92,
+  "mapping": [
+    {
+      "before": "4cde6d970421cec4a29beecb7a7659bc4b98d7e6",
+      "after": "48e56d149d522140d073dc1b5cc2f1c851ecb030",
+      "subject": "docs: plan dev integration for Console chat starts PR"
+    },
+    {
+      "before": "2734ae74e98941a871caf2fead1ae9381fbd15fb",
+      "after": "d553c5d4b3ca908cebab8c4d6356436f7a7b529f",
+      "subject": "Integrate Console bounded chat starts with current dev owners"
+    },
+    {
+      "before": "912092f7e2d734940273afeae8c87d9f323a6131",
+      "after": "e945d3819811047cd28fcbedfef7b856e4683077",
+      "subject": "Retire unshipped predecessor chat-start migration names"
+    },
+    {
+      "before": "1f9b8e1411d127b3ec12b2c60c6ae6c0f0006f57",
+      "after": "2d53a9042b30de201adb06cab13f52a54075ce0d",
+      "subject": "docs: record current-dev compatibility requirements and verification scope"
+    },
+    {
+      "before": "94fed24a20a53bdfb8faaceb6959acb429b01586",
+      "after": "7116ee79de1d3544e4f7b58e49541ee064d5a6d6",
+      "subject": "Reject mixed native replay and preserve child chat drafts"
+    },
+    {
+      "before": "c6d41eb201bccd6a2d5afae08c47b6255264f2b9",
+      "after": "f78457d12390ce754b8a0dfbce067bf1f8e31ae0",
+      "subject": "docs: reconcile Console chat task identities and qualification scope"
+    },
+    {
+      "before": "96462d2b2de78c9076bff01f30bd8c41f2f53a3c",
+      "after": "16c31926a97b45ab4d0d587e6f4990d2eb8d6e79",
+      "subject": "fix(console): cancel idle spend refresh under turn custody"
+    },
+    {
+      "before": "7b66e52b7669bb7958d5c0abe03dc16c0316ed22",
+      "after": "9fc31f10f209c291b949a88b7b9a4e3b8dac056d",
+      "subject": "fix(console): preserve child approval and consume mounted handoffs"
+    },
+    {
+      "before": "f6bdd93f9701d4ac5db9a9314a1a84724782c722",
+      "after": "c98b8179ae715bd97c33afdfbef718fd89393eae",
+      "subject": "docs(console): preserve qualification and draft review blockers"
+    },
+    {
+      "before": "26d47e74da9157ca88736613d6d410d6b0a66856",
+      "after": "eb27865e44ab6bc306b26c75acbb02a2cafb76b0",
+      "subject": "docs(console): verify artifact integrity and publication payload"
+    },
+    {
+      "before": "312a04033ee5c7f6c81d4d3f00cc516b4a618e99",
+      "after": "d4b141e7e338dbe16182f0eb7cb38ceeff2dad0a",
+      "subject": "docs(console): record attached draft PR and remaining gate"
+    },
+    {
+      "before": "ffe3f8c7952a6e387276e6a49f15e81cb8bafc44",
+      "after": "d70bc5a2bc96e8fda6b4d10dbe476f8b8e478240",
+      "subject": "fix(console): preserve accepted handoffs through composer navigation"
+    },
+    {
+      "before": "467614776b6679345766d28c78ddc51132a5670d",
+      "after": "1d69920f312bb8eebb1d60af297691aac15e15e9",
+      "subject": "docs(console): record authorized PR review and merge follow-up"
+    },
+    {
+      "before": "758f90d64f3aeb2ac4f76636e3dfd64044a71200",
+      "after": "a0f9cf590867831378dac0e34a73b3e9680bf7d8",
+      "subject": "fix(console): preserve grants when close tickets are refused"
+    },
+    {
+      "before": "4c83d6eb11d33840d021857436fbc2caf06ca91e",
+      "after": "2ab3455188643315e98bf8decf3d4d05948fa6a0",
+      "subject": "docs(console): retain PR rebase and review repair evidence"
+    },
+    {
+      "before": "9b27182797c8f8b46331534f89f9018087821a57",
+      "after": "10dd73bab113f733119ffe5cb15c3c0da193203a",
+      "subject": "docs(console): qualify latest dev and retain complete review logs"
+    },
+    {
+      "before": "e5253a4b07980cb902a8e54d479903c00c4caea8",
+      "after": "8003fa309e93042147bbe682e8eec30a42989e15",
+      "subject": "fix(console): validate chat creation and preserve handoff labels"
+    },
+    {
+      "before": "71eae78d832d78f919c3b4e5e96dccc1a873dcd7",
+      "after": "778c2ddd8d7d39aeec0012c6e2ab2882c0183ba5",
+      "subject": "fix(console): settle uncertain chat starts and retain commit ownership"
+    },
+    {
+      "before": "0cbc017683b80b10fdcdbf4249c4d2ecc3c81060",
+      "after": "31895da4d9e0ab2da92c2c7d9844513c43665b22",
+      "subject": "fix(ledger): fence recovery cleanup to committed restriction entries"
+    },
+    {
+      "before": "1e52b8c7c261648588532fb0f0e1ee5cd6fc42ef",
+      "after": "fa08381ce8198da022af169fc030f18e3ed99085",
+      "subject": "test(console): claim manual screen startup before mounting"
+    },
+    {
+      "before": "fccb0061521bd9a42988336d922191dc3475de8a",
+      "after": "c1b41d1424b7339b03304e88219273f6618c62a3",
+      "subject": "docs(console): retain Qodo and ownership repair evidence before dev integration"
+    },
+    {
+      "before": "602d83dcf616b819fd1b883bfd24aef60a91fc21",
+      "after": "e9b5e36a4705929b084a482c2b09f182bf1dc32d",
+      "subject": "fix(console): retain integration diagnostics and private provider tests"
+    },
+    {
+      "before": "909c4dae79763bb9016940d38573f5baf85053cf",
+      "after": "f5791d4e839d71a4b50fb87e5327a60f9a16c04c",
+      "subject": "fix(console): fence public fork mutations and drain name persistence"
+    },
+    {
+      "before": "b2ac31558b951a53781399350ccbc7343be6b601",
+      "after": "371631614052c2289e4881bd829aaa5d60c6edde",
+      "subject": "docs(console): allocate ADR219 for bounded chat starts"
+    },
+    {
+      "before": "382b0a8ff6d1d67d98363bae26015dd4b78dba5a",
+      "after": "06db628159a9401d5033615057617c2a509cc80a",
+      "subject": "docs: checkpoint console integration and ADR219 references"
+    },
+    {
+      "before": "c62cdc8c59a1442985ccddc1e383b2fe1981f6c7",
+      "after": "249246b6928cc4c6b5e032f3b262582c0822bbc1",
+      "subject": "test(console): own startup before navigation continuity mount"
+    },
+    {
+      "before": "e8dc6b0eaafb41cf1e17db8c13d227cec42a6c3f",
+      "after": "34a1c87008e7cd7fef2817485358debf2f6caf2c",
+      "subject": "docs: record navigation ownership proof and reader integration scope"
+    },
+    {
+      "before": "e5ca738538b54cf27b491b5d003081b063e628b2",
+      "after": "1896348b281ba834c84908e0be04ec98be77b811",
+      "subject": "test(library): qualify reader fixtures and preserve size guards"
+    },
+    {
+      "before": "2c03bf3946b074fb33987cd6f13338492aa5d0fe",
+      "after": "e2778b7a1dbfaaf78126cc7aeaa9c84f3720407d",
+      "subject": "test(console): detect setattr publication in fork census"
+    },
+    {
+      "before": "5794d6d5ded6fd9f52442e67922bb14e96a4343b",
+      "after": "43a546f0323faa70777b6e0a6fedde07d0f5b23c",
+      "subject": "docs: scope current-dev schema integration for console PR"
+    },
+    {
+      "before": "d2fc11e3a74924dcd3faa33dd68bed3e372d3fda",
+      "after": "9dda232eb58ec81e26f7b0920d91d7724939e9e4",
+      "subject": "docs: retain exact legacy receipt schemas during latest-dev rebase"
+    },
+    {
+      "before": "814fbd79053c3c9d99c4c8830c759cdd8412d454",
+      "after": "0b51c8bc84f16f58019e55b689c43fd68cbc8830",
+      "subject": "fix(db): preserve native receipt archives across schema 77 integration"
+    },
+    {
+      "before": "f9b3e249c729566cab3fcf8c6c382043926754a1",
+      "after": "1a01965d65ee2ae71744edf93f909372a6602f7d",
+      "subject": "docs: checkpoint schema qualification and next dev integration scope"
+    },
+    {
+      "before": "9bc19f737bc32d5d6a3ec8eb19d7e73b7fb2529a",
+      "after": "7eec9e5e9c08cb1cd39649991cc0a3f2206c2f86",
+      "subject": "test(console): isolate the settings return profile after dev integration"
+    },
+    {
+      "before": "1b27e10bc0e3897768903b0314008e27203340f8",
+      "after": "982902a25801f369d3f06d96fbf63ff7b5351f9b",
+      "subject": "docs: scope inherited Console adoption and ownership baseline repairs"
+    },
+    {
+      "before": "1b621dec372cd41a18003ad95bdad54ea6b448ce",
+      "after": "7a03226ec41992344d0fa1cad8a4ed4015fb818b",
+      "subject": "fix(console): honor verified provider adoption and canonical rebase"
+    },
+    {
+      "before": "ac8a0ed069dd54596ffc7acf0847a0754dc96d21",
+      "after": "5a854ba0e4b885583412be97f878aeeab002f292",
+      "subject": "refactor(console): move verified adoption into Session owner"
+    },
+    {
+      "before": "84db666854234a463a7d36ef2f58415dca952ccf",
+      "after": "e01987b4faeb2f764ac0c42add95667f3482cf6a",
+      "subject": "refactor(console): keep hooks review UI adapter in wiring"
+    },
+    {
+      "before": "e2b264ead010e2573bd26fc91263d349704c66cb",
+      "after": "3238e7e6c5fd2a6f0a74098d26c2543ac9ca7be3",
+      "subject": "chore(console): reconcile reviewed diagnostic owner moves"
+    },
+    {
+      "before": "0a4ee5c6144813e18667aec351b30dcf2f482534",
+      "after": "7d1a0cdfa3ade4e401b1413b93798cdf247cfed5",
+      "subject": "docs(tests): clarify verified adoption configuration contract"
+    },
+    {
+      "before": "3d730beb79ec82dc395b9ae643dd2b03cb69bbe8",
+      "after": "a1677ce5df04efba133ac2b624e76d7f9d7b64ea",
+      "subject": "docs(console): checkpoint provider adoption qualification and final dev scope"
+    },
+    {
+      "before": "f99c488b4b7960f9dc14e0ca07dad68c47fe1be3",
+      "after": "3dda77c5f3e742fe8bc3a90795a9946c0a1eb07c",
+      "subject": "docs: scope latest dev Console Close integration"
+    },
+    {
+      "before": "649867cd74fe71c5bdd491a58f53afead72f3b9f",
+      "after": "0fa2e8ffcbe1954e0e0666bfdceaf7815bac8e90",
+      "subject": "fix(console): preserve prepared drafts across source Close"
+    },
+    {
+      "before": "97d9e2afca1568a3df7c644240b885a36be9a49e",
+      "after": "440f2162514390ef5f9064f2f7339e799c2d5749",
+      "subject": "docs: scope storage-free creation registry decisions"
+    },
+    {
+      "before": "1117c1475da208ef64b423810cce1dbbd69998b8",
+      "after": "fc6ff3992338fe65d3caf5d94723fbee51619994",
+      "subject": "fix(console): keep creation validation reads outside registry lock"
+    },
+    {
+      "before": "e8ffa056064953b24e055187d907a24c2e52c017",
+      "after": "73d8f1ff33b906d7630c25d6ff769bb24541b28c",
+      "subject": "docs: record reviewed lock fix and remaining controller cap gate"
+    },
+    {
+      "before": "1279a01bbd3a278477ea6c3cd12393028de559a9",
+      "after": "77938f82d1a5a06b63c24851b42c6c5ab9702298",
+      "subject": "docs(console): select pure fork cap repair and current-dev integration"
+    },
+    {
+      "before": "efe59d71b56cb6627af42bcb3ff1bc23fa6519fc",
+      "after": "708126011c8e403b4f3d65854a51d331cd563a78",
+      "subject": "refactor(console): place pure fork projections with fork owner"
+    },
+    {
+      "before": "36e11822ba9e436937fd2d23ec055e3ddcd77c40",
+      "after": "6eb534c4b23ed515c3cfc62e3e42d35d74ed6e21",
+      "subject": "fix(console): order fork type-only imports"
+    },
+    {
+      "before": "b0f00d7ccf4d7947c64fd9fa8804750b11ced772",
+      "after": "8dbe6cca3682ab7ac9b3212bc1b781951b8c1d02",
+      "subject": "docs(console): close fork cap review and pin latest-dev follow-up"
+    },
+    {
+      "before": "ff358cac2fe79b13d08ad32e68c39513c1f345d6",
+      "after": "dc03a55cc53aa28a33631e04ece0d0ca01ad9a0a",
+      "subject": "docs(console): scope inherited capture-cancellation admission fixture"
+    },
+    {
+      "before": "d192ba400ae87aca9ff80741956fe8abc8ca4726",
+      "after": "e925924ff4a91b4365a3475f84ff6793f9f9c1a1",
+      "subject": "test(console): admit capture cancellation through private profile"
+    },
+    {
+      "before": "1cacebcbf267c4cd3d9f84b0cd0000f8e5fac9d8",
+      "after": "d20e66a6163ae62e60bd82dd80de3079063239a8",
+      "subject": "docs: scope remaining inherited evidence admission fixtures"
+    },
+    {
+      "before": "5448aa955dbc040464ebea681b49b83b291f2469",
+      "after": "52a437aecbbbc3a8dafb035ab960438b5330c628",
+      "subject": "test(console): admit selected evidence recovery fixtures through private profiles"
+    },
+    {
+      "before": "b2435667082986fb1f25d55e0fdadb22a6c20529",
+      "after": "c662c9b1e9baaba85a59f01f347d30f9825384f1",
+      "subject": "docs: scope latest modal lifetime integration"
+    },
+    {
+      "before": "b21d3b63aa5e876bf30fbf99c6cb53fbd0f80f8a",
+      "after": "d683ba3441a8eaf76e1a23b1b190829b0b635b9f",
+      "subject": "docs: record latest dev integration evidence"
+    },
+    {
+      "before": "75b229ce6e28609a4d9e67e54744ba2d9da5a9c8",
+      "after": "bd751b21234e8344cc344a9bb7f5c2c7629a50c8",
+      "subject": "docs: select explicit Console decision and preflight ownership"
+    },
+    {
+      "before": "9fc2d5ca52149f0774ffe5c5d0fb6350c1352435",
+      "after": "c939be4788843190032fce1947223d3ba133a18e",
+      "subject": "refactor(console): place decision and compaction coordination with explicit owners"
+    },
+    {
+      "before": "a807bf684fad1785a6b7bfd9110d5783b70c4a7b",
+      "after": "cb3b4196bae4e251e498298520b004fd1b069403",
+      "subject": "docs: scope reproduced Console fixture admission repairs"
+    },
+    {
+      "before": "9d52fd1c26eadb9de9e59a4f28977f1ab4b9ed9f",
+      "after": "59c366b3b74fdfb9f88592f31ce287ebf3a7e870",
+      "subject": "test: enroll bounded Console confirmation fixtures in profile admission"
+    },
+    {
+      "before": "e349aa8b77b4bc454c7ed30e38733706e53c1fe5",
+      "after": "a0dacec080e3b49cff07a3aebbdb288925f267f8",
+      "subject": "docs: scope inherited bounded provider resolution repair"
+    },
+    {
+      "before": "2a25e71345031038f84fc912bd81d804c7c138f6",
+      "after": "6a06a1c9fdb947240bd2d7fae1f903cb2dbdf62a",
+      "subject": "fix: bound inherited Console policy and profile provider waits"
+    },
+    {
+      "before": "b16ba647f0204c1c492eb2a16cdc9a8a3b756c1c",
+      "after": "1aa7a9093c3a773152c8e760f41e5d4bafddcae6",
+      "subject": "docs: scope remaining Console fixture reconstruction"
+    },
+    {
+      "before": "c55e6c5c748b76ecc8266d43f519ecd796116a56",
+      "after": "49786c63bf51957fc0b67a08db4b88582f754344",
+      "subject": "test(console): admit selected remaining qualification fixtures"
+    },
+    {
+      "before": "71445f8850f0338a473040598a1b892eb18a2572",
+      "after": "7c8cb40c0f4fb7ab7512862f1ebc279c916ca615",
+      "subject": "docs: scope remaining native console fixture qualification"
+    },
+    {
+      "before": "81bd2f02b8ff43702e98059c5bd8accf7fc67a7e",
+      "after": "b11e9819da4da4c2584780f898ddd6fc1b7d2df5",
+      "subject": "fix(console): trigger legacy approval summary on session projection"
+    },
+    {
+      "before": "b4cee0dc7ad882aa4fe3f90214e6c7afc6a4003a",
+      "after": "279137943b7b9dda6e09460ff7aebbe0f7c60926",
+      "subject": "docs: scope native video resolver observation repair"
+    },
+    {
+      "before": "fd6120bfc2b1d92e8292e8cf279d986c4b1ed705",
+      "after": "8aaec13be4af3d9f75ee731d92fc7545cc37b512",
+      "subject": "test(console): observe native video resolution state"
+    },
+    {
+      "before": "985fd603c388e477455ee2b363e5631aaa231a2e",
+      "after": "56d5e7e9cf2284ec0ed46c344a1ca837a141e898",
+      "subject": "docs: scope latest dev console runtime integration"
+    },
+    {
+      "before": "d9f951eeb9e94f6a7a66cab8db24535f931f333c",
+      "after": "137390b3380bdf77a2dd4646043b9dcad113cd19",
+      "subject": "docs: link canonical character activation decision"
+    },
+    {
+      "before": "f5bf0e3a997c147ae4b29479f6e15b77bdc55c1a",
+      "after": "1aaa363d2fc3d8c3d212ab1e90ac56b43c03ba2f",
+      "subject": "docs: preserve historical QA with exact upstream append"
+    },
+    {
+      "before": "82e4df9f5376c268b5a770e5c0c98209b099b275",
+      "after": "3adf31817b10c63e060700b19fe1d416cbcd43c1",
+      "subject": "docs: close reviewed console ownership qualification"
+    },
+    {
+      "before": "77bd4aee3e0792be82003f22d931a6af3e982975",
+      "after": "8ad8f7c7cd600944076b212fea0ce4ca3e5e4a62",
+      "subject": "test(console): adapt latest dev timeout policy to native interrupt host"
+    },
+    {
+      "before": "4ff320bbb704d930fa9cddb056e7d5ff062cdc29",
+      "after": "c23aa374e42c42fc5a6647f8209415f68ce12449",
+      "subject": "docs: close integration review and scope final loading"
+    },
+    {
+      "before": "b72bf396ad13b7b6ca41a56c438986ee2a938e30",
+      "after": "d548aee4b1f8149f510cae67676e2baab19af688",
+      "subject": "docs: preserve final loading and scope newest dev send repair"
+    },
+    {
+      "before": "7f3b06a732f4999b273b40dfb434f623dcd141f7",
+      "after": "7d60b16179ecb16a4865d732bc90e5979e937813",
+      "subject": "style(console): normalize incoming trace-row calls and bank controller headroom"
+    },
+    {
+      "before": "021a5aba2f87dc1dde11c03c79ef3c0c41bb462f",
+      "after": "ca8caf18bee0eac2e12ab4626cd080ba1003c092",
+      "subject": "docs: archive qualified PR2995 integration and source decisions"
+    },
+    {
+      "before": "c611b2b9cf0725f59d9f1291b48080e31f1696a9",
+      "after": "9b1b26e00dbb1187856bbbf8b6b2005bcc2a0b91",
+      "subject": "docs: preserve qualified source on latest dev documentation update"
+    },
+    {
+      "before": "1dde1d65259d1d0bcda716f583f73e6e7448e2c1",
+      "after": "e18cd0be5684d2ef2de27329c2110566d7daaa4f",
+      "subject": "docs: pack immutable PR2995 qualification evidence"
+    },
+    {
+      "before": "e3d431c571f4f05a52f039b1485f5fc4a7bcaf76",
+      "after": "001afab590f23d851924d104a7c98a3c77bd43dd",
+      "subject": "chore: scope current-head review and latest-dev repairs"
+    },
+    {
+      "before": "e4a97394e7cc9cefaab6dd5e4abc05304a586e65",
+      "after": "020a108d88de8d90bd12edba01638cd52e384003",
+      "subject": "test(console): supply Session consumers in reconciliation fixture"
+    },
+    {
+      "before": "01bbb3ac3d77c0886b35c4220bf781f00a5826f9",
+      "after": "7f69cecbe639ea46012918d8b33f8029fbe4d277",
+      "subject": "docs: record approved Together integration and CI fixture repair"
+    },
+    {
+      "before": "c67427a6cff5d9c6f28227797557a0d1e1e6bdba",
+      "after": "cfcc07a020eadb14a10ef9692104c1d32e7b178f",
+      "subject": "fix(console): finish bounded chat-start cleanup after registration failures"
+    },
+    {
+      "before": "ebb276ae0982327f5d088205f1d7101740385e3f",
+      "after": "6366ba8d03a8830d22247e404be734d7fb5cbd18",
+      "subject": "docs: scope persistent chat-start restriction failure repair"
+    },
+    {
+      "before": "b15cb1860fa9ca92c0be8c0dcc309a20dc090263",
+      "after": "d7a219068b0eceda4db2f1190e6e959ca1b48533",
+      "subject": "fix(console): retain uncertain-start denial with captured store identity"
+    },
+    {
+      "before": "126dacc1e6600b070b430f5cefe714c704822da2",
+      "after": "f666be7d91633afd56ffa7b28b869ee2807a6582",
+      "subject": "docs: record approved chat-start cleanup and uncertainty repair"
+    },
+    {
+      "before": "749e7540affab2b543f472fcf6fae6bff34d8122",
+      "after": "307816c5e505942eaaa15921d21ae7c60e950156",
+      "subject": "docs: scope latest-dev roleplay and merge queue integration"
+    },
+    {
+      "before": "b084d720e98e4c2a7aaaf17ab5c8386c84495aa9",
+      "after": "17d52f1659f2c1bf33b2b5689a375d0f58652a00",
+      "subject": "docs: scope two proven reader-profile baseline repairs"
+    },
+    {
+      "before": "f817cbefabdb57896b40371bcdc9346f5bb0659b",
+      "after": "e829ced92759ce490f9c4a879e69b0edd90b9aa0",
+      "subject": "docs: scope live typed-answer screen adapter repair"
+    },
+    {
+      "before": "81484b688a03c0f924a0ea6a6474b5e2d4b355e8",
+      "after": "3e1d9555dba797fd46928da91efc82a8d1553ce2",
+      "subject": "test(ui): restore canonical profiles and typed send adapter"
+    },
+    {
+      "before": "06cfe2f6a30236dcd8f81893ebf49bc3d0b78036",
+      "after": "6f3bfd539b1110f1b701e1f01f29945ae23d1f19",
+      "subject": "docs: preserve approved PR2995 review and latest-dev evidence"
+    },
+    {
+      "before": "13d1668d4eedbdfcab50fff28a47a8a68346f033",
+      "after": "54a18180211ed2ecbf450db78202d28d97a7b995",
+      "subject": "docs: scope current Qodo repairs and command integration"
+    }
+  ]
+}

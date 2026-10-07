@@ -17,6 +17,7 @@ import pytest
 from textual.app import App
 from textual.screen import Screen
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook import config as config_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.LLM_Provider_Catalog.model_auto_refresh import (
@@ -112,14 +113,19 @@ _DEFAULT_DISK_STORE = object()
 
 
 def _stub(
-    monkeypatch, *, settings=None, report=None, error=None, disk_store=_DEFAULT_DISK_STORE
+    monkeypatch,
+    *,
+    settings=None,
+    report=None,
+    error=None,
+    disk_store=_DEFAULT_DISK_STORE,
 ):
     """Build a stub app + service and pin tldw_chatbook.app.load_settings."""
     if settings is None:
         # Consent defaults to recorded so refresh-path tests exercise the
         # refresh itself; consent gating has its own dedicated tests below.
         settings = {"model_catalog": {"refresh_consent_recorded": True}}
-    monkeypatch.setattr("tldw_chatbook.app.load_settings", lambda: settings or {})
+    set_app_global(monkeypatch, "load_settings", lambda: settings or {})
     service = _StubCatalogService(report=report, error=error)
     app = _StubApp(
         disk_store=object() if disk_store is _DEFAULT_DISK_STORE else disk_store,
@@ -184,16 +190,12 @@ class _ConsentHost:
 @pytest.mark.asyncio
 async def test_consent_allow_persists_consent_and_schedules_refresh(monkeypatch):
     saved = MagicMock(return_value=True)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, True)
 
-    saved.assert_called_once_with(
-        {"model_catalog": {"refresh_consent_recorded": True}}
-    )
+    saved.assert_called_once_with({"model_catalog": {"refresh_consent_recorded": True}})
     host.run_worker.assert_called_once_with(
         host._refresh_model_catalogs,
         exclusive=True,
@@ -205,9 +207,7 @@ async def test_consent_allow_persists_consent_and_schedules_refresh(monkeypatch)
 @pytest.mark.asyncio
 async def test_consent_deny_persists_disabled_and_skips_refresh(monkeypatch):
     saved = MagicMock(return_value=True)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, False)
@@ -230,9 +230,7 @@ async def test_consent_deny_persists_disabled_and_skips_refresh(monkeypatch):
 async def test_consent_truthy_non_bool_is_treated_as_deny(monkeypatch, junk):
     """Only the boolean True counts as consent, mirroring the parser."""
     saved = MagicMock(return_value=True)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, junk)
@@ -245,9 +243,7 @@ async def test_consent_truthy_non_bool_is_treated_as_deny(monkeypatch, junk):
 @pytest.mark.asyncio
 async def test_consent_allow_still_refreshes_when_persist_fails(monkeypatch):
     saved = MagicMock(return_value=False)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, True)
@@ -268,18 +264,18 @@ async def test_refresh_honors_disabled_setting_from_canonical_config(
     # admission pins the shared module's participant to the session
     # bootstrap selection, so re-selecting in place raises
     # RecoveryRequired. ``TldwCli._refresh_model_catalogs_owned`` resolves
-    # ``load_settings`` from the app module's globals, so that reference is
-    # rebound too -- otherwise the refresh would read the bootstrap profile
-    # and pass via the swallowed-exception/consent fallbacks instead of the
-    # disabled setting this test is about.
+    # ``load_settings`` from the app modules' globals (the refresh now lives in
+    # ``app_feature_glue``), so every reference is rebound -- otherwise the
+    # refresh would read the bootstrap profile and pass via the
+    # swallowed-exception/consent fallbacks instead of the disabled setting
+    # this test is about.
     from Tests.Backup_Recovery.config_test_support import install_config_source
-    from tldw_chatbook import app as app_module
 
     config_path = tmp_path / "model-catalog-disabled.toml"
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     fresh = install_config_source(monkeypatch)
     monkeypatch.setattr(sys.modules[__name__], "config_module", fresh)
-    monkeypatch.setattr(app_module, "load_settings", fresh.load_settings)
+    set_app_global(monkeypatch, "load_settings", fresh.load_settings)
     assert fresh.save_settings_to_cli_config(
         {"model_catalog": {"auto_refresh_enabled": False}}
     )
@@ -410,9 +406,7 @@ async def test_refresh_posts_model_catalog_refreshed_for_refreshed_and_baseline(
     )
     app, _service = _stub(monkeypatch, report=report)
     await TldwCli._refresh_model_catalogs(app)
-    events = [
-        m for m in app.posted_messages if isinstance(m, ModelCatalogRefreshed)
-    ]
+    events = [m for m in app.posted_messages if isinstance(m, ModelCatalogRefreshed)]
     assert len(events) == 1
     assert events[0].providers == frozenset({"OpenAI", "Anthropic"})
 
@@ -468,7 +462,7 @@ async def test_refresh_swallows_and_logs_errors(monkeypatch):
 
 
 def test_disk_store_builds_for_cache_path_inside_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     app, _service = _stub(monkeypatch)
     store = TldwCli._init_model_catalog_disk_store(app)
     assert store is not None
@@ -478,7 +472,7 @@ def test_disk_store_builds_for_cache_path_inside_data_dir(tmp_path, monkeypatch)
 def test_disk_store_rejected_when_cache_path_escapes_data_dir(tmp_path, monkeypatch):
     from loguru import logger
 
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     monkeypatch.setattr(
         "tldw_chatbook.Utils.path_validation.get_safe_relative_path",
         lambda path, base: None,
@@ -503,7 +497,7 @@ def test_disk_store_load_failure_logs_path_without_traceback(tmp_path, monkeypat
         ModelCatalogDiskStore,
     )
 
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
 
     def failing_load_into(self, cache):
         raise RuntimeError("boom-secret")
@@ -525,3 +519,86 @@ def test_disk_store_load_failure_logs_path_without_traceback(tmp_path, monkeypat
     # message, which may carry sensitive details.
     assert "boom-secret" not in text
     assert "Traceback" not in text
+
+
+# ---------------------------------------------------------------------------
+# TASK-34100.5 review (B-F7): the post-setup pass announces only failures
+# ---------------------------------------------------------------------------
+
+
+def _success_report():
+    return RefreshReport(
+        outcomes=(
+            ProviderRefreshOutcome(
+                provider_list_key="OpenAI",
+                status="refreshed",
+                new_model_ids=("gpt-9",),
+            ),
+        )
+    )
+
+
+def _failure_report():
+    return RefreshReport(
+        outcomes=(
+            ProviderRefreshOutcome(
+                provider_list_key="OpenAI", status="failed", error_kind="network"
+            ),
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_pass_setup_released_is_quiet_unless_it_failed(monkeypatch):
+    """Live (g5-v-oai): 'Model lists updated — OpenAI: 124 new cached, ...'
+    showed beside the 'Setup complete' arrival line (AC#11: one first-run
+    notice at a time). The pass that setup's own choice started announces
+    only a failure; the model picker shows the new lists anyway."""
+    app, _service = _stub(monkeypatch, report=_success_report())
+    app._model_catalog_notice_quiet = True
+    await TldwCli._refresh_model_catalogs(app)
+    assert app.notifications == []
+    assert app.posted_messages, "the refresh itself still happened"
+
+    app, _service = _stub(monkeypatch, report=_failure_report())
+    app._model_catalog_notice_quiet = True
+    await TldwCli._refresh_model_catalogs(app)
+    assert [severity for _m, _t, severity in app.notifications] == ["warning"]
+
+
+class _ScheduleHost:
+    def __init__(self) -> None:
+        self.app_config = {"first_run": {"setup_completed": True}}
+        self.run_worker = MagicMock()
+        self.call_after_refresh = MagicMock()
+        self._refresh_model_catalogs = AsyncMock()
+
+    _schedule_startup_model_catalog_refresh = (
+        TldwCli._schedule_startup_model_catalog_refresh
+    )
+
+
+@pytest.mark.parametrize("after_setup", [True, False])
+def test_only_the_pass_setup_released_is_marked_quiet(monkeypatch, after_setup):
+    set_app_global(
+        monkeypatch,
+        "load_settings",
+        lambda: {"model_catalog": {"refresh_consent_recorded": True}},
+    )
+    host = _ScheduleHost()
+    assert host._schedule_startup_model_catalog_refresh(
+        after_setup_completion=after_setup, environ={}
+    )
+    host.run_worker.assert_called_once()
+    assert getattr(host, "_model_catalog_notice_quiet", False) is after_setup
+
+
+def test_the_setup_summary_consent_pass_is_marked_quiet() -> None:
+    """Live (g5-r1-ant): the Summary's 'Keep model lists fresh' consent runs
+    the pass through refresh_model_catalogs_now, not the scheduler -- the
+    toast still showed beside the arrival line. Its only caller is setup."""
+    host = _ScheduleHost()
+    host.refresh_model_catalogs_now = TldwCli.refresh_model_catalogs_now.__get__(host)
+    host.refresh_model_catalogs_now()
+    host.run_worker.assert_called_once()
+    assert host._model_catalog_notice_quiet is True

@@ -91,6 +91,11 @@ from ...Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailSectionHeader,
 )
+from ...Widgets.recompose_capture_guard import (
+    family_position,
+    family_stand_in,
+    focus_identity,
+)
 from ...Workspaces.conversation_browser_state import (
     console_rail_section_height_budget,
 )
@@ -143,12 +148,26 @@ class ContextSectionDescriptor:
     max_content_lines: int
 
 
+#: TASK-33621.12: focus recovery waits for a rebuild of the lost control's
+#: own container by polling at this interval, at most this many times (2 s).
+_FOCUS_RECOVERY_REBUILD_POLL_SECONDS = 0.02
+_FOCUS_RECOVERY_REBUILD_MAX_POLLS = 100
+
+
 @dataclass(frozen=True, slots=True)
 class _ContextFocusRecoveryIncident:
-    """Stable local-focus identity retained across one DOM mutation."""
+    """Stable local-focus identity retained across one DOM mutation.
+
+    ``target_family``/``family_index`` place a row control among its own kind
+    (``recompose_capture_guard.family_position``), so when its item leaves
+    the list the stand-in is the same kind of control -- the one the tray's
+    own restore picks too (Qodo #2932).
+    """
 
     target_id: str | None
     target_index: int | None
+    target_family: str | None = None
+    family_index: int | None = None
 
 
 CONTEXT_SECTION_DESCRIPTORS = (
@@ -884,16 +903,22 @@ class ConsoleLeftRail(Vertical):
 
     @staticmethod
     def _stable_focus_id(widget: Widget) -> str | None:
-        return widget.id or None
+        # A reordered list hands a row's positional id to another item, so a
+        # row control's own identity wins over its id -- the key the tray's
+        # rebuild restore uses too (Qodo #2932).
+        return focus_identity(widget)
 
     def _focus_recovery_incident(
         self,
         previous: Widget,
         controls: tuple[Widget, ...],
     ) -> _ContextFocusRecoveryIncident:
+        family, family_index = family_position(controls, previous)
         return _ContextFocusRecoveryIncident(
             target_id=self._stable_focus_id(previous),
             target_index=controls.index(previous) if previous in controls else None,
+            target_family=family,
+            family_index=family_index,
         )
 
     def _ensure_focus_recovery(
@@ -930,15 +955,27 @@ class ConsoleLeftRail(Vertical):
         self,
         section_id: str,
         incident: _ContextFocusRecoveryIncident,
+        rebuild_polls: int = 0,
+        landing: Widget | None = None,
     ) -> None:
-        """Resolve one current incident against the section's current DOM."""
+        """Resolve one current incident against the section's current DOM.
+
+        Args:
+            section_id: The section whose focus is being recovered.
+            incident: The frozen identity of the control that lost focus.
+            rebuild_polls: How many times resolution has already waited for
+                an in-flight rebuild inside the section (TASK-33621.12).
+            landing: Where focus sat when that wait began -- Textual's
+                automatic reset target. Only read once ``rebuild_polls`` > 0.
+        """
 
         if self._pending_focus_recoveries.get(section_id) is not incident:
             return
         if not self.is_attached:
             self._pending_focus_recoveries.pop(section_id, None)
             return
-        if self._focus_is_valid_outside_rail(self.app.focused):
+        focused = self.app.focused
+        if self._focus_is_valid_outside_rail(focused):
             self._pending_focus_recoveries.pop(section_id, None)
             self._section_focus_history.pop(section_id, None)
             return
@@ -950,6 +987,46 @@ class ConsoleLeftRail(Vertical):
             self._pending_focus_recoveries.pop(section_id, None)
             return
 
+        # TASK-33621.12: focus moved while this incident waited for a rebuild
+        # -- Tab, a click, or the rebuilt container restoring its own focus.
+        # That move is newer than the incident; recovering now would snap
+        # focus back to the old row.
+        if (
+            rebuild_polls
+            and focused is not None
+            and focused is not landing
+            and self._is_enabled_focus_target(focused)
+        ):
+            self._pending_focus_recoveries.pop(section_id, None)
+            self._section_focus_history.pop(section_id, None)
+            if self._section_for_owned_target(focused) == section_id:
+                self._record_section_focus(section_id, focused)
+            bounded._acknowledge_focus_recovery(focused)
+            return
+
+        # TASK-33621.12: the incident may come from a rebuild of the focused
+        # control's own container. Until that recompose has mounted the
+        # replacement, nothing matches the target's id and the index fallback
+        # strands focus on a neighbour -- live, "New conversation" after the
+        # Save .md prompt closed and the Conversations tray re-synced. Resolve
+        # once the rebuild is done. A same-section incident merges into this
+        # pending one; focus leaving the rail or moving on (above) ends the
+        # wait, and the poll is bounded so a rebuild that never finishes
+        # cannot hold it forever.
+        if (
+            rebuild_polls < _FOCUS_RECOVERY_REBUILD_MAX_POLLS
+            and self._section_rebuild_in_flight(bounded)
+        ):
+            wait_landing = landing if rebuild_polls else focused
+            self.set_timer(
+                _FOCUS_RECOVERY_REBUILD_POLL_SECONDS,
+                lambda: self._recover_pending_focus(
+                    section_id, incident, rebuild_polls + 1, wait_landing
+                ),
+                name="console-rail-focus-recovery-rebuild-wait",
+            )
+            return
+
         controls = self._focusable_body_controls(section_id)
         candidates: list[Widget] = []
         if incident.target_id is not None:
@@ -958,6 +1035,11 @@ class ConsoleLeftRail(Vertical):
                 for control in controls
                 if self._stable_focus_id(control) == incident.target_id
             )
+        stand_in = family_stand_in(
+            controls, incident.target_family, incident.family_index
+        )
+        if stand_in is not None:
+            candidates.append(stand_in)
         if incident.target_index is None:
             candidates.extend(controls)
         else:
@@ -1001,6 +1083,15 @@ class ConsoleLeftRail(Vertical):
         self._pending_focus_recoveries.pop(section_id, None)
         self._section_focus_history.pop(section_id, None)
         bounded._acknowledge_focus_recovery(None)
+
+    @staticmethod
+    def _section_rebuild_in_flight(bounded: ConsoleBoundedSection) -> bool:
+        """Whether a guarded container inside the section is mid-recompose."""
+
+        return any(
+            getattr(widget, "recompose_in_flight", False)
+            for widget in bounded.viewport.walk_children(Widget, with_self=True)
+        )
 
     def _commit_focus_recovery(
         self,
@@ -2261,8 +2352,8 @@ class ConsoleLeftRail(Vertical):
                 owner=self,
             )
 
-            # Model (provider/model readout lines plus a
-            # Configure shortcut into the Console session settings).
+            # Model (sampling readout lines plus "Change  Alt+M", which
+            # opens Switch model, TASK-33004.7).
             yield self._section_header(
                 "model",
                 rail_state.model_open,
@@ -2273,9 +2364,6 @@ class ConsoleLeftRail(Vertical):
             # TASK-32338: structured fields on the summary state replace
             # regex-parsing of the formatted sampling_row (which rendered a
             # silent em-dash whenever the copy's wording shifted).
-            temperature_value = summary_state.temperature or "—"
-            max_tokens_value = summary_state.max_tokens or "—"
-
             # TASK-23196: the Provider and Model rows that stood here were
             # the third simultaneous rendering of the same two values -- the
             # persistent status bar and the Inspector's run recipe both
@@ -2283,46 +2371,42 @@ class ConsoleLeftRail(Vertical):
             # width where this rail is shown at all (below 100 columns the
             # rail force-collapses). This was the copy that cost scarce
             # vertical space, so it is the copy that went. What remains is
-            # what is NOT duplicated: the sampling parameters, the
-            # system-prompt row, and Configure.
-            model_rows = (
+            # what is NOT duplicated: the sampling parameters (Streaming
+            # back since TASK-33004.7, task-338), the system-prompt row, and
+            # the Change action.
+            model_rows = tuple(
                 Horizontal(
                     Static(
-                        "Temperature",
+                        label,
                         classes="console-model-section-label",
                         markup=False,
                     ),
                     Static(
-                        temperature_value,
+                        value or "—",
                         classes="console-model-section-value",
                         markup=False,
                     ),
-                    id="console-model-section-temperature",
+                    id=f"console-model-section-{row_id}",
                     classes="console-model-section-line",
-                ),
-                Horizontal(
-                    Static(
-                        "Max tokens",
-                        classes="console-model-section-label",
-                        markup=False,
-                    ),
-                    Static(
-                        max_tokens_value,
-                        classes="console-model-section-value",
-                        markup=False,
-                    ),
-                    id="console-model-section-max-tokens",
-                    classes="console-model-section-line",
-                ),
+                )
+                for row_id, label, value in (
+                    ("temperature", "Temperature", summary_state.temperature),
+                    ("max-tokens", "Max tokens", summary_state.max_tokens),
+                    ("streaming", "Streaming", summary_state.streaming),
+                )
             )
+            # TASK-33005.3: the readiness word, always (red only when blocked).
             readiness = (summary_state.readiness_label or "").strip()
             recovery = Static(
-                readiness or "",
+                readiness,
                 id="console-model-section-recovery",
-                classes="console-model-section-recovery",
                 markup=False,
             )
-            recovery.styles.display = "none"
+            recovery.styles.display = "block" if readiness else "none"
+            recovery.set_class(
+                getattr(summary_state.readiness, "operability", "") == "not_ready",
+                "conversation-attention-error",
+            )
             generation_recovery = Vertical(
                 Static(
                     "Not saved: generation settings",
@@ -2394,13 +2478,14 @@ class ConsoleLeftRail(Vertical):
             system_line.styles.text_wrap = "nowrap"
             system_line.styles.text_overflow = "ellipsis"
             system_line.set_class(self._system_line_dim, "console-rail-system-line-dim")
+            # The id predates the label; rail tests key on it.
             configure = Button(
-                "Configure",
+                "Change  Alt+M",
                 id="console-model-section-configure",
                 classes="console-workspace-action",
                 compact=True,
             )
-            configure.tooltip = "Configure Console session settings"
+            configure.tooltip = "Switch model: this chat's provider·model pair (Alt+M)"
             model_body = self._section_body(
                 "model",
                 rail_state.model_open,
@@ -2494,8 +2579,17 @@ class ConsoleLeftRail(Vertical):
                 steering_bar,
                 back_button,
                 full_log_button,
-                *([Button("Progress: 0 queued", id="console-agent-progress", compact=True)]
-                  if self._open_agent_progress is not None else []),
+                *(
+                    [
+                        Button(
+                            "Progress: 0 queued",
+                            id="console-agent-progress",
+                            compact=True,
+                        )
+                    ]
+                    if self._open_agent_progress is not None
+                    else []
+                ),
                 classes="console-agent-section",
             )
             yield _ContextBoundedSection(
@@ -2545,28 +2639,23 @@ class ConsoleLeftRail(Vertical):
             self._progress_timer.stop()
 
     def _sync_progress_count(self) -> None:
-        try:
-            progress = self.query_one("#console-agent-progress", Button)
-        except NoMatches:
-            # A queued tick can outlive the descendants during recomposition.
-            return
         count, counts = (
             self._agent_progress_state() if self._agent_progress_state else (0, {})
         )
-        progress.label = f"Progress: {count} queued"
+        for progress in self.query("#console-agent-progress").results(Button):
+            progress.label = f"Progress: {count} queued"
         if counts != self._progress_counts:
             if self._refresh_progress_navigation is not None:
                 self._refresh_progress_navigation()
             self._progress_counts = counts
 
-
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Catch this rail's own section-toggle buttons; let everything else bubble.
 
-        Every other button inside this rail's subtree (Configure, the
-        agent drill-down Back/View-full-log buttons, the rail collapse
-        button) has a handler whose body reaches beyond this rail -- the
-        Console settings modal, the agent run-log viewer, a screen-wide
+        Every other button inside this rail's subtree (the Model section's
+        Change, the agent drill-down Back/View-full-log buttons, the rail
+        collapse button) has a handler whose body reaches beyond this rail --
+        Switch model, the agent run-log viewer, a screen-wide
         chat-UI sync, or Console rail preference persistence that also
         drives the Inspector rail. Those stay on ``ChatScreen`` and keep
         working unchanged: this method does not stop or otherwise touch
@@ -2579,7 +2668,10 @@ class ConsoleLeftRail(Vertical):
                 consulted here.
         """
         button_id = event.button.id or ""
-        if button_id == "console-agent-progress" and self._open_agent_progress is not None:
+        if (
+            button_id == "console-agent-progress"
+            and self._open_agent_progress is not None
+        ):
             event.stop()
             self._open_agent_progress()
             return

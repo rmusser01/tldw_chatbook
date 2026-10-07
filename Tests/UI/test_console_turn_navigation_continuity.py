@@ -864,7 +864,7 @@ async def test_claimed_queued_continuation_drains_while_console_is_hidden(
         await asyncio.wait_for(gateway.first_chunk.wait(), timeout=3)
 
         queue_snapshot = controller.prompt_queue_registry.snapshot(session_id)
-        queued = controller.queue_prompt(
+        queued = await controller.queue_prompt(
             session_id,
             text="queued continuation survives navigation",
             expected_revision=queue_snapshot.revision,

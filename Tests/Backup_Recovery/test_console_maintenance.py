@@ -1,8 +1,27 @@
 """Real Console controller intake and queue maintenance boundaries."""
 
+import subprocess
+
 import pytest
 
-from Tests.Backup_Recovery.test_home_citation_retirement import _run
+from Tests.hooks_v2_process_support import child_argv
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
+
+def _run(tmp_path, case, outcome, *, script):
+    """Run the real controller against the exact checkout and private profile."""
+    del tmp_path
+    result = subprocess.run(
+        child_argv(script) + [case, outcome],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
+    assert "retired and reopened" in result.stdout
+
 
 _SCRIPT = r"""
 import asyncio, sys, time
@@ -96,13 +115,13 @@ async def main():
         gateway.resolve_release.set()
         await gateway.started[0].wait()
         if case != "preflight":
-            _queue(controller, session, "second")
+            await _queue(controller, session, "second")
             if case == "user_pause":
                 snapshot = controller.prompt_queue_registry.snapshot(session)
                 controller.pause_prompt_queue_after_turn(session, expected_revision=snapshot.revision)
             controller.maintenance_close_admission()
             snapshot = controller.prompt_queue_registry.snapshot(session)
-            rejected = controller.queue_prompt(session, text="third", expected_revision=snapshot.revision)
+            rejected = await controller.queue_prompt(session, text="third", expected_revision=snapshot.revision)
             assert not rejected.applied
             assert not await controller.maintenance_drain(time.monotonic())
         gateway.release[0].set()

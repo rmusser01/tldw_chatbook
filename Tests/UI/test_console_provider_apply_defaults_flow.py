@@ -21,6 +21,7 @@ from textual.widgets import Button, Input, Select, Static
 
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
 from Tests.console_provider_doubles import provider_resolution
+from Tests.private_profile import private_profile_test
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -214,8 +215,12 @@ def _console_app():
     return app
 
 
-def _persisted_console_app():
-    """Build from the sandbox config file the default writer will mutate."""
+def _persisted_console_app(**vllm_settings: object):
+    """Build from the sandbox config file the default writer will mutate.
+
+    Args:
+        **vllm_settings: Extra keys written into ``[api_settings.vllm]``.
+    """
 
     adapter = SettingsConfigAdapter()
     assert adapter.save_sections(
@@ -232,6 +237,7 @@ def _persisted_console_app():
                 "api_url": "http://127.0.0.1:9098",
                 "model": "vendor/model:b",
                 "streaming": True,
+                **vllm_settings,
             },
         }
     )
@@ -255,7 +261,38 @@ async def _open_provider_popover(
     await pilot.pause()
     modal = harness.screen
     assert isinstance(modal, ConsoleModelPopover)
+    # Readiness, RECENT and catalogs fill in after open (TASK-33004.4).
+    await harness.workers.wait_for_complete()
+    await pilot.pause()
     return modal
+
+
+async def _highlight(modal: ConsoleModelPopover, pilot, query: str):
+    """Type in Find and return the row Enter would act on."""
+    modal.query_one("#console-popover-find", Input).value = query
+    await pilot.pause()
+    return modal.highlighted_row()
+
+
+async def _edit_highlighted(
+    modal: ConsoleModelPopover, pilot, temperature: str
+) -> None:
+    """Editing a value edits the highlighted pair's values (TASK-33004.4)."""
+    field = modal.query_one("#console-popover-temperature", Input)
+    field.focus()
+    await pilot.pause()
+    field.value = temperature
+    await pilot.pause()
+
+
+async def _choose_streaming(modal: ConsoleModelPopover, pilot, value: bool) -> None:
+    """Pick Streaming On or Off with the keyboard (TASK-33004.5: an On/Off
+    Select replaced the toggle Button)."""
+    streaming = modal.query_one("#console-popover-streaming", Select)
+    streaming.focus()
+    await pilot.press("enter", "up" if value else "down", "enter")
+    await pilot.pause()
+    assert streaming.value is value
 
 
 async def _select_vllm_model(
@@ -265,17 +302,11 @@ async def _select_vllm_model(
     model: str = "model-b",
     temperature: str = "0.31",
 ) -> None:
-    modal.query_one("#console-popover-provider", Select).value = "vllm"
-    await pilot.pause()
-    picker = modal.query_one("#console-popover-model-search")
-    picker.set_model_value(model)
-    picker.post_message(picker.ModelSelected(model))
-    await pilot.pause()
-    modal.query_one("#console-popover-temperature", Input).value = temperature
-    modal.query_one("#console-popover-compaction-mode", Select).value = (
-        ContextCompactionMode.AUTOMATIC.value
-    )
-    await pilot.pause()
+    """Rewritten for TASK-33004.4: Find + the vllm row replace the provider
+    Select, the model picker and the (removed) compaction Select."""
+    row = await _highlight(modal, pilot, model)
+    assert row is not None and (row.provider, row.model) == ("vllm", model)
+    await _edit_highlighted(modal, pilot, temperature)
 
 
 async def _drain_settings_tasks(app) -> None:
@@ -379,10 +410,8 @@ async def test_apply_closes_and_changes_only_later_send_context(
             "model-b",
             pytest.approx(0.31),
         )
-        assert store.session_context_policy_overrides(session.id) == replace(
-            policy_before,
-            compaction_mode=ContextCompactionMode.AUTOMATIC,
-        )
+        # Quick Apply submits the compaction override unchanged (ADR-095).
+        assert store.session_context_policy_overrides(session.id) == policy_before
         captured_after = console._session._build_console_turn_execution_context(
             session.id
         )
@@ -442,7 +471,8 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
             "model-b",
             pytest.approx(0.31),
         )
-        assert policy.overrides.compaction_mode is ContextCompactionMode.AUTOMATIC
+        # Quick Apply carries the chat's (absent) compaction override as is.
+        assert policy.overrides.compaction_mode is None
 
         conversation = app.chachanotes_db.get_conversation_by_id(conversation_id)
         assert conversation is not None
@@ -462,10 +492,7 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
             "vllm",
             "model-b",
         )
-        assert (
-            resumed.context_policy_overrides.compaction_mode
-            is ContextCompactionMode.AUTOMATIC
-        )
+        assert resumed.context_policy_overrides.compaction_mode is None
 
         temporary = store.create_session(
             settings=ConsoleSessionSettings(
@@ -580,8 +607,7 @@ async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> No
         )
 
         assert all(
-            result.accepted
-            for result in (retry, continued, regenerated, edited)
+            result.accepted for result in (retry, continued, regenerated, edited)
         ), [
             (result.accepted, result.visible_copy)
             for result in (retry, continued, regenerated, edited)
@@ -636,9 +662,7 @@ async def test_normal_sync_projects_delayed_first_persist_failure_for_switched_s
         assert context_row.display is False
 
         await console._session._activate_native_console_session(failed_session.id)
-        context_retry = console.query_one(
-            "#console-retry-context-settings", Button
-        )
+        context_retry = console.query_one("#console-retry-context-settings", Button)
         assert context_row.display is True
         assert context_retry.console_settings_session_id == failed_session.id
         assert context_retry.console_settings_revision == failure.revision
@@ -736,9 +760,7 @@ async def test_promotion_completion_projects_current_session_recovery_after_swit
             ConsoleSettingsComponent.CONTEXT_POLICY
         ]
         context_row = console.query_one("#console-context-recovery-row")
-        context_retry = console.query_one(
-            "#console-retry-context-settings", Button
-        )
+        context_retry = console.query_one("#console-retry-context-settings", Button)
         assert temporary.ephemeral is False
         assert promotion_failure.persisted_conversation_id != (
             clean_failure.persisted_conversation_id
@@ -800,13 +822,11 @@ async def test_stale_compaction_retry_cannot_replace_newer_full_policy(
             ConsoleSettingsComponent.CONTEXT_POLICY
         ]
         assert (
-            failure.policy_failure_label
-            is ConsoleSettingsPolicyFailureLabel.COMPACTION
+            failure.policy_failure_label is ConsoleSettingsPolicyFailureLabel.COMPACTION
         )
-        assert failure.context_policy_overrides == replace(
-            original_policy,
-            compaction_mode=ContextCompactionMode.AUTOMATIC,
-        )
+        # TASK-33004.4: the quick surface no longer edits compaction, so the
+        # failed quick write carries the unchanged policy (ADR-095).
+        assert failure.context_policy_overrides == original_policy
 
         monkeypatch.setattr(
             persistence,
@@ -826,17 +846,21 @@ async def test_stale_compaction_retry_cannot_replace_newer_full_policy(
             newer_full_policy,
         )
         assert persisted is True
-        assert await store.retry_console_settings_persistence(
-            session_id=session_id,
-            component=ConsoleSettingsComponent.CONTEXT_POLICY,
-            revision=failure.revision,
-        ) is False
+        assert (
+            await store.retry_console_settings_persistence(
+                session_id=session_id,
+                component=ConsoleSettingsComponent.CONTEXT_POLICY,
+                revision=failure.revision,
+            )
+            is False
+        )
         assert store.session_context_policy_overrides(session_id) == newer_full_policy
 
 
 @pytest.mark.asyncio
-async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaults(
-) -> None:
+async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaults() -> (
+    None
+):
     """Profile/global scope drift or missing runtime publication fails here."""
 
     literal_model = "vendor/model:b"
@@ -869,15 +893,8 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
             model=literal_model,
             temperature="0.42",
         )
-        streaming = modal.query_one("#console-popover-streaming", Button)
-        assert str(streaming.label) == "Streaming: on"
-        streaming.scroll_visible(animate=False, force=True)
-        await pilot.pause()
-        assert await pilot.click(streaming) is True
-        await pilot.pause()
-        assert str(streaming.label) == "Streaming: off"
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
+        assert modal.query_one("#console-popover-streaming", Select).value is True
+        await _choose_streaming(modal, pilot, False)
         await pilot.click("#console-popover-save-model-default")
         await pilot.pause()
         assert harness.screen is console
@@ -900,17 +917,17 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
         assert restarted_target.streaming is False
 
         modal = await _open_provider_popover(console, harness, pilot)
-        modal.query_one("#console-popover-temperature", Input).value = "0.23"
-        streaming = modal.query_one("#console-popover-streaming", Button)
-        assert str(streaming.label) == "Streaming: off"
-        streaming.scroll_visible(animate=False, force=True)
-        await pilot.pause()
-        assert await pilot.click(streaming) is True
-        await pilot.pause()
-        assert str(streaming.label) == "Streaming: on"
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
-        await pilot.click("#console-popover-make-new-chat-default")
+        # PREVIOUS (llama.cpp) is highlighted on open; pick the current pair.
+        row = await _highlight(modal, pilot, literal_model)
+        assert (row.provider, row.model, row.note) == (
+            "vllm",
+            literal_model,
+            "● CURRENT",
+        )
+        await _edit_highlighted(modal, pilot, "0.23")
+        assert modal.query_one("#console-popover-streaming", Select).value is False
+        await _choose_streaming(modal, pilot, True)
+        await pilot.press("ctrl+n")
         await pilot.pause()
         assert harness.screen is console
         await _drain_settings_tasks(app)
@@ -1014,6 +1031,179 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
     assert f"Eligible new-chat default saved: vllm/{literal_model}" in notifications
 
 
+@pytest.mark.parametrize(
+    ("provider_max_tokens", "saved_max_tokens"),
+    ((8192, 8192), ("", None)),
+    ids=("capped", "blank"),
+)
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quick_default_actions_write_the_quick_mask_to_the_exact_profile(
+    request,
+    provider_max_tokens: object,
+    saved_max_tokens: int | None,
+) -> None:
+    """TASK-33004.1 (D3): quick defaults carry Max tokens; blank leaves none.
+
+    Drives the real popover buttons, the ChatScreen coordinator and the real
+    default writer against the sandbox config file. Apply to this chat writes
+    nothing; each default action writes Temperature, Max tokens and Streaming
+    into the exact profile and keeps sibling profiles and unexposed fields.
+    """
+    from tldw_chatbook.config import get_cli_config_path
+
+    literal_model = "vendor/model:b"
+    app = _persisted_console_app(
+        max_tokens=provider_max_tokens,
+        model_defaults={
+            literal_model: {"top_p": 0.5, "unexposed": "kept"},
+            "sibling/model": {"temperature": 0.4},
+        },
+    )
+    notifications: list[str] = []
+    app.notify = lambda message, **_kwargs: notifications.append(str(message))
+    harness = _ConsoleFlowHarness(app)
+    config_path = get_cli_config_path()
+
+    def saved_config() -> dict:
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))
+
+    def expected_profile(*, temperature: float, streaming: bool) -> dict:
+        profile = {
+            "top_p": 0.5,
+            "unexposed": "kept",
+            "temperature": pytest.approx(temperature),
+            "streaming": streaming,
+        }
+        if saved_max_tokens is not None:
+            profile["max_tokens"] = saved_max_tokens
+        return profile
+
+    async with harness.run_test(size=(160, 48)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _select_vllm_model(modal, pilot, model=literal_model, temperature="0.42")
+        before_apply = config_path.read_bytes()
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+        assert config_path.read_bytes() == before_apply
+        applied = store.session_settings(store.active_session_id)
+        assert applied is not None
+        assert (applied.provider, applied.model, applied.max_tokens) == (
+            "vllm",
+            literal_model,
+            saved_max_tokens,
+        )
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _highlight(modal, pilot, literal_model)
+        await _choose_streaming(modal, pilot, False)
+        save_copy = modal.query_one("#console-popover-save-model-default-copy", Static)
+        assert str(save_copy.render()) == "saves Temperature, Max tokens, Streaming"
+        await pilot.click("#console-popover-save-model-default")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+
+        saved = saved_config()
+        profiles = saved["api_settings"]["vllm"]["model_defaults"]
+        assert profiles[literal_model] == expected_profile(
+            temperature=0.42, streaming=False
+        )
+        assert profiles["sibling/model"] == {"temperature": 0.4}
+        assert saved["chat_defaults"]["provider"] == "llama_cpp"
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _highlight(modal, pilot, literal_model)
+        await _edit_highlighted(modal, pilot, "0.23")
+        await pilot.click("#console-popover-make-new-chat-default")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+
+        saved = saved_config()
+        profiles = saved["api_settings"]["vllm"]["model_defaults"]
+        assert profiles[literal_model] == expected_profile(
+            temperature=0.23, streaming=False
+        )
+        assert profiles["sibling/model"] == {"temperature": 0.4}
+        assert saved["chat_defaults"]["provider"] == "vllm"
+        assert saved["chat_defaults"]["model"] == literal_model
+
+    assert app.console_default_durability_state.failure_phase is None
+    assert f"Model profile default saved: vllm/{literal_model}" in notifications
+    assert f"Eligible new-chat default saved: vllm/{literal_model}" in notifications
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quick_save_of_a_stale_blank_max_tokens_keeps_chat_and_profile_in_step(
+    request,
+) -> None:
+    """TASK-33004.1 review: a chat with no cap, whose model profile gained one
+    later, saves "no cap" as the model default. The profile override is
+    deleted, and the live chat must take the same post-save value, not the
+    pre-save profile cap it just deleted (ADR-095: blank profile values let
+    lower-precedence defaults apply)."""
+    from tldw_chatbook.config import get_cli_config_path
+
+    literal_model = "vendor/model:b"
+    app = _persisted_console_app(
+        max_tokens="", model_defaults={literal_model: {"top_p": 0.5}}
+    )
+    harness = _ConsoleFlowHarness(app)
+    config_path = get_cli_config_path()
+
+    async with harness.run_test(size=(160, 48)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _select_vllm_model(modal, pilot, model=literal_model, temperature="0.42")
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        await _drain_settings_tasks(app)
+        assert store.session_settings(store.active_session_id).max_tokens is None
+
+        # Settings later gives this model a cap; the chat's blank is now stale.
+        assert SettingsConfigAdapter().save_sections(
+            {
+                "api_settings.vllm": {
+                    "model_defaults": {
+                        literal_model: {"top_p": 0.5, "max_tokens": 4096}
+                    }
+                }
+            }
+        )
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _highlight(modal, pilot, literal_model)
+        await pilot.click("#console-popover-save-model-default")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        profile = saved["api_settings"]["vllm"]["model_defaults"][literal_model]
+        assert "max_tokens" not in profile
+        post_save = build_target_default_console_session_settings(
+            load_settings(force_reload=True), "vllm", literal_model
+        )
+        live = store.session_settings(store.active_session_id)
+        assert live.max_tokens == post_save.max_tokens
+        assert live.max_tokens is None
+
+    assert app.console_default_durability_state.failure_phase is None
+
+
 @pytest.mark.asyncio
 async def test_default_failures_render_exact_sanitized_recovery_actions() -> None:
     """App-owned failure phase selects the only valid recovery controls."""
@@ -1026,7 +1216,7 @@ async def test_default_failures_render_exact_sanitized_recovery_actions() -> Non
         provider_config_key="vllm",
         literal_model_id="vendor/private:model",
         field_mask=QUICK_MODEL_DEFAULT_FIELDS,
-        values={"temperature": 0.22, "streaming": True},
+        values={"temperature": 0.22, "max_tokens": 2048, "streaming": True},
         endpoint_patch=ConsoleEndpointPatch(
             value="http://192.168.1.9:8000/v1?api_key=never-render",
             bound_provider_config_key="vllm",
@@ -1049,12 +1239,11 @@ async def test_default_failures_render_exact_sanitized_recovery_actions() -> Non
         console._sync_console_settings_recovery_surfaces()
         await pilot.pause()
 
-        copy = str(
-            rail.query_one("#console-default-recovery-copy", Static).renderable
-        )
+        copy = str(rail.query_one("#console-default-recovery-copy", Static).renderable)
         assert copy == (
             "Not written to disk · Make default for new chats · "
-            "vllm/vendor/private:model · fields: streaming, temperature · "
+            "vllm/vendor/private:model · "
+            "fields: max_tokens, streaming, temperature · "
             "192.168.1.9:8000 · LAN"
         )
         assert "api_key" not in copy and "never-render" not in copy
@@ -1075,9 +1264,7 @@ async def test_default_failures_render_exact_sanitized_recovery_actions() -> Non
         console._sync_console_settings_recovery_surfaces()
         await pilot.pause()
 
-        copy = str(
-            rail.query_one("#console-default-recovery-copy", Static).renderable
-        )
+        copy = str(rail.query_one("#console-default-recovery-copy", Static).renderable)
         assert copy.startswith("Saved on disk; running app refresh failed · ")
         assert refresh.display and dismiss.display
         assert not retry.display and not discard.display
@@ -1114,23 +1301,23 @@ async def test_custom_and_unconfigured_selection_stays_literal_and_blocks_defaul
         )
 
         modal = await _open_provider_popover(console, harness, pilot)
-        provider = modal.query_one("#console-popover-provider", Select)
-        picker = modal.query_one("#console-popover-model-search")
-        assert provider.value == "anthropic"
-        assert picker.value == literal_model
+        # The unconfigured current pair stays literal and marked (TASK-33004.4);
+        # nothing substitutes a fallback model.
+        current = next(row for row in modal._rows if row.note == "● CURRENT")
+        assert (current.provider, current.model) == ("anthropic", literal_model)
+        assert all(
+            row.model in {None, literal_model}
+            for row in modal._rows
+            if row.provider == "anthropic"
+        )
+        row = await _highlight(modal, pilot, literal_model)
+        assert row.key == current.key
 
-        await pilot.click("#console-popover-defaults")
+        await pilot.press("ctrl+n")
         await pilot.pause()
-        make_default = modal.query_one(
-            "#console-popover-make-new-chat-default", Button
-        )
-        block_copy = str(
-            modal.query_one(
-                "#console-popover-new-chat-default-block", Static
-            ).renderable
-        )
-        assert make_default.disabled is True
-        assert "unavailable" in block_copy.lower()
+        assert harness.screen is modal
+        error = str(modal.query_one("#console-popover-error", Static).render())
+        assert error.lower().startswith("unavailable")
         assert store.session_settings(session_id).model == literal_model
 
 
@@ -1182,11 +1369,13 @@ def _install_ready_vllm_target(app, *, generation: int = 7):
     return owner, target
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_vllm_console_handoff_replaces_only_active_session_without_config_write(
+    request,
     monkeypatch,
 ) -> None:
-    """Calling any durable writer or rebasing from saved vLLM loses this contract."""
+    """Verified adoption changes only the active session, preserving durable config."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
@@ -1235,9 +1424,10 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         controller = console._ensure_console_chat_controller()
         controller._turn_context_provider = None
         controller.provider_gateway = _RecordingProviderGateway()
-        detached_resolution, detached_turn = (
-            await controller._capture_and_resolve_turn_execution_context(session_id)
-        )
+        (
+            detached_resolution,
+            detached_turn,
+        ) = await controller._capture_and_resolve_turn_execution_context(session_id)
         assert detached_resolution.ready is True
         assert detached_turn is not None
         assert detached_turn.provider_selection.base_url == target.api_url
@@ -1245,23 +1435,24 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         assert detached_turn.session_settings.base_url == target.api_url
         assert controller.provider_gateway.selections[-1].base_url == target.api_url
         assert (
-            app.app_config["api_settings"]["vllm"]["api_url"]
-            == "http://127.0.0.1:9098"
+            app.app_config["api_settings"]["vllm"]["api_url"] == "http://127.0.0.1:9098"
         )
         summary = console._build_console_settings_summary_state()
         assert summary.provider_row == "Provider: vLLM"
         assert summary.model_row == "Model: chatbook-vllm"
         assert "127.0.0.1:8000" in summary.endpoint_row
-        assert summary.readiness_label == ""
+        # TASK-33005.3 (rewritten on purpose): the typed spec §5 word (was "").
+        assert summary.readiness_label == "Not ready · endpoint unsaved"
         assert summary.readiness.blocker == "endpoint_not_saved"
         assert summary.readiness.recovery_action == "save_endpoint"
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_vllm_console_session_endpoint_never_enters_conversation_metadata() -> (
-    None
-):
+async def test_vllm_console_session_endpoint_never_enters_conversation_metadata(
+    request,
+) -> None:
     """The verified endpoint stays live-only through persist, message, and reload."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -1288,7 +1479,7 @@ async def test_vllm_console_session_endpoint_never_enters_conversation_metadata(
             HandoffChannel.VLLM_CONSOLE,
             VllmConsoleIntent.from_target(target),
         )
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         immediate_record = app.chachanotes_db.get_conversation_by_id(conversation_id)
         assert immediate_record is not None
         immediate_metadata = str(immediate_record.get("metadata") or "")
@@ -1347,10 +1538,11 @@ async def test_vllm_console_session_endpoint_never_enters_conversation_metadata(
         assert "http://127.0.0.1:8111/v1/chat/completions" in ordinary_metadata
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint() -> (
-    None
-):
+async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint(
+    request,
+) -> None:
     """A later first persist and message never serialize the live endpoint."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -1373,7 +1565,7 @@ async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint(
             HandoffChannel.VLLM_CONSOLE,
             VllmConsoleIntent.from_target(target),
         )
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         assert store.effective_session_settings(session_id).base_url == target.api_url
 
         conversation_id = store.persist_session_if_needed(session_id)
@@ -1394,9 +1586,7 @@ async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint(
         assert later_record is not None
         assert target.api_url not in str(later_record.get("metadata") or "")
 
-        app.app_config["api_settings"]["vllm"]["api_url"] = (
-            "http://127.0.0.1:9111/v1"
-        )
+        app.app_config["api_settings"]["vllm"]["api_url"] = "http://127.0.0.1:9111/v1"
         resumed_store, resumed = _restore_console_record(
             app, store, conversation_id, later_record
         )
@@ -1405,10 +1595,11 @@ async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint(
         assert resumed_store.session_ephemeral_endpoint_policy(resumed.id) is None
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_defaults() -> (
-    None
-):
+async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_defaults(
+    request,
+) -> None:
     """Atomic temporary promotion cannot serialize either live endpoint."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -1429,7 +1620,7 @@ async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_de
             HandoffChannel.VLLM_CONSOLE,
             VllmConsoleIntent.from_target(target),
         )
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         message = store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
@@ -1446,9 +1637,7 @@ async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_de
         assert "http://127.0.0.1:9098" not in metadata
         assert "base_url" not in metadata
 
-        app.app_config["api_settings"]["vllm"]["api_url"] = (
-            "http://127.0.0.1:9222/v1"
-        )
+        app.app_config["api_settings"]["vllm"]["api_url"] = "http://127.0.0.1:9222/v1"
         resumed_store, resumed = _restore_console_record(
             app, store, conversation_id, record
         )
@@ -1457,10 +1646,11 @@ async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_de
         assert resumed_store.session_ephemeral_endpoint_policy(resumed.id) is None
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy() -> (
-    None
-):
+async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy(
+    request,
+) -> None:
     """A durable fork transfers live policy without pinning either URL."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -1480,7 +1670,7 @@ async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy
             HandoffChannel.VLLM_CONSOLE,
             VllmConsoleIntent.from_target(target),
         )
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         boundary = store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
@@ -1518,9 +1708,7 @@ async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy
         assert "http://127.0.0.1:9098" not in metadata
         assert "base_url" not in metadata
 
-        app.app_config["api_settings"]["vllm"]["api_url"] = (
-            "http://127.0.0.1:9333/v1"
-        )
+        app.app_config["api_settings"]["vllm"]["api_url"] = "http://127.0.0.1:9333/v1"
         resumed_store, resumed = _restore_console_record(
             app, store, result.conversation_id, record
         )
@@ -1529,8 +1717,10 @@ async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy
         assert resumed_store.session_ephemeral_endpoint_policy(resumed.id) is None
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
+    request,
     monkeypatch,
 ) -> None:
     """A sync exception after store mutation must restore every active projection."""
@@ -1586,7 +1776,7 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         assert session_store.active_session_id == session_id
         assert session_store.session_settings(session_id) == before
         assert session.has_user_work is False
@@ -1603,12 +1793,14 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
         monkeypatch.setattr(console, "_sync_console_settings_summary", original_sync)
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails(
+    request,
     monkeypatch,
 ) -> None:
     """A failed compensation is disclosed and cannot leave a sendable endpoint."""
@@ -1662,7 +1854,7 @@ async def test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails(
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         raw = session_store.session_settings(session_id)
         effective = session_store.effective_session_settings(session_id)
         assert raw is not None and effective is not None
@@ -1684,8 +1876,10 @@ async def test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails(
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
+    request,
     monkeypatch,
 ) -> None:
     """A concurrent SQLite winner survives while the adopted session fails closed."""
@@ -1737,7 +1931,7 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         durable = app.chachanotes_db.get_conversation_by_id(conversation_id)
         assert durable is not None
         assert durable.get("metadata") == winner_metadata
@@ -1764,9 +1958,7 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
                 detached.provider_selection.configured_endpoint_fallback_allowed
                 is False
             )
-            resolution = await gateway.resolve_for_send(
-                detached.provider_selection
-            )
+            resolution = await gateway.resolve_for_send(detached.provider_selection)
             assert resolution.ready is False
             result = await controller.submit_draft(
                 "Must never reach the configured vLLM endpoint.",
@@ -1782,12 +1974,14 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
             await gateway.aclose()
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failing_sync",
     ("_sync_console_chat_core_state", "_sync_console_settings_summary"),
 )
 async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fails(
+    request,
     monkeypatch,
     failing_sync,
 ) -> None:
@@ -1821,9 +2015,41 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
         summary_before = summary_widget.state
         original_sync = getattr(console, failing_sync)
         calls = 0
+        pending_phase = None
+        entered = []
+        failed_phases = []
+        original_adopt = session_store.adopt_session_ephemeral_endpoint
+        original_rollback = session_store.rollback_session_ephemeral_endpoint_adoption
+
+        def adopt_endpoint(*args, **kwargs):
+            nonlocal pending_phase
+            receipt = original_adopt(*args, **kwargs)
+            entered.append(session_store.effective_session_settings(session_id))
+            pending_phase = "forward"
+            return receipt
+
+        def rollback_endpoint(*args, **kwargs):
+            nonlocal pending_phase
+            outcome = original_rollback(*args, **kwargs)
+            assert outcome.value == "restored"
+            pending_phase = "rollback"
+            return outcome
+
+        monkeypatch.setattr(
+            session_store, "adopt_session_ephemeral_endpoint", adopt_endpoint
+        )
+        monkeypatch.setattr(
+            session_store,
+            "rollback_session_ephemeral_endpoint_adoption",
+            rollback_endpoint,
+        )
 
         def apply_forward_then_fail_rollback():
-            nonlocal calls
+            nonlocal calls, pending_phase
+            if pending_phase is None:
+                return original_sync()
+            failed_phases.append(pending_phase)
+            pending_phase = None
             calls += 1
             if calls == 1:
                 original_sync()
@@ -1835,9 +2061,16 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         monkeypatch.setattr(console, failing_sync, original_sync)
         assert calls == 2
+        assert failed_phases == ["forward", "rollback"]
+        assert len(entered) == 1
+        assert (entered[0].provider, entered[0].model, entered[0].base_url) == (
+            "vllm",
+            target.model_id,
+            target.api_url,
+        )
         assert session_store.session_settings(session_id) == before
         assert (
             controller.provider,
@@ -1846,14 +2079,15 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
         ) == controller_before
         assert summary_widget.state == summary_before
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay() -> (
-    None
-):
+async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
+    request,
+) -> None:
     """Dropping the claim on a stale owner or failed replace loses user intent."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -1874,7 +2108,7 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
         intent = VllmConsoleIntent.from_target(target)
         app.pending_handoffs.stage(HandoffChannel.VLLM_CONSOLE, intent)
         owner.invalidate("target_changed")
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         assert console._session._active_console_session_settings() == before
 
@@ -1884,15 +2118,13 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
             VllmConsoleIntent.from_target(fresh_target),
         )
         original_adopt = session_store.adopt_session_ephemeral_endpoint
-        session_store.adopt_session_ephemeral_endpoint = (
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                RuntimeError("replace failed")
-            )
-        )
-        assert console.consume_pending_vllm_console_intent() is False
+        session_store.adopt_session_ephemeral_endpoint = lambda *_args, **_kwargs: (
+            _ for _ in ()
+        ).throw(RuntimeError("replace failed"))
+        assert console._session.consume_pending_vllm_console_intent() is False
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         session_store.adopt_session_ephemeral_endpoint = original_adopt
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
         rollback_settings = replace(
@@ -1915,7 +2147,7 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
             return receipt
 
         session_store.adopt_session_ephemeral_endpoint = replace_then_switch
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         assert session_store.session_settings(origin_id) == rollback_settings
         assert session_store.active_session_id != origin_id
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
@@ -1926,13 +2158,15 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
         HandoffChannel.VLLM_CONSOLE,
         VllmConsoleIntent.from_target(fresh_target),
     )
-    assert console.consume_pending_vllm_console_intent() is False
+    assert console._session.consume_pending_vllm_console_intent() is False
     assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("release_failure", ("false", "exception"))
 async def test_vllm_console_failed_release_survives_for_later_readoption(
+    request,
     monkeypatch,
     release_failure,
 ) -> None:
@@ -1972,11 +2206,9 @@ async def test_vllm_console_failed_release_survives_for_later_readoption(
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
-        recovery = app.pending_handoffs.release_recovery(
-            HandoffChannel.VLLM_CONSOLE
-        )
+        recovery = app.pending_handoffs.release_recovery(HandoffChannel.VLLM_CONSOLE)
         assert recovery is not None
         assert recovery.revision == revision
         assert recovery.last_failure == release_failure
@@ -1987,10 +2219,9 @@ async def test_vllm_console_failed_release_survives_for_later_readoption(
             real_adopt,
         )
         monkeypatch.setattr(app.pending_handoffs, "release", real_release)
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         assert (
-            app.pending_handoffs.release_recovery(HandoffChannel.VLLM_CONSOLE)
-            is None
+            app.pending_handoffs.release_recovery(HandoffChannel.VLLM_CONSOLE) is None
         )
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         session_id = session_store.active_session_id
@@ -2044,10 +2275,7 @@ async def test_vllm_default_handoff_stages_settings_and_revert_is_byte_identical
         assert draft is not None
         assert draft.values["provider"] == "vllm"
         assert draft.values["model"] == "chatbook-vllm"
-        assert (
-            draft.values["endpoint"]
-            == "http://127.0.0.1:8000/v1/chat/completions"
-        )
+        assert draft.values["endpoint"] == "http://127.0.0.1:8000/v1/chat/completions"
         assert screen.query_one("#settings-model-value", Input).value == (
             "chatbook-vllm"
         )
@@ -2205,7 +2433,10 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
     """Late compensation restores authoritative draft and every staged widget."""
 
     from tldw_chatbook.config import get_cli_config_path
-    from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderProbeResult,
+        provider_connection_evidence,
+    )
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
@@ -2249,9 +2480,7 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
 
         draft_before = copy.deepcopy(screen._provider_draft())
         assert draft_before is not None and draft_before.is_dirty
-        test_evidence_before = evidence_store.latest_evidence()
         draft_generation_before = screen._provider_draft_generation
-        credential_revision_before = screen._provider_credential_revision
         discovery_before = (
             screen._model_discovery_status,
             screen._model_discovery_models,
@@ -2353,11 +2582,15 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
 
         assert screen._provider_draft() == draft_before
         assert presentation() == presentation_before
-        assert screen._provider_test_evidence_store.latest_evidence() == (
-            test_evidence_before
-        )
+        # TASK-33005.1 (ruling 3), rewritten on purpose: the restore used to
+        # swap in a private copy of the evidence store. Evidence is now shared
+        # with Chat settings and the Console, so the live store stays and the
+        # settled result stays in the app's owner -- a restore cannot roll back
+        # what another surface settled meanwhile.
+        assert screen._provider_test_evidence_store is evidence_store
+        shared = provider_connection_evidence(screen.app).evidence_for(identity)
+        assert shared is not None and shared.endpoint == "reachable"
         assert screen._provider_draft_generation == draft_generation_before
-        assert screen._provider_credential_revision == credential_revision_before
         assert (
             screen._model_discovery_status,
             screen._model_discovery_models,

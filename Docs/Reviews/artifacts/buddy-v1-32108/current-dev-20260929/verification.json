@@ -1,0 +1,30 @@
+{
+  "production_commit": "64579cce2c8dc64053fb50c00eb4f59b56716b01",
+  "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+  "headless": true,
+  "before": {
+    "result": "16 setup errors in 7.30s",
+    "signature": "RecoveryRequired: raw_source_selection_changed",
+    "raw_log_sha256": "78474b6dfd6354c556939dbca4c6e2bb362a9517330ed08b8eea2190e6e41b1b"
+  },
+  "after": {
+    "result": "16 passed in 110.81s",
+    "raw_log_sha256": "31d4e46598a17067348696f8069be7241a23f853c28bed160c24940fca555734"
+  },
+  "retained_receipts": {
+    "upgrade-evidence.json": "376f40139630798641c1196306a46d5d92dbf9a2e51a2ecd64a580d07bbf1b6e",
+    "fresh-evidence.json": "9ae8235e03b2afb759a5ba97ffe26893734c87ec7a45dadcca4d4ef1ffb5cd85"
+  },
+  "raw_captures": "/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/chatbook-buddy-v1-qualification-32108/20260929-current-dev",
+  "raw_capture_retention": "SVG captures remain in disposable local storage; receipt hashes do not imply repository retention.",
+  "limits": [
+    "No physical terminal walkthrough",
+    "No microphone or audible playback",
+    "No real provider",
+    "No full local test suite"
+  ],
+  "preflight": {
+    "result": "all 11 derived-artifact checks passed",
+    "raw_log_sha256": "452af9cafc10c1ddc0c020e64b47a40992e3bf746174ca194585ce72af8e9d13"
+  }
+}

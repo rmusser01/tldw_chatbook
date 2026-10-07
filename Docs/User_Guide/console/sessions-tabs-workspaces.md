@@ -60,6 +60,18 @@ icon opens the action menu; focus a row and press `m` for the same menu. Escape
 returns focus to that row. **Icon and colour…** lives in this menu beside
 Favourite, status, rename, and other existing actions.
 
+**Copy as ▸** exports the chat as Markdown. **Clean markdown** and **Full
+transcript** copy it to the clipboard. **Save .md…** asks where to save the
+Clean version; the path starts as a file named after the chat in
+`~/Downloads`. Press Enter or **Save** to write the file, and a notification
+names the file and the folder it went to (a bare file name is saved in the
+folder the app was started from). Esc, **Cancel**, or a click outside the
+prompt closes it without writing, and focus returns to the row you opened the
+menu from — that chat's row even if the list reordered meanwhile, or the row
+now in its place if the chat has left the list. If the file cannot be written — for example the folder is
+read-only, or part of the path is a file — a notification names the path and
+the problem, and the Console stays open.
+
 Choose **Mark as unread** on a saved chat to keep a local reminder. It remains
 unread while you stay in the chat, reopen its menu, or click its current row.
 Leaving and explicitly reopening the chat clears the reminder after the chat
@@ -109,10 +121,12 @@ On a local-only setup the server lines collapse into one line:
 |---|---|
 | "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab |
 | Click a tab | Switches to it; a second click on the active tab opens "Rename Chat Tab" |
-| Middle-click a tab | Closes it |
-| "✕" on a tab | Closes it; if the tab has messages, a "Close Tab" confirmation warns "This tab has messages that will be lost." and asks "Close it anyway?" — "Close" / "Keep" |
+| Middle-click a tab | Closes it, exactly like its "✕", without switching to it first |
+| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, delegated sub-agents, queued prompts), a dialog naming the tab first shows only what closing would discard or cancel, including pending approvals, questions, chat-creation confirmations, skill confirmations and worktree-merge confirmations: "Close" closes the tab, "Stay" keeps it |
 | Alt+1 … Alt+9 | Jumps straight to tab 1–9 |
 | Marker glyph (● ◆ ✓ ✗) | That tab's agent-run status — clears when you visit the tab |
+
+Once a tab starts closing, pending requests to create another chat are declined, and previously confirmed requests cannot start from that tab. A creation still in progress cannot open a new tab after its source closes.
 
 Each tab keeps its own unsent draft: switch tabs mid-thought and the
 half-typed message is still in the composer when you come back.
@@ -232,7 +246,7 @@ context that is already active:
 | Settings > Console Behavior > Rail layout scope | **Global** is the default and keeps one arrangement across workspace switches. **Per workspace** restores and keeps each workspace's existing saved arrangement. |
 | What the selected layout scope saves | Whether the Context and Inspect rails are open, direct section disclosures (including **More**), and explicit rail-open behavior markers. Compact responsive collapse may temporarily override the rendering without rewriting those choices. |
 | What it does not save | Local or outer scroll positions, Workspaces search disclosure, Tree selection, pointer tooltip, and focus are transient. Switching layout scope neither deletes the inactive scope's records nor turns those transient states into preferences. |
-| Pinned Inspect summary | `What happens if I send now?` stays above Inspect scrolling and reports six fixed rows: its heading plus **Where**, **Scope**, **Run**, **Sources**, and **Approvals**, all from the same Console snapshot. On a short terminal (the rail below sixteen rows, which includes 80x24) it shrinks to two rows — the heading and **Run**, which already rolls up the other four — so the scrolling body keeps room for a whole section. The heading says so: it reads `If I send now? · +4 more`. The four hidden facts stay complete in the block's tooltip and, with the block focused, in **F1**. |
+| Pinned Inspect summary | `What happens if I send now?` stays above Inspect scrolling and reports six fixed rows: its heading plus **Where**, **Scope**, **Run**, **Sources**, and **Approvals**, all from the same Console snapshot. On a short terminal (the rail below sixteen rows, which includes 80x24) it shrinks to two rows — the heading and **Run**, which already rolls up the other four — so the scrolling body keeps room for a whole section. The heading says so: it reads `If I send now? · +4 more`. The four hidden facts stay complete in the block's tooltip and, with the block focused, in **F1**. While a turn is in flight, **Run** reads **Running** (or **Waiting for approval** while a card waits on you) and the Run section's **Provider** row stays **ready**; **Blocked** and "Provider setup needed" are reserved for a genuine provider or source problem, and the blocked row says what to fix. |
 | Inspect **More** | Empty Tools, Approvals, and Artifacts groups stay under **More**. A nonzero, pending, blocked, available, or otherwise actionable group promotes into the main Inspect sequence; collapsing More never hides an actionable group. |
 
 Workspaces search can reveal matching conversation results whose parent branch
@@ -485,8 +499,22 @@ in a full accent box.
 - On a fresh profile only Default exists, so workspace switching is
   unavailable — the "Switch" button is disabled and hover shows why
   ("Add another workspace before switching."). Click "New" first.
-- Closing a tab that has messages always asks the "Close Tab" confirmation;
-  there is no way to close a non-empty tab silently.
+- Closing a tab asks for confirmation only when something would be lost;
+  saved history always stays in Library, so a saved, idle chat closes at
+  once.
+- If a tab cannot be closed, it stays open and an error toast names it and
+  gives the reason — for example `Couldn't close tab "Weekly notes": The
+  close did not finish. Try again in a moment.` A Temporary chat with a
+  pending turn cannot close until you finish or discard that turn. The dialog
+  closes so you can resolve the pending work. A temporary cleanup failure offers
+  a fresh dialog; another Close click is required to retry.
+  When earlier Close cleanup needs recovery, the tab stays open
+  and shows `Close cleanup needs recovery. Restart the app before closing this
+  tab.` The confirmation flow ends instead of repeatedly asking to retry.
+- If the tab closed but the Console could not finish updating afterwards, a
+  warning says so (`Closed tab "Weekly notes", but the Console did not
+  finish updating`). Should the closed tab still be drawn, clicking its "✕"
+  clears it.
 - Tab titles truncate at about 19 characters. Hover the tab for the full
   title.
 - With more tabs than fit the strip's width, the strip scrolls horizontally
@@ -583,5 +611,12 @@ conversations remain in Library, with the workspace marked archived. This is
 separate from individually archiving a conversation.
 
 Closing a tab removes the open session. Saved history stays in Library; the
-close dialog separately lists unsaved messages, drafts, attachments and live or
-queued work that closing would discard or cancel.
+close dialog names the tab and lists only the consequences that apply: unsaved
+messages, drafts, attachments, live or queued work, and pending human decisions.
+The dialog keeps both actions visible when the terminal is short. Press Shift+Tab
+from **Stay** to focus the scrollable consequences, then use arrows, Home or End
+to read them. Tab returns to **Stay**. Resizing keeps the same controls and decision.
+Closing denies pending tool approvals, cancels unanswered questions and declines
+skill, chat-creation and worktree-merge confirmations, cancelling the owning work
+without affecting other tabs. Declining chat creation creates no chat. Declining
+a merge or discard confirmation performs neither action.

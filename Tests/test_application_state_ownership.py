@@ -35,6 +35,7 @@ APP_PATH = PRODUCTION_ROOT / "app.py"
 #: TASK-33011: TldwCli's destination launchers, handoffs and Personal Context
 #: launchers live here as functions of ``app``; ``TldwCli`` keeps stubs.
 APP_DESTINATIONS_PATH = PRODUCTION_ROOT / "app_destinations.py"
+APP_SPEECH_PATH = PRODUCTION_ROOT / "app_speech.py"
 BOOTSTRAP_PATH = PRODUCTION_ROOT / "runtime_policy" / "bootstrap.py"
 SOURCE_STATE_PATH = PRODUCTION_ROOT / "runtime_policy" / "source_state.py"
 SCHEDULES_WORKBENCH_PATH = (
@@ -798,13 +799,45 @@ class _TldwCliRootOccurrenceCollector(ast.NodeVisitor):
             self._record("selector_literal", node.lineno)
 
 
+def _tldw_cli_root_class_nodes() -> list[tuple[Path, ast.ClassDef]]:
+    """``TldwCli`` plus the mixins TASK-33011 moved out of ``app.py``.
+
+    Their method bodies are ``TldwCli`` bodies, so every class-scoped root
+    guard below walks them too (``app_ingest_queue.py``,
+    ``app_service_wiring.py`` ...). ``TldwCli`` itself comes from
+    ``_class_definition`` so the synthetic tests can substitute it.
+    """
+    return [(APP_PATH, _class_definition(APP_PATH, "TldwCli"))] + [
+        (path, node)
+        for path, node in _tldw_root_classes_with_paths(APP_PATH)
+        if path != APP_PATH
+    ]
+
+
+def _app_root_source_paths() -> list[Path]:
+    """``app.py`` and every sibling module holding a ``TldwCli`` mixin."""
+    return list(dict.fromkeys(path for path, _node in _tldw_cli_root_class_nodes()))
+
+
+def _app_occurrences(target: str) -> list[tuple[str, str, tuple[str, ...], int]]:
+    """``_occurrences`` over ``app.py`` and its extracted mixin modules."""
+    return [
+        occurrence
+        for path in _app_root_source_paths()
+        for occurrence in _occurrences(path, target)
+    ]
+
+
 def _tldw_cli_occurrences(
     target: str,
 ) -> list[tuple[str, str, tuple[str, ...], int]]:
-    """Collect root-owned syntax inside the production ``TldwCli`` class."""
-    collector = _TldwCliRootOccurrenceCollector(APP_PATH, target)
-    collector.collect(_class_definition(APP_PATH, "TldwCli"))
-    return collector.occurrences
+    """Collect root-owned syntax inside ``TldwCli`` and its extracted mixins."""
+    occurrences: list[tuple[str, str, tuple[str, ...], int]] = []
+    for path, class_node in _tldw_cli_root_class_nodes():
+        collector = _TldwCliRootOccurrenceCollector(path, target)
+        collector.collect(class_node)
+        occurrences.extend(collector.occurrences)
+    return occurrences
 
 
 def _class_definition(path: Path, name: str) -> ast.ClassDef:
@@ -1074,14 +1107,20 @@ class QueueMixin(RootStateMixin):
     ]
 
 
-def test_app_destinations_functions_take_the_root_app_as_app() -> None:
+@pytest.mark.parametrize(
+    "module_path", [APP_DESTINATIONS_PATH, APP_SPEECH_PATH], ids=lambda p: p.stem
+)
+def test_app_destinations_functions_take_the_root_app_as_app(
+    module_path: Path,
+) -> None:
     """Keep the moved TldwCli bodies inside the root-app sweeps (TASK-33011).
 
     ``_local_tldw_root_classes`` follows only classes, so it cannot see
-    ``app_destinations``. Its bodies stay guarded because they reach the app
-    through a parameter named ``app``, which ``_is_root_app_expression`` and
-    the production-wide ``_root_app_*`` sweeps recognize; a rename to
-    ``self`` or ``host`` would silently drop them out of every sweep.
+    ``app_destinations`` or ``app_speech``. Their bodies stay guarded because
+    they reach the app through a parameter named ``app``, which
+    ``_is_root_app_expression`` and the production-wide ``_root_app_*``
+    sweeps recognize; a rename to ``self`` or ``host`` would silently drop
+    them out of every sweep.
     """
     former_staticmethods = {
         "_watchlists_run_navigation_context",
@@ -1089,7 +1128,7 @@ def test_app_destinations_functions_take_the_root_app_as_app() -> None:
     }
     functions = [
         node
-        for node in _parse(APP_DESTINATIONS_PATH).body
+        for node in _parse(module_path).body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
     assert functions
@@ -1305,7 +1344,7 @@ def test_legacy_chat_root_state_and_accessors_are_absent() -> None:
     ] = {}
     targets = frozenset(LEGACY_CHAT_ROOT_NAMES)
     for name in targets:
-        occurrences = _occurrences(APP_PATH, name)
+        occurrences = _app_occurrences(name)
         if occurrences:
             violations[name] = occurrences
     for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
@@ -1331,7 +1370,7 @@ def test_legacy_ccp_prompt_root_state_and_accessors_are_absent() -> None:
     ] = {}
     targets = frozenset(LEGACY_CCP_ROOT_NAMES)
     for name in targets:
-        occurrences = _occurrences(APP_PATH, name)
+        occurrences = _app_occurrences(name)
         if occurrences:
             violations[name] = occurrences
     for path in sorted(PRODUCTION_ROOT.rglob("*.py")):
@@ -1376,7 +1415,9 @@ def test_tldw_cli_final_reactive_ownership_contract_is_exact() -> None:
     """Freeze the reviewed 61-descriptor disposition at the app boundary."""
     root_owner_classes_with_paths = _tldw_root_classes_with_paths(APP_PATH)
     root_owner_classes = tuple(node for _path, node in root_owner_classes_with_paths)
-    assert "LibraryIngestQueueMixin" in {node.name for node in root_owner_classes}
+    root_owner_class_names = {node.name for node in root_owner_classes}
+    assert "LibraryIngestQueueMixin" in root_owner_class_names
+    assert "ServiceWiringMixin" in root_owner_class_names
     assert len(RETAINED_TLDW_REACTIVES) == 2
     assert len(RETIRED_TLDW_REACTIVES) == 59
     assert RETAINED_TLDW_REACTIVES.isdisjoint(RETIRED_TLDW_REACTIVES)
@@ -1463,9 +1504,9 @@ def test_retired_destination_root_state_and_handlers_are_absent() -> None:
 def test_retired_destination_root_companions_are_absent() -> None:
     """Keep directly orphaned constants and the lazy placeholder retired."""
     violations = {
-        name: _occurrences(APP_PATH, name)
+        name: _app_occurrences(name)
         for name in RETIRED_APP_COMPANION_NAMES
-        if _occurrences(APP_PATH, name)
+        if _app_occurrences(name)
     }
 
     assert violations == {}
@@ -1564,8 +1605,8 @@ def test_tldw_cli_does_not_render_or_retain_prompt_bodies() -> None:
     assert all(
         widget_id not in app_source for widget_id in prohibited_prompt_widget_ids
     )
-    assert _occurrences(APP_PATH, "current_prompt_system") == []
-    assert _occurrences(APP_PATH, "current_prompt_user") == []
+    assert _app_occurrences("current_prompt_system") == []
+    assert _app_occurrences("current_prompt_user") == []
 
 
 def test_tldw_cli_neither_imports_nor_instantiates_app_state() -> None:
@@ -2148,30 +2189,32 @@ def test_tldw_cli_has_no_retired_llm_destination_state_or_dispatcher() -> None:
         "_update_model_download_log",
     )
     violations = {
-        name: _occurrences(APP_PATH, name)
+        name: _app_occurrences(name)
         for name in retired_names
-        if _occurrences(APP_PATH, name)
+        if _app_occurrences(name)
     }
 
     assert violations == {}
 
 
 def test_tldw_cli_has_no_root_provider_descriptor_or_access() -> None:
-    app_class = _class_definition(APP_PATH, "TldwCli")
-    collector = _NamedOccurrenceCollector(APP_PATH, "chat_api_provider_value")
-    collector.visit(app_class)
+    occurrences = []
+    for path, app_class in _tldw_cli_root_class_nodes():
+        collector = _NamedOccurrenceCollector(path, "chat_api_provider_value")
+        collector.visit(app_class)
+        occurrences.extend(collector.occurrences)
 
-    assert collector.occurrences == []
+    assert occurrences == []
 
 
 def test_tldw_cli_has_no_retired_media_destination_state() -> None:
-    app_class = _class_definition(APP_PATH, "TldwCli")
     violations = {}
     for name in LEGACY_MEDIA_ROOT_NAMES:
-        collector = _NamedOccurrenceCollector(APP_PATH, name)
-        collector.visit(app_class)
-        if collector.occurrences:
-            violations[name] = collector.occurrences
+        for path, app_class in _tldw_cli_root_class_nodes():
+            collector = _NamedOccurrenceCollector(path, name)
+            collector.visit(app_class)
+            if collector.occurrences:
+                violations.setdefault(name, []).extend(collector.occurrences)
 
     assert violations == {}
 
@@ -2193,9 +2236,9 @@ def test_media_events_module_contains_contracts_not_root_handlers() -> None:
 
 
 def test_tldw_cli_has_no_constant_reactive_attribute_dispatch() -> None:
-    app_class = _class_definition(APP_PATH, "TldwCli")
     violations = [
-        (node.lineno, ast.unparse(node.value))
+        (path.name, node.lineno, ast.unparse(node.value))
+        for path, app_class in _tldw_cli_root_class_nodes()
         for node in ast.walk(app_class)
         if isinstance(node, ast.keyword)
         and node.arg == "reactive_attr"

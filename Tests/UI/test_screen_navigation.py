@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import replace
 from types import SimpleNamespace
 
+from Tests.app_module_patches import patch_app_global, set_app_global
 from Tests.private_profile import private_profile_test
 
 import pytest
@@ -883,7 +884,9 @@ def test_navigation_completion_releases_callback_before_invocation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_navigation_commit_settles_success_before_post_switch_failure(monkeypatch):
+async def test_navigation_commit_settles_success_before_post_switch_failure(
+    monkeypatch,
+):
     """Committed ownership reports success while preserving mount diagnostics."""
     app = _build_test_app()
     app._initial_screen_pushed = True
@@ -967,7 +970,9 @@ async def test_navigation_sync_switch_error_after_stack_transfer_commits_and_pro
 
 
 @pytest.mark.asyncio
-async def test_navigation_commit_reports_success_but_propagates_cancellation(monkeypatch):
+async def test_navigation_commit_reports_success_but_propagates_cancellation(
+    monkeypatch,
+):
     """Cancellation keeps worker semantics after the target owns the stack."""
     app = _build_test_app()
     app._initial_screen_pushed = True
@@ -1436,7 +1441,6 @@ async def test_overlapping_navigate_requests_complete_in_fifo_order() -> None:
     )
 
 
-
 @pytest.mark.asyncio
 async def test_navigation_keypress_during_splash_is_safely_ignored():
     """Regression lock for the F9-during-splash crash (task-1339).
@@ -1468,7 +1472,7 @@ async def test_navigation_keypress_during_splash_is_safely_ignored():
             return splash_defaults.get(key, default)
         return default
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=force_splash_config):
+    with patch_app_global("get_cli_setting", side_effect=force_splash_config):
         async with app.run_test(size=(120, 35)) as pilot:
             await pilot.pause(0.3)
             assert app.splash_screen_active, "splash must still be active at press time"
@@ -1491,6 +1495,7 @@ async def test_navigation_keypress_during_splash_is_safely_ignored():
             # app settles on its configured initial screen instead.
             assert type(app.screen).__name__ != "SettingsScreen"
             assert app.screen.is_running
+
 
 # The shared app factory moved to Tests/UI/app_factory.py (task-1458) so a
 # test module no longer hosts suite-wide infrastructure and its temp dirs
@@ -1721,9 +1726,7 @@ async def test_file_notes_new_app_owner_classifies_prior_stage_as_external_witho
             replacement_binding,
             SessionChange("modified", "note.md"),
         )
-        replacement_discovery = await replacement_service.discover(
-            replacement_binding
-        )
+        replacement_discovery = await replacement_service.discover(replacement_binding)
         assert replacement_discovery.repository is not None
         assert replacement_owner.publish_trust(
             replacement_binding,
@@ -1738,9 +1741,7 @@ async def test_file_notes_new_app_owner_classifies_prior_stage_as_external_witho
         assert len(status.rows) == 1
         assert status.rows[0].state == "external_staged"
         assert not status.rows[0].unstage_eligible
-        assert not replacement_owner.snapshot(
-            replacement_binding
-        ).staging_ownership
+        assert not replacement_owner.snapshot(replacement_binding).staging_ownership
     finally:
         await prior_owner.shutdown_async()
         await replacement_owner.shutdown_async()
@@ -3132,7 +3133,10 @@ def test_action_library_media_viewer_back_returns_to_list_and_refocuses_it():
     # runs the exact task-2856 AC1 focus/timer sequence afterwards.
     assert refresh_calls == [True]
     assert timer_calls == [
-        (LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS, screen._disarm_library_list_entry_focus)
+        (
+            LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+            screen._disarm_library_list_entry_focus,
+        )
     ]
     assert focus_calls == [screen._focus_library_list_entry]
     # With a page already applied, the exit must NOT re-request it:
@@ -3269,8 +3273,8 @@ async def test_action_library_prompt_editor_back_honors_dirty_guard():
         return True
 
     screen._flush_library_prompt_save = flush_ok
-    screen._reset_library_prompt_editor_state = (
-        lambda: setattr(screen._prompts_state, "view", "list")
+    screen._reset_library_prompt_editor_state = lambda: setattr(
+        screen._prompts_state, "view", "list"
     )
     screen._refresh_local_source_snapshot = lambda: None
     # task-3316: the guarded exit now re-requests the Prompts page through
@@ -3278,8 +3282,8 @@ async def test_action_library_prompt_editor_back_honors_dirty_guard():
     # deliberately unmounted, so stand in for that request -- the exit's
     # veto/reset/focus contract is what this test asserts.
     browse_requests = []
-    screen._request_library_prompts_browse = (
-        lambda scope, **kwargs: browse_requests.append(scope)
+    screen._request_library_prompts_browse = lambda scope, **kwargs: (
+        browse_requests.append(scope)
     )
     focus_calls = []
     screen.call_after_refresh = lambda callback, *args: focus_calls.append(callback)
@@ -3420,7 +3424,10 @@ def test_arm_library_list_entry_focus_schedules_immediate_attempt_and_settle_tim
     assert screen._library_pending_list_entry_focus is True
     assert focus_calls == [screen._focus_library_list_entry]
     assert timer_calls == [
-        (LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS, screen._disarm_library_list_entry_focus)
+        (
+            LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS,
+            screen._disarm_library_list_entry_focus,
+        )
     ]
 
     screen._disarm_library_list_entry_focus()
@@ -4121,7 +4128,10 @@ async def test_main_navigation_copy_and_order(request):
         ]
 
         assert actual_button_order == expected_button_order
-        assert str(app.query_one("#nav-console", Button).label).strip() == "\u23032 Console"
+        assert (
+            str(app.query_one("#nav-console", Button).label).strip()
+            == "\u23032 Console"
+        )
         assert nav_buttons[0].id == "nav-home"
         assert nav_buttons[1].id == "nav-console"
         assert nav_buttons[-1].id == "nav-meetings"
@@ -4247,8 +4257,6 @@ async def test_research_workspace_runs_round_trip_restores_independent_context(
         WorkspaceDataSource,
     )
 
-    import tldw_chatbook.app as app_module
-
     class _AvailableServerWorkspaceService:
         async def list_workspaces(self):
             return [
@@ -4271,7 +4279,7 @@ async def test_research_workspace_runs_round_trip_restores_independent_context(
             "revision": "round-trip-context-1",
         },
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     app = _build_test_app()
     app.server_notes_workspace_service = _AvailableServerWorkspaceService()
     app.server_context_provider = SimpleNamespace(
@@ -4339,9 +4347,7 @@ async def test_research_workspace_runs_round_trip_restores_independent_context(
         assert restored.active_pane == "studio"
         assert restored._overlay_revision == 1
         assert restored.pane_preferences == server_preferences
-        assert restored.query_one("#research-data-source-server").has_class(
-            "is-active"
-        )
+        assert restored.query_one("#research-data-source-server").has_class("is-active")
         assert not restored.query_one("#research-sources-pane").display
         assert restored.query_one("#research-chat-pane").display
         assert restored.query_one("#research-studio-pane").display
@@ -5039,7 +5045,9 @@ async def test_navigation_survives_screen_construction_failure(monkeypatch):
     # Must not raise: an escaping exception here is what killed the app.
     await app.handle_screen_navigation(NavigateToScreen("mcp"))
 
-    assert switched_screens == [], "a screen that failed to build must not be switched to"
+    assert switched_screens == [], (
+        "a screen that failed to build must not be switched to"
+    )
     assert notifications, "the user must be told the destination failed to open"
 
 
@@ -5200,9 +5208,7 @@ async def test_navigation_timeout_does_not_cancel_the_in_flight_save(monkeypatch
     notifications = []
     monkeypatch.setattr(app, "_resolve_screen_navigation_target", fake_resolve)
     monkeypatch.setattr(app, "switch_screen", fake_switch_screen)
-    monkeypatch.setattr(
-        type(app), "screen", property(lambda self: SlowSavingScreen())
-    )
+    monkeypatch.setattr(type(app), "screen", property(lambda self: SlowSavingScreen()))
     monkeypatch.setattr(
         app, "notify", lambda message, **kwargs: notifications.append(message)
     )
@@ -5218,7 +5224,9 @@ async def test_navigation_timeout_does_not_cancel_the_in_flight_save(monkeypatch
         "the in-flight save was cancelled; its reconciliation never ran, so the "
         "editor is stuck in 'saving' with a stale content hash"
     )
-    assert reconciled["done"], "the save must still complete after the app stops waiting"
+    assert reconciled["done"], (
+        "the save must still complete after the app stops waiting"
+    )
 
 
 @pytest.mark.asyncio
@@ -5479,20 +5487,19 @@ async def test_nav_bar_overflow_menu_reaches_undigitized_destinations():
         # the active one is marked.
         assert str(menu.query_one("#nav-overflow-lab", Button).label) == "F2 Lab"
         assert (
-            str(menu.query_one("#nav-overflow-research", Button).label)
-            == "F5 Research"
+            str(menu.query_one("#nav-overflow-research", Button).label) == "F5 Research"
         )
         assert str(menu.query_one("#nav-overflow-logs", Button).label) == "F3 Logs"
-        assert str(menu.query_one("#nav-overflow-settings", Button).label) == "F4 Settings"
-        assert str(menu.query_one("#nav-overflow-home", Button).label).startswith("⌃1 Home")
-        assert "(current)" in str(
-            menu.query_one("#nav-overflow-console", Button).label
+        assert (
+            str(menu.query_one("#nav-overflow-settings", Button).label) == "F4 Settings"
         )
+        assert str(menu.query_one("#nav-overflow-home", Button).label).startswith(
+            "⌃1 Home"
+        )
+        assert "(current)" in str(menu.query_one("#nav-overflow-console", Button).label)
 
         menu.query_one("#nav-overflow-logs", Button).press()
         await pilot.pause(0.5)
 
         assert "logs" in app.nav_requests
-        assert (
-            pilot.app.screen_stack[-1].__class__.__name__ != "NavOverflowMenu"
-        )
+        assert pilot.app.screen_stack[-1].__class__.__name__ != "NavOverflowMenu"

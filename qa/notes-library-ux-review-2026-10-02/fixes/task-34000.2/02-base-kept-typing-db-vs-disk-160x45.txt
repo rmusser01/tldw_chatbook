@@ -1,0 +1,18 @@
+# 02 base build 12119a6b46 (live, socket w1-t2-2): typed ' and more' past the wedge; the editor says Saved, the file on disk did not get it
+-- operations (kind|state|reason):
+  10 create_note|completed|
+   1 update_file|needs_attention|postcondition_failed
+-- roots (state|last_status_code):
+active|needs_attention
+-- note in DB:
+version=3
+length=99 last16hex=6974206C696E6520616E64206D6F7265
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more
+-- file on disk (md5, od tail):
+09eb426231ebdb0d8aceb5f74aac3967
+0000100    t   h   i   n   k   i   n   g   .  \n   s   e   c   o   n   d
+0000120        e   d   i   t       l   i   n   e  \n                    
+0000133

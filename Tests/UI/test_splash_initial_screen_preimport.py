@@ -38,6 +38,7 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook import app as app_module
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.UI.Navigation import screen_registry
@@ -349,9 +350,7 @@ def test_missing_module_degrade_is_unchanged_by_a_pre_import_attempt(monkeypatch
         screen_name="task-21110-missing-route",
         module_path="tldw_chatbook.UI.Screens.no_such_screen_xyz_21110",
     )
-    monkeypatch.setattr(
-        app, "_initial_screen_preimport_route", lambda: missing_route
-    )
+    monkeypatch.setattr(app, "_initial_screen_preimport_route", lambda: missing_route)
 
     assert missing_route.load_screen_class() is None  # today's baseline
 
@@ -432,9 +431,7 @@ async def test_initial_screen_module_is_imported_by_the_thread_not_the_loop(
 
     def spy_import_module(name, *args, **kwargs):
         if name == CHAT_MODULE:
-            importers.append(
-                (threading.current_thread().name, time.perf_counter())
-            )
+            importers.append((threading.current_thread().name, time.perf_counter()))
         return real_import_module(name, *args, **kwargs)
 
     monkeypatch.setattr(screen_registry, "import_module", spy_import_module)
@@ -485,7 +482,7 @@ async def test_no_overlap_thread_when_the_splash_is_disabled(monkeypatch):
             return False
         return real_get_cli_setting(section, key, default, *args, **kwargs)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", splash_off)
+    set_app_global(monkeypatch, "get_cli_setting", splash_off)
     async with app.run_test(size=(120, 36)) as pilot:
         assert await _wait_until(
             lambda: getattr(app, "_ui_ready", False),

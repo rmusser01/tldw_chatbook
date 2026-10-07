@@ -274,13 +274,23 @@ class LocalLLMProviderCatalogService:
         config = self._combined_hosted_settings(
             saved_settings, staged_settings, provider_key
         )
-        if provider_key == "moonshot":
-            resolution = resolve_moonshot_request(
-                app_config=config,
-                environ=self.environ,
+        if provider_key in ("moonshot", "zai"):
+            # The gateway pins a send to the first configured endpoint alias
+            # (effective_provider_endpoint); these resolvers read only
+            # api_base_url, so pass the alias to list where a send goes.
+            try:
+                pinned = self._endpoint_from_provider_settings(
+                    self._provider_settings_for_key(config, provider_key)
+                )
+            except ProviderSettingsError:
+                pinned = None  # the resolver reports the ambiguous table
+            resolver = (
+                resolve_moonshot_request
+                if provider_key == "moonshot"
+                else resolve_zai_request
             )
-        elif provider_key == "zai":
-            resolution = resolve_zai_request(
+            resolution = resolver(
+                explicit_base_url=pinned,
                 app_config=config,
                 environ=self.environ,
             )
@@ -325,9 +335,7 @@ class LocalLLMProviderCatalogService:
             settings table, or ``None`` when none is configured.
         """
         try:
-            provider_settings = self._provider_settings_for_key(
-                config, provider_key
-            )
+            provider_settings = self._provider_settings_for_key(config, provider_key)
         except ProviderSettingsError:
             return None
         return configured_workspace_base_url(provider_settings)
@@ -388,9 +396,7 @@ class LocalLLMProviderCatalogService:
             )
         except ProviderSettingsError:
             return None
-        staged_source = configured_provider_credential_source(
-            staged_provider_settings
-        )
+        staged_source = configured_provider_credential_source(staged_provider_settings)
         if staged_source == "stored":
             pinned_saved_settings = dict(saved_provider_settings)
             pinned_saved_settings["credential_source"] = "stored"
@@ -400,9 +406,11 @@ class LocalLLMProviderCatalogService:
         staged_key = self._api_key_from_provider_settings(
             provider_key, staged_provider_settings
         )
-        if "api_key" in staged_provider_settings or (
-            "api_key_env_var" in staged_provider_settings
-        ) or "credential_source" in staged_provider_settings:
+        if (
+            "api_key" in staged_provider_settings
+            or ("api_key_env_var" in staged_provider_settings)
+            or "credential_source" in staged_provider_settings
+        ):
             return staged_key
         saved_key = self._api_key_from_provider_settings(
             provider_key, saved_provider_settings
@@ -543,7 +551,9 @@ class LocalLLMProviderCatalogService:
         """Discover OpenAI-compatible models from a configured provider endpoint."""
         self._enforce("llm.catalog.models.discover.local")
         recovered = _provider_recovery.recovered_settings()
-        catalog = recovered.get("providers", {}) if recovered is not None else self._catalog()
+        catalog = (
+            recovered.get("providers", {}) if recovered is not None else self._catalog()
+        )
         provider_resolution = resolve_provider_list_key(provider, catalog)
         if provider_resolution.status == "missing":
             return ModelDiscoveryResult(
@@ -712,16 +722,26 @@ class LocalLLMProviderCatalogService:
                 list_key: str | None = None
                 try:
                     resolution = resolve_provider_list_key(requested_key, catalog)
-                    if resolution.status != "resolved" or resolution.provider_list_key is None:
-                        outcomes.append(ProviderRefreshOutcome(
-                            provider_list_key=requested_key, status="skipped_not_ready"))
+                    if (
+                        resolution.status != "resolved"
+                        or resolution.provider_list_key is None
+                    ):
+                        outcomes.append(
+                            ProviderRefreshOutcome(
+                                provider_list_key=requested_key,
+                                status="skipped_not_ready",
+                            )
+                        )
                         continue
                     provider_key = resolution.normalized_provider
                     list_key = resolution.provider_list_key
 
                     if provider_key in catalog_settings.auto_refresh_disabled:
-                        outcomes.append(ProviderRefreshOutcome(
-                            provider_list_key=list_key, status="skipped_disabled"))
+                        outcomes.append(
+                            ProviderRefreshOutcome(
+                                provider_list_key=list_key, status="skipped_disabled"
+                            )
+                        )
                         continue
 
                     api_key = self._resolve_api_key(
@@ -732,22 +752,34 @@ class LocalLLMProviderCatalogService:
                     )
                     # OpenRouter's catalog is public; everything else needs credentials.
                     if api_key is None and provider_key != "openrouter":
-                        outcomes.append(ProviderRefreshOutcome(
-                            provider_list_key=list_key, status="skipped_not_ready"))
+                        outcomes.append(
+                            ProviderRefreshOutcome(
+                                provider_list_key=list_key, status="skipped_not_ready"
+                            )
+                        )
                         continue
 
-                    fingerprint = self._current_endpoint_fingerprint(provider_key=provider_key)
+                    fingerprint = self._current_endpoint_fingerprint(
+                        provider_key=provider_key
+                    )
                     if fingerprint is None:
-                        outcomes.append(ProviderRefreshOutcome(
-                            provider_list_key=list_key, status="skipped_not_ready"))
+                        outcomes.append(
+                            ProviderRefreshOutcome(
+                                provider_list_key=list_key, status="skipped_not_ready"
+                            )
+                        )
                         continue
 
                     if not force and not disk_store.is_stale(
-                        list_key, fingerprint,
+                        list_key,
+                        fingerprint,
                         stale_after_hours=catalog_settings.stale_after_hours,
                     ):
-                        outcomes.append(ProviderRefreshOutcome(
-                            provider_list_key=list_key, status="skipped_fresh"))
+                        outcomes.append(
+                            ProviderRefreshOutcome(
+                                provider_list_key=list_key, status="skipped_fresh"
+                            )
+                        )
                         continue
 
                     # Snapshot the pre-fetch cache entry for the diff BEFORE discover_models
@@ -767,24 +799,33 @@ class LocalLLMProviderCatalogService:
                                 f"Model catalog auto-refresh skipped for {list_key}: "
                                 "credentials were rejected"
                             )
-                            outcomes.append(ProviderRefreshOutcome(
-                                provider_list_key=list_key, status="skipped_not_ready"))
+                            outcomes.append(
+                                ProviderRefreshOutcome(
+                                    provider_list_key=list_key,
+                                    status="skipped_not_ready",
+                                )
+                            )
                             continue
-                        error_kind = result.error.kind if result.error else "request_failed"
+                        error_kind = (
+                            result.error.kind if result.error else "request_failed"
+                        )
                         logger.info(
                             f"Model catalog auto-refresh failed for {list_key} "
                             f"(fingerprint {fingerprint}): {error_kind}"
                         )
-                        outcomes.append(ProviderRefreshOutcome(
-                            provider_list_key=list_key,
-                            status="failed",
-                            error_kind=error_kind,
-                        ))
+                        outcomes.append(
+                            ProviderRefreshOutcome(
+                                provider_list_key=list_key,
+                                status="failed",
+                                error_kind=error_kind,
+                            )
+                        )
                         continue
 
                     fresh_ids = [model.model_id for model in result.models]
                     new_ids = tuple(
-                        model_id for model_id in fresh_ids
+                        model_id
+                        for model_id in fresh_ids
                         if model_id not in previous_ids and model_id not in saved_ids
                     )
 
@@ -800,14 +841,19 @@ class LocalLLMProviderCatalogService:
                             self._enforce("llm.catalog.models.persist.local")
                             # Re-read current settings so the append base is the latest file
                             # state, not the startup snapshot.
-                            fresh_providers = self._providers_from_settings(self._settings())
+                            fresh_providers = self._providers_from_settings(
+                                self._settings()
+                            )
                             persist_result = persist_discovered_models_to_settings(
                                 providers_config=fresh_providers,
                                 requested_provider=list_key,
                                 model_ids=new_ids,
                                 save_callback=self.save_discovered_models_callback,
                             )
-                            if persist_result.status == "saved" and persist_result.saved_model_ids:
+                            if (
+                                persist_result.status == "saved"
+                                and persist_result.saved_model_ids
+                            ):
                                 saved_to_config = persist_result.saved_model_ids
                                 if on_config_saved is not None:
                                     on_config_saved()
@@ -828,13 +874,15 @@ class LocalLLMProviderCatalogService:
                             f"Model catalog disk cache skipped for {list_key} "
                             "(reason=validation_error)"
                         )
-                    outcomes.append(ProviderRefreshOutcome(
-                        provider_list_key=list_key,
-                        status=status,
-                        new_model_ids=new_ids,
-                        saved_model_ids=saved_to_config,
-                        write_failed=write_failed,
-                    ))
+                    outcomes.append(
+                        ProviderRefreshOutcome(
+                            provider_list_key=list_key,
+                            status=status,
+                            new_model_ids=new_ids,
+                            saved_model_ids=saved_to_config,
+                            write_failed=write_failed,
+                        )
+                    )
                 except Exception as exc:
                     # No traceback: the log file sink runs with diagnose=True, which
                     # would dump frame locals (api_key, headers) into the log file.
@@ -842,9 +890,13 @@ class LocalLLMProviderCatalogService:
                         f"Model catalog refresh failed for {list_key or requested_key}: "
                         f"{type(exc).__name__}"
                     )
-                    outcomes.append(ProviderRefreshOutcome(
-                        provider_list_key=list_key or requested_key,
-                        status="failed", error_kind="unexpected"))
+                    outcomes.append(
+                        ProviderRefreshOutcome(
+                            provider_list_key=list_key or requested_key,
+                            status="failed",
+                            error_kind="unexpected",
+                        )
+                    )
         finally:
             # Keep-set is the configured catalog only: entries for providers no
             # longer in [providers] are pruned even when still requested here.
@@ -972,7 +1024,9 @@ class LocalLLMProviderCatalogService:
 
     @staticmethod
     def _providers_from_settings(settings: Mapping[str, Any]) -> dict[str, list[str]]:
-        providers = settings.get("providers", {}) if isinstance(settings, Mapping) else {}
+        providers = (
+            settings.get("providers", {}) if isinstance(settings, Mapping) else {}
+        )
         if not isinstance(providers, Mapping):
             return {}
         return {

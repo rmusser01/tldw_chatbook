@@ -467,11 +467,7 @@ class ConsolePromptsModal(
             return
         if self._recipe_selecting and self.state.mode == "browse":
             self._recipe_selecting = False
-        if (
-            self.state.mode in {"edit", "recipe", "draft_edit"}
-            and self.state.dirty
-            and not discard
-        ):
+        if self._holds_dirty_edit() and not discard:
             self._show_dirty_guard()
             return
         if len(self.state.mode_stack) == 1:
@@ -657,8 +653,8 @@ class ConsolePromptsModal(
 
     def _supports_structured_save(self, artifact_type: str) -> bool:
         source = self.state.selected_source or self.state.source
-        capabilities = self.state.selected_capabilities or self._capabilities_by_source.get(
-            source
+        capabilities = (
+            self.state.selected_capabilities or self._capabilities_by_source.get(source)
         )
         if capabilities is None:
             return False
@@ -798,9 +794,7 @@ class ConsolePromptsModal(
                     fallback_page = result.total_pages
                     self.state = self.state.with_page(fallback_page)
                     raw = await _maybe_await(self._list_page(source, fallback_page))
-                    result = self._normalize_list_result(
-                        raw, source, fallback_page
-                    )
+                    result = self._normalize_list_result(raw, source, fallback_page)
             else:
                 raw = await _maybe_await(self._search(source, query))
                 result = self._normalize_search_result(raw, source)
@@ -920,9 +914,8 @@ class ConsolePromptsModal(
 
         if source == "draft_shelf":
             collection_options = await self._load_draft_collections()
-            if (
-                not self.is_mounted
-                or not self.state.accepts_detail(detail_token, source, identifier)
+            if not self.is_mounted or not self.state.accepts_detail(
+                detail_token, source, identifier
             ):
                 return
             self._selected_record = record
@@ -1504,7 +1497,10 @@ class ConsolePromptsModal(
                 return
             kind = str(getattr(outcome, "kind", "applied"))
             if kind == "applied":
-                if not self.dismiss_safe_once(result):
+                # Covered (Ctrl+Q's quit-anyway question, say), the close is
+                # kept and finished once this modal is on top again; until
+                # then it says the apply landed (TASK-33622.15).
+                if not self.dismiss_safe_once_when_on_top(result):
                     self._set_improvement_status("Applied to the Console.")
                 return
             if kind == "persistence_failed":
@@ -1738,9 +1734,7 @@ class ConsolePromptsModal(
                 "#console-prompts-recipe-save-confirmation-panel", Vertical
             )
             confirmation.display = False
-            open_library = self.query_one(
-                "#console-prompts-open-saved-recipe", Button
-            )
+            open_library = self.query_one("#console-prompts-open-saved-recipe", Button)
             open_library.can_focus = False
 
     def _show_dirty_guard(self) -> None:
@@ -1777,10 +1771,48 @@ class ConsolePromptsModal(
             return
         if self._improvement_is_cancelling():
             return
-        if self.state.mode in {"edit", "recipe", "draft_edit"} and self.state.dirty:
+        if self._holds_dirty_edit():
             self._show_dirty_guard()
             return
         self.dismiss_safe_once(None)
+
+    def _holds_dirty_edit(self) -> bool:
+        """Whether closing now would discard edits -- the dirty guard's test."""
+        return self.state.mode in {"edit", "recipe", "draft_edit"} and bool(
+            self.state.dirty
+        )
+
+    async def confirm_quit(self) -> bool:
+        """Ask before Ctrl+Q discards an unsaved edit (TASK-33622.10).
+
+        Asks exactly where the close guard would: the quit flow consults the
+        open modal first, and quitting must not skip what Escape honours.
+        An apply in flight refuses, as Close does: quitting under it would
+        drop the reviewed prompt before it reaches the Console (a repeated
+        Ctrl+Q asks instead, ``refuse_quit_while_working``). An
+        improvement request needs no stop -- Close cancels it unasked, which
+        is what quitting does.
+
+        Returns:
+            True to let the quit proceed; False to keep editing.
+        """
+        if self._apply_in_progress:
+            from tldw_chatbook.Widgets.quit_while_working import (
+                refuse_quit_while_working,
+            )
+
+            return await refuse_quit_while_working(
+                self, "Still applying changes to the Console."
+            )
+        if not self._holds_dirty_edit():
+            return True
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            confirm_quit_discarding_edits,
+        )
+
+        return await confirm_quit_discarding_edits(
+            self, "Your prompt edits are not saved."
+        )
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         guard = self.query_one("#console-prompts-dirty-guard", Vertical)
@@ -2366,9 +2398,7 @@ class ConsolePromptsModal(
             confirmation = self.query_one(
                 "#console-prompts-recipe-save-confirmation", Static
             )
-            open_library = self.query_one(
-                "#console-prompts-open-saved-recipe", Button
-            )
+            open_library = self.query_one("#console-prompts-open-saved-recipe", Button)
         except NoMatches:
             return
         record = dict(saved) if isinstance(saved, Mapping) else {}

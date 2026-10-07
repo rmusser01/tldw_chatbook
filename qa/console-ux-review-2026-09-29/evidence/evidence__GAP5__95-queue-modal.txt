@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                               Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Use your todo tool to add a...                                                  │
+                  Context ◂  │ ◂Using my Library s…  ✕  Give me two tiny c…  ✕  Chat with Captain…   ✕ Q1 ● Use your todo to▸ │  ▸ Inspect
+   Terminal                  │                                                                                                │     Choose folder · Project
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).  ✕  │  What happens if I send now?
+  ▊  Filter      ▎           │ ────────────────────────────────────────────────────────────────────────────────────────────── │  Where: Default › Use your to…
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ything available
+                    │                                                                                                                      │d
+  Chats             │ Prompt queue                                                                                                         │ne staged
+   Use your todo too│ Queue 1/10 · paused · failed                                                                                         │None pending
+   Prompt queue paus│                                                                                                                      │                ▾
+   Give me two tiny │ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │en't tracked for…
+   Using my Library │                                          0. And count to three.                                              Waiting │der and enable C…
+                    │                                                                                                                      │efresh
+ ───────────────────│                                                                                                                      │
+ Character · Chats w│                                                                                                                      │    Run history ▸
+  No current charact│ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │ all runs
+  Local · No open ch│                                                                                                                      │
+  Reaction: Automati│   Edit    Save     Up     Down    Remove    Clear                                                                    │ext send        3
+   Reaction…        │                                                                                                                      │gation (Library
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔│                                                                                                                      │phyr-irrigation
+  ▊  Search chats   │   Paused    Skip & resume    Review    Use current    Close                                                          │pper-lantern ·
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁│                                                                                                                      │illmere-battery
+   ▾ Chats with     │                                                                                                                      │tions before sen
+   Chat with Captain│   Retry failed    Retry stopped                                                                                      │
+   View all 1 in Lib│                                                                                                                      │tes, Media,
+ ───────────────────│                                                                                                                      │ns (Prompts off)
+ ▼ Agent · Details  └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ons — scroll
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────   │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Staged for next send · 3 sources                                                                                                                    Un-stage
+ zephyr-irrigation — media
+ copper-lantern — media
+ quillmere-battery — media
+Queue 1/10 · Turn failed · Next: "And count to three."                                                                                     Mana       Retry
+ Status ▾   Run: Agent running.     Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                            Send disabled: type a message      Queue         Dictate   Redir
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

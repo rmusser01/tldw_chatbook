@@ -82,6 +82,7 @@ class ConsoleSubmissionOrigin(str, Enum):
     MANUAL = "manual"
     QUEUED = "queued"
     AGENT_WAKE = "agent_wake"
+    AGENT_CHAT_START = "agent_chat_start"
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +105,7 @@ class ConsoleControllerActivity:
     queued_count: int
     queue_paused: bool
     terminal_notification_eligible: bool
+    agent_handoff_status: str = ""
 
     @property
     def has_queued_work(self) -> bool:
@@ -370,6 +372,14 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
 }
 
 
+#: Shared decision-kind keys for pending-round registries and UI copy.
+CONSOLE_PENDING_APPROVAL_KIND = "approval"
+CONSOLE_PENDING_QUESTION_KIND = "question"
+CONSOLE_PENDING_SKILL_INSTALL_KIND = "skill_install"
+CONSOLE_PENDING_SKILL_SCRIPT_KIND = "skill_script"
+CONSOLE_PENDING_WORKTREE_MERGE_KIND = "worktree_merge"
+
+
 #: Qodo #4 (task-32345): what the run chip and the turn-activity line say
 #: while an interrupt round is waiting on the user, by round KIND
 #: (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys). Only the two kinds
@@ -381,8 +391,8 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
 #: Sentence-less on purpose: the run chip appends its own full stop, the
 #: activity line appends " · <elapsed>".
 CONSOLE_PENDING_ROUND_COPY: Mapping[str, str] = {
-    "approval": "Waiting for your approval",
-    "question": "Waiting for your answer",
+    CONSOLE_PENDING_APPROVAL_KIND: "Waiting for your approval",
+    CONSOLE_PENDING_QUESTION_KIND: "Waiting for your answer",
 }
 CONSOLE_PENDING_ROUND_DEFAULT_COPY = "Waiting for your confirmation"
 
@@ -392,8 +402,8 @@ def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
 
     Precedence, when more than one kind is outstanding at once: an approval
     wins. That is the one kind the Inspector counts
-    (``ConsoleInspectorState.pending_approval_count`` counts mounted APPROVAL
-    cards), so it is the only choice that keeps the chip and the Inspector
+    (``ConsoleInspectorState.pending_approval_count`` counts outstanding APPROVAL
+    rounds), so it is the only choice that keeps the chip and the Inspector
     telling the same story -- and an approval is the heavier decision of the
     two. Otherwise a lone question asks for an answer, and anything else --
     including a mix of non-approval kinds -- asks for a confirmation.
@@ -409,10 +419,10 @@ def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
         The waiting sentence, without trailing punctuation.
     """
     resolved = {str(kind) for kind in kinds}
-    if not resolved or "approval" in resolved:
-        return CONSOLE_PENDING_ROUND_COPY["approval"]
-    if resolved == {"question"}:
-        return CONSOLE_PENDING_ROUND_COPY["question"]
+    if not resolved or CONSOLE_PENDING_APPROVAL_KIND in resolved:
+        return CONSOLE_PENDING_ROUND_COPY[CONSOLE_PENDING_APPROVAL_KIND]
+    if resolved == {CONSOLE_PENDING_QUESTION_KIND}:
+        return CONSOLE_PENDING_ROUND_COPY[CONSOLE_PENDING_QUESTION_KIND]
     return CONSOLE_PENDING_ROUND_DEFAULT_COPY
 
 
@@ -463,6 +473,12 @@ CONSOLE_DISPATCH_DUPLICATE_WARNING = (
     "Retry anyway may send a duplicate request because delivery status is unknown."
 )
 CONSOLE_DISPATCH_DISCARDED_COPY = "Response discarded."
+#: Shared kind for chat-creation registration and Close consequences.
+CONSOLE_PENDING_CHAT_CREATE_KIND = "chat_create"
+
+CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL = (
+    "Close cleanup needs recovery. Restart the app before closing this tab."
+)
 CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY = (
     "Finish or discard the pending turn before saving."
 )
@@ -990,6 +1006,8 @@ class ConsoleProviderSelection:
     #: Internal routed-run snapshot authority; ordinary sessions follow live
     #: registry edits. Never populated from model-provided spawn arguments.
     base_url_is_pinned: bool = field(default=False, kw_only=True)
+    #: Internal routed-run execution snapshot; raw provider still owns credentials.
+    execution_provider: str = field(default="", kw_only=True)
     #: False only for a live session policy that must never fall back to a
     #: configured endpoint (notably a failed endpoint-adoption rollback).
     configured_endpoint_fallback_allowed: bool = True

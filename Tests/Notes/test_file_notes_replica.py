@@ -157,9 +157,9 @@ def test_commit_failure_rolls_back_and_leaves_connection_usable(
     with replica._lock:
         assert not replica._connection.in_transaction
         assert (
-            replica._connection.execute(
-                "SELECT COUNT(*) FROM commit_child"
-            ).fetchone()[0]
+            replica._connection.execute("SELECT COUNT(*) FROM commit_child").fetchone()[
+                0
+            ]
             == 0
         )
 
@@ -332,9 +332,9 @@ def test_move_file_replaces_current_projection_without_tombstone(
         size=len(moved_bytes),
         mtime_ns=2,
     )
-    assert [
-        item.relative_path for item in replica.list_active_files(root)
-    ] == ["folder/moved-to.md"]
+    assert [item.relative_path for item in replica.list_active_files(root)] == [
+        "folder/moved-to.md"
+    ]
     assert replica.search(root, "searchable") == ["folder/moved-to.md"]
     assert replica.get_bytes(root, "moved-from.md") is None
     assert replica.list_deleted(root) == []

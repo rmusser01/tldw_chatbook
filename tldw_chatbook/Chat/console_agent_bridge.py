@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.local_tool_provider import RunAdmittedWorkspaceRoot
     from tldw_chatbook.Agents.run_log_paging import RunLogPage, RunLogPageCursor
     from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity
-    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage
+    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage, MessageIdentity
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
     from tldw_chatbook.Personal_Context.context_service import ProfileContextSnapshot
@@ -239,6 +239,7 @@ from tldw_chatbook.config import (
 
 from tldw_chatbook.Chat.console_skill_resolver import SKILL_UNTRUSTED_REFUSE
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Workspaces.change_review_consent import SkippedReviewRoot
 from tldw_chatbook.Workspaces.change_review_finalization import (
     ChangeReviewFinalizeResult,
@@ -1036,7 +1037,14 @@ def _append_to_last_user_message(
             content, str
         ):
             result = list(messages)
-            result[index] = {**message, "content": f"{content}\n\n{block}"}
+            from tldw_chatbook.Agents.agent_models import carry_plugin_context
+
+            result[index] = {
+                **message,
+                "content": carry_plugin_context(
+                    f"{content}\n\n{block}", content, block
+                ),
+            }
             return result, True
     return messages, False
 
@@ -1531,8 +1539,10 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_GATE_ERROR_REFUSAL,
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
+        LOCAL_RUN_WORKTREE_RELEASED_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,
         LOCAL_USER_DENY_REFUSAL,
+        LOCAL_WORKER_FAILED_REFUSAL,
     )
     from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 
@@ -1560,6 +1570,8 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_GATE_ERROR_REFUSAL: "blocked",
         LOCAL_ROOT_CHANGED_REFUSAL: "blocked",
         LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: "blocked",
+        LOCAL_WORKER_FAILED_REFUSAL: "blocked",
+        LOCAL_RUN_WORKTREE_RELEASED_REFUSAL: "blocked",
         MCP_UNRESOLVED_REFUSAL: "blocked",
         MCP_TIMEOUT_REFUSAL: "blocked",
     })
@@ -1940,6 +1952,8 @@ class SubAgentSummary:
         created_at: Saved run start timestamp, absent on live summaries.
         updated_at: Saved last-update timestamp; only an approximate end.
         detail: Bounded saved result or last meaningful step for this child.
+        resolved_provider: Frozen provider selection, absent for legacy runs.
+        resolved_model: Frozen model selection, absent for legacy runs.
     """
 
     text: str
@@ -1950,6 +1964,8 @@ class SubAgentSummary:
     created_at: str | None = None
     updated_at: str | None = None
     detail: str = ""
+    resolved_provider: str | None = None
+    resolved_model: str | None = None
 
 
 def _subagent_summaries_from_fleet(
@@ -1967,7 +1983,8 @@ def _subagent_summaries_from_fleet(
     included), only its private ``_live_ids`` liveness set shrinks on
     ``finish``. So once non-empty for a run, it stays the source for the
     rest of that run, and every child's real status/run_id/handle_id is
-    always current.
+    always current. Inline fallback rows receive the frozen target when
+    their child enters its model scope.
 
     ``handles`` non-empty means AT LEAST ONE handle has been reserved for
     this run -- and once that is true, ``handles`` is used EXCLUSIVELY;
@@ -2034,6 +2051,8 @@ def _subagent_summaries_from_fleet(
                 status=h.status,
                 run_id=h.run_id or "",
                 handle_id=h.handle_id,
+                resolved_provider=h.resolved_provider,
+                resolved_model=h.resolved_model,
             )
             for h in handles
         )
@@ -3415,6 +3434,7 @@ class _StreamingModelAdapter:
             if per_call_kwargs.get(kwarg) is not None
         }
         api_base_url = per_call_kwargs.pop("api_base_url", None)
+        execution_provider = str(per_call_kwargs.pop("execution_provider", "") or "")
         # Any keys still in per_call_kwargs stay ignored, exactly as before.
         # Same-target decision keys on the parent's RAW selection identity,
         # not the flattened execution key: a child explicitly routed to the
@@ -3459,7 +3479,10 @@ class _StreamingModelAdapter:
             and requested_endpoint
             not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS
         )
-        rerouted = bool(requested_endpoint) and not same_target
+        rerouted = bool(requested_endpoint) and (
+            not same_target
+            or bool(execution_provider and execution_provider != parent_execution_key)
+        )
 
         transport_messages = _serialize_project_instruction_rows_for_transport(
             messages_payload, native_tools=self._native_tools
@@ -3603,6 +3626,7 @@ class _StreamingModelAdapter:
                     model=model,
                     api_base_url=api_base_url,
                     sampling_overlays=sampling_overlays,
+                    execution_provider=execution_provider,
                 )
             # Forwarding `tools=` only when it is non-None (rather than
             # always passing the keyword, even as None) keeps every
@@ -3726,9 +3750,11 @@ class _StreamingModelAdapter:
                 ),
             )
             from tldw_chatbook.Chat.stream_stall_watchdog import (
+                first_token_timeout_seconds,
                 watch_content_stalls,
             )
 
+            stall_timeout = _stall_timeout_seconds()
             async for chunk in watch_content_stalls(
                 self._gateway.stream_chat(
                     effective_resolution,
@@ -3739,8 +3765,13 @@ class _StreamingModelAdapter:
                     capture_mode=self._capture_mode,
                     **stream_kwargs,
                 ),
-                _stall_timeout_seconds(),
+                stall_timeout,
                 provider=effective_resolution.provider,
+                # TASK-34100.5 AC#5: a cold local model's first token waits
+                # longer than the gap between tokens.
+                first_item_timeout_seconds=first_token_timeout_seconds(
+                    effective_resolution.provider, stall_timeout=stall_timeout
+                ),
             ):
                 synthetic = emission_synthetic is True
                 emission_synthetic = None
@@ -4010,6 +4041,7 @@ class _StreamingModelAdapter:
         model: str | None,
         api_base_url: str | None,
         sampling_overlays: Mapping[str, Any],
+        execution_provider: str = "",
     ) -> ConsoleProviderResolution:
         """Re-resolve a per-call provider target through the gateway's send seam.
 
@@ -4017,7 +4049,8 @@ class _StreamingModelAdapter:
         ``resolve_for_send`` is async (the direct-llama path probes
         reachability). The seam is custom-ep aware per ADR-146, so a
         ``custom-ep:<slug>`` id resolves through its registry entry's family
-        and credential. Re-resolving per call -- never caching -- matches
+        and credential. A routed run can pin its execution family separately.
+        Re-resolving per call -- never caching -- matches
         Console's per-send discipline: a credential or readiness change
         between turns takes effect on the very next call.
 
@@ -4026,6 +4059,7 @@ class _StreamingModelAdapter:
             model: Per-call model, or None to fall back to the provider's
                 configured default.
             api_base_url: Per-call endpoint override, or None.
+            execution_provider: Internal frozen execution family for routed runs.
             sampling_overlays: Provided sampling values keyed by
                 ``ConsoleProviderSelection`` field name.
 
@@ -4050,6 +4084,7 @@ class _StreamingModelAdapter:
                 provider=provider,
                 base_url=str(api_base_url) if api_base_url else None,
                 base_url_is_pinned=bool(api_base_url),
+                execution_provider=execution_provider,
                 explicit_model=str(model) if model else None,
                 **sampling_overlays,
             )
@@ -4113,7 +4148,7 @@ def _eligible_skill_entries(context: Mapping[str, Any]) -> list[Mapping[str, Any
         context.get("available_skills") if isinstance(context, Mapping) else None
     )
     return [
-        item
+        (dict(item, name=item["tool_name"]) if item.get("plugin_owned") else item)
         for item in (available or [])
         if isinstance(item, Mapping)
         and item.get("name")
@@ -4178,10 +4213,13 @@ def _non_colliding_skill_entries(
         | set(canvas_names)
         | RUNTIME_TOOL_NAMES
     )
+    eligible = _eligible_skill_entries(context)
+    names = [str(item["name"]) for item in eligible]
     return [
         item
-        for item in _eligible_skill_entries(context)
+        for item in eligible
         if str(item["name"]) not in collision_names
+        and names.count(str(item["name"])) == 1
     ]
 
 
@@ -4382,6 +4420,53 @@ def _warn_shadowed_mcp_name_once(name: str) -> None:
     )
 
 
+def _compose_prospective_hook_context(
+    configuration,
+    *,
+    mcp_provider,
+    lifecycle,
+    input_scope,
+    current,
+    runtime_current,
+    workspace_id,
+    ephemeral,
+):
+    """Use normal catalog composition privately inside one validated admission."""
+    from tldw_chatbook.Agents.hooks_v2.mcp_executor import MCPHookContext
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+
+    registry, allowed, _builtins, _locals = _compose_run_registry_and_allowed(
+        configuration.skill_context_maximum,
+        mcp_provider=mcp_provider,
+        workspace_id=workspace_id,
+        ephemeral=ephemeral,
+        persona_policy_rules=configuration.persona_policy_rules,
+    )
+
+    def requirements(definition):
+        owner = registry.resolve_owner_for_name(definition.name)
+        provider = getattr(owner[1], "_provider", owner[1]) if owner else None
+        native = getattr(lifecycle.engine, "native_plugins", None)
+        if native is not None:
+            return native.definition_requirements(definition, registry)
+        return () if type(provider) is MCPToolProvider else None
+
+    return MCPHookContext(
+        registry=registry,
+        lifecycle=lifecycle,
+        parent_scope=input_scope,
+        run_id=input_scope,
+        session_id=configuration.session_id,
+        allowed_names=frozenset(allowed),
+        current=current,
+        required_handler_ids=requirements,
+        workspace_id=workspace_id,
+        turn_id=input_scope,
+        input_scope=input_scope,
+        runtime_current=runtime_current,
+    )
+
+
 def _compose_run_registry_and_allowed(
     context: Mapping[str, Any],
     *,
@@ -4569,7 +4654,14 @@ def _compose_run_registry_and_allowed(
     # only possible outcome is a refusal -- a UX improvement layered on top
     # of the choke point, which stays load-bearing on its own.
     if eligible and not ephemeral:
-        registry.register_provider(SkillToolProvider(eligible))
+        ordinary = [row for row in eligible if not row.get("plugin_owned")]
+        owned = [row for row in eligible if row.get("plugin_owned")]
+        if ordinary:
+            registry.register_provider(SkillToolProvider(ordinary))
+        if owned:
+            from tldw_chatbook.Plugins.skill_provider import PluginSkillProvider
+
+            registry.register_provider(PluginSkillProvider(owned))
     skill_names = () if ephemeral else tuple(str(item["name"]) for item in eligible)
     allowed_tools = (
         tuple(builtin_names)
@@ -4696,6 +4788,60 @@ def _console_first_request_runtime_context(
         )
     )
     return definitions, max_live if budget.max_subagents > 0 else 1
+
+
+def _advertised_path_root_aliases(
+    allowed_tools: Sequence[str],
+    *,
+    local_provider: Any | None,
+    virtual_cli_provider: Any | None,
+) -> tuple[str, ...] | None:
+    """Return the root aliases the model's offered path tools accept.
+
+    TASK-33940.1: feeds ``workspace_context_note`` so it names folders by the
+    aliases the fs_*/git_*/virtual_cli schemas actually carry. A provider whose
+    tools were filtered out of the allow-list contributes nothing.
+
+    Returns:
+        The union of the advertised providers' aliases, ``()`` when no path
+        tool is offered, or ``None`` when only legacy alias-free providers are.
+    """
+    from tldw_chatbook.Agents.local_tool_provider import PATH_AUTHORITY_TOOL_NAMES
+    from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+    offered = set(allowed_tools)
+    aliases: set[str] = set()
+    alias_free = False
+    for provider, names in (
+        (local_provider, PATH_AUTHORITY_TOOL_NAMES),
+        (virtual_cli_provider, frozenset({VIRTUAL_CLI_TOOL_NAME})),
+    ):
+        if provider is None or not offered & names:
+            continue
+        provider_aliases = provider.path_root_aliases()
+        if provider_aliases is None:
+            alias_free = True
+            continue
+        aliases.update(provider_aliases)
+    if alias_free and not aliases:
+        return None
+    return tuple(sorted(aliases))
+
+
+def _advertised_scratch_relative_tools(
+    allowed_tools: Sequence[str], builtin_names: Sequence[str]
+) -> tuple[str, ...]:
+    """Return offered built-ins whose relative paths resolve in scratch."""
+    from tldw_chatbook.Tools.file_operation_tools import SCRATCH_RELATIVE_PATH_TOOLS
+
+    builtins = set(builtin_names)
+    return tuple(
+        sorted(
+            name
+            for name in allowed_tools
+            if name in SCRATCH_RELATIVE_PATH_TOOLS and name in builtins
+        )
+    )
 
 
 def build_console_first_request_plan(
@@ -4879,24 +5025,35 @@ def build_console_first_request_plan(
         get_remote_binding_status_cache,
     )
 
+    response_reserve = (
+        getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
+    )
+    from tldw_chatbook.Agents.agent_models import plugin_tool_ceiling
+
+    allowed_tools = plugin_tool_ceiling(agent_messages, allowed_tools)
+    # TASK-33940.1: built AFTER the final allow-list so the note describes only
+    # tools the model is actually offered -- the root_alias values its path
+    # tools accept and which built-ins resolve relative paths in scratch.
     workspace_note = workspace_context_note(
         workspace_id,
         binding_authority=workspace_binding_authority,
         status_cache=get_remote_binding_status_cache(),
-    )
-    response_reserve = (
-        getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
+        path_tool_aliases=_advertised_path_root_aliases(
+            allowed_tools,
+            local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+        ),
+        scratch_relative_tools=_advertised_scratch_relative_tools(
+            allowed_tools, builtin_names
+        ),
     )
     config = AgentConfig(
         model=resolved_model,
         system_prompt=direct_prompt,
-        # TASK-26002: so the loop can name the provider when it reports a
-        # provider-level fault (an empty-response run is otherwise
-        # indistinguishable from the agent deciding it was finished).
-        # Reuses `api_endpoint` above rather than re-deriving it -- that is the
-        # key the request is actually sent under, and it already carries the
-        # execution_key -> provider -> "agent" fallback.
-        provider=api_endpoint,
+        # Keep selection identity on model calls; api_endpoint remains the
+        # execution key used for capabilities and protocol preparation.
+        provider=selected_provider,
+        base_url=getattr(resolution, "base_url", None),
         fallback_providers=console_fallback_providers(),
         allowed_tools=allowed_tools,
         budget=(
@@ -4911,18 +5068,10 @@ def build_console_first_request_plan(
     )
     messages = agent_messages
     if turn_bundle_block:
-        messages = [dict(message) for message in agent_messages]
-        for index in range(len(messages) - 1, -1, -1):
-            message = messages[index]
-            content = message.get("content")
-            if message.get("role") == ConsoleMessageRole.USER.value and isinstance(
-                content, str
-            ):
-                messages[index] = {
-                    **message,
-                    "content": f"{content}\n\n{turn_bundle_block}",
-                }
-                break
+        messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
+    # Lazy (ADR-097 UI-ready census): only a send plans its first request.
+    from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
+
     schemas = build_first_request_schema_plan(
         registry,
         allowed_tools,
@@ -4947,6 +5096,12 @@ def build_console_first_request_plan(
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
         discovery_system_prompt=discovery_prompt,
+        # TASK-34100.5 AC#6: the same window the send preflight used, and a
+        # tool-less request carries only the session's own prompt (or a
+        # neutral one-liner, never the tool-protocol prompt: V2-F2).
+        context_window=getattr(resolution, "context_window", None),
+        plain_system_prompt=(session_system_prompt or "").strip()
+        or PLAIN_CHAT_SYSTEM_PROMPT,
     )
     config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     profile_workspace_id = (
@@ -5073,7 +5228,11 @@ class _BridgeSkillRunner:
         local_names: tuple[str, ...] = (),
         skill_file_bindings: SkillFileBindings | None = None,
         definition_digests: Mapping[str, str] | None = None,
+        plugin_entries: Sequence[Mapping[str, Any]] = (),
+        owned_mcp_names: tuple[str, ...] = (),
     ) -> None:
+        self._owned_mcp_names = owned_mcp_names
+        self._plugin_entries = {str(row["tool_name"]): row for row in plugin_entries}
         self._skills_service = skills_service
         self._skill_names = skill_names
         self._builtin_names = builtin_names
@@ -5092,10 +5251,17 @@ class _BridgeSkillRunner:
                 if local is None and hasattr(self._skills_service, "trust_service"):
                     local = self._skills_service
                 trust = getattr(local, "trust_service", None)
+                plugin_entry = self._plugin_entries.get(name)
                 current_digest = (
-                    trust.current_fingerprint_digest(name)
-                    if trust is not None
-                    else None
+                    local.plugin_service.current_definition(
+                        name, plugin_entry["plugin_admission"]
+                    )
+                    if plugin_entry is not None
+                    else (
+                        trust.current_fingerprint_digest(name)
+                        if trust is not None
+                        else None
+                    )
                 )
                 if current_digest != expected_digest:
                     raise SkillTrustBlockedError(
@@ -5104,7 +5270,24 @@ class _BridgeSkillRunner:
                         trust_status="quarantined_modified",
                     )
             result = asyncio.run(
-                self._skills_service.execute_skill(name, mode="local", args=args)
+                self._skills_service.execute_skill(
+                    name,
+                    mode="local",
+                    args=args,
+                    **(
+                        {
+                            "plugin_admission": self._plugin_entries[name][
+                                "plugin_admission"
+                            ]
+                        }
+                        if name in self._plugin_entries
+                        else {}
+                    ),
+                )
+            )
+        except PermissionError:
+            return ToolResult(
+                ok=False, error="Plugin authority changed; review and retry."
             )
         except SkillTrustBlockedError as exc:
             return ToolResult(
@@ -5125,7 +5308,10 @@ class _BridgeSkillRunner:
         # builtin + local set through, matching how native spawn_subagent
         # children already inherit local tools.
         allowed_tools = intersect_skill_tools(
-            declared_allowed_tools, self._builtin_names + self._local_names
+            declared_allowed_tools,
+            self._builtin_names
+            + self._local_names
+            + (self._owned_mcp_names if name in self._plugin_entries else ()),
         )
         # task-4 (skills-fork-reachability): grant the spawned skill's own
         # name skill_file authorization BEFORE spawn -- so the child's very
@@ -5145,7 +5331,12 @@ class _BridgeSkillRunner:
                 f"{'' if r.get('is_text', True) else ', binary'})"
                 for r in refs
             )
-            rendered = f"{rendered}\n\nBundled files (readable via skill_file): {rows}"
+            from tldw_chatbook.Agents.agent_models import carry_plugin_context
+
+            rendered = carry_plugin_context(
+                f"{rendered}\n\nBundled files (readable via skill_file): {rows}",
+                rendered,
+            )
         return spawn(rendered, allowed_tools=allowed_tools)
 
 
@@ -5193,10 +5384,19 @@ class ConsoleAgentBridge:
         # harnesses) means this bridge never wires a hooks engine at all.
         ensure_run_hooks: Callable[[], Any] | None = None,
         app_config: Mapping[str, Any] | None = None,
+        get_hooks_v2: Callable[[str], Any] | None = None,
     ) -> None:
         self._message_store = message_store
         self._progress_closed = False
+        self._progress_shutdown_task: asyncio.Task[None] | None = None
+        self._progress_close_drains: dict[
+            str, tuple[MessageStore, str, MessageInbox | None]
+        ] = {}
         self._message_store_lock = threading.RLock()
+        self._progress_consumer_lock = threading.Lock()
+        self._progress_consumers: dict[str, Callable[[str, str, MessageIdentity], None]] = {}
+        if message_store is not None:
+            message_store.on_enqueue = self._on_progress_enqueue
         self._runtime_capacity = runtime_capacity
         self._runtime_capacity_factory = runtime_capacity_factory
         self._runtime_capacity_lock = threading.RLock()
@@ -5229,6 +5429,7 @@ class ConsoleAgentBridge:
         # the spawn resolver's readiness gate does not depend on host
         # credentials.
         self._app_config = app_config
+        self._get_hooks_v2 = get_hooks_v2
         if registry is None:
             registry = ToolCatalogRegistry()
             registry.register_provider(BuiltinToolProvider())
@@ -5515,11 +5716,11 @@ class ConsoleAgentBridge:
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
         skills_context: Mapping[str, Any] | None = None,
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         worktree_merge_enabled: bool = False,
-        fork_chat_enabled: bool = False,
-        new_chat_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         profile_provider: Any | None = None,
@@ -5651,11 +5852,11 @@ class ConsoleAgentBridge:
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         worktree_merge_enabled: bool = False,
-        fork_chat_enabled: bool = False,
-        new_chat_enabled: bool = False,
         profile_context_service: Any | None = None,
     ) -> ProfileContextSnapshot:
         """Build the exact reserved profile snapshot for disposable Next Send."""
@@ -5765,6 +5966,7 @@ class ConsoleAgentBridge:
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         request_chat_create_confirm: Callable[[dict], dict] | None = None,
         execute_agent_chat_create: Callable[[dict], dict] | None = None,
+        prepare_agent_chat_create: Callable[[dict], dict] | None = None,
         # TASK-28238 phase 2 Task 6: forwarded straight to
         # `AgentService.run_turn(request_worktree_merge_confirm=...)` --
         # unlike `request_skill_script_confirm` above, this is never
@@ -5794,6 +5996,7 @@ class ConsoleAgentBridge:
         # `AgentService(revoke_approvals=...)`; `None` (a caller with no UI)
         # leaves cancellation exactly as it was.
         revoke_approvals: Callable[[str], object] | None = None,
+        plugin_cancel_root: Callable[[], object] | None = None,
         on_tool_terminal: Callable[[str, str, str], object] | None = None,
         on_tool_result_terminal: (
             Callable[[str, str, str, ToolResult], object] | None
@@ -5816,12 +6019,12 @@ class ConsoleAgentBridge:
         startup_instruction_candidate: StartupInstructionCandidate | None = None,
         project_instruction_nested_max_bytes: int | None = None,
         run_budget: RunBudget | None = None,
-        confirm_project_instruction_dispatch: Callable[[InstructionSnapshot], str]
-        | None = None,
-        on_project_instruction_activation: Callable[
-            [ProjectInstructionActivationEvent], None
-        ]
-        | None = None,
+        confirm_project_instruction_dispatch: (
+            Callable[[InstructionSnapshot], str] | None
+        ) = None,
+        on_project_instruction_activation: (
+            Callable[[ProjectInstructionActivationEvent], None] | None
+        ) = None,
         propagate_trace_call_persistence_errors: bool = False,
         capture_mode: ConsoleTraceCaptureMode = ConsoleTraceCaptureMode.CAPTURE_OFF,
         trace_request: PreparedConsoleRequest | None = None,
@@ -5859,6 +6062,8 @@ class ConsoleAgentBridge:
             generation_token = self._store.begin_generation_attempt(
                 assistant_message_id
             )
+        # SQLite preparation must finish outside the native identity scope.
+        self._store.prepare_progress_inbox(session_id, message_store=self.message_store)
         # Capture before setup can yield to native close/state replacement.
         # Reusing a native ID must not let this delayed run bind its successor.
         with self._store.progress_owner_scope(
@@ -5952,6 +6157,50 @@ class ConsoleAgentBridge:
         context: Mapping[str, Any] = skills_context or {}
         if self._skills_service is not None and skills_context is None:
             context = asyncio.run(self._skills_service.get_context(mode="local"))
+        plugin_service = getattr(
+            getattr(self._skills_service, "local_service", None), "plugin_service", None
+        )
+        if restore_provider_continuation is not None:
+            if plugin_service is not None:
+                context = asyncio.run(
+                    plugin_service.resume_maximum(
+                        context,
+                        restore_provider_continuation,
+                        self._store._session_or_raise(
+                            session_id
+                        ).persisted_conversation_id
+                        or "",
+                        assistant_message_id,
+                    )
+                )
+            elif restore_provider_continuation.schema_version == 2:
+                raise PermissionError("Managed continuation service unavailable.")
+            else:
+                context = dict(context, plugin_resume_constraint="zero")
+                context["available_skills"] = [
+                    row
+                    for row in context.get("available_skills", ())
+                    if not row.get("plugin_owned")
+                ]
+                context["context_text"] = "\n".join(
+                    str(row.get("name", "")) for row in context["available_skills"]
+                )
+        if plugin_service is not None and (
+            context.get("plugin_resume_constraint") is not None
+            or any(
+                item.get("plugin_owned") for item in context.get("available_skills", ())
+            )
+        ):
+            context = asyncio.run(
+                plugin_service.admit(
+                    context, context.get("plugin_run_id") or "pending:" + uuid4().hex
+                )
+            )
+        plugin_entries = tuple(
+            row
+            for row in context.get("available_skills", ())
+            if row.get("plugin_owned")
+        )
         run_workspace_id = workspace_id
         run_is_ephemeral = bool(workspace_ephemeral)
         if self._store is not None and workspace_id is None:
@@ -5990,6 +6239,38 @@ class ConsoleAgentBridge:
         runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
             self._db, run_budget
         )
+        if plugin_entries and not run_is_ephemeral:
+            eligible = frozenset(
+                row.name
+                for provider in (
+                    self._registry,
+                    mcp_provider,
+                    local_provider,
+                    virtual_cli_provider,
+                    raw_shell_provider,
+                    library_provider,
+                    profile_provider,
+                    canvas_provider,
+                )
+                if provider is not None
+                for row in provider.list_catalog()
+            )
+            managed = asyncio.run(
+                plugin_service.agent_presets(
+                    plugin_entries,
+                    eligible,
+                    parent_provider=str(
+                        getattr(resolution, "selected_provider", "")
+                        or getattr(resolution, "execution_key", "")
+                        or getattr(resolution, "provider", "")
+                    ),
+                )
+            )
+            if {item.name for item in managed} & {
+                item.name for item in runtime_definitions
+            }:
+                raise PermissionError("plugin_agent_namespace_collision")
+            runtime_definitions = (*runtime_definitions, *managed)
         # Build the exact outbound user payload before schema planning. Both
         # automatic riders can change whether direct catalog disclosure still
         # leaves the configured response reserve, so the planner and live run
@@ -6045,6 +6326,7 @@ class ConsoleAgentBridge:
             fork_chat_tool, new_chat_tool = build_chat_create_tool_closures(
                 confirm=request_chat_create_confirm,
                 execute=execute_agent_chat_create,
+                prepare=prepare_agent_chat_create,
                 session_id=session_id,
                 run_id=assistant_message_id,
             )
@@ -6193,6 +6475,9 @@ class ConsoleAgentBridge:
             for item in _eligible_skill_entries(context)
             if item.get("name") and item.get("definition_digest")
         }
+        admitted_skill_definition_digests.update(
+            (entry["name"], entry["definition_digest"]) for entry in plugin_entries
+        )
         if self._skills_service is not None:
             local_skills = getattr(self._skills_service, "local_service", None)
             if local_skills is None and hasattr(
@@ -6202,6 +6487,11 @@ class ConsoleAgentBridge:
             trust_service = getattr(local_skills, "trust_service", None)
 
             def current_skill_definition_digest(skill_name: str) -> str | None:
+                for entry in plugin_entries:
+                    if skill_name in {entry["name"], entry["tool_name"]}:
+                        return plugin_service.current_definition(
+                            skill_name, entry["plugin_admission"]
+                        )
                 if trust_service is None:
                     return None
                 return trust_service.current_fingerprint_digest(skill_name)
@@ -6209,15 +6499,34 @@ class ConsoleAgentBridge:
             skill_file_bindings = SkillFileBindings(
                 authorized=set(),
                 reader=lambda skill_name, path: asyncio.run(
-                    self._skills_service.read_skill_file(skill_name, path, mode="local")
+                    self._skills_service.read_skill_file(
+                        skill_name,
+                        path,
+                        mode="local",
+                        **next(
+                            (
+                                {"plugin_admission": entry["plugin_admission"]}
+                                for entry in plugin_entries
+                                if skill_name in {entry["name"], entry["tool_name"]}
+                            ),
+                            {},
+                        ),
+                    )
                 ),
                 current_definition_digest=current_skill_definition_digest,
             )
             skill_runner = _BridgeSkillRunner(
                 skills_service=self._skills_service,
+                plugin_entries=plugin_entries,
                 skill_names=first_request_plan.skill_names,
                 builtin_names=first_request_plan.builtin_names,
                 local_names=first_request_plan.local_names,
+                owned_mcp_names=tuple(
+                    entry.name
+                    for entry in registry.list_catalog()
+                    if entry.source == "plugin_mcp"
+                    and entry.name in first_request_plan.config.allowed_tools
+                ),
                 skill_file_bindings=skill_file_bindings,
                 definition_digests={
                     name: digest
@@ -6612,6 +6921,23 @@ class ConsoleAgentBridge:
                         activity_round_ordinal=planning.activity_round_ordinal,
                     )
             tool_activity.observe(step, planning_deriver.active_round_ordinal)
+
+        def on_resolved_target(run_id: str, provider: str, model: str) -> None:
+            for index, summary in enumerate(subagents):
+                if summary.run_id != run_id:
+                    continue
+                subagents[index] = dataclass_replace(
+                    summary, resolved_provider=provider, resolved_model=model
+                )
+                snapshot = self._live.get(conversation_id, {}).get(primary_live_key)
+                if snapshot is not None:
+                    self._publish_live(
+                        conversation_id,
+                        primary_live_key,
+                        dataclass_replace(snapshot, subagents=tuple(subagents)),
+                        primary=False,
+                    )
+                break
 
         def on_step(step: AgentStep, agent_kind: str, run_id: str) -> None:
             if agent_kind == AGENT_KIND_PRIMARY and run_id:
@@ -7110,6 +7436,24 @@ class ConsoleAgentBridge:
                 on_timeout=on_baseline_timeout,
             )
 
+        if plugin_entries:
+            original_review = review_tool_calls
+            original_dispatch = before_tool_dispatch
+
+            def review_tool_calls(calls, kind):
+                active_plugin_entries = bind_plugin_actor()
+                plugin_service.check_entries_from_agent(active_plugin_entries)
+                decisions = original_review(calls, kind) if original_review else {}
+                plugin_service.check_entries_from_agent(active_plugin_entries)
+                return decisions
+
+            def before_tool_dispatch(calls, pure_runtime_tools):
+                active_plugin_entries = bind_plugin_actor()
+                plugin_service.check_entries_from_agent(active_plugin_entries)
+                if original_dispatch is not None:
+                    original_dispatch(calls, pure_runtime_tools)
+                plugin_service.check_entries_from_agent(active_plugin_entries)
+
         run_log_writer = None
         if scratch_root is not None and scratch_lease is not None:
             from tldw_chatbook.Agents.run_log import RunLogWriter, resolve_log_root
@@ -7179,26 +7523,197 @@ class ConsoleAgentBridge:
             if on_redirect_ready is not None:
                 on_redirect_ready(redirect_fn)
 
+        create_fleet = bool(
+            first_request_plan.schemas.runtime_schemas
+            or first_request_plan.schemas.active_schemas
+        )
+        progress_store = self.message_store
+        self._store.prepare_progress_inbox(
+            session_id, message_store=progress_store, create_temporary=create_fleet
+        )
         with self._store.progress_owner_scope(
-            session_id, message_store=self.message_store
+            session_id, message_store=progress_store
         ) as progress_owner_id:
             if progress_owner_id != initial_progress_owner_id:
                 from tldw_chatbook.Agents.fleet_messages import MessageError
 
                 raise MessageError("unavailable")
+            message_inbox = progress_store.get_inbox(progress_owner_id)
+            if create_fleet and message_inbox is None:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
             fleet_coordinator = self._conversation_fleet_coordinator(
                 conversation_id,
-                create=bool(
-                    first_request_plan.schemas.runtime_schemas
-                    or first_request_plan.schemas.active_schemas
-                ),
+                create=create_fleet,
                 progress_owner_id=progress_owner_id,
+                message_inbox=message_inbox,
             )
-            message_inbox = self.message_store.get_inbox(progress_owner_id)
+        plugin_root_id = ""
+        plugin_producer_pin = None
+
+        def bind_plugin_root(actual_run_id: str) -> None:
+            nonlocal plugin_root_id, plugin_producer_pin
+            plugin_root_id = actual_run_id
+            if plugin_entries:
+                if plugin_cancel_root is None:
+                    raise PermissionError(
+                        "Plugin run cancellation owner is unavailable."
+                    )
+
+                def cancel_root():
+                    plugin_cancel_root()
+                    if revoke_approvals is not None:
+                        revoke_approvals(actual_run_id)
+
+                plugin_service.bind_run(plugin_entries, actual_run_id, cancel_root)
+                if plugin_producer_pin is None:
+                    # Capture capabilities at real binding. The store finalizer
+                    # binds its durable conversation ID only after persisting it.
+                    conversation_id = (
+                        self._store._session_or_raise(
+                            session_id
+                        ).persisted_conversation_id
+                        or session_id
+                    )
+                    plugin_producer_pin = plugin_service.capture_resume_pin(
+                        plugin_entries,
+                        actual_run_id,
+                        conversation_id,
+                        assistant_message_id,
+                    )
+
+        def bind_plugin_actor():
+            from tldw_chatbook.Agents.run_context import current_run_actor
+
+            actor = current_run_actor()
+            if actor is None:
+                raise PermissionError("Plugin run identity is unavailable.")
+            actual_run_id = actor.run_id
+            if actor.kind == "primary":
+                bind_plugin_root(actual_run_id)
+                return plugin_entries
+            handle = next(
+                (
+                    item
+                    for item in service.fleet_snapshot()
+                    if item.run_id == actual_run_id
+                ),
+                None,
+            )
+            if handle is None:
+                if actor.parent_run_id != plugin_root_id or plugin_cancel_root is None:
+                    raise PermissionError("Plugin child ownership is unavailable.")
+
+                def cancel_inline_child():
+                    plugin_cancel_root()
+                    if revoke_approvals is not None:
+                        revoke_approvals(actual_run_id)
+
+                plugin_service.bind_run(
+                    plugin_entries,
+                    actual_run_id,
+                    cancel_inline_child,
+                    parent_run_id=actor.parent_run_id,
+                )
+                return plugin_entries
+            ceiling = handle.managed_resume_ceiling
+            if handle.managed_resume_handle_id is not None:
+                ceiling = plugin_service.fleet_resume_ceiling(
+                    handle.managed_resume_pin,
+                    handle.managed_resume_run_id,
+                    handle.managed_resume_handle_id,
+                    plugin_entries,
+                )
+            child_entries = plugin_service.constrain_entries(plugin_entries, ceiling)
+            plugin_service.bind_run(
+                child_entries,
+                actual_run_id,
+                lambda: service.cancel_subagent(handle.handle_id),
+                handle.handle_id,
+                parent_run_id=actor.parent_run_id,
+                component_ceiling=ceiling,
+            )
+            if handle.managed_pin is None:
+                pin = plugin_service.capture_resume_pin(
+                    child_entries,
+                    actual_run_id,
+                    session_id,
+                    handle.handle_id,
+                )
+                service._fleet.set_managed_custody(
+                    handle.handle_id,
+                    required=bool(plugin_entries),
+                    pin=pin,
+                    resume_ceiling=ceiling,
+                    resume_pin=handle.managed_resume_pin,
+                    resume_run_id=handle.managed_resume_run_id,
+                    resume_handle_id=handle.managed_resume_handle_id,
+                )
+            return child_entries
+
+        def plugin_run_terminal(actual_run_id: str) -> None:
+            if plugin_entries:
+                plugin_service.complete_run(actual_run_id)
+            if on_run_terminal is not None:
+                on_run_terminal(actual_run_id)
+
+        def plugin_checked_chat_call(**kwargs):
+            active_plugin_entries = ()
+            if plugin_entries:
+                active_plugin_entries = bind_plugin_actor()
+                plugin_service.check_entries_from_agent(active_plugin_entries)
+                from tldw_chatbook.Plugins.context import check_send_context
+
+                kwargs["messages_payload"] = check_send_context(
+                    kwargs["messages_payload"]
+                )
+            result = adapter.chat_call(**kwargs)
+            if plugin_entries:
+                plugin_service.check_entries_from_agent(active_plugin_entries)
+            return result
+
+        def finalize_managed_checkpoint(
+            checkpoint, conversation_id, message_id, run_id
+        ):
+            if plugin_producer_pin is None or run_id != plugin_root_id:
+                raise PermissionError("Managed continuation producer is unavailable.")
+            pin = json.loads(plugin_producer_pin)
+            session = self._store._session_or_raise(session_id)
+            if (
+                session.persisted_conversation_id != conversation_id
+                or message_id != assistant_message_id
+            ):
+                raise PermissionError("Managed continuation durable owner changed.")
+            if pin["conversation_id"] not in {session_id, conversation_id}:
+                raise PermissionError("Managed continuation original owner changed.")
+            pin["conversation_id"] = conversation_id
+            return plugin_service.seal_resume_checkpoint(
+                json.dumps(pin),
+                checkpoint,
+                conversation_id,
+                message_id,
+            )
+
+        def persist_continuation(event):
+            if (
+                plugin_entries
+                and event.context.durability == "persistent"
+                and event.context.agent_kind == "primary"
+            ):
+                bind_plugin_root(event.context.run_id)
+            return self._store.persist_provider_continuation_event(
+                event,
+                checkpoint_finalizer=(
+                    finalize_managed_checkpoint if plugin_entries else None
+                ),
+            )
+
+        hooks_v2_engine = self._get_hooks_v2(session_id) if self._get_hooks_v2 else None
         service = AgentService(
             self._db,
             registry,
-            chat_call=adapter.chat_call,
+            chat_call=plugin_checked_chat_call if plugin_entries else adapter.chat_call,
             runtime_capacity=self.runtime_capacity,
             work_origin=work_origin,
             work_chain_id=work_chain_id,
@@ -7206,6 +7721,7 @@ class ConsoleAgentBridge:
             clock=self._clock,
             app_config=self._app_config,
             on_step=on_step,
+            on_resolved_target=on_resolved_target,
             on_tool_activity=on_tool_activity,
             # TASK-25903: hands the controller a steer(text) bound to THIS
             # run once its mailbox registers -- run ids are minted inside
@@ -7216,6 +7732,21 @@ class ConsoleAgentBridge:
             skill_file_bindings=skill_file_bindings,
             review_tool_calls=review_tool_calls,
             guard_tool_calls=guard_tool_calls,
+            hooks_v2_engine=hooks_v2_engine,
+            hooks_v2_session_id=session_id,
+            hooks_v2_turn_id=assistant_message_id,
+            # Standalone work has no plugin dependency graph.
+            hooks_v2_required_handler_ids=lambda _run_id: (),
+            hooks_v2_definition_requirements=(
+                lambda definition, messages: (
+                    hooks_v2_engine.native_plugins.requirements_for(
+                        definition, registry, messages
+                    )
+                )
+            )
+            if hooks_v2_engine is not None
+            and getattr(hooks_v2_engine, "native_plugins", None) is not None
+            else None,
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
@@ -7234,17 +7765,29 @@ class ConsoleAgentBridge:
             on_tool_terminal=on_tool_terminal,
             on_tool_result_terminal=on_tool_result_terminal,
             on_run_terminal=lambda run_id: self._on_live_run_terminal(
-                run_id, on_run_terminal
+                run_id, plugin_run_terminal if plugin_entries else on_run_terminal
             ),
             run_model_scope=functools.partial(
                 self._live_usage_run_scope,
                 adapter,
                 conversation_id,
                 primary_live_key,
+                inline_subagents=subagents if fleet_coordinator is None else None,
             ),
-            persist_provider_continuation=(
-                self._store.persist_provider_continuation_event
+            managed_child_required=bool(plugin_entries),
+            managed_child_resume=(
+                (
+                    lambda retained: plugin_service.fleet_resume_ceiling(
+                        retained.managed_pin,
+                        retained.run_id,
+                        retained.handle_id,
+                        plugin_entries,
+                    )
+                )
+                if plugin_service is not None
+                else None
             ),
+            persist_provider_continuation=persist_continuation,
             expand_provider_continuation=expand_provider_continuation,
             prepare_provider_continuation_request=bool(
                 continuation_target is not None
@@ -8076,6 +8619,7 @@ class ConsoleAgentBridge:
                     retained.remove(waiter)
                 if not retained:
                     self._fleet_terminal_waiters.pop(conversation_id, None)
+
     def on_fleet_child_settled(
         self, name: str, consumer: Callable[[FleetChildSettled], None]
     ) -> None:
@@ -8553,19 +9097,60 @@ class ConsoleAgentBridge:
 
     @property
     def message_store(self):
-        """Create the shared progress store only when execution needs it."""
+        """Create the shared progress store; publish loaded hints after initialization."""
+        from tldw_chatbook.Agents.fleet_messages import MessageError, MessageStore
+
+        created = False
         with self._message_store_lock:
             if self._progress_closed:
-                from tldw_chatbook.Agents.fleet_messages import MessageError
-
                 raise MessageError("unavailable")
             if self._message_store is None:
-                from tldw_chatbook.Agents.fleet_messages import MessageStore
-
                 self._message_store = MessageStore()
+                self._message_store.on_enqueue = self._on_progress_enqueue
+                # Revocation may race construction; assignment precedes this
+                # check so close can always deny this exact newly created store.
+                if self._progress_closed:
+                    self._message_store.begin_close()
+                    raise MessageError("unavailable")
                 if self._store is not None:
-                    self._store.register_progress_message_store(self._message_store)
-            return self._message_store
+                    self._store.register_progress_message_store(
+                        self._message_store, publish_hints=False
+                    )
+                created = True
+            message_store = self._message_store
+            if self._progress_closed:
+                message_store.begin_close()
+                raise MessageError("unavailable")
+        if created and self._store is not None:
+            for session_id in self._store.progress_owner_ids():
+                if self._progress_closed or self._message_store is not message_store:
+                    break
+                self._store.publish_progress_inbox_hints(
+                    session_id, message_store=message_store
+                )
+        return message_store
+
+    def on_progress_enqueued(
+        self, name: str, consumer: Callable[[str, str, MessageIdentity], None]
+    ) -> None:
+        """Register body-free committed-report hints; callbacks grant no authority."""
+        with self._progress_consumer_lock:
+            self._progress_consumers[name] = consumer
+
+    def _on_progress_enqueue(
+        self, owner_key: str, message_id: str, identity: MessageIdentity
+    ) -> None:
+        """Publish only after queue admission/commit, outside queue and owner locks."""
+        with self._progress_consumer_lock:
+            consumers = tuple(self._progress_consumers.values())
+        for consumer in consumers:
+            try:
+                consumer(owner_key, message_id, identity)
+            except Exception as exc:  # noqa: BLE001 -- one hint cannot block another
+                logger.warning(
+                    "progress hint consumer raised (exception_type={})",
+                    type(exc).__name__,
+                )
 
     def _session_progress_inbox(self, session_id: str) -> MessageInbox | None:
         """Noncreating lookup of the native session's exact progress owner."""
@@ -8577,6 +9162,20 @@ class ConsoleAgentBridge:
             return (
                 self._message_store.get_inbox(owner_id) if owner_id is not None else None
             )
+
+    def progress_pending_metadata(
+        self, session_id: str
+    ) -> tuple[tuple[str, MessageIdentity], ...]:
+        """Read current IDs/source metadata for a native session; never consume."""
+        inbox = self._session_progress_inbox(session_id)
+        if inbox is None:
+            return ()
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        try:
+            return inbox.pending_metadata()
+        except MessageError:
+            return ()
 
     def progress_snapshot(self, owner_id: str) -> tuple[ProgressMessage, ...]:
         """Inspect an opaque owner key from store.progress_owner_id; never allocate."""
@@ -8618,28 +9217,99 @@ class ConsoleAgentBridge:
     def close_progress(
         self, session_id: str, *, conversation_id: str | None = None
     ) -> None:
-        """Release a native binding before cancellation; last close drops progress."""
+        """Revoke a native binding; last close retains saved pending reports."""
         if self._progress_closed or self._message_store is None:
-            return None
+            return
         with self._store.progress_owner_scope(
             session_id, release=True, message_store=self._message_store
         ) as owner_id:
             if owner_id is not None:
                 self._fleet_coordinators.pop(conversation_id or session_id, None)
 
-    def close_all_progress(self) -> None:
-        """Permanently invalidate progress before worker shutdown."""
+    def begin_close_progress(
+        self, session_id: str, *, conversation_id: str | None = None
+    ) -> None:
+        """Immediately revoke native authority; leave physical cleanup to runtime."""
+        if self._progress_closed or self._message_store is None:
+            return
+        message_store = self._message_store
+        with self._store.progress_owner_scope(
+            session_id, release=True, message_store=message_store, defer_close=True
+        ) as owner_id:
+            if owner_id is not None:
+                inbox = message_store.begin_close_inbox(owner_id)
+                self._progress_close_drains[session_id] = (
+                    message_store, owner_id, inbox
+                )
+                self._fleet_coordinators.pop(conversation_id or session_id, None)
+
+    async def await_progress_closed(self, session_id: str) -> None:
+        """Own exact queue cleanup until admitted SQL physically releases its lock."""
+        record = self._progress_close_drains.get(session_id)
+        if record is None:
+            return
+        message_store, owner_id, inbox = record
+        physical = asyncio.create_task(
+            asyncio.to_thread(message_store.finish_close_inbox, owner_id, inbox),
+            name=f"console-progress-close-{session_id[:8]}",
+        )
+        cancelled = False
+        try:
+            while True:
+                try:
+                    await asyncio.shield(physical)
+                    break
+                except asyncio.CancelledError:
+                    cancelled = True
+        finally:
+            if self._progress_close_drains.get(session_id) is record:
+                self._progress_close_drains.pop(session_id, None)
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def begin_close_all_progress(self) -> None:
+        """Immediately revoke all live authority without waiting for durable SQL."""
+        # This deny-only latch must never wait for initialization's SQL drain.
+        self._progress_closed = True
+        message_store = self._message_store
+        if message_store is not None:
+            message_store.begin_close()
         with self._runtime_capacity_lock:
             self._runtime_capacity_closed = True
-        with self._message_store_lock:
-            self._progress_closed = True
-            if self._message_store is not None:
-                self._message_store.close()
-            self._fleet_coordinators.clear()
+        self._fleet_coordinators.clear()
         with self._live_usage_lock:
             self._live_usage_closed = True
             self._live_turn_usage.clear()
             self._live_usage_owners.clear()
+
+    async def await_all_progress_closed(self) -> None:
+        """Retain physical queue cleanup through close timeout or cancellation."""
+        if self._progress_shutdown_task is None:
+            self._progress_shutdown_task = asyncio.create_task(
+                asyncio.to_thread(self._finish_close_all_progress),
+                name="console-progress-dispose",
+            )
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(self._progress_shutdown_task)
+                break
+            except asyncio.CancelledError:
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+
+    def _finish_close_all_progress(self) -> None:
+        """Wait away from the UI for initialization, then release exact queue state."""
+        with self._message_store_lock:
+            message_store = self._message_store
+        if message_store is not None:
+            message_store.close()
+
+    def close_all_progress(self) -> None:
+        """Synchronous compatibility cleanup outside runtime's async disposal."""
+        self.begin_close_all_progress()
+        self._finish_close_all_progress()
 
     def _conversation_fleet_coordinator(
         self,
@@ -8647,6 +9317,7 @@ class ConsoleAgentBridge:
         *,
         create: bool = True,
         progress_owner_id: str | None = None,
+        message_inbox: MessageInbox | None = None,
     ) -> FleetCoordinator | None:
         """The coordinator for this conversation, built on first use.
 
@@ -8722,13 +9393,26 @@ class ConsoleAgentBridge:
                 )
             )
         )
+        progress_store = self.message_store
+        if message_inbox is None:
+            message_inbox = progress_store.get_inbox(progress_owner_id or conversation_id)
+            if message_inbox is None and create:
+                # Production passes the exact native-prepared inbox; legacy
+                # direct callers also wait before taking fleet admission.
+                message_inbox = progress_store.open_inbox(
+                    progress_owner_id or conversation_id
+                )
         with self._fleet_admission_lock:
+            if self._progress_closed:
+                from tldw_chatbook.Agents.fleet_messages import MessageError
+
+                raise MessageError("unavailable")
             coordinator = self._fleet_coordinators.get(conversation_id)
             if (
                 coordinator is not None
                 and progress_owner_id is not None
                 and coordinator.message_inbox
-                is not self.message_store.get_inbox(progress_owner_id)
+                is not message_inbox
             ):
                 # Native state replacement closed the previous inbox. A new binding
                 # must not reuse a coordinator carrying that revoked capability.
@@ -8740,7 +9424,7 @@ class ConsoleAgentBridge:
                 coordinator = FleetCoordinator(
                     max_live=max_live,
                     clock=self._clock,
-                    message_inbox=self.message_store.open_inbox(progress_owner_id or conversation_id),
+                    message_inbox=message_inbox,
                     retained_transcripts=retained_transcripts,
                     retained_transcript_max_chars=retained_transcript_max_chars,
                     on_reserve=functools.partial(
@@ -9006,7 +9690,35 @@ class ConsoleAgentBridge:
         primary_live_key: str,
         run_id: str,
         agent_kind: str,
+        *,
+        inline_subagents: list[SubAgentSummary] | None = None,
     ):
+        snapshot = self._live.get(conversation_id, {}).get(primary_live_key)
+        if (
+            agent_kind == AGENT_KIND_SUBAGENT
+            and inline_subagents
+            and snapshot is not None
+            and snapshot.steps
+            and snapshot.steps[-1].kind == STEP_SPAWN
+        ):
+            # An inline child's model scope starts after its row is saved,
+            # before its first provider call. The primary's pending SPAWN
+            # identifies the latest fallback row; skill calls/refusals cannot
+            # reuse it after their parent step has advanced.
+            target = self._db.get_run_resolved_target(run_id)
+            if target is not None:
+                inline_subagents[-1] = dataclass_replace(
+                    inline_subagents[-1],
+                    run_id=run_id,
+                    resolved_provider=target["provider"],
+                    resolved_model=target["model"],
+                )
+                self._publish_live(
+                    conversation_id,
+                    primary_live_key,
+                    dataclass_replace(snapshot, subagents=tuple(inline_subagents)),
+                    primary=False,
+                )
         owner = (conversation_id, agent_kind, primary_live_key)
         with self._live_usage_lock:
             registered = not self._live_usage_closed
@@ -9481,18 +10193,19 @@ class ConsoleAgentBridge:
         self, conversation_id: str, drill_id: str | None
     ) -> str | None:
         """Resolve a log selection using metadata only. Call from a worker."""
-        if not conversation_id:
-            return None
-        if drill_id:
-            record = self._db.get_run_metadata(drill_id)
-            if (
-                record is not None
-                and record.get("conversation_id") == conversation_id
-                and record.get("agent_kind") == AGENT_KIND_SUBAGENT
-            ):
-                return drill_id
-            return None
-        return self.latest_primary_run_id(conversation_id)
+        with operation_owned_connection(self._db):
+            if not conversation_id:
+                return None
+            if drill_id:
+                record = self._db.get_run_metadata(drill_id)
+                if (
+                    record is not None
+                    and record.get("conversation_id") == conversation_id
+                    and record.get("agent_kind") == AGENT_KIND_SUBAGENT
+                ):
+                    return drill_id
+                return None
+            return self.latest_primary_run_id(conversation_id)
 
     def latest_primary_run_id(self, conversation_id: str) -> str | None:
         """Return the most recent non-superseded PRIMARY run's id, if any.
@@ -9584,9 +10297,10 @@ class ConsoleAgentBridge:
             rather than a lookup error); its ``parent_run_id`` when it is
             a recorded sub-agent run.
         """
-        record = self._db.get_run_metadata(run_id)
-        parent_run_id = record.get("parent_run_id") if record else None
-        return parent_run_id or run_id
+        with operation_owned_connection(self._db):
+            record = self._db.get_run_metadata(run_id)
+            parent_run_id = record.get("parent_run_id") if record else None
+            return parent_run_id or run_id
 
     def run_log_available(
         self, run_id: str, *, cancelled: Callable[[], bool] | None = None
@@ -10638,6 +11352,29 @@ class ConsoleAgentBridge:
                 if any(step.get(key) for key in ("summary", "result", "tool_name")):
                     detail = ConsoleAgentBridge._summarize_persisted_step(step)
                     break
+        provider = record.get("resolved_provider")
+        model = record.get("resolved_model")
+        if record.get("fallback_targets_json") is not None:
+            provider = model = None
+            try:
+                targets = json.loads(record["fallback_targets_json"])
+                index = record.get("active_fallback_index", 0)
+                if (
+                    type(targets) is list
+                    and 1
+                    <= len(targets)
+                    <= agent_models_constants.MAX_PRESET_FALLBACK_MODELS + 1
+                    and type(index) is int
+                    and 0 <= index < len(targets)
+                ):
+                    target = targets[index]
+                    if isinstance(target, dict) and all(
+                        isinstance(target.get(key), str) and target[key]
+                        for key in ("provider", "model")
+                    ):
+                        provider, model = target["provider"], target["model"]
+            except (ValueError, TypeError):
+                pass
         return SubAgentSummary(
             text=str(record.get("task") or "sub-agent"),
             status=str(record.get("status") or "running"),
@@ -10646,6 +11383,8 @@ class ConsoleAgentBridge:
             created_at=record.get("created_at"),
             updated_at=record.get("updated_at"),
             detail=detail,
+            resolved_provider=provider,
+            resolved_model=model,
         )
 
     @staticmethod
@@ -10694,6 +11433,7 @@ def build_chat_create_tool_closures(
     *,
     confirm: Callable[[dict], dict],
     execute: Callable[[dict], dict],
+    prepare: Callable[[dict], dict] | None = None,
     session_id: str,
     run_id: str,
 ) -> tuple[Callable[[dict], ToolResult], Callable[[dict], ToolResult]]:
@@ -10722,6 +11462,7 @@ def build_chat_create_tool_closures(
         ``(fork_chat_tool, new_chat_tool)`` -- each ``args -> ToolResult``.
     """
     denials = {"fork_chat": 0, "new_chat": 0}
+    remembered: set[object] = set()
 
     def _run(tool: str, args: dict) -> ToolResult:
         if denials[tool] >= _CHAT_CREATE_DENIAL_LIMIT:
@@ -10755,6 +11496,13 @@ def build_chat_create_tool_closures(
                     error=f"invalid_args: {name} must be a string, got "
                     f"{type(value).__name__}",
                 )
+        if tool == "new_chat":
+            try:
+                public = validate_new_chat_arguments(args)
+            except ValueError as exc:
+                return ToolResult(ok=False, error=str(exc))
+        else:
+            public = {}
         title = raw_title.strip()[:CHAT_CREATE_TITLE_MAX]
         opening_prompt = raw_prompt
         instructions = raw_instructions
@@ -10783,23 +11531,49 @@ def build_chat_create_tool_closures(
             "model": model,
             "preset": preset,
         }
-        # Qodo 2761 round, finding 1: NO closure-local remember memo. The
-        # controller's session grants are the single remember authority,
-        # and they REFUSE to ride for sub-agent requesters -- caching a
-        # remember here would let a later child-run call on this turn skip
-        # consent entirely.
-        try:
-            decision = confirm(dict(payload))
-        except Exception:  # noqa: BLE001 — a UI error fails closed
-            decision = {"allow": False, "remember": False}
-        if not isinstance(decision, Mapping) or not decision.get(
-            "allow", False
-        ):
-            denials[tool] += 1
-            return ToolResult(
-                ok=False,
-                error="The user declined. Do not retry this turn.",
-            )
+        grant_scope: object = tool
+        if tool == "new_chat":
+            if prepare is None:
+                return ToolResult(ok=False, error="creation_preparation_unavailable")
+            from tldw_chatbook.Agents.run_context import current_run_id
+
+            payload.update(public)
+            payload["source_run_id"] = current_run_id()
+            payload["source_message_id"] = run_id
+            try:
+                payload = prepare(payload)
+                grant_scope = payload["_grant_scope"]
+                hash(grant_scope)
+                if payload.get("_creation_token") is None:
+                    raise ValueError("creation_authority_unavailable")
+            except Exception as exc:
+                from tldw_chatbook.Agents.agent_routing import RoutingError
+
+                if isinstance(exc, RoutingError):
+                    return ToolResult(ok=False, error=f"{exc.code}: {exc}")
+                return ToolResult(ok=False, error="creation_preparation_refused")
+        # Trusted preparation rechecks the captured primary or child actor.
+        # Child decisions never remember, so every child request confirms anew.
+        child_request = (
+            tool == "new_chat" and payload.get("source_agent_kind") == "subagent"
+        )
+        if tool != "new_chat" or child_request or grant_scope not in remembered:
+            try:
+                decision = confirm(dict(payload))
+            except Exception:
+                decision = {"allow": False, "remember": False}
+            if not isinstance(decision, Mapping) or not decision.get("allow", False):
+                denials[tool] += 1
+                _release_chat_creation_token(payload)
+                return ToolResult(
+                    ok=False, error="The user declined. Do not retry this turn."
+                )
+            if (
+                tool == "new_chat"
+                and not child_request
+                and decision.get("remember", False)
+            ):
+                remembered.add(grant_scope)
         # Broad-catch the EXECUTE phase exactly like the sibling
         # run_skill_script_tool does: a raising executor must surface as
         # the outcome contract (ok=False, execution_failed), never as an
@@ -10809,6 +11583,8 @@ def build_chat_create_tool_closures(
             outcome = execute(dict(payload))
         except Exception as exc:  # noqa: BLE001 — the outcome contract is the error boundary
             return ToolResult(ok=False, error=f"execution_failed: {exc}")
+        finally:
+            _release_chat_creation_token(payload)
         if not isinstance(outcome, dict) or not outcome.get("ok"):
             kind = (
                 str(outcome.get("kind", "execution_failed"))
@@ -10826,6 +11602,11 @@ def build_chat_create_tool_closures(
             "opening prompt as a draft in its input box; the user reviews and "
             "sends it themselves. Do not send messages into the new chat."
         )
+        if tool == "new_chat":
+            note = (
+                "Creation is saved. Do not repeat creation to recover a blocked "
+                "or uncertain start. Inspect this chat and use its normal controls."
+            )
         content = json.dumps(
             {
                 "title": outcome.get("title"),
@@ -10834,6 +11615,20 @@ def build_chat_create_tool_closures(
                 "copied_messages": outcome.get("copied_messages"),
                 "draft_set": bool(outcome.get("draft_set")),
                 "note": note,
+                **(
+                    {
+                        key: outcome.get(key)
+                        for key in (
+                            "destination",
+                            "scope_type",
+                            "mode",
+                            "launch_status",
+                            "reason",
+                        )
+                    }
+                    if tool == "new_chat"
+                    else {}
+                ),
             }
         )
         return ToolResult(ok=True, content=content)
@@ -10845,3 +11640,33 @@ def build_chat_create_tool_closures(
         return _run("new_chat", args)
 
     return fork_chat_tool, new_chat_tool
+
+
+def validate_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
+    """Validate public creation fields without carrying model-supplied authority.
+
+    Args:
+        arguments: Public title, opening_prompt, instructions, destination,
+            mode, and optional provider/model/preset strings. Omitted fields
+            retain empty-string, same_workspace, and draft defaults. Unknown
+            authority fields are discarded by the shared validator.
+
+    Returns:
+        The eight validated fields, with title trimmed after its length check
+        and literal prompts, instructions, and routing strings preserved.
+
+    Raises:
+        ValueError: An input-free invalid_args or payload_too_large category for
+            non-string fields, unsupported choices, exceeded limits, or a
+            blank opening_prompt in start mode.
+    """
+    from tldw_chatbook.Utils.input_validation import validate_console_new_chat_arguments
+
+    return validate_console_new_chat_arguments(arguments)
+
+
+def _release_chat_creation_token(payload: dict) -> None:
+    """Drop private preparation custody on every terminal tool path."""
+    release = getattr(payload.get("_creation_token"), "close", None)
+    if callable(release):
+        release()

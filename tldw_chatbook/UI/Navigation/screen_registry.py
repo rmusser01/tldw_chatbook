@@ -7,7 +7,13 @@ from importlib import import_module
 
 from loguru import logger
 
-from tldw_chatbook.Constants import TAB_CCP, TAB_LLM, TAB_MCP, TAB_MEETINGS, TAB_RESEARCH_WORKSPACE
+from tldw_chatbook.Constants import (
+    TAB_CCP,
+    TAB_LLM,
+    TAB_MCP,
+    TAB_MEETINGS,
+    TAB_RESEARCH_WORKSPACE,
+)
 from .shell_destinations import resolve_shell_route
 
 
@@ -67,8 +73,10 @@ class ScreenRoute:
 
 _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     "chunking_lab": ScreenRoute(
-        "chunking_lab", "library",
-        "tldw_chatbook.UI.Screens.chunking_lab_screen", "ChunkingLabScreen",
+        "chunking_lab",
+        "library",
+        "tldw_chatbook.UI.Screens.chunking_lab_screen",
+        "ChunkingLabScreen",
     ),
     "home": ScreenRoute(
         "home",
@@ -138,7 +146,10 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
         "WorkflowsScreen",
     ),
     TAB_MEETINGS: ScreenRoute(
-        "meetings", TAB_MEETINGS, "tldw_chatbook.UI.Screens.meetings_screen", "MeetingsScreen"
+        "meetings",
+        TAB_MEETINGS,
+        "tldw_chatbook.UI.Screens.meetings_screen",
+        "MeetingsScreen",
     ),
     "mcp": ScreenRoute(
         "mcp", TAB_MCP, "tldw_chatbook.UI.Screens.mcp_screen", "MCPScreen"
@@ -194,7 +205,10 @@ _SCREEN_ROUTES: dict[str, ScreenRoute] = {
     # the Workbench migration owner stays "library"
     # (UI/Workbench/route_inventory.py).
     "research": ScreenRoute(
-        "research", "research", "tldw_chatbook.UI.Screens.research_screen", "ResearchScreen"
+        "research",
+        "research",
+        "tldw_chatbook.UI.Screens.research_screen",
+        "ResearchScreen",
     ),
     # Task 1 records the lazy route contract. The screen module is created by
     # the dedicated screen task, so this metadata is intentionally not

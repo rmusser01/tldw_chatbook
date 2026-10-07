@@ -112,7 +112,9 @@ def test_no_lazy_first_import_of_textual_image_widget_without_warmup():
     """
     helper = (
         Path(__file__).resolve().parents[2]
-        / "tldw_chatbook" / "Utils" / "terminal_utils.py"
+        / "tldw_chatbook"
+        / "Utils"
+        / "terminal_utils.py"
     ).read_text(encoding="utf-8")
     assert "def warm_up_image_protocol" in helper
     assert re.search(r"import_module\(\s*[\"']textual_image\.widget[\"']", helper)

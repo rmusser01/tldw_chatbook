@@ -107,27 +107,15 @@ def builtin_case(tmp_path, monkeypatch, helper_resource_root, request):
         db = CharactersRAGDB(core, "fixture")
         try:
             if owner_id == "persona.assets":
-                from Tests.Persona_Visual.test_persona_visual_publication import (
-                    _snapshot,
-                )
-                from tldw_chatbook.Persona_Visual.publication import (
-                    publish_persona_visual,
-                )
-                from tldw_chatbook.Persona_Visual.repository import (
-                    PersonaVisualRepository,
+                from Tests.Backup_Recovery.test_created_persona_subtree_rollback import (
+                    _seed_persona,
                 )
 
                 selected.unlink()
                 selected.parent.rmdir()
                 source = tmp_path / "legacy-source"
                 source.mkdir(mode=0o700)
-                publish_persona_visual(
-                    PersonaVisualRepository(db),
-                    _snapshot(source),
-                    source_root=source,
-                    profile_root=selector.parent,
-                    authority_guard=lambda: True,
-                )
+                _seed_persona(db, source, selector.parent)
                 selected = (
                     selector.parent
                     / db.get_connection()
@@ -370,7 +358,9 @@ def test_builtin_safety_requires_explicit_finite_member_closure(
     }
     if omitted != "foreign_owner":
         pending = bootstrap._records(tmp_path / "bootstrap")[0]
-        with pytest.raises(ValueError, match="^rollback_dependency_selection_required$"):
+        with pytest.raises(
+            ValueError, match="^rollback_dependency_selection_required$"
+        ):
             stage_restore(archive, plan, tmp_path / "builtin-stage", Event())
         assert not (tmp_path / "builtin-stage").exists()
         assert bootstrap._records(tmp_path / "bootstrap")[0] == pending

@@ -268,7 +268,11 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
             self.owner_id,
             self.versions,
             self.schemas,
-            ((18, 21, _AGENT_RUNS_MIGRATION_18_21),),
+            (
+                (18, 21, _AGENT_RUNS_MIGRATION_18_21),
+                (21, 22, _AGENT_RUNS_MIGRATION_21_22),
+                (22, 23, _AGENT_RUNS_MIGRATION_22_23),
+            ),
         )
 
     def validate(self, candidate: Path) -> tuple[str, ...]:
@@ -442,6 +446,7 @@ _SUBSCRIPTIONS_SCHEMA = (
             "CREATE INDEX idx_flashcard_templates_name ON flashcard_templates(name)",
             "CREATE INDEX idx_flashcards_deck_id ON flashcards(deck_id)",
             "CREATE INDEX idx_flashcards_next_review ON flashcards(next_review)",
+            "CREATE INDEX idx_hook_continuation_receipts_conversation\n    ON console_hook_continuation_receipts(conversation_id)",
             "CREATE INDEX idx_kept_briefings_kept_at ON kept_briefings(kept_at DESC, id DESC)",
             "CREATE INDEX idx_kept_scripts_briefing ON kept_scripts(kept_briefing_id)",
             "CREATE INDEX idx_local_watchlist_runs_batch ON local_watchlist_runs(batch_id)",
@@ -586,7 +591,7 @@ _SUBSCRIPTIONS_SCHEMA = (
             "CREATE TABLE 'chat_dictionaries_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
             "CREATE TABLE 'chat_dictionaries_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
             "CREATE TABLE collection_keywords(\n  collection_id INTEGER NOT NULL REFERENCES keyword_collections(id) ON DELETE CASCADE ON UPDATE CASCADE,\n  keyword_id    INTEGER NOT NULL REFERENCES keywords(id)            ON DELETE CASCADE ON UPDATE CASCADE,\n  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY(collection_id,keyword_id)\n)",
-            "CREATE TABLE console_auxiliary_attempts(\n  operation_id             TEXT PRIMARY KEY NOT NULL,\n  conversation_id          TEXT NOT NULL\n                               REFERENCES conversations(id)\n                               ON DELETE CASCADE ON UPDATE CASCADE,\n  purpose                  TEXT NOT NULL,\n  provider                 TEXT NOT NULL,\n  model                    TEXT NOT NULL,\n  requested_output_cap     INTEGER NOT NULL CHECK(requested_output_cap > 0),\n  estimated_input_tokens   INTEGER NOT NULL CHECK(estimated_input_tokens >= 0),\n  status                   TEXT NOT NULL\n                                CHECK(status IN ('started','succeeded','failed','cancelled','stale','timed_out')),\n  started_at               DATETIME NOT NULL,\n  finished_at              DATETIME,\n  elapsed_ms               INTEGER CHECK(elapsed_ms >= 0),\n  pricing_provenance_json  TEXT,\n  provider_usage_json      TEXT\n)",
+            "CREATE TABLE console_auxiliary_attempts(\n  operation_id             TEXT PRIMARY KEY NOT NULL,\n  conversation_id          TEXT NOT NULL\n                               REFERENCES conversations(id)\n                               ON DELETE CASCADE ON UPDATE CASCADE,\n  purpose                  TEXT NOT NULL,\n  provider                 TEXT NOT NULL,\n  model                    TEXT NOT NULL,\n  requested_output_cap     INTEGER NOT NULL CHECK(requested_output_cap > 0),\n  estimated_input_tokens   INTEGER NOT NULL CHECK(estimated_input_tokens >= 0),\n  status                   TEXT NOT NULL\n                                CHECK(status IN ('started','succeeded','failed','cancelled','stale','timed_out')),\n  started_at               DATETIME NOT NULL,\n  finished_at              DATETIME,\n  elapsed_ms               INTEGER CHECK(elapsed_ms >= 0),\n  pricing_provenance_json  TEXT,\n  provider_usage_json      TEXT\n, failure_reason TEXT\n  CHECK(\n    failure_reason IS NULL\n    OR (\n      status IN ('failed', 'cancelled', 'stale', 'timed_out')\n      AND length(failure_reason) BETWEEN 1 AND 64\n      AND failure_reason GLOB '[a-z]*'\n      AND failure_reason NOT GLOB '*[^a-z_]*'\n    )\n  ))",
             "CREATE TABLE console_conversation_capture_policy(\n  conversation_id TEXT PRIMARY KEY NOT NULL\n    REFERENCES conversations(id) ON DELETE CASCADE,\n  capture_detail TEXT NULL CHECK (capture_detail IN ('safe', 'full')),\n  capture_enabled INTEGER NULL CHECK (capture_enabled IN (0, 1)),\n  pii_redaction_enabled INTEGER NULL CHECK (pii_redaction_enabled IN (0, 1)),\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  CHECK (\n    capture_detail IS NOT NULL\n    OR capture_enabled IS NOT NULL\n    OR pii_redaction_enabled IS NOT NULL\n  )\n)",
             "CREATE TABLE console_conversation_context_policy(\n  conversation_id      TEXT PRIMARY KEY\n                            REFERENCES conversations(id)\n                            ON DELETE CASCADE ON UPDATE CASCADE,\n  budget_mode          TEXT CHECK(budget_mode IN ('automatic','custom')),\n  custom_budget_tokens INTEGER CHECK(custom_budget_tokens > 0),\n  compaction_mode      TEXT CHECK(compaction_mode IN ('ask','automatic','off')),\n  trigger_ratio        REAL CHECK(trigger_ratio > 0 AND trigger_ratio <= 0.95),\n  target_ratio         REAL CHECK(target_ratio > 0 AND target_ratio < 1),\n  summary_max_tokens   INTEGER CHECK(summary_max_tokens > 0),\n  failure_behavior     TEXT CHECK(failure_behavior IN ('stop_and_ask','omit_older_context')),\n  carry_forward_mode   TEXT CHECK(carry_forward_mode IN ('memory_with_recent_turns','memory_with_latest_exchange')),\n  policy_revision      INTEGER NOT NULL DEFAULT 1 CHECK(policy_revision > 0),\n  updated_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n, compaction_representation TEXT\n    CHECK(compaction_representation IN ('text_summary','visual_transcript','hybrid')))",
             "CREATE TABLE console_conversation_library_policy (\n    conversation_id TEXT PRIMARY KEY\n        REFERENCES conversations(id)\n        ON DELETE CASCADE ON UPDATE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    auto_retrieve_on_send INTEGER NOT NULL DEFAULT 0\n        CHECK(auto_retrieve_on_send IN (0, 1)),\n    assistant_library_access INTEGER NOT NULL DEFAULT 0\n        CHECK(assistant_library_access IN (0, 1)),\n    policy_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(policy_revision > 0),\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
@@ -594,6 +599,7 @@ _SUBSCRIPTIONS_SCHEMA = (
             "CREATE TABLE console_conversation_memory_scopes(\n  memory_id                   TEXT NOT NULL,\n  conversation_id             TEXT NOT NULL\n                                  REFERENCES conversations(id)\n                                  ON DELETE CASCADE ON UPDATE CASCADE,\n  coverage_kind               TEXT NOT NULL\n                                  CHECK(coverage_kind IN ('prefix', 'range')),\n  origin_kind                 TEXT NOT NULL\n                                  CHECK(origin_kind IN ('automatic', 'manual_rewind')),\n  selection_anchor_message_id TEXT,\n  PRIMARY KEY (memory_id),\n  FOREIGN KEY (memory_id, conversation_id)\n    REFERENCES console_conversation_memories(id, conversation_id)\n    ON DELETE CASCADE ON UPDATE CASCADE,\n  FOREIGN KEY (conversation_id, selection_anchor_message_id)\n    REFERENCES messages(conversation_id, id)\n    ON DELETE RESTRICT ON UPDATE CASCADE,\n  CHECK(\n    (origin_kind = 'automatic'\n      AND coverage_kind = 'prefix'\n      AND selection_anchor_message_id IS NULL)\n    OR\n    (origin_kind = 'manual_rewind'\n      AND selection_anchor_message_id IS NOT NULL)\n  )\n)",
             "CREATE TABLE console_conversation_memory_selections(\n  sequence              INTEGER PRIMARY KEY AUTOINCREMENT,\n  selection_id          TEXT NOT NULL UNIQUE,\n  conversation_id       TEXT NOT NULL\n                           REFERENCES conversations(id)\n                           ON DELETE CASCADE ON UPDATE CASCADE,\n  activation_message_id TEXT NOT NULL,\n  selected_memory_id    TEXT,\n  event_kind            TEXT NOT NULL CHECK(event_kind IN ('select', 'reset')),\n  suppresses_legacy     INTEGER NOT NULL DEFAULT 0 CHECK(suppresses_legacy IN (0, 1)),\n  created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  revision              INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),\n  active                INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0, 1)),\n  FOREIGN KEY (conversation_id, activation_message_id)\n    REFERENCES messages(conversation_id, id)\n    ON DELETE RESTRICT ON UPDATE CASCADE,\n  FOREIGN KEY (selected_memory_id, conversation_id)\n    REFERENCES console_conversation_memories(id, conversation_id)\n    ON DELETE RESTRICT ON UPDATE CASCADE,\n  CHECK(\n    (event_kind = 'select' AND selected_memory_id IS NOT NULL)\n    OR\n    (event_kind = 'reset' AND selected_memory_id IS NULL)\n  )\n)",
             "CREATE TABLE console_dispatch_checkpoints (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued')),\n    queue_entry_id TEXT,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
+            "CREATE TABLE console_hook_continuation_receipts (\n    parent_turn_id TEXT NOT NULL CHECK(length(parent_turn_id) > 0),\n    stop_event_id TEXT NOT NULL CHECK(length(stop_event_id) > 0),\n    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,\n    parent_assistant_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,\n    assistant_message_id TEXT NOT NULL,\n    chain_id TEXT NOT NULL CHECK(length(chain_id) > 0),\n    admitted_turns INTEGER NOT NULL CHECK(admitted_turns BETWEEN 1 AND 3),\n    initiator TEXT NOT NULL CHECK(initiator = 'hook_continuation'),\n    PRIMARY KEY(parent_turn_id, stop_event_id)\n)",
             "CREATE TABLE console_trace_artifacts(\n  artifact_id TEXT PRIMARY KEY NOT NULL,\n  identity_digest TEXT NOT NULL\n    CHECK(length(identity_digest) = 64)\n    CHECK(identity_digest NOT GLOB '*[^0-9a-f]*'),\n  media_type TEXT NOT NULL CHECK(length(media_type) > 0),\n  normalization_version TEXT NOT NULL CHECK(length(normalization_version) > 0),\n  sanitized_bytes BLOB NOT NULL,\n  byte_length INTEGER NOT NULL CHECK(byte_length >= 0),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  CHECK(typeof(sanitized_bytes) = 'blob'),\n  CHECK(length(sanitized_bytes) = byte_length)\n)",
             "CREATE TABLE console_trace_calls(\n  call_id TEXT PRIMARY KEY NOT NULL,\n  owner_id TEXT NOT NULL REFERENCES console_trace_owners(owner_id),\n  segment_id TEXT NOT NULL REFERENCES console_trace_segments(segment_id),\n  turn_id TEXT NOT NULL,\n  run_id TEXT NOT NULL,\n  call_sequence INTEGER NOT NULL CHECK(call_sequence >= 0),\n  idempotency_key TEXT NOT NULL CHECK(length(idempotency_key) > 0),\n  policy_id TEXT NOT NULL REFERENCES console_trace_policies(policy_id),\n  state TEXT NOT NULL DEFAULT 'reserved' CHECK(state IN (\n    'reserved', 'not_dispatched', 'dispatch_started', 'dispatch_unknown',\n    'response_started', 'complete', 'stopped', 'error', 'interrupted',\n    'abandoned'\n  )),\n  surface_node_id TEXT DEFAULT NULL REFERENCES console_trace_surface_nodes(node_id),\n  request_header_id TEXT DEFAULT NULL\n    REFERENCES console_trace_request_headers(header_id),\n  provider_name TEXT DEFAULT NULL,\n  model_name TEXT DEFAULT NULL,\n  route_identity TEXT DEFAULT NULL,\n  dispatch_started_at TEXT DEFAULT NULL,\n  response_started_at TEXT DEFAULT NULL,\n  settled_at TEXT DEFAULT NULL,\n  provider_inactive_at TEXT DEFAULT NULL,\n  outcome TEXT DEFAULT NULL CHECK(outcome IS NULL OR outcome IN (\n    'complete', 'stopped', 'error', 'interrupted', 'abandoned'\n  )),\n  usage_json TEXT DEFAULT NULL\n    CHECK(usage_json IS NULL OR\n          (json_valid(usage_json) AND json_type(usage_json) = 'object')),\n  integrity_state TEXT NOT NULL DEFAULT 'pending'\n    CHECK(integrity_state IN ('pending', 'complete', 'incomplete')),\n  omission_reason_code TEXT DEFAULT NULL,\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, reservation_provenance TEXT NOT NULL\n  DEFAULT 'crash_durable_reserved'\n  CHECK(reservation_provenance IN (\n    'crash_durable_reserved', 'post_dispatch_promoted'\n  )), import_reason_code TEXT DEFAULT NULL\n  CHECK(import_reason_code IS NULL OR\n        import_reason_code = 'provisional_voice_promoted'),\n  CHECK(\n    (surface_node_id IS NULL AND request_header_id IS NULL) OR\n    (surface_node_id IS NOT NULL AND request_header_id IS NOT NULL)\n  ),\n  CHECK(\n    (provider_name IS NULL AND model_name IS NULL AND route_identity IS NULL) OR\n    (provider_name IS NOT NULL AND model_name IS NOT NULL AND\n     route_identity IS NOT NULL)\n  ),\n  CHECK(\n    state IN ('reserved', 'not_dispatched') OR\n    (surface_node_id IS NOT NULL AND request_header_id IS NOT NULL AND\n     provider_name IS NOT NULL AND dispatch_started_at IS NOT NULL)\n  ),\n  CHECK(\n    (state IN ('complete', 'stopped', 'error', 'interrupted', 'abandoned') AND\n     outcome = state) OR\n    (state NOT IN ('complete', 'stopped', 'error', 'interrupted', 'abandoned') AND\n     outcome IS NULL)\n  ),\n  CHECK(\n    (state = 'reserved' AND dispatch_started_at IS NULL AND\n     response_started_at IS NULL AND settled_at IS NULL AND\n     provider_inactive_at IS NULL) OR\n    (state = 'not_dispatched' AND dispatch_started_at IS NULL AND\n     response_started_at IS NULL AND settled_at IS NOT NULL AND\n     provider_inactive_at IS NULL) OR\n    (state = 'dispatch_started' AND dispatch_started_at IS NOT NULL AND\n     response_started_at IS NULL AND settled_at IS NULL AND\n     provider_inactive_at IS NULL) OR\n    (state = 'dispatch_unknown' AND dispatch_started_at IS NOT NULL AND\n     response_started_at IS NULL AND settled_at IS NOT NULL AND\n     provider_inactive_at IS NULL) OR\n    (state = 'response_started' AND dispatch_started_at IS NOT NULL AND\n     response_started_at IS NOT NULL AND settled_at IS NULL AND\n     provider_inactive_at IS NULL) OR\n    (state IN ('complete', 'stopped', 'interrupted') AND\n     dispatch_started_at IS NOT NULL AND response_started_at IS NOT NULL AND\n     settled_at IS NOT NULL AND provider_inactive_at IS NULL) OR\n    (state = 'error' AND dispatch_started_at IS NOT NULL AND\n     settled_at IS NOT NULL AND provider_inactive_at IS NULL) OR\n    (state = 'abandoned' AND dispatch_started_at IS NOT NULL AND\n     response_started_at IS NULL AND settled_at IS NOT NULL AND\n     provider_inactive_at IS NOT NULL)\n  ),\n  CHECK(\n    usage_json IS NULL OR\n    state IN ('complete', 'stopped', 'error', 'interrupted', 'abandoned')\n  )\n)",
             "CREATE TABLE console_trace_compaction_state(\n  singleton_id INTEGER PRIMARY KEY NOT NULL CHECK(singleton_id = 1),\n  status TEXT NOT NULL DEFAULT 'pending'\n    CHECK(status IN ('pending', 'running', 'complete')),\n  reason_code TEXT NOT NULL DEFAULT 'awaiting_gc'\n    CHECK(length(reason_code) BETWEEN 1 AND 64),\n  last_gc_request_id TEXT DEFAULT NULL\n    CHECK(last_gc_request_id IS NULL OR length(last_gc_request_id) BETWEEN 1 AND 128),\n  attempt_id TEXT DEFAULT NULL\n    CHECK(attempt_id IS NULL OR length(attempt_id) BETWEEN 1 AND 128),\n  retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count BETWEEN 0 AND 32),\n  next_retry_at TEXT DEFAULT NULL,\n  progress_basis_points INTEGER NOT NULL DEFAULT 0\n    CHECK(progress_basis_points BETWEEN 0 AND 10000),\n  allocated_bytes_before INTEGER NOT NULL DEFAULT 0 CHECK(allocated_bytes_before >= 0),\n  allocated_bytes_after INTEGER NOT NULL DEFAULT 0 CHECK(allocated_bytes_after >= 0),\n  freelist_bytes_before INTEGER NOT NULL DEFAULT 0 CHECK(freelist_bytes_before >= 0),\n  freelist_bytes_after INTEGER NOT NULL DEFAULT 0 CHECK(freelist_bytes_after >= 0),\n  wal_bytes_before INTEGER NOT NULL DEFAULT 0 CHECK(wal_bytes_before >= 0),\n  wal_bytes_after INTEGER NOT NULL DEFAULT 0 CHECK(wal_bytes_after >= 0),\n  logical_live_bytes INTEGER NOT NULL DEFAULT 0 CHECK(logical_live_bytes >= 0),\n  started_at TEXT DEFAULT NULL,\n  completed_at TEXT DEFAULT NULL,\n  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
@@ -1230,7 +1236,13 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             stamp = connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()
-            if stamp != (73,):
+            actual = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+                )
+            )
+            if stamp not in _subscriptions_chachanotes_stamps(actual):
                 return ("unsupported_schema_version",)
         return ()
 
@@ -1289,7 +1301,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21),
+            (18, 21, 22, 23),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1303,3 +1315,221 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             (),
         ),
     )
+
+
+# ADR-219: exact constructor-captured v22 object deltas; all v18/v21 variants remain.
+_AGENT_RUNS_V22_REMOVED = (
+    "CREATE TABLE automatic_work_chains (\n    id TEXT PRIMARY KEY,\n    conversation_id TEXT NOT NULL,\n    root_submission_id TEXT NOT NULL UNIQUE,\n    limits_json TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'active'\n        CHECK (status IN ('active', 'paused', 'review_required')),\n    pause_reason TEXT,\n    created_at REAL NOT NULL,\n    started_at REAL,\n    deadline_at REAL,\n    clock_owner_id TEXT,\n    started_monotonic REAL,\n    last_observed_at REAL NOT NULL\n)",
+    "CREATE TRIGGER automatic_chain_identity_immutable\nBEFORE UPDATE OF conversation_id, root_submission_id, limits_json ON automatic_work_chains\nWHEN OLD.conversation_id IS NOT NEW.conversation_id\n  OR OLD.root_submission_id IS NOT NEW.root_submission_id\n  OR OLD.limits_json IS NOT NEW.limits_json\nBEGIN SELECT RAISE(ABORT, 'automatic chain identity is immutable'); END",
+)
+_AGENT_RUNS_V22_ADDED = (
+    "CREATE INDEX idx_automatic_chains_allowance_root\n    ON automatic_work_chains(allowance_root_chain_id)",
+    "CREATE UNIQUE INDEX idx_automatic_chat_start_conversation_active\n    ON automatic_chat_start_attempts(conversation_id) WHERE state IN ('prepared', 'accepted')",
+    "CREATE TABLE automatic_chat_start_attempts (\n    id TEXT PRIMARY KEY,\n    source_run_id TEXT NOT NULL REFERENCES agent_runs(id),\n    source_chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),\n    chain_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_chains(id),\n    conversation_id TEXT NOT NULL,\n    session_id TEXT NOT NULL,\n    session_incarnation TEXT NOT NULL,\n    owner_id TEXT NOT NULL,\n    draft_revision INTEGER NOT NULL CHECK (typeof(draft_revision)='integer' AND draft_revision>=0),\n    context_epoch INTEGER NOT NULL CHECK (typeof(context_epoch)='integer' AND context_epoch>=0),\n    request_fingerprint TEXT NOT NULL CHECK (length(request_fingerprint)=64 AND request_fingerprint NOT GLOB '*[^0-9a-f]*'),\n    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),\n    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),\n    created_at REAL NOT NULL,\n    accepted_at REAL,\n    completed_at REAL\n)",
+    "CREATE TABLE automatic_work_chains (\n    id TEXT PRIMARY KEY,\n    conversation_id TEXT NOT NULL,\n    root_submission_id TEXT NOT NULL UNIQUE,\n    limits_json TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'active'\n        CHECK (status IN ('active', 'paused', 'review_required')),\n    pause_reason TEXT,\n    created_at REAL NOT NULL,\n    started_at REAL,\n    deadline_at REAL,\n    clock_owner_id TEXT,\n    started_monotonic REAL,\n    last_observed_at REAL NOT NULL\n, allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id))",
+    "CREATE TRIGGER automatic_chain_identity_immutable\nBEFORE UPDATE OF id, conversation_id, root_submission_id, limits_json, allowance_root_chain_id ON automatic_work_chains\nWHEN OLD.id IS NOT NEW.id\n  OR OLD.allowance_root_chain_id IS NOT NEW.allowance_root_chain_id\n  OR OLD.conversation_id IS NOT NEW.conversation_id\n  OR OLD.root_submission_id IS NOT NEW.root_submission_id\n  OR OLD.limits_json IS NOT NEW.limits_json\nBEGIN SELECT RAISE(ABORT, 'automatic chain identity is immutable'); END",
+    "CREATE TRIGGER automatic_chain_root_insert\nBEFORE INSERT ON automatic_work_chains\nWHEN NEW.allowance_root_chain_id IS NOT NULL\nAND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (\n    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id\n    AND allowance_root_chain_id IS NULL))\nBEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END",
+    "CREATE TRIGGER automatic_chain_root_update\nBEFORE UPDATE OF allowance_root_chain_id ON automatic_work_chains\nWHEN NEW.allowance_root_chain_id IS NOT NULL\nAND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (\n    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id\n    AND allowance_root_chain_id IS NULL))\nBEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END",
+    "CREATE TRIGGER automatic_chat_start_identity_immutable\nBEFORE UPDATE OF id, source_run_id, source_chain_id, chain_id, conversation_id,\n    session_id, session_incarnation, owner_id, draft_revision, context_epoch,\n    request_fingerprint, generation_reservation_id ON automatic_chat_start_attempts\nWHEN OLD.id IS NOT NEW.id OR OLD.source_run_id IS NOT NEW.source_run_id\n  OR OLD.source_chain_id IS NOT NEW.source_chain_id OR OLD.chain_id IS NOT NEW.chain_id\n  OR OLD.conversation_id IS NOT NEW.conversation_id OR OLD.session_id IS NOT NEW.session_id\n  OR OLD.session_incarnation IS NOT NEW.session_incarnation OR OLD.owner_id IS NOT NEW.owner_id\n  OR OLD.draft_revision IS NOT NEW.draft_revision OR OLD.context_epoch IS NOT NEW.context_epoch\n  OR OLD.request_fingerprint IS NOT NEW.request_fingerprint\n  OR OLD.generation_reservation_id IS NOT NEW.generation_reservation_id\nBEGIN SELECT RAISE(ABORT, 'chat start identity is immutable'); END",
+)
+
+
+def _agent_runs_v22_catalog(schema):
+    import re
+
+    def catalog_key(sql):
+        match = re.match(
+            r'CREATE (?:UNIQUE |VIRTUAL )?(INDEX|TABLE|TRIGGER) (?:IF NOT EXISTS )?["`]?([^"` (]+)',
+            sql,
+        )
+        assert match is not None
+        return match[1].lower(), match[2]
+
+    unchanged = tuple(sql for sql in schema if sql not in _AGENT_RUNS_V22_REMOVED)
+    return tuple(sorted(unchanged + _AGENT_RUNS_V22_ADDED, key=catalog_key))
+
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (22, _agent_runs_v22_catalog(schema))
+    for version, schema in _AGENT_RUNS_SCHEMA
+    if version == 21
+)
+_SUBSCRIPTIONS_V76_REPLACEMENTS = {
+    "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n  ON console_dispatch_checkpoints(user_message_id)": "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n    ON console_dispatch_checkpoints(user_message_id)",
+    "CREATE TABLE console_dispatch_checkpoints (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued')),\n    queue_entry_id TEXT,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n)": "CREATE TABLE \"console_dispatch_checkpoints\" (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued', 'agent_chat_start')),\n    queue_entry_id TEXT,\n    agent_chat_start_attempt_id TEXT UNIQUE,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK ((origin = 'queued' AND queue_entry_id IS NOT NULL)\n        OR (origin IN ('manual', 'agent_chat_start') AND queue_entry_id IS NULL)),\n    CHECK ((origin = 'agent_chat_start' AND agent_chat_start_attempt_id IS NOT NULL\n            AND length(agent_chat_start_attempt_id) BETWEEN 1 AND 200)\n        OR (origin IN ('manual', 'queued') AND agent_chat_start_attempt_id IS NULL))\n)",
+}
+_SUBSCRIPTIONS_V76_SCHEMA = tuple(
+    _SUBSCRIPTIONS_V76_REPLACEMENTS.get(sql, sql) for sql in _SUBSCRIPTIONS_SCHEMA[1][1]
+)
+# Qualified shared-file constructor catalogs; these are not primary-owner policies.
+from .recovery_core_schema import (
+    _CHAT_DICTIONARIES_INITIAL_TRIGGER,
+    _CHAT_DICTIONARIES_UPDATED_TRIGGER,
+    _CHACHANOTES_V77_QUEUE_CHECK,
+)
+
+_SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS = (
+    _SUBSCRIPTIONS_V76_SCHEMA,
+    tuple(
+        _CHAT_DICTIONARIES_UPDATED_TRIGGER
+        if sql == _CHAT_DICTIONARIES_INITIAL_TRIGGER
+        else sql
+        for sql in _SUBSCRIPTIONS_V76_SCHEMA
+    ),
+)
+_SUBSCRIPTIONS_SHIPPED_CHACHANOTES_SCHEMAS = (
+    _SUBSCRIPTIONS_SCHEMA[1][1],
+    tuple(
+        _CHAT_DICTIONARIES_UPDATED_TRIGGER
+        if sql == _CHAT_DICTIONARIES_INITIAL_TRIGGER
+        else sql
+        for sql in _SUBSCRIPTIONS_SCHEMA[1][1]
+    ),
+)
+_SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS = tuple(
+    tuple(
+        sql.replace(
+            _CHACHANOTES_V77_QUEUE_CHECK,
+            "CHECK (origin != 'agent_chat_start' OR queue_entry_id IS NULL)",
+        )
+        for sql in schema
+    )
+    for schema in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
+)
+_SUBSCRIPTIONS_V77_SCHEMA = _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS[0]
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (2, schema)
+    for schema in _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS
+    + _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
+    + _SUBSCRIPTIONS_SHIPPED_CHACHANOTES_SCHEMAS[1:]
+)
+
+
+def _subscriptions_chachanotes_stamps(schema):
+    """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS:
+        return ((78,),)
+    if schema in _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS:
+        return ((77,),)
+    if schema in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS:
+        return ((76,), (77,))
+    if schema in _SUBSCRIPTIONS_SHIPPED_CHACHANOTES_SCHEMAS:
+        return ((75,), (76,))
+    return ()
+
+
+_AGENT_RUNS_V22_FRESH_CHAIN = "CREATE TABLE automatic_work_chains (\n    id TEXT PRIMARY KEY,\n    conversation_id TEXT NOT NULL,\n    root_submission_id TEXT NOT NULL UNIQUE,\n    limits_json TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'active'\n        CHECK (status IN ('active', 'paused', 'review_required')),\n    pause_reason TEXT,\n    created_at REAL NOT NULL,\n    started_at REAL,\n    deadline_at REAL,\n    clock_owner_id TEXT,\n    started_monotonic REAL,\n    last_observed_at REAL NOT NULL,\n    allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id)\n)"
+_AGENT_RUNS_SCHEMA += (
+    (
+        22,
+        tuple(
+            _AGENT_RUNS_V22_FRESH_CHAIN
+            if sql.startswith("CREATE TABLE automatic_work_chains ")
+            else sql
+            for sql in next(
+                schema for version, schema in _AGENT_RUNS_SCHEMA if version == 22
+            )
+        ),
+    ),
+)
+
+
+# ADR-219: fixed installed v21→v22 SQL; only disposable candidates migrate.
+_AGENT_RUNS_MIGRATION_21_22 = (
+    "ALTER TABLE automatic_work_chains ADD COLUMN allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id)",
+    "DROP TRIGGER IF EXISTS automatic_chain_identity_immutable",
+    "CREATE TRIGGER IF NOT EXISTS automatic_chain_identity_immutable\nBEFORE UPDATE OF id, conversation_id, root_submission_id, limits_json, allowance_root_chain_id ON automatic_work_chains\nWHEN OLD.id IS NOT NEW.id\n  OR OLD.allowance_root_chain_id IS NOT NEW.allowance_root_chain_id\n  OR OLD.conversation_id IS NOT NEW.conversation_id\n  OR OLD.root_submission_id IS NOT NEW.root_submission_id\n  OR OLD.limits_json IS NOT NEW.limits_json\nBEGIN SELECT RAISE(ABORT, 'automatic chain identity is immutable'); END",
+    "CREATE INDEX IF NOT EXISTS idx_automatic_chains_allowance_root\n    ON automatic_work_chains(allowance_root_chain_id)",
+    "CREATE TRIGGER IF NOT EXISTS automatic_chain_root_insert\nBEFORE INSERT ON automatic_work_chains\nWHEN NEW.allowance_root_chain_id IS NOT NULL\nAND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (\n    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id\n    AND allowance_root_chain_id IS NULL))\nBEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END",
+    "CREATE TRIGGER IF NOT EXISTS automatic_chain_root_update\nBEFORE UPDATE OF allowance_root_chain_id ON automatic_work_chains\nWHEN NEW.allowance_root_chain_id IS NOT NULL\nAND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (\n    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id\n    AND allowance_root_chain_id IS NULL))\nBEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END",
+    "CREATE TABLE IF NOT EXISTS automatic_chat_start_attempts (\n    id TEXT PRIMARY KEY,\n    source_run_id TEXT NOT NULL REFERENCES agent_runs(id),\n    source_chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),\n    chain_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_chains(id),\n    conversation_id TEXT NOT NULL,\n    session_id TEXT NOT NULL,\n    session_incarnation TEXT NOT NULL,\n    owner_id TEXT NOT NULL,\n    draft_revision INTEGER NOT NULL CHECK (typeof(draft_revision)='integer' AND draft_revision>=0),\n    context_epoch INTEGER NOT NULL CHECK (typeof(context_epoch)='integer' AND context_epoch>=0),\n    request_fingerprint TEXT NOT NULL CHECK (length(request_fingerprint)=64 AND request_fingerprint NOT GLOB '*[^0-9a-f]*'),\n    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),\n    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),\n    created_at REAL NOT NULL,\n    accepted_at REAL,\n    completed_at REAL\n)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_automatic_chat_start_conversation_active\n    ON automatic_chat_start_attempts(conversation_id) WHERE state IN ('prepared', 'accepted')",
+    "CREATE TRIGGER IF NOT EXISTS automatic_chat_start_identity_immutable\nBEFORE UPDATE OF id, source_run_id, source_chain_id, chain_id, conversation_id,\n    session_id, session_incarnation, owner_id, draft_revision, context_epoch,\n    request_fingerprint, generation_reservation_id ON automatic_chat_start_attempts\nWHEN OLD.id IS NOT NEW.id OR OLD.source_run_id IS NOT NEW.source_run_id\n  OR OLD.source_chain_id IS NOT NEW.source_chain_id OR OLD.chain_id IS NOT NEW.chain_id\n  OR OLD.conversation_id IS NOT NEW.conversation_id OR OLD.session_id IS NOT NEW.session_id\n  OR OLD.session_incarnation IS NOT NEW.session_incarnation OR OLD.owner_id IS NOT NEW.owner_id\n  OR OLD.draft_revision IS NOT NEW.draft_revision OR OLD.context_epoch IS NOT NEW.context_epoch\n  OR OLD.request_fingerprint IS NOT NEW.request_fingerprint\n  OR OLD.generation_reservation_id IS NOT NEW.generation_reservation_id\nBEGIN SELECT RAISE(ABORT, 'chat start identity is immutable'); END",
+    "INSERT OR IGNORE INTO schema_version (version) VALUES (22)",
+)
+
+
+# ADR-199/200 follow exact shipped native v22, including its fresh-chain variant.
+_AGENT_RUNS_V23_WAKE_TABLES = (
+    "CREATE TABLE automatic_wake_attempts (\n    id TEXT PRIMARY KEY,\n    chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),\n    conversation_id TEXT NOT NULL,\n    session_id TEXT NOT NULL,\n    owner_id TEXT NOT NULL,\n    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),\n    run_ids_json TEXT NOT NULL,\n    cause TEXT NOT NULL DEFAULT 'completion' CHECK (cause IN ('completion', 'progress', 'mixed')),\n    message_ids_json TEXT NOT NULL DEFAULT '[]',\n    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),\n    created_at REAL NOT NULL,\n    accepted_at REAL,\n    completed_at REAL\n)",
+    "CREATE TABLE automatic_wake_attempts (\n    id TEXT PRIMARY KEY,\n    chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),\n    conversation_id TEXT NOT NULL,\n    session_id TEXT NOT NULL,\n    owner_id TEXT NOT NULL,\n    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),\n    run_ids_json TEXT NOT NULL,\n    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),\n    created_at REAL NOT NULL,\n    accepted_at REAL,\n    completed_at REAL\n, cause TEXT NOT NULL DEFAULT 'completion' CHECK (cause IN ('completion', 'progress', 'mixed')), message_ids_json TEXT NOT NULL DEFAULT '[]')",
+)
+_AGENT_RUNS_V23_PROGRESS_TABLE = "CREATE TABLE automatic_progress_wake_claims (\n    message_id TEXT PRIMARY KEY,\n    source_run_id TEXT NOT NULL REFERENCES agent_runs(id),\n    attempt_id TEXT NOT NULL REFERENCES automatic_wake_attempts(id)\n)"
+_AGENT_RUNS_V23_PROGRESS_INDEX = "CREATE INDEX idx_automatic_progress_claims_attempt\n    ON automatic_progress_wake_claims(attempt_id)"
+_AGENT_RUNS_V23_FRESH_TABLES = (
+    "CREATE TABLE agent_definitions (\n                    id TEXT PRIMARY KEY,\n                    name TEXT NOT NULL,\n                    description TEXT NOT NULL DEFAULT '',\n                    instructions TEXT NOT NULL DEFAULT '',\n                    tool_allowlist TEXT NOT NULL DEFAULT '[]',\n                    model TEXT NOT NULL DEFAULT '',\n                    -- v21 (ADR-147, TASK-32477): preset routing -- the\n                    -- provider this definition pins ('' = inherit the\n                    -- caller's provider at spawn) and its sampling-param\n                    -- overrides as a JSON object string ('{}' = none).\n                    provider TEXT NOT NULL DEFAULT '',\n                    params_json TEXT NOT NULL DEFAULT '{}',\n                    fallback_models_json TEXT NOT NULL DEFAULT '[]',\n                    enabled INTEGER NOT NULL DEFAULT 1,\n                    max_wall_seconds REAL,\n                    deleted INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL\n                )",
+    "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    ),\n                    -- v21 (ADR-147, TASK-32477; planned as v16, renumbered\n                    -- past dev's v16-v20 via #2641 and #2665): the\n                    -- resolved-target snapshot -- where this run's agent\n                    -- ACTUALLY went after preset routing resolved\n                    -- (provider, model, base_url, and the merged params as\n                    -- a raw JSON object string). Written once at spawn\n                    -- (Task 6); read back verbatim on resume/continuation\n                    -- (Task 8). NULL for every pre-v21 row and for runs\n                    -- spawned without routing resolution.\n                    resolved_provider TEXT,\n                    resolved_model TEXT,\n                    resolved_base_url TEXT,\n                    resolved_params_json TEXT,\n                    fallback_targets_json TEXT,\n                    active_fallback_index INTEGER NOT NULL DEFAULT 0\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id))",
+)
+
+
+def _agent_runs_v23_catalog(catalog):
+    """Freeze the installed ALTER deltas without changing native v22 objects."""
+    rows = []
+    for item in catalog:
+        if item.startswith("CREATE TABLE agent_definitions "):
+            rows.append(
+                item[:-1] + ", fallback_models_json TEXT NOT NULL DEFAULT '[]')"
+            )
+        elif item.startswith("CREATE TABLE agent_runs "):
+            rows.append(
+                item[:-1]
+                + ", fallback_targets_json TEXT, active_fallback_index INTEGER NOT NULL DEFAULT 0)"
+            )
+        elif item.startswith("CREATE TABLE automatic_wake_attempts "):
+            rows.extend(
+                (_AGENT_RUNS_V23_PROGRESS_TABLE, _AGENT_RUNS_V23_WAKE_TABLES[1])
+            )
+        else:
+            rows.append(item)
+            if item.startswith("CREATE INDEX idx_automatic_claims_attempt"):
+                rows.append(_AGENT_RUNS_V23_PROGRESS_INDEX)
+    return tuple(rows)
+
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (23, _agent_runs_v23_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 22
+)
+_AGENT_RUNS_SCHEMA += (
+    (
+        23,
+        tuple(
+            _AGENT_RUNS_V23_FRESH_TABLES[0]
+            if item.startswith("CREATE TABLE agent_definitions ")
+            else _AGENT_RUNS_V23_FRESH_TABLES[1]
+            if item.startswith("CREATE TABLE agent_runs ")
+            else _AGENT_RUNS_V23_WAKE_TABLES[0]
+            if item.startswith("CREATE TABLE automatic_wake_attempts ")
+            else item
+            for item in _agent_runs_v23_catalog(
+                next(
+                    catalog
+                    for version, catalog in _AGENT_RUNS_SCHEMA
+                    if version == 22 and _AGENT_RUNS_V22_FRESH_CHAIN in catalog
+                )
+            )
+        ),
+    ),
+)
+_AGENT_RUNS_MIGRATION_22_23 = (
+    "ALTER TABLE agent_definitions ADD COLUMN fallback_models_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE agent_runs ADD COLUMN fallback_targets_json TEXT",
+    "ALTER TABLE agent_runs ADD COLUMN active_fallback_index INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE automatic_wake_attempts ADD COLUMN cause TEXT NOT NULL DEFAULT 'completion' CHECK (cause IN ('completion', 'progress', 'mixed'))",
+    "ALTER TABLE automatic_wake_attempts ADD COLUMN message_ids_json TEXT NOT NULL DEFAULT '[]'",
+    _AGENT_RUNS_V23_PROGRESS_TABLE,
+    _AGENT_RUNS_V23_PROGRESS_INDEX,
+    "INSERT INTO schema_version (version) VALUES (23)",
+)
+
+from .recovery_core_schema import _fleet_progress_catalog
+
+_SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS = tuple(
+    _fleet_progress_catalog(schema)
+    for schema in _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS
+    + _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
+)
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (2, schema) for schema in _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS
+)

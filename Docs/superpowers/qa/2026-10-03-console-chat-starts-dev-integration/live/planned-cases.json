@@ -1,0 +1,43 @@
+[
+  {
+    "case": "workspace-draft",
+    "title": "DEV_WS_DRAFT",
+    "destination": "same_workspace",
+    "mode": "draft",
+    "opening_prompt": "Reply only DEV_WS_DRAFT_REPLY.",
+    "source_prompt": "Call new_chat exactly once with these arguments: {\"title\": \"DEV_WS_DRAFT\", \"destination\": \"same_workspace\", \"mode\": \"draft\", \"opening_prompt\": \"Reply only DEV_WS_DRAFT_REPLY.\"}. Do not call other tools. After the tool result, reply with the returned status."
+  },
+  {
+    "case": "casual-draft",
+    "title": "DEV_CASUAL_DRAFT",
+    "destination": "casual",
+    "mode": "draft",
+    "opening_prompt": "Reply only DEV_CASUAL_DRAFT_REPLY.",
+    "source_prompt": "Call new_chat exactly once with these arguments: {\"title\": \"DEV_CASUAL_DRAFT\", \"destination\": \"casual\", \"mode\": \"draft\", \"opening_prompt\": \"Reply only DEV_CASUAL_DRAFT_REPLY.\", \"instructions\": \"[literal instructions] @everyone\\nFollow the opening prompt and reply briefly.\"}. Do not call other tools. After the tool result, reply with the returned status.",
+    "instructions": "[literal instructions] @everyone\nFollow the opening prompt and reply briefly."
+  },
+  {
+    "case": "workspace-start",
+    "title": "DEV_WS_START",
+    "destination": "same_workspace",
+    "mode": "start",
+    "opening_prompt": "Reply only DEV_WS_START_OK.",
+    "source_prompt": "Call new_chat exactly once with these arguments: {\"title\": \"DEV_WS_START\", \"destination\": \"same_workspace\", \"mode\": \"start\", \"opening_prompt\": \"Reply only DEV_WS_START_OK.\"}. Do not call other tools. After the tool result, reply with the returned status."
+  },
+  {
+    "case": "casual-start",
+    "title": "DEV_CASUAL_START",
+    "destination": "casual",
+    "mode": "start",
+    "opening_prompt": "/settings @everyone\nReply only DEV_CASUAL_START_OK.",
+    "source_prompt": "Call new_chat exactly once with these arguments: {\"title\": \"DEV_CASUAL_START\", \"destination\": \"casual\", \"mode\": \"start\", \"opening_prompt\": \"/settings @everyone\\nReply only DEV_CASUAL_START_OK.\"}. Do not call other tools. After the tool result, reply with the returned status."
+  },
+  {
+    "case": "runtime-refusal",
+    "title": "DEV_REFUSED_START",
+    "destination": "casual",
+    "mode": "start",
+    "opening_prompt": "Reply only DEV_SHOULD_NOT_AUTOSEND.",
+    "source_prompt": "Call new_chat exactly once with these arguments: {\"title\": \"DEV_REFUSED_START\", \"destination\": \"casual\", \"mode\": \"start\", \"opening_prompt\": \"Reply only DEV_SHOULD_NOT_AUTOSEND.\"}. Do not call other tools. After the tool result, reply with the returned status."
+  }
+]

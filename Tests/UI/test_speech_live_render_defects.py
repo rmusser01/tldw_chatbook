@@ -65,15 +65,12 @@ async def test_the_axis_select_has_no_inner_border_under_the_real_css(
                         bordered.append(axis)
 
     assert not bordered, (
-        f"inner SelectCurrent still bordered, so the value cannot show: "
-        f"{bordered}"
+        f"inner SelectCurrent still bordered, so the value cannot show: {bordered}"
     )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "bar_id", ["#audio-progress-bar", "#generation-progress"]
-)
+@pytest.mark.parametrize("bar_id", ["#audio-progress-bar", "#generation-progress"])
 async def test_progress_bars_declare_a_total(bar_id):
     """A ProgressBar with no `total` renders its indeterminate pulse, so an
     idle screen animates forever -- motion that says work is happening when

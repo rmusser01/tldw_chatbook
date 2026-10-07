@@ -30,7 +30,10 @@ Branching lives in two places on the Console screen:
 
 - **The action row** under a selected message — its stable direct order is
   Copy, Speak/Stop when available, Edit, text-response **< / >** when present,
-  **Fork**, ♻ Regenerate/Retry when present, Continue, and **More…**. When
+  **Fork**, ♻ Regenerate/Retry when present (Resend on your last message
+  when its turn is broken — it re-runs that turn in place and never forks;
+  see [chat basics](chat-basics.md#resend-a-broken-turn)), Continue, and
+  **More…**. When
   variants exist, the message's role label above it carries the
   "(2/2)"-style counter.
 - **The "Rewind" menu** (captured above) — opened by typing `/rewind`. Your
@@ -51,10 +54,26 @@ without changing either chat.
 The boundary is inclusive. The new chat receives exactly the source's active
 lineage from its first message through the selected message. Later turns,
 off-path sibling branches, display-only tool/activity rows, and unselected
-variants are absent. A User boundary does not generate a reply automatically.
+variants are absent. Command output such as `/help`, `/doctor` or an
+unknown-command hint is left out too, so it never stops you forking a later
+message. A User boundary does not generate a reply automatically. A message you
+have just sent can be forked straight away; you do not need to reopen the chat.
+
+When a message cannot be forked, the guide under the selected row drops
+`f Fork` and shows **Fork unavailable** with the reason instead, and `f` repeats
+it. The reason names the row that blocks the fork, whether that is the selected
+message or an earlier one (for example a failed reply with no text, or a
+discarded reply), and the nearest earlier message you can fork from instead, or
+says that no earlier message can be forked. A reply that is still being written
+only asks you to wait for it to finish.
 After confirmation the fork opens as a separate Console tab and can diverge;
 the source tab stays open with the same title, selected variants, active leaf,
-history, and live work it had before.
+history, and live work it had before. While the dialog shows **Forking…** the
+fork can no longer be cancelled: Escape is refused, and **Ctrl+Q** says the
+fork is still being created and stays open; press it again once the fork has
+opened. Pressed again before that, it asks **Quit while still working?**
+(**Wait** keeps the dialog; if the fork opened in the meantime, the dialog
+then closes on the new fork as usual).
 
 - A saved source creates a saved fork in the same Chats or named Workspace
   section, with durable ancestry back to the source and boundary.

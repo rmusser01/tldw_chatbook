@@ -5,20 +5,25 @@ import asyncio
 import pytest
 from textual.widgets import Button, Select, Switch
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_navigation_decisions import _until
 from Tests.UI.test_console_screen_reuse import (
     _boot_settled,
     _press_until_screen,
-    _scratch_env,
 )
 
 
 @pytest.mark.asyncio
 @pytest.mark.ui
+@private_profile_test
 async def test_fresh_install_selects_independent_buddy_and_opens_pinned_chat_from_home(
-    monkeypatch, tmp_path
+    request: pytest.FixtureRequest, monkeypatch, tmp_path
 ):
-    _scratch_env(monkeypatch, tmp_path)
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    assert save_settings_to_cli_config(
+        {"first_run": {"setup_completed": True}, "splash_screen": {"enabled": False}}
+    )
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.UI.Navigation.buddy_management import (
         get_buddy_management,

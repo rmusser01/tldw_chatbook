@@ -33,6 +33,7 @@ from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 # (TASK-22213; guard:
 # `Tests/Packaging/test_exchange_export_trajectory_deferral.py`).
 from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
+    EXPORT_STILL_WRITING,
     TRACE_EXPORT_PROFILE_COPY,
     TRACE_EXPORT_PROFILE_LABELS,
     full_trace_confirmation,
@@ -133,9 +134,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="trace-export-dialog"):
             yield Static("Export shared Trace", id="trace-export-title", markup=False)
-            yield Static(
-                "Analyzing privacy inventory…", id="trace-export-inventory"
-            )
+            yield Static("Analyzing privacy inventory…", id="trace-export-inventory")
             yield Static(
                 "Credentials are always blocked in every profile.",
                 id="trace-export-policy",
@@ -289,9 +288,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
 
     async def _confirm_full_export(self) -> bool:
         return bool(
-            await self.app.push_screen_wait(
-                full_trace_confirmation(noun="Trace")
-            )
+            await self.app.push_screen_wait(full_trace_confirmation(noun="Trace"))
         )
 
     @on(Button.Pressed, "#trace-export-submit")
@@ -356,7 +353,10 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             self._set_status(f"Export failed: {exc}", error=True)
             return
         self._writing = False
-        self.dismiss(written)
+        # Covered (Ctrl+Q's quit-anyway question), the close is kept for when
+        # this dialog is on top again, so the export is still reported
+        # (TASK-33622.15).
+        self.dismiss_safe_once_when_on_top(written)
 
     def _set_controls_disabled(self, disabled: bool) -> None:
         for selector in (
@@ -378,3 +378,15 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             self._set_status("Export is finishing; the destination is still protected.")
             return
         self.dismiss_safe_once(None)
+
+    async def confirm_quit(self) -> bool:
+        """Stay while the export is written, as Escape does (TASK-33622.15).
+
+        Returns:
+            refuse_quit_while_working's answer mid-write; else True.
+        """
+        if not self._writing:
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(self, EXPORT_STILL_WRITING)

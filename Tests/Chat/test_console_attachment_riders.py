@@ -237,6 +237,7 @@ class TestSaveImageToastEscaping:
             current_chat_store_accessor=lambda: store,
             ensure_console_chat_controller=_unreached,
             current_chat_controller_accessor=lambda: None,
+            generation_refusal_copy=_unreached,
             sync_native_console_chat_ui=_unreached,
             active_session_is_ephemeral=_unreached,
             active_native_console_session=_unreached,

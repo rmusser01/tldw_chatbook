@@ -6,6 +6,8 @@ active screen, mirroring ``ThemeProvider`` in ``app.py`` for Hit construction.
 
 from __future__ import annotations
 
+from functools import partial
+
 from textual.command import Hit, Hits, Provider
 
 
@@ -28,6 +30,19 @@ class ConsoleCommandProvider(Provider):
         Returns:
             Tuples of label, callback, and help text.
         """
+        # Deferred off the boot path (app.py imports this provider eagerly):
+        # both modules load with the Console screen, which is the only place
+        # these commands are ever listed.
+        from tldw_chatbook.UI.Console_Modules import (
+            composer_run_controls as run_controls,
+        )
+        from tldw_chatbook.Widgets.Console.console_composer_menu_modal import (
+            ACTION_ATTACH_CONTEXT,
+            ACTION_IMPERSONATE,
+            ACTION_IMPROVE_CURRENT_DRAFT,
+            ACTION_SAVE_CHATBOOK,
+        )
+
         return (
             (
                 "Console: Recover agent work…",
@@ -40,9 +55,9 @@ class ConsoleCommandProvider(Provider):
                 "Fuzzy-find and activate a conversation (Ctrl+K)",
             ),
             (
-                "Console: Change model…",
+                "Console: Switch model…",
                 screen.action_open_console_model_popover,
-                "Quick provider/model/temperature switch (Alt+M)",
+                "Pick this chat's provider·model pair and quick values (Alt+M)",
             ),
             (
                 "Console: New chat tab",
@@ -93,9 +108,9 @@ class ConsoleCommandProvider(Provider):
                 "Create a local workspace and switch Console to it",
             ),
             (
-                "Console: Session settings…",
+                "Console: Chat settings…",
                 screen.action_open_console_session_settings,
-                "Open the full session settings modal",
+                "Tune every setting for this chat (Ctrl+O)",
             ),
             (
                 "Console: Insert prompt…",
@@ -121,6 +136,58 @@ class ConsoleCommandProvider(Provider):
                 "Console: View chat context",
                 screen.action_view_chat_context,
                 "Show current and next-send context (Ctrl+Shift+P)",
+            ),
+            # TASK-33625.1: keyboard routes to the viewed tab's run that do
+            # not depend on the composer row's geometry.
+            (
+                "Console: Stop this tab's run",
+                screen.action_stop_console_run,
+                f"Stop the active run in this tab "
+                f"({run_controls.STOP_RUN_KEY_LABEL}, /stop)",
+            ),
+            (
+                "Console: Redirect this tab's run",
+                partial(run_controls.redirect_from_draft, screen),
+                "Re-run the current turn with the composer draft as the "
+                "correction (/redirect)",
+            ),
+            # TASK-33622.2: the Composer menu and the actions that lived only
+            # behind it. Each routes through the menu's own availability
+            # contract (`run_composer_menu_action`).
+            (
+                "Console: Open composer menu",
+                partial(run_controls.open_composer_menu, screen),
+                "Prompts, attach, save as Chatbook, image, caption, impersonate",
+            ),
+            (
+                "Console: Attach file…",
+                partial(
+                    run_controls.run_composer_menu_action, screen, ACTION_ATTACH_CONTEXT
+                ),
+                "Attach a file to the draft",
+            ),
+            (
+                "Console: Save as Chatbook",
+                partial(
+                    run_controls.run_composer_menu_action, screen, ACTION_SAVE_CHATBOOK
+                ),
+                "Open the available Chatbook artifact in Artifacts",
+            ),
+            (
+                "Console: Impersonate",
+                partial(
+                    run_controls.run_composer_menu_action, screen, ACTION_IMPERSONATE
+                ),
+                "Draft your next reply with the current model",
+            ),
+            (
+                "Console: Improve current draft…",
+                partial(
+                    run_controls.run_composer_menu_action,
+                    screen,
+                    ACTION_IMPROVE_CURRENT_DRAFT,
+                ),
+                "Improve the unsent message with the current provider and model",
             ),
         )
 

@@ -66,9 +66,7 @@ async def test_summary_row_stays_plain_marker_when_disabled(monkeypatch):
         transcript_mod,
         "get_cli_setting",
         lambda section, key, default=None: (
-            False
-            if (section, key) == ("console", "turn_file_cards")
-            else default
+            False if (section, key) == ("console", "turn_file_cards") else default
         ),
     )
     app = _build_test_app()

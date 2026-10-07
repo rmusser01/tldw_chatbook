@@ -31,6 +31,8 @@ from rich.markup import escape as escape_markup
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
+    ChatAPIError,
+    project_provider_error,
     ChatBadRequestError,
     ChatConfigurationError,
     ChatProviderError,
@@ -139,6 +141,8 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.console_session_settings import (
     _custom_endpoint_missing_key_readiness,
+    configured_provider_model,
+    console_provider_settings,
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import (
     custom_endpoint_provider_settings,
@@ -154,6 +158,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     THINKING_ENVELOPE_VERSION,
     ThinkingHistoryPolicy,
 )
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -168,11 +173,9 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
 )
 from tldw_chatbook.LLM_Calls.moonshot import MoonshotFinishPolicy
 from tldw_chatbook.LLM_Calls.zai import ZAIFinishPolicy
-from tldw_chatbook.config import (
-    ProviderSettingsError,
-    provider_settings_for_key,
-)
+from tldw_chatbook.config import ProviderSettingsError
 from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
+from tldw_chatbook.Utils.egress import capture_rate_limits_for
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -708,6 +711,9 @@ class ConsoleProviderStreamSignals:
         init=False,
         repr=False,
     )
+    provider_work_callback: (
+        Callable[[asyncio.Future[Any], Callable[[], Any]], bool] | None
+    ) = field(default=None, repr=False, kw_only=True)
     model_retry_callback: Callable[[], None] | None = field(
         default=None,
         repr=False,
@@ -770,13 +776,13 @@ class ConsoleProviderStreamSignals:
     ) -> bool:
         """Expose real provider work to an owner that needs cleanup custody.
 
-        Ordinary Console streams have no attempt lifecycle, so their default
-        signal ignores this hook. Attempt-local signals override it without
-        widening this class's audited slot inventory.
+        The callback retains actual gateway futures; cancellation of a stream
+        consumer must not cancel those futures or imply their completion.
+        Attempt-local signals may override this hook with their existing owner.
         """
 
-        del completion, force_close
-        return False
+        callback = self.provider_work_callback
+        return callback(completion, force_close) if callback is not None else False
 
     def mark_synthetic_fallback(self) -> None:
         """Record that locally synthesized fallback copy was emitted."""
@@ -1460,12 +1466,19 @@ def _cap_automatic_prepared(
     )
 
 
-def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
+def safe_provider_error_copy(
+    provider: str,
+    exc: BaseException,
+    *,
+    known_credentials: tuple[str, ...] = (),
+) -> str:
     """Return safe user-visible provider failure copy.
 
     Args:
         provider: Provider name associated with the failed request.
         exc: Exception raised by the provider adapter.
+        known_credentials: The exact credentials the request carried; an
+            echo of one in the provider's reason is hidden.
 
     Returns:
         Redacted user-facing error text that categorizes the failure without
@@ -1482,14 +1495,116 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
         category = "configuration error"
     elif isinstance(exc, ChatProviderError):
         category = "provider unavailable"
-    provider_copy = _sanitized_provider_diagnostic(provider or "unknown")
+    if getattr(exc, "status_code", None) == 404 and not isinstance(
+        exc, (ChatAuthenticationError, ChatRateLimitError)
+    ):
+        # TASK-34100.5 AC#4: a 404 is the model, whichever class carried it
+        # (live: Gemini's retired-model 404 arrived as a provider error).
+        category = "model or endpoint not found"
+    from tldw_chatbook.Chat.provider_error_reason import (
+        CONTEXT_OVERFLOW_CATEGORY,
+        CONTEXT_OVERFLOW_FIX,
+        is_context_overflow_error,
+        provider_reason_for_exception,
+    )
+
+    overflow = is_context_overflow_error(exc)
+    if overflow:
+        category = CONTEXT_OVERFLOW_CATEGORY  # review round 2, V2-F3
+    # The catalog name the user sees elsewhere ("NVIDIA NIM", not "nvidia");
+    # an unmapped or custom-endpoint id stays as given (TASK-33002.14).
+    provider_copy = _sanitized_provider_diagnostic(
+        provider_display_name(provider) if provider else "unknown"
+    )
     if provider_copy == _PROVIDER_REQUEST_FAILED_COPY:
         return provider_copy
     status_code = getattr(exc, "status_code", None)
+    field = getattr(exc, "field", None)
+    if (
+        isinstance(exc, ChatConfigurationError)
+        and status_code is None
+        and isinstance(field, str)
+        and field.isidentifier()
+    ):
+        # TASK-32369: a local check named the field it refused, so nothing
+        # reached the provider. Only the field name is shown, never the
+        # message. A status-less error without a field may be a reply that
+        # could not be read (task-32342), so it keeps the copy below.
+        return _sanitized_provider_diagnostic(
+            f"Request to {provider_copy} not sent: it failed a local check on {field}."
+        )
     status_copy = f" Status: {status_code}." if type(status_code) is int else ""
-    return _sanitized_provider_diagnostic(
-        f"Provider error from {provider_copy}: {category}.{status_copy}"
+    # TASK-34100.5 AC#4: the provider's own allowlisted sentence, and the fix.
+    reason = provider_reason_for_exception(exc, known_credentials=known_credentials)
+    action_copy = (
+        " Update the API key in Settings ▸ Providers & Models, or run "
+        "Ctrl+P ▸ Setup: Run setup wizard."
+        if category == "authentication failed"
+        else CONTEXT_OVERFLOW_FIX if overflow else ""
     )
+    head = f"Provider error from {provider_copy}: {category}.{status_copy}"
+    if reason:
+        # Review round 1 (F2): a reason the sanitizer rejects (a masked key
+        # fragment, a hex id) drops alone -- never the category or the fix.
+        # A reason with no final punctuation still ends its sentence before
+        # the fix ("... try increasing it”. Start the server ...").
+        quote_end = "”" if reason[-1:] in ".!?…" else "”."
+        with_reason = _sanitized_provider_diagnostic(
+            f"{head} {provider_copy} says: “{reason}{quote_end}{action_copy}",
+            known_credentials=known_credentials,
+        )
+        if with_reason != _PROVIDER_REQUEST_FAILED_COPY:
+            return with_reason
+    return _sanitized_provider_diagnostic(f"{head}{action_copy}")
+
+
+def _raise_if_context_overflow(
+    exc: httpx.HTTPStatusError, *, provider: str, api_key: str | None
+) -> None:
+    """Report a request longer than a llama.cpp server's context, once.
+
+    Review round 2 (V2-F3): the stream path's non-streaming fallback re-sent
+    the identical, still-too-long request, and the failure read "provider
+    returned HTTP 400 (...)" with no provider and no fix. An overflow is the
+    same with or without streaming, so it is raised here, before the
+    fallback, with the provider's sentence and the fix.
+
+    Raises:
+        ChatBadRequestError: When ``exc`` is a context-size refusal.
+    """
+    from tldw_chatbook.Chat.provider_error_reason import (
+        attach_provider_reason,
+        is_context_overflow_error,
+    )
+
+    if not is_context_overflow_error(exc):
+        return
+    credentials = (api_key or "",)
+    status = exc.response.status_code
+    error = ChatBadRequestError(provider=provider, status_code=status)
+    error.context_overflow = True  # type: ignore[attr-defined]
+    attach_provider_reason(error, exc.response, known_credentials=credentials)
+    raise ChatBadRequestError(
+        safe_provider_error_copy(provider, error, known_credentials=credentials),
+        provider=provider,
+        status_code=status,
+    ) from None
+
+
+def _error_copy_for(copy_fn: Any, resolution: Any, exc: BaseException) -> str:
+    """Run ``copy_fn``, handing the default the credential the call carried.
+
+    Review round 1 (F3): an echo of the exact key is then hidden in place
+    rather than collapsing the whole line. An injected formatter keeps its
+    two-argument contract.
+    """
+    if copy_fn is safe_provider_error_copy:
+        return safe_provider_error_copy(
+            resolution.provider,
+            exc,
+            known_credentials=(getattr(resolution, "api_key", None) or "",),
+        )
+    return copy_fn(resolution.provider, exc)
 
 
 def adapter_wire_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
@@ -1611,25 +1726,98 @@ def _flight_capture(
     )
 
 
+def _tool_definition_rejection_copy(
+    provider_message: str,
+    tools: Sequence[Mapping[str, Any]] | None,
+) -> str | None:
+    """Return recovery copy when a provider 400 blames a sent tool definition.
+
+    TASK-33621.1: OpenAI and Anthropic validate every tool schema before the
+    model runs, so a rejected tool definition fails the request on EVERY
+    model -- the model-picker advice below cannot help and must not be shown.
+    Only a tool name the request actually sent is ever echoed; the provider's
+    own text never reaches the copy.
+
+    The advice follows the tool's source, which its sent name tells apart:
+    every MCP-bridged tool is named ``mcp__<server>__<tool>``
+    (``MCP.tool_naming.llm_tool_name``), and every other tool is Chatbook's
+    own -- its rejection is a Chatbook bug to report, and not every such
+    tool has a switch to promise.
+
+    Args:
+        provider_message: The adapter exception's text (untrusted).
+        tools: The OpenAI-shape tool definitions this request sent.
+
+    Returns:
+        Copy naming the rejected tool, generic tool-definition copy when the
+        message blames a tool that cannot be named, or None otherwise.
+    """
+    if not tools:
+        return None
+    from tldw_chatbook.Agents.native_tools import (
+        blames_tool_definition,
+        rejected_tool_name,
+    )
+
+    name = rejected_tool_name(provider_message, tools)
+    if name is None:
+        if not blames_tool_definition(provider_message):
+            return None
+        # Blamed only through a marker in the provider's text: say what is
+        # likely, not what is certain.
+        return (
+            "The provider rejected one of the tool definitions sent with this "
+            "request before the model ran, so choosing another model is "
+            "unlikely to help. A tool from an MCP server is the likeliest "
+            "cause: turn MCP servers off on the MCP screen, then send again."
+        )
+    rejected = (
+        f"The provider rejected the tool definition for {escape_markup(name)} "
+        "before the model ran, so choosing another model will not help."
+    )
+    if name.startswith("mcp__"):
+        return (
+            f"{rejected} Turn off the MCP server that provides it on the MCP "
+            "screen, then send again."
+        )
+    return (
+        f"{rejected} It is one of Chatbook's own tools, so please report it. "
+        "If its tool group has a switch on the MCP screen, turning that off "
+        "lets you send meanwhile."
+    )
+
+
 def _provider_error_copy_with_model_recovery(
     copy: str,
     *,
     model: str | None,
     status_code: int | None,
+    provider_message: str = "",
+    tools: Sequence[Mapping[str, Any]] | None = None,
 ) -> str:
-    """Add safe model-specific recovery to provider bad-request copy."""
+    """Add safe recovery to provider bad-request copy.
+
+    A rejected tool definition gets tool copy (see
+    ``_tool_definition_rejection_copy``); any other 400 names the model. A
+    404 names the model and says what to check: Fireworks, SambaNova, Nous
+    and GMI answer an unknown model, or one the key cannot use, that way
+    (no-key probes 2026-09-30, TASK-33640).
+    """
+    if status_code == 404:
+        model_id = _safe_model_id(model)
+        named = f" Selected model: {escape_markup(model_id)}." if model_id else ""
+        return (
+            f"{copy}{named} The provider could not find this model or "
+            "endpoint, or this key cannot use it. Check the model name and "
+            "the key, or choose another model from the model picker "
+            "(Alt+M: Switch model)."
+        )
     if status_code != 400:
         return copy
-    model_result = CredentialSanitizer().sanitize(model or "")
-    if (
-        not model_result.available
-        or model_result.redacted
-        or type(model_result.value) is not str
-    ):
-        return copy
-    model_id = "".join(
-        character for character in model_result.value.strip() if character.isprintable()
-    )[:PROVIDER_ERROR_MODEL_ID_MAX_CHARS]
+    tool_copy = _tool_definition_rejection_copy(provider_message, tools)
+    if tool_copy is not None:
+        return f"{copy} {tool_copy}"
+    model_id = _safe_model_id(model)
     if not model_id:
         return copy
     return (
@@ -1637,6 +1825,27 @@ def _provider_error_copy_with_model_recovery(
         "The provider rejected this request. Confirm the model is still "
         "available, or choose another model from the model picker."
     )
+
+
+def _safe_model_id(model: str | None) -> str:
+    """The model id fit for user copy, or "" when it is absent or redacted.
+
+    Args:
+        model: The selected model identifier.
+
+    Returns:
+        A printable, bounded model id; empty when it cannot be shown.
+    """
+    model_result = CredentialSanitizer().sanitize(model or "")
+    if (
+        not model_result.available
+        or model_result.redacted
+        or type(model_result.value) is not str
+    ):
+        return ""
+    return "".join(
+        character for character in model_result.value.strip() if character.isprintable()
+    )[:PROVIDER_ERROR_MODEL_ID_MAX_CHARS]
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:
@@ -1975,14 +2184,23 @@ class _QueueItem:
     # "no real status available" (a bare RuntimeError, say), which the
     # consumer maps to ChatProviderError's own upstream-error default.
     status_code: int | None = None
+    # TASK-32369: the failure never left the client (a status-less
+    # ChatConfigurationError), so the consumer must not report a provider 502.
+    local: bool = False
 
     @classmethod
     def content(cls, text: str, *, synthetic: bool = False) -> "_QueueItem":
         return cls("content", text, synthetic=synthetic)
 
     @classmethod
-    def error(cls, text: str, status_code: int | None = None) -> "_QueueItem":
-        return cls("error", text, status_code=status_code)
+    def error(
+        cls, text: str, status_code: int | None = None, *,
+        typed_error: ChatAPIError | None = None,
+        local: bool = False,
+    ) -> _QueueItem:
+        return cls(
+            "error", text, status_code=status_code, payload=typed_error, local=local
+        )
 
     @classmethod
     def trace_verification_error(cls) -> "_QueueItem":
@@ -2162,6 +2380,31 @@ async def _settle_trace_response(
         try:
             handoff = preparer(envelope, outcome, usage)
             if handoff is not None:
+                if outcome is TraceCallState.ERROR and envelope is None:
+                    # An intermediate failed attempt has no canonical response
+                    # to link. Its assistant owner remains live across retries;
+                    # waiting for that owner's final save deadlocks admission.
+                    async def settle_failed_attempt() -> bool:
+                        if await asyncio.to_thread(handoff.settle, None):
+                            return True
+                        # Retain failed writes in the run's settlement custody
+                        # so terminal persistence and teardown can retry them.
+                        return (
+                            signals is not None
+                            and await signals.publish_trace_settlement(handoff)
+                        )
+
+                    completion = asyncio.create_task(settle_failed_attempt())
+                    owned = signals is not None and signals.register_provider_work(
+                        completion, lambda: None
+                    )
+                    try:
+                        settled_or_retained = await asyncio.shield(completion)
+                    finally:
+                        if not owned and not completion.done():
+                            await asyncio.shield(completion)
+                    if settled_or_retained:
+                        return
                 if signals is not None and await signals.publish_trace_settlement(
                     handoff
                 ):
@@ -2689,6 +2932,14 @@ def build_llamacpp_chat_payload(
             **template_options,
         }
     return payload
+
+
+def _adapter_api_base_url(resolution: ConsoleProviderResolution) -> str | None:
+    """The custom engine adds its route; legacy slots accept the full endpoint."""
+    base_url = resolution.base_url
+    if resolution.execution_key == "custom-hosted":
+        base_url = base_url.rstrip("/").removesuffix("/chat/completions")
+    return base_url or None
 
 
 class ConsoleProviderGateway:
@@ -3877,7 +4128,9 @@ class ConsoleProviderGateway:
         family = family_execution_key(entry.family) if entry else settings.provider
         identity = resolve_console_provider_identity(family)
         family = identity.readiness_key or family
-        provider_settings = _provider_settings(config, identity.readiness_key)
+        provider_settings = console_provider_settings(
+            config, identity.readiness_key, strict=True
+        )
         endpoint = (
             entry.base_url
             if entry
@@ -4158,11 +4411,27 @@ class ConsoleProviderGateway:
         # id executes through its entry's family -- llama_cpp entry -> direct
         # llama path, openai_compatible -> generic custom path, ollama ->
         # ollama -- with the entry, not ``api_settings``, as the
-        # provider-settings and endpoint source. Unresolvable ids keep the
-        # generic fallback identity resolved by
-        # ``resolve_console_provider_identity``.
+        # provider-settings and endpoint source. A frozen execution family
+        # never substitutes for the raw registry entry's current authority.
         custom_entry = entry_for(app_config, selection.provider)
-        if custom_entry is not None:
+        if split_custom_endpoint_id(selection.provider) and custom_entry is None:
+            return self._blocked_resolution(
+                selection,
+                provider=selection.provider,
+                visible_copy=(
+                    "Provider blocked: this custom endpoint is no longer configured. "
+                    "Restore its entry or choose another provider before sending."
+                ),
+            )
+        if selection.execution_provider:
+            # ADR-200: a routed child freezes execution as well as its URL.
+            # The raw registry entry still resolves credentials and readiness.
+            frozen_execution = selection.execution_provider
+            identity = resolve_console_provider_identity(
+                "custom" if frozen_execution == "custom-hosted" else frozen_execution
+            )
+            identity = replace(identity, execution_key=frozen_execution)
+        elif custom_entry is not None:
             identity = _apply_custom_endpoint_engine_swap(
                 resolve_console_provider_identity(
                     family_execution_key(custom_entry.family)
@@ -4291,8 +4560,8 @@ class ConsoleProviderGateway:
             )
         else:
             try:
-                provider_settings = _provider_settings(
-                    app_config, identity.readiness_key
+                provider_settings = console_provider_settings(
+                    app_config, identity.readiness_key, strict=True
                 )
             except ProviderSettingsError:
                 return self._blocked_resolution(
@@ -4308,9 +4577,7 @@ class ConsoleProviderGateway:
         model = _first_string(
             selection.explicit_model,
             selection.configured_model,
-            provider_settings.get("model"),
-            provider_settings.get("api_model"),
-            provider_settings.get("default_model"),
+            configured_provider_model(provider_settings),
         )
         if model is None:
             return self._blocked_resolution(
@@ -4434,6 +4701,7 @@ class ConsoleProviderGateway:
         # guard: their endpoint is config-backed by construction (the entry).
         if (
             selection.configured_endpoint_fallback_allowed
+            and not selection.base_url_is_pinned
             and custom_entry is None
             and provider_uses_endpoint(identity.readiness_key, provider_settings)
             and endpoint_differs
@@ -4734,6 +5002,8 @@ class ConsoleProviderGateway:
                     headers=headers,
                 )
                 async with stream_context as response:
+                    if getattr(response, "is_error", False) is True:
+                        await response.aread()  # the body says why (V2-F3)
                     response.raise_for_status()
                     async for line in response.aiter_lines():
                         _check_automatic_dispatch()
@@ -4785,6 +5055,8 @@ class ConsoleProviderGateway:
         except httpx.HTTPError as exc:
             if emitted_content:
                 raise
+            if isinstance(exc, httpx.HTTPStatusError):
+                _raise_if_context_overflow(exc, provider=provider, api_key=api_key)
             stream_error = exc
         finally:
             if call_signals is not None:
@@ -5231,6 +5503,7 @@ class ConsoleProviderGateway:
                             self._complete_sensitive_sync,
                             kwargs,
                             admission,
+                            resolution.provider,
                         )
                         if call_signals is not None and isinstance(response, Mapping):
                             _maybe_record_usage(response, call_signals)
@@ -5239,6 +5512,9 @@ class ConsoleProviderGateway:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            typed_error = project_provider_error(exc, provider)
+            if typed_error is not None:
+                raise typed_error from None
             if isinstance(exc, ChatConfigurationError) and exc.status_code is None:
                 # task-32342: a status-less configuration error never reached
                 # the provider -- the request could not be built or its reply
@@ -5259,7 +5535,7 @@ class ConsoleProviderGateway:
             else:
                 status_code = getattr(exc, "status_code", 502)
             raise ChatProviderError(
-                safe_provider_error_copy(provider, exc),
+                _error_copy_for(safe_provider_error_copy, resolution, exc),
                 provider=provider,
                 status_code=status_code if isinstance(status_code, int) else 502,
             ) from None
@@ -5323,10 +5599,17 @@ class ConsoleProviderGateway:
         self,
         kwargs: Mapping[str, Any],
         admission: _ProviderAdapterAdmission,
+        provider: str = "",
     ) -> Any:
-        """Invoke the final synchronous adapter under the sensitive policy."""
+        """Invoke the final synchronous adapter under the sensitive policy.
 
-        with sensitive_llm_request():
+        ``provider`` is the session-facing provider the cost tooltip looks up
+        (TASK-28229), not ``api_endpoint``: for a custom endpoint that is the
+        shared execution handler, so its readings would land in one bucket.
+        """
+
+        provider_key = provider_config_key(provider)
+        with sensitive_llm_request(), capture_rate_limits_for(provider_key):
             _check_automatic_dispatch()
             return self._enter_provider_adapter(
                 admission,
@@ -5378,7 +5661,7 @@ class ConsoleProviderGateway:
                 system_parts.append(content)
         kwargs: dict[str, Any] = {
             "api_endpoint": resolution.execution_key,
-            "api_base_url": resolution.base_url or None,
+            "api_base_url": _adapter_api_base_url(resolution),
             "system_message": "\n\n".join(system_parts) or None,
             "messages_payload": payload,
             "api_key": resolution.api_key,
@@ -5409,7 +5692,7 @@ class ConsoleProviderGateway:
         }
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
             kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
@@ -6552,13 +6835,21 @@ class ConsoleProviderGateway:
                 raw_status = getattr(exc, "status_code", None)
                 status_code = raw_status if type(raw_status) is int else None
                 try:
-                    raw_error_copy = self._safe_error_copy(resolution.provider, exc)
+                    raw_error_copy = _error_copy_for(
+                        self._safe_error_copy, resolution, exc
+                    )
                 except BaseException:  # failure context can contain credentials
                     raw_error_copy = _PROVIDER_REQUEST_FAILED_COPY
+                try:
+                    provider_message = str(exc)
+                except BaseException:  # noqa: BLE001 - classification is optional
+                    provider_message = ""
                 error_copy = _provider_error_copy_with_model_recovery(
                     raw_error_copy,
                     model=resolution.model,
                     status_code=status_code,
+                    provider_message=provider_message,
+                    tools=request.tools,
                 )
                 error_copy = _sanitized_provider_diagnostic(
                     error_copy,
@@ -6570,6 +6861,9 @@ class ConsoleProviderGateway:
                     _QueueItem.error(
                         error_copy,
                         status_code=status_code,
+                        typed_error=project_provider_error(exc, resolution.provider),
+                        local=isinstance(exc, ChatConfigurationError)
+                        and status_code is None,
                     )
                 )
             finally:
@@ -6579,7 +6873,13 @@ class ConsoleProviderGateway:
         def worker() -> None:
             token = _local_reasoning_sink.set(capture_structured)
             try:
-                with sensitive_llm_request() if current_automatic_work() else contextlib.nullcontext():
+                # TASK-28229: record the provider's rate-limit headers for the
+                # whole consume -- a stream may send its request lazily.
+                with (
+                    sensitive_llm_request()
+                    if current_automatic_work()
+                    else contextlib.nullcontext()
+                ), capture_rate_limits_for(provider_config_key(resolution.provider)):
                     consume_provider()
             finally:
                 _local_reasoning_sink.reset(token)
@@ -6596,6 +6896,16 @@ class ConsoleProviderGateway:
                 if item.kind == "done":
                     break
                 if item.kind == "error":
+                    if isinstance(item.payload, ChatAPIError):
+                        item.payload.console_copy = item.text
+                        raise item.payload
+                    if item.local:
+                        # TASK-32369: as the non-stream path does (task-32342), a
+                        # failure that never left the client stays status-less;
+                        # wrapping it as ChatProviderError(502) blamed the provider.
+                        raise ChatConfigurationError(
+                            item.text, provider=resolution.provider, status_code=None
+                        )
                     # F5: carry the real status the worker captured -- never
                     # re-derive it by parsing item.text back out (that text
                     # is redacted prose, not a machine-readable status).
@@ -7002,11 +7312,11 @@ class ConsoleProviderGateway:
         if template_options:
             kwargs["chat_template_kwargs"] = template_options
         if local:
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             kwargs["api_key_resolved"] = True
         elif resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in (
             _ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS
         ):
@@ -7015,9 +7325,9 @@ class ConsoleProviderGateway:
             # record/settings defaults never shadow a session-selected or
             # alias-configured URL. The custom family keeps its own branch
             # below (it also pins the gateway credential decision).
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in {"moonshot", "zai"}:
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             kwargs["request_timeout"] = resolution.request_timeout
             kwargs["request_retries"] = resolution.request_retries
             kwargs["request_retry_delay"] = resolution.request_retry_delay
@@ -7032,7 +7342,7 @@ class ConsoleProviderGateway:
             "vllm",
             "local_vllm",
         } | CUSTOM_OPENAI_EXECUTION_KEYS:
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
                 kwargs["api_key_resolved"] = True
         elif (
@@ -7041,7 +7351,7 @@ class ConsoleProviderGateway:
             # Evaluator-only structured-output requests pin the endpoint that
             # was resolved and capability-checked. Ordinary Console sends have
             # no response_format and retain their existing adapter behavior.
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         if (
             resolution.execution_key in _ENGINE_EXECUTION_KEYS
             and request.continuation_groups
@@ -7115,14 +7425,14 @@ class ConsoleProviderGateway:
         }
         if resolution.execution_key == "qwencloud":
             kwargs["api_mode"] = resolution.api_mode
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in (
             _ENGINE_EXECUTION_KEYS - CUSTOM_OPENAI_EXECUTION_KEYS
         ):
             # Engine-driven presets outside the custom family (ADR-179,
             # Qodo finding 2): pin the resolved endpoint on the plain-message
             # path too; the custom family keeps its branch below.
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
         elif resolution.execution_key in {
             "anthropic",
             "mistral",
@@ -7132,7 +7442,7 @@ class ConsoleProviderGateway:
             # Console has resolved a provider-scoped endpoint and credential.
             # Pinning the resolved base keeps that pair intact, including the
             # custom aliases and distinct mistral config owners.
-            kwargs["api_base_url"] = resolution.base_url or None
+            kwargs["api_base_url"] = _adapter_api_base_url(resolution)
             if resolution.execution_key in _CUSTOM_CREDENTIAL_DECISION_PROVIDERS:
                 kwargs["api_key_resolved"] = True
         return {key: value for key, value in kwargs.items() if value is not None}
@@ -7439,13 +7749,6 @@ def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
             return value
 
     return _UNSUPPORTED_RESPONSE
-
-
-def _provider_settings(
-    app_config: Mapping[str, object], provider_key: str
-) -> Mapping[str, object]:
-    api_settings = _mapping_value(app_config, "api_settings")
-    return provider_settings_for_key(api_settings, provider_key)
 
 
 def _hosted_transport_policy(

@@ -1,6 +1,7 @@
 # ADR-077: Bound Console rail sections and expose hidden overflow
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-21
 Related Task: [TASK-19428](../tasks/task-19428%20-%20Bound-Console-Context-and-Inspector-sections-with-20-line-scroll-limits.md)
 Related Spec: [Console bounded rail-section scrolling design](../../Docs/superpowers/specs/2026-08-21-console-bounded-rail-section-scroll-design.md)

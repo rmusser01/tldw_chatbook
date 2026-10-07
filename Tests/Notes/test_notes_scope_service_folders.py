@@ -9,7 +9,9 @@ import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
-from tldw_chatbook.Notes.notes_organization_repository import NotesOrganizationRepository
+from tldw_chatbook.Notes.notes_organization_repository import (
+    NotesOrganizationRepository,
+)
 from tldw_chatbook.Notes.note_folder_models import (
     FolderPlacementId,
     FolderCapabilityError,
@@ -1088,7 +1090,9 @@ async def test_synchronized_folder_create_rejects_until_group_ready(
         )
     repository = LocalNoteFolderRepository(notes)
     organization = NotesOrganizationSyncService(
-        notes_repository=NotesOrganizationRepository(notes, server_profile_id="server-a"),
+        notes_repository=NotesOrganizationRepository(
+            notes, server_profile_id="server-a"
+        ),
         state_repository=state,
     )
     service = NotesScopeService(
@@ -1108,9 +1112,12 @@ async def test_synchronized_folder_create_rejects_until_group_ready(
         )
 
     assert repository.list_children(parent_id=None, limit=10, offset=0).folders == ()
-    assert notes.get_connection().execute(
-        "SELECT COUNT(*) FROM notes_organization_sync_intents"
-    ).fetchone()[0] == 0
+    assert (
+        notes.get_connection()
+        .execute("SELECT COUNT(*) FROM notes_organization_sync_intents")
+        .fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -1158,13 +1165,19 @@ async def test_ready_folder_create_commits_mutation_and_one_explicit_intent(
         sync_v2_profile={"server_profile_id": "server-a"},
     )
 
-    row = notes.get_connection().execute(
-        "SELECT domain, object_id, operation, payload_json, source_version "
-        "FROM notes_organization_sync_intents"
-    ).fetchone()
-    sync_id = notes.get_connection().execute(
-        "SELECT sync_id FROM note_folders WHERE id = ?", (folder.folder_id,)
-    ).fetchone()[0]
+    row = (
+        notes.get_connection()
+        .execute(
+            "SELECT domain, object_id, operation, payload_json, source_version "
+            "FROM notes_organization_sync_intents"
+        )
+        .fetchone()
+    )
+    sync_id = (
+        notes.get_connection()
+        .execute("SELECT sync_id FROM note_folders WHERE id = ?", (folder.folder_id,))
+        .fetchone()[0]
+    )
     assert tuple(row) == (
         "notes.folder",
         sync_id,
@@ -1229,9 +1242,13 @@ async def test_ready_scope_managed_membership_routes_through_organization_owner(
     )
 
     assert len(memberships) == 1
-    row = notes.get_connection().execute(
-        "SELECT operation, payload_json FROM notes_organization_sync_intents "
-        "WHERE domain = 'notes.folder_link'"
-    ).fetchone()
+    row = (
+        notes.get_connection()
+        .execute(
+            "SELECT operation, payload_json FROM notes_organization_sync_intents "
+            "WHERE domain = 'notes.folder_link'"
+        )
+        .fetchone()
+    )
     assert row["operation"] == "upsert"
     assert json.loads(row["payload_json"])["note_id"] == note_id

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from tldw_chatbook.Utils.timestamps import (
+    as_utc,
     is_canonical_utc,
     parse_utc,
     to_utc_iso,
@@ -101,3 +102,16 @@ def test_everything_to_utc_iso_emits_is_canonical():
         datetime(2026, 9, 20, 12, 0, 0),  # naive -> UTC
     ]:
         assert is_canonical_utc(to_utc_iso(dt))
+
+
+def test_as_utc_reads_a_parsed_column_or_a_string_and_refuses_the_rest():
+    """A DB adapter may hand back a ``datetime`` or a string (cubic #2947)."""
+    aware = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
+    assert as_utc(datetime(2026, 9, 30, 12, 0)) == aware  # naive means UTC
+    assert as_utc(datetime(2026, 9, 30, 14, 0, tzinfo=timezone(timedelta(hours=2)))) == aware
+    assert as_utc("2026-09-30 12:00:00") == aware
+    assert as_utc("2026-09-30T12:00:00.000Z") == aware
+    assert as_utc("not a time") is None
+    assert as_utc("") is None
+    assert as_utc(None) is None
+    assert as_utc(1_727_697_600) is None

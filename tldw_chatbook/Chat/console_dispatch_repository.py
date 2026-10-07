@@ -51,7 +51,7 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
-from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.Chat.message_metadata import MessageMetadata, AgentChatStartMetadata
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
@@ -63,12 +63,15 @@ _OWNER_SELECT = """
            checkpoint.preparation_id, checkpoint.attempt_id, checkpoint.state,
            checkpoint.checkpoint_revision, checkpoint.user_message_version,
            checkpoint.assistant_message_version, checkpoint.origin,
-           checkpoint.queue_entry_id, checkpoint.frozen_authority_json,
+           checkpoint.queue_entry_id, checkpoint.agent_chat_start_attempt_id, checkpoint.frozen_authority_json,
            checkpoint.resolved_destination_json,
            checkpoint.reconstructability_json,
            conversation.deleted AS conversation_deleted,
            user_message.conversation_id AS user_conversation_id,
            user_message.role AS user_role,
+           user_message.content AS user_content,
+           user_message.parent_message_id AS user_parent_message_id,
+           user_message.metadata_json AS user_metadata_json,
            user_message.version AS current_user_version,
            user_message.deleted AS user_deleted,
            assistant_message.conversation_id AS assistant_conversation_id,
@@ -142,6 +145,29 @@ class ConsoleDispatchRepository:
             _OWNER_SELECT + " WHERE checkpoint.conversation_id = ?",
             (acceptance.conversation_id,),
         ).fetchall()
+        if existing_rows and acceptance.origin == "agent_chat_start":
+            checkpoint, error = self._checkpoint_from_row(existing_rows[0])
+            metadata = MessageMetadata.from_json(existing_rows[0]["user_metadata_json"])
+            if (
+                len(existing_rows) == 1
+                and checkpoint is not None
+                and error is None
+                and checkpoint.agent_chat_start_attempt_id
+                == acceptance.agent_chat_start_attempt_id
+                and checkpoint.user_message_id == acceptance.user_message_id
+                and checkpoint.assistant_message_id == acceptance.assistant_message_id
+                and checkpoint.preparation_id == acceptance.preparation_id
+                and checkpoint.attempt_id == acceptance.attempt_id
+                and metadata is not None
+                and metadata.agent_chat_start == acceptance.agent_chat_start
+                and existing_rows[0]["user_content"] == acceptance.user_content
+                and existing_rows[0]["user_parent_message_id"]
+                == acceptance.parent_message_id
+                and checkpoint.frozen_authority == acceptance.frozen_authority
+                and checkpoint.resolved_destination == acceptance.resolved_destination
+                and checkpoint.reconstructability == acceptance.reconstructability
+            ):
+                return checkpoint
         if existing_rows:
             raise RuntimeError(
                 "Conversation already has an active dispatch checkpoint."
@@ -159,6 +185,53 @@ class ConsoleDispatchRepository:
                 raise ConsoleDispatchCheckpointValidationError(
                     "Parent message is unavailable."
                 )
+        receipt = acceptance.continuation_receipt
+        if receipt is not None:
+            from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationReceipt
+
+            if (
+                type(receipt) is not ContinuationReceipt
+                or receipt.initiator != "hook_continuation"
+                or acceptance.origin != "queued"
+                or type(receipt.admitted_turns) is not int
+                or not 1 <= receipt.admitted_turns <= 3
+                or any(
+                    type(value) is not str or not value or len(value) > 256
+                    for value in (
+                        receipt.parent_turn_id,
+                        receipt.stop_event_id,
+                        receipt.parent_assistant_message_id,
+                        receipt.chain_id,
+                    )
+                )
+                or receipt.parent_assistant_message_id != acceptance.parent_message_id
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid continuation receipt."
+                )
+            parent = cursor.execute(
+                "SELECT role FROM messages WHERE id = ? AND conversation_id = ? AND deleted = 0",
+                (receipt.parent_assistant_message_id, acceptance.conversation_id),
+            ).fetchone()
+            if parent is None or parent["role"] != "assistant":
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid continuation parent."
+                )
+            cursor.execute(
+                "INSERT INTO console_hook_continuation_receipts "
+                "(parent_turn_id, stop_event_id, conversation_id, parent_assistant_message_id, "
+                "assistant_message_id, chain_id, admitted_turns, initiator) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    receipt.parent_turn_id,
+                    receipt.stop_event_id,
+                    acceptance.conversation_id,
+                    receipt.parent_assistant_message_id,
+                    acceptance.assistant_message_id,
+                    receipt.chain_id,
+                    receipt.admitted_turns,
+                    receipt.initiator,
+                ),
+            )
         attachments = self._validated_attachments(acceptance)
         first_attachment = next(
             (row for row in attachments if row[0] == 0),
@@ -175,7 +248,7 @@ class ConsoleDispatchRepository:
                 usage_json, metadata_json, provider_continuation_json,
                 assistant_generation_state
             ) VALUES (?, ?, ?, 'user', ?, ?, ?, ?, NULL,
-                      ?, ?, 1, 0, 'user', NULL, NULL, NULL, NULL)
+                      ?, ?, 1, 0, 'user', NULL, ?, NULL, NULL)
             """,
             (
                 acceptance.user_message_id,
@@ -187,6 +260,25 @@ class ConsoleDispatchRepository:
                 now,
                 now,
                 self.db.client_id,
+                (
+                    MessageMetadata(
+                        origin="agent_chat_start",
+                        agent_chat_start=acceptance.agent_chat_start,
+                    ).to_json()
+                    if acceptance.origin == "agent_chat_start"
+                    else json.dumps(
+                        {
+                            "origin": "hook",
+                            "initiator": "hook_continuation",
+                            "parent_turn_id": receipt.parent_turn_id,
+                            "stop_event_id": receipt.stop_event_id,
+                        }
+                    )
+                    if receipt
+                    else MessageMetadata(root_fork=True).to_json()
+                    if acceptance.user_root_fork
+                    else None
+                ),
             ),
         )
         cursor.executemany(
@@ -256,10 +348,10 @@ class ConsoleDispatchRepository:
                 assistant_message_id, user_message_id, conversation_id,
                 schema_version, preparation_id, attempt_id, state,
                 checkpoint_revision, user_message_version,
-                assistant_message_version, origin, queue_entry_id,
+                assistant_message_version, origin, queue_entry_id, agent_chat_start_attempt_id,
                 frozen_authority_json, resolved_destination_json,
                 reconstructability_json, created_at, updated_at
-            ) VALUES (?, ?, ?, 1, ?, ?, 'accepted', 1, 1, 1, ?, ?, ?, ?, ?,
+            ) VALUES (?, ?, ?, 1, ?, ?, 'accepted', 1, 1, 1, ?, ?, ?, ?, ?, ?,
                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             (
@@ -270,6 +362,7 @@ class ConsoleDispatchRepository:
                 acceptance.attempt_id,
                 acceptance.origin,
                 acceptance.queue_entry_id,
+                acceptance.agent_chat_start_attempt_id,
                 authority_json,
                 destination_json,
                 reconstructability_json,
@@ -1451,9 +1544,32 @@ class ConsoleDispatchRepository:
     def _validate_acceptance(acceptance: ConsoleDurableTurnAcceptance) -> None:
         if (
             not isinstance(acceptance, ConsoleDurableTurnAcceptance)
-            or acceptance.origin not in {"manual", "queued"}
-            or (acceptance.origin == "manual" and acceptance.queue_entry_id is not None)
+            or acceptance.origin not in {"manual", "queued", "agent_chat_start"}
+            or (acceptance.origin != "queued" and acceptance.queue_entry_id is not None)
             or (acceptance.origin == "queued" and not acceptance.queue_entry_id)
+            or (
+                acceptance.origin == "agent_chat_start"
+                and (
+                    acceptance.attachments
+                    or type(acceptance.handoff_draft_revision) is not int
+                    or acceptance.handoff_draft_revision < 1
+                    or not isinstance(
+                        acceptance.agent_chat_start, AgentChatStartMetadata
+                    )
+                    or acceptance.agent_chat_start_attempt_id
+                    != acceptance.agent_chat_start.attempt_id
+                    or not ConsoleDispatchRepository._valid_identifier(
+                        acceptance.agent_chat_start_attempt_id
+                    )
+                )
+            )
+            or (
+                acceptance.origin != "agent_chat_start"
+                and (
+                    acceptance.agent_chat_start_attempt_id is not None
+                    or acceptance.agent_chat_start is not None
+                )
+            )
             or any(
                 not ConsoleDispatchRepository._valid_identifier(value)
                 for value in (
@@ -1481,6 +1597,19 @@ class ConsoleDispatchRepository:
             or type(acceptance.user_content) is not str
             or type(acceptance.attachments) is not tuple
             or type(acceptance.contributions) is not tuple
+            or (
+                acceptance.user_root_fork
+                and (
+                    acceptance.origin == "agent_chat_start"
+                    or acceptance.continuation_receipt is not None
+                )
+            )
+            or (
+                acceptance.origin == "agent_chat_start"
+                and acceptance.continuation_receipt is not None
+            )
+            or type(acceptance.user_root_fork) is not bool
+            or (acceptance.user_root_fork and acceptance.parent_message_id is not None)
         ):
             raise ConsoleDispatchCheckpointValidationError(
                 "Invalid durable turn acceptance."
@@ -1567,11 +1696,23 @@ class ConsoleDispatchRepository:
                     row["user_message_version"],
                     row["assistant_message_version"],
                 )
-                or row["origin"] not in {"manual", "queued"}
-                or (row["origin"] == "manual" and row["queue_entry_id"] is not None)
+                or row["origin"] not in {"manual", "queued", "agent_chat_start"}
+                or (row["origin"] != "queued" and row["queue_entry_id"] is not None)
                 or (row["origin"] == "queued" and not row["queue_entry_id"])
             ):
                 return None, "invalid_checkpoint_owner"
+            provenance = MessageMetadata.from_json(row["user_metadata_json"])
+            if row["origin"] == "agent_chat_start":
+                if (
+                    provenance is None
+                    or provenance.origin != "agent_chat_start"
+                    or provenance.agent_chat_start is None
+                    or provenance.agent_chat_start.attempt_id
+                    != row["agent_chat_start_attempt_id"]
+                ):
+                    return None, "invalid_machine_provenance"
+            elif row["agent_chat_start_attempt_id"] is not None:
+                return None, "invalid_checkpoint_identity"
             identity_values = (
                 row["assistant_message_id"],
                 row["user_message_id"],
@@ -1608,6 +1749,7 @@ class ConsoleDispatchRepository:
                 user_message_version=row["user_message_version"],
                 assistant_message_version=row["assistant_message_version"],
                 origin=row["origin"],
+                agent_chat_start_attempt_id=row["agent_chat_start_attempt_id"],
                 queue_entry_id=row["queue_entry_id"],
                 frozen_authority=frozen_authority,
                 resolved_destination=parse_console_resolved_destination_json(

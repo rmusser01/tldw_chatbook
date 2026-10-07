@@ -1,0 +1,56 @@
+# Chat settings model list after Down: background colour of each list row,
+# parsed from tmux capture-pane -e (SGR 48;2) of the running app. The primary
+# highlight bar is bg=(87, 165, 226); every other row is the list surface.
+# 15-model runs: TASK-33004.6 implementation (claude-haiku-4-5 committed).
+# 25-model runs: review fix round 1, claude-scratch-10 committed at catalog
+# position 25, past the 20-row cap; it takes the last visible slot.
+# The first row (the Model field) and the last ('Saved fallback' line under
+# the list box) sit outside the list and are listed for reference.
+
+## chat-settings-model-list-down-211x44
+row 13 bg=(30, 30, 30) fg=(225, 225, 225) 'claude-haiku-4-5'
+row 17 bg=(39, 39, 39) fg=(121, 121, 121) 'Saved fallback'
+row 18 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-sonnet-5'
+row 19 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-opus-5'
+row 20 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-fable-5'
+row 21 bg=(87, 165, 226) fg=(36, 47, 56) 'claude-haiku-4-5  ● CURRENT'
+row 22 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-opus-4-20250514'
+row 23 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-sonnet-4-20250514'
+row 24 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-3-7-sonnet-20250219'
+row 26 bg=(36, 47, 56) fg=(224, 224, 224) 'Saved fallback'
+
+## chat-settings-model-list-down-235x52
+row 14 bg=(30, 30, 30) fg=(225, 225, 225) 'claude-haiku-4-5'
+row 18 bg=(39, 39, 39) fg=(121, 121, 121) 'Saved fallback'
+row 19 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-sonnet-5'
+row 20 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-opus-5'
+row 21 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-fable-5'
+row 22 bg=(87, 165, 226) fg=(36, 47, 56) 'claude-haiku-4-5  ● CURRENT'
+row 23 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-opus-4-20250514'
+row 24 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-sonnet-4-20250514'
+row 25 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-3-7-sonnet-20250219'
+row 27 bg=(36, 47, 56) fg=(224, 224, 224) 'Saved fallback'
+
+## chat-settings-model-down-25-211x44
+row 13 bg=(30, 30, 30) fg=(225, 225, 225) 'claude-scratch-10'
+row 17 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-3-sonnet-20240229'
+row 18 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-2.1'
+row 19 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-2.0'
+row 20 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-scratch-01'
+row 21 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-scratch-02'
+row 22 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-scratch-03'
+row 23 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-scratch-04'
+row 24 bg=(87, 165, 226) fg=(36, 47, 56) 'claude-scratch-10  ● CURRENT'
+row 26 bg=(36, 47, 56) fg=(224, 224, 224) 'Saved fallback'
+
+## chat-settings-model-down-25-235x52
+row 14 bg=(30, 30, 30) fg=(225, 225, 225) 'claude-scratch-10'
+row 18 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-3-sonnet-20240229'
+row 19 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-2.1'
+row 20 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-2.0'
+row 21 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-scratch-01'
+row 22 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-scratch-02'
+row 23 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-scratch-03'
+row 24 bg=(39, 39, 39) fg=(224, 224, 224) 'claude-scratch-04'
+row 25 bg=(87, 165, 226) fg=(36, 47, 56) 'claude-scratch-10  ● CURRENT'
+row 27 bg=(36, 47, 56) fg=(224, 224, 224) 'Saved fallback'

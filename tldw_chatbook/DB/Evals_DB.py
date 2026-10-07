@@ -28,7 +28,17 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, TYPE_CHECKING, List, Dict, Optional, Any, Union, Tuple, Sequence
+from typing import (
+    Iterator,
+    TYPE_CHECKING,
+    List,
+    Dict,
+    Optional,
+    Any,
+    Union,
+    Tuple,
+    Sequence,
+)
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -50,7 +60,11 @@ from tldw_chatbook.DB.sql_validation import validate_identifier
 from tldw_chatbook.Utils.fts5_match_forms import build_phrase_match_query
 
 # Database Schema Version
-SCHEMA_VERSION = 5
+#
+# v6 (TASK-19566 F8) dropped the inert ``version`` columns from the five
+# tables that carried them (see ``_VERSION_COLUMN_TABLES``); v5-and-older
+# databases are migrated with ``ALTER TABLE ... DROP COLUMN`` on open.
+SCHEMA_VERSION = 6
 
 #: SQLite's own host-parameter limit varies by build -- as low as 999 on
 #: older versions, tens of thousands on newer ones -- so a single
@@ -75,6 +89,31 @@ _PROBE_ANNOTATION_CASCADE_BATCH_SIZE = 500
 _PROBE_ANNOTATION_CASCADE_TABLES: Tuple[str, str] = (
     "eval_probe_turn_annotations",
     "eval_probe_review_state",
+)
+
+#: The five tables that carried an ``version INTEGER NOT NULL DEFAULT 1``
+#: column from their creation through schema v5, dropped at v6
+#: (TASK-19566 F8). The column was inert optimistic-locking residue:
+#: ``expected_version`` appeared in zero callers, no UPDATE carried
+#: ``AND version = ?``, and four of the six update surfaces never even
+#: bumped it -- it had the shape of concurrency control and provided none.
+#: It was removed rather than made real because no caller of the six
+#: update methods can supply an expected version: the two that bumped it
+#: (``update_task``/``update_dataset``) are single-UI-thread edit paths,
+#: and the run/A-B status writers are lifecycle state transitions where a
+#: version guard would reject legitimate terminal writes (see the v6
+#: migration step below and the task's Implementation Notes for the
+#: caller map). Same literal-tuple identifier pattern as
+#: ``_PROBE_ANNOTATION_CASCADE_TABLES`` above: bare table names can never
+#: be bind parameters, so these trusted module-level literals are still
+#: run through ``sql_validation.validate_identifier`` before
+#: interpolation.
+_VERSION_COLUMN_TABLES: Tuple[str, str, str, str, str] = (
+    "eval_tasks",
+    "eval_datasets",
+    "eval_models",
+    "eval_runs",
+    "ab_tests",
 )
 
 
@@ -218,7 +257,9 @@ class EvalsDB:
         _core_access(self)
         conn = _core_cached_connection(self, getattr(self._local, "connection", None))
         if conn is None:
-            conn = connect_private_sqlite("db.evals", self.db_path, check_same_thread=False)
+            conn = connect_private_sqlite(
+                "db.evals", self.db_path, check_same_thread=False
+            )
             try:
                 _register_core_connection(self, conn)
                 _core_access(self)
@@ -280,7 +321,6 @@ class EvalsDB:
                 dataset_id TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
-                version INTEGER NOT NULL DEFAULT 1,
                 client_id TEXT NOT NULL,
                 deleted_at TEXT,
                 FOREIGN KEY (dataset_id) REFERENCES eval_datasets (id)
@@ -298,7 +338,6 @@ class EvalsDB:
                 metadata TEXT, -- JSON metadata
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
-                version INTEGER NOT NULL DEFAULT 1,
                 client_id TEXT NOT NULL,
                 deleted_at TEXT
             )
@@ -314,7 +353,6 @@ class EvalsDB:
                 config TEXT, -- JSON configuration for model parameters
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
-                version INTEGER NOT NULL DEFAULT 1,
                 client_id TEXT NOT NULL,
                 deleted_at TEXT,
                 UNIQUE(name, provider, model_id)
@@ -338,7 +376,6 @@ class EvalsDB:
                 error_message TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
-                version INTEGER NOT NULL DEFAULT 1,
                 client_id TEXT NOT NULL,
                 deleted_at TEXT,
                 FOREIGN KEY (task_id) REFERENCES eval_tasks (id),
@@ -522,7 +559,6 @@ class EvalsDB:
                 completed_at TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
-                version INTEGER NOT NULL DEFAULT 1,
                 client_id TEXT NOT NULL,
                 deleted_at TEXT,
                 FOREIGN KEY (task_id) REFERENCES eval_tasks (id),
@@ -745,6 +781,34 @@ class EvalsDB:
                 "ON eval_probe_review_state (run_group_id)"
             )
 
+        if current_version < 6 and SCHEMA_VERSION >= 6:
+            logger.info(
+                "Migrating to version 6: dropping the inert Evals version "
+                "columns (TASK-19566 F8)"
+            )
+
+            # v5-and-older databases carry an inert `version` column on the
+            # five tables below. It was never an optimistic-lock token --
+            # `expected_version` existed in zero callers and no UPDATE ever
+            # carried `AND version = ?` -- so it is dropped outright rather
+            # than repurposed. `ALTER TABLE ... DROP COLUMN` requires SQLite
+            # >= 3.35; the app floor of Python 3.12 bundles a newer SQLite
+            # than that on every supported platform. The PRAGMA table_info
+            # guard keeps the step idempotent (a database at v5 whose tables
+            # already lack the column -- e.g. restored from a v6 snapshot
+            # with a stale user_version -- still migrates cleanly).
+            for table in _VERSION_COLUMN_TABLES:
+                if not validate_identifier(table, "table name"):
+                    raise SchemaError(
+                        f"Refusing to drop the inert version column: {table!r} "
+                        f"failed SQL identifier validation."
+                    )
+                existing = {
+                    row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+                }
+                if "version" in existing:
+                    conn.execute(f"ALTER TABLE {table} DROP COLUMN version")
+
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     # --- Task Management ---
@@ -899,8 +963,11 @@ class EvalsDB:
         if not updates:
             return True  # Nothing to update
 
+        # No `version` bump: the column was inert optimistic-locking residue
+        # and was removed at schema v6 (TASK-19566 F8) -- nothing ever
+        # checked it, so bumping it only maintained the appearance of
+        # concurrency protection that did not exist.
         updates.append("updated_at = datetime('now', 'utc')")
-        updates.append("version = version + 1")
 
         query = f"UPDATE eval_tasks SET {', '.join(updates)} WHERE id = ? AND deleted_at IS NULL"
         params.append(task_id)
@@ -916,7 +983,9 @@ class EvalsDB:
 
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
-                    raise ConflictError("Task name already exists", "eval_tasks", task_id)
+                    raise ConflictError(
+                        "Task name already exists", "eval_tasks", task_id
+                    )
                 raise EvalsDBError(f"Failed to update task: {e}")
 
     def delete_task(self, task_id: str) -> bool:
@@ -943,7 +1012,6 @@ class EvalsDB:
                 matching row".
         """
         with self.connection() as conn:
-
             try:
                 with conn:
                     # Resolve the task's run groups BEFORE the soft-delete below.
@@ -1052,7 +1120,9 @@ class EvalsDB:
                     for start in range(
                         0, len(ids), _PROBE_ANNOTATION_CASCADE_BATCH_SIZE
                     ):
-                        batch = ids[start : start + _PROBE_ANNOTATION_CASCADE_BATCH_SIZE]
+                        batch = ids[
+                            start : start + _PROBE_ANNOTATION_CASCADE_BATCH_SIZE
+                        ]
                         placeholders = ",".join("?" for _ in batch)
                         cursor = conn.execute(
                             f"DELETE FROM {table} WHERE run_group_id IN ({placeholders})",
@@ -1074,7 +1144,6 @@ class EvalsDB:
         )
 
         with self.connection() as conn:
-
             query = "SELECT * FROM eval_tasks WHERE id = ?"
             if not include_deleted:
                 query += " AND deleted_at IS NULL"
@@ -1089,11 +1158,19 @@ class EvalsDB:
             log_histogram(
                 "eval_db_operation_duration",
                 duration,
-                labels={"operation": "get_task", "table": "eval_tasks", "status": status},
+                labels={
+                    "operation": "get_task",
+                    "table": "eval_tasks",
+                    "status": status,
+                },
             )
             log_counter(
                 "eval_db_operation_success",
-                labels={"operation": "get_task", "table": "eval_tasks", "status": status},
+                labels={
+                    "operation": "get_task",
+                    "table": "eval_tasks",
+                    "status": status,
+                },
             )
 
             if row:
@@ -1107,7 +1184,6 @@ class EvalsDB:
     ) -> List[Dict[str, Any]]:
         """List evaluation tasks with optional filtering."""
         with self.connection() as conn:
-
             query = "SELECT * FROM eval_tasks WHERE deleted_at IS NULL"
             params = []
 
@@ -1148,7 +1224,6 @@ class EvalsDB:
             # last seam in this family that still had it.
             return []
         with self.connection() as conn:
-
             # Remove null bytes and other control characters
             query = "".join(c for c in query if c.isprintable() and ord(c) != 0)
 
@@ -1246,7 +1321,9 @@ class EvalsDB:
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
                     raise ConflictError(
-                        f"Dataset with name '{name}' already exists", "eval_datasets", name
+                        f"Dataset with name '{name}' already exists",
+                        "eval_datasets",
+                        name,
                     )
                 raise EvalsDBError(f"Failed to create dataset: {e}")
 
@@ -1333,12 +1410,9 @@ class EvalsDB:
         if not updates:
             return self.get_dataset(dataset_id) is not None
 
-        updates.extend(
-            [
-                "updated_at = datetime('now', 'utc')",
-                "version = version + 1",
-            ]
-        )
+        # No `version` bump -- same v6 rationale as `update_task` above
+        # (TASK-19566 F8): the column was never read by anyone.
+        updates.append("updated_at = datetime('now', 'utc')")
         params.append(dataset_id)
 
         with self.connection() as conn:
@@ -1356,7 +1430,9 @@ class EvalsDB:
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
                     raise ConflictError(
-                        f"Dataset with name '{name}' already exists", "eval_datasets", name
+                        f"Dataset with name '{name}' already exists",
+                        "eval_datasets",
+                        name,
                     )
                 raise EvalsDBError(f"Failed to update dataset: {e}")
 
@@ -1478,9 +1554,7 @@ class EvalsDB:
         try:
             return json.loads(value)
         except (TypeError, ValueError) as exc:
-            raise EvalsDBError(
-                f"Corrupt JSON in {column}: {exc!r}"
-            ) from exc
+            raise EvalsDBError(f"Corrupt JSON in {column}: {exc!r}") from exc
 
     def get_model(self, model_id: str) -> Optional[Dict[str, Any]]:
         """Get model by ID."""
@@ -1507,7 +1581,6 @@ class EvalsDB:
     ) -> List[Dict[str, Any]]:
         """List evaluation models with optional provider filtering."""
         with self.connection() as conn:
-
             query = "SELECT * FROM eval_models WHERE deleted_at IS NULL"
             params = []
 
@@ -1687,9 +1760,10 @@ class EvalsDB:
                 for field, value in updates.items():
                     if field in allowed_fields:
                         fields_to_update.append(f"{field} = ?")
-                        if field in ["metrics_summary", "config_overrides"] and isinstance(
-                            value, dict
-                        ):
+                        if field in [
+                            "metrics_summary",
+                            "config_overrides",
+                        ] and isinstance(value, dict):
                             values.append(json.dumps(value))
                         else:
                             values.append(value)
@@ -1758,7 +1832,6 @@ class EvalsDB:
             parsed from JSON.
         """
         with self.connection() as conn:
-
             query = """
             SELECT r.*, t.name as task_name, m.name as model_name
             FROM eval_runs r
@@ -2304,7 +2377,9 @@ class EvalsDB:
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
                     raise ConflictError(
-                        f"A/B test with ID '{test_id}' already exists", "ab_tests", test_id
+                        f"A/B test with ID '{test_id}' already exists",
+                        "ab_tests",
+                        test_id,
                     )
                 raise EvalsDBError(f"Failed to create A/B test: {e}")
 
@@ -2423,7 +2498,6 @@ class EvalsDB:
     ) -> List[Dict[str, Any]]:
         """List A/B tests with optional filtering."""
         with self.connection() as conn:
-
             query = """
             SELECT a.*, 
                    t.name as task_name,

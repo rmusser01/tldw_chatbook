@@ -75,9 +75,12 @@ def test_source_proof_and_sync_v2_outbox_carry_explicit_generation_state(
         )
 
         assert result["status"] == "enqueued"
-        assert _decrypt_payload(
-            result["outbox_entry"]["envelope"]["payload_ciphertext"], dataset_key
-        ) == payload
+        assert (
+            _decrypt_payload(
+                result["outbox_entry"]["envelope"]["payload_ciphertext"], dataset_key
+            )
+            == payload
+        )
     finally:
         db.close_connection()
 
@@ -115,11 +118,14 @@ def test_source_proof_normalizes_only_legacy_missing_generation_state(tmp_path) 
             }
         )
 
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=1,
-            payload_hash=payload_hash,
-        ) is not None
+        assert (
+            db.read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is not None
+        )
 
         legacy_payload["unexpected"] = True
         connection.execute(
@@ -127,11 +133,14 @@ def test_source_proof_normalizes_only_legacy_missing_generation_state(tmp_path) 
             (json.dumps(legacy_payload), message_id),
         )
         connection.commit()
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=1,
-            payload_hash=payload_hash,
-        ) is None
+        assert (
+            db.read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is None
+        )
     finally:
         db.close_connection()
 
@@ -174,11 +183,14 @@ def test_source_proof_rejects_malformed_wrong_role_and_mismatched_state(
                 (json.dumps(payload), message_id),
             )
             connection.commit()
-            assert db.read_committed_chat_sync_intent(
-                message_id=str(message_id),
-                message_version=1,
-                payload_hash=payload_hash,
-            ) is None
+            assert (
+                db.read_committed_chat_sync_intent(
+                    message_id=str(message_id),
+                    message_version=1,
+                    payload_hash=payload_hash,
+                )
+                is None
+            )
     finally:
         db.close_connection()
 
@@ -211,11 +223,14 @@ def test_source_proof_rejects_illegal_nonassistant_persisted_state(tmp_path) -> 
                 "role": "user",
             }
         )
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=1,
-            payload_hash=payload_hash,
-        ) is None
+        assert (
+            db.read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is None
+        )
     finally:
         db.close_connection()
 
@@ -244,11 +259,14 @@ def test_source_proof_rejects_continuation_active_without_continuation(
             }
         )
 
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=1,
-            payload_hash=payload_hash,
-        ) is None
+        assert (
+            db.read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=1,
+                payload_hash=payload_hash,
+            )
+            is None
+        )
     finally:
         db.close_connection()
 
@@ -309,11 +327,14 @@ def test_undelete_source_proof_rejects_invalid_prior_delete_state(
             }
         )
 
-        assert db.read_committed_chat_sync_intent(
-            message_id=str(message_id),
-            message_version=3,
-            payload_hash=payload_hash,
-        ) is None
+        assert (
+            db.read_committed_chat_sync_intent(
+                message_id=str(message_id),
+                message_version=3,
+                payload_hash=payload_hash,
+            )
+            is None
+        )
     finally:
         db.close_connection()
 
@@ -646,10 +667,10 @@ def test_chachanotes_source_read_uses_database_transaction(
         db.close_connection()
 
 
-def test_message_tombstone_read_uses_database_transaction(tmp_path, monkeypatch) -> None:
-    db = CharactersRAGDB(
-        tmp_path / "tombstone-transaction.db", client_id="sync-source"
-    )
+def test_message_tombstone_read_uses_database_transaction(
+    tmp_path, monkeypatch
+) -> None:
+    db = CharactersRAGDB(tmp_path / "tombstone-transaction.db", client_id="sync-source")
     try:
         conversation_id = db.add_conversation({"title": "Tombstone transaction"})
         message_id = db.add_message(
@@ -734,6 +755,7 @@ def test_delete_source_and_current_intent_list_use_database_transactions(
         assert transaction_calls >= 3
     finally:
         db.close_connection()
+
 
 def test_chachanotes_source_rejects_uncommitted_ambiguous_and_deleted_intents(
     tmp_path,

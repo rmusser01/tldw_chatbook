@@ -159,7 +159,11 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
-    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 976,
+    # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to
+    # library_conversation_reader_freshness.py with its new transcript re-check.
+    # 964 -> 967 (2026-10-03, Qodo #2989): a completed load calls that module's
+    # recheck_settled_load, so a load a list read found in flight is re-checked.
+    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 967,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
     "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1453,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
@@ -408,7 +412,13 @@ _BUDGETS: dict[str, int] = {
     # test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vault`
     # -- without the handler the toggle press never re-checks and the test reds
     # on "Turning Obsidian vault off never re-ran the check."
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6366,
+    #
+    # 2026-10-03, TASK-34000.2: 6366 -> 6311 (-55), a MOVE. The note
+    # location loader's body and its file-written label moved into
+    # `library_notes_sync_attention.py` (which now also answers whether the
+    # note's sync folder is held for attention); the controller keeps a
+    # three-line delegator and one scheduling call.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6311,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
@@ -431,7 +441,13 @@ _BUDGETS: dict[str, int] = {
     # (keyed on `root_id == ""` => setup), so each of the two Check paths
     # spends exactly one line on it. This row was briefly pinned at 2128 with
     # the table in the controller; that was rejected in review and reverted.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2380,
+    #
+    # 2026-10-03, TASK-32633 slice (N-03): 2380 -> 2366 (-14), a MOVE. The
+    # root-status copy table moved to `Library/library_notes_lasting_sync_
+    # state.py` as `ROOT_STATUS_LABELS`, next to the refusal table above, and
+    # the healthy label is now dated there (`root_status_label`); the
+    # controller spends one line on the call it used to spend three on.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2366,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

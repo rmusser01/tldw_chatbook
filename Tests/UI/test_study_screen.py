@@ -11,6 +11,7 @@ import pytest
 from textual.containers import Container
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_study_dashboard import (
     DashboardQuizScopeService,
@@ -60,7 +61,7 @@ def _disable_full_app_splash(monkeypatch: pytest.MonkeyPatch) -> None:
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 def _pending_scope_store(scope_context=None) -> PendingHandoffStore:

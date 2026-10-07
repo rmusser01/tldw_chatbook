@@ -144,6 +144,54 @@ async def test_quit_confirmation_error_fails_closed_and_preserves_state():
     ]
 
 
+class _ModalScreen:
+    """A modal on top of the stack: it has no quit hooks of its own."""
+
+    is_modal = True
+
+
+class _ModalStackHarness(_ConfirmationHarness):
+    """The active screen is a modal; the screens beneath it are in the stack."""
+
+    def __init__(self, *stack) -> None:
+        super().__init__(stack[-1])
+        self.screen_stack = list(stack)
+
+
+@pytest.mark.asyncio
+async def test_quit_under_a_modal_asks_the_screen_beneath_and_stay_wins():
+    """TASK-33622.10: Ctrl+Q is priority now, so it reaches the quit flow
+    while a modal is up. The unsaved work (Settings' theme edits, the
+    Chunking Lab) lives on the destination screen BENEATH the modal; asking
+    only the modal would quit straight past that screen's prompt."""
+    destination = _ConfirmationScreen(decision=False)
+    app = _ModalStackHarness(destination, _ModalScreen())
+
+    await app._confirm_and_quit()
+
+    assert destination.calls == ["confirm"]
+    assert app._quit_in_progress is False
+    assert app._shutting_down is False
+    assert app.cleanup_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_quit_under_stacked_modals_confirms_and_prepares_only_the_destination():
+    below_destination = _ConfirmationScreen()
+    destination = _ConfirmationScreen()
+    app = _ModalStackHarness(
+        below_destination, destination, _ModalScreen(), _ModalScreen()
+    )
+
+    await app._confirm_and_quit()
+
+    assert destination.calls == ["confirm", "prepare"]
+    assert below_destination.calls == [], (
+        "only the topmost non-modal screen is the one the user is in"
+    )
+    assert app.cleanup_calls == 1
+
+
 class _Timer:
     def __init__(self, events: list[tuple[str, int]]) -> None:
         self.events = events

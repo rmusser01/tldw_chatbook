@@ -90,3 +90,24 @@ class AutomaticWakeAttempt:
     owner_id: str
     state: str
     run_ids: tuple[str, ...]
+    cause: str = "completion"
+    message_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AutomaticChatStartAttempt:
+    """Body-free exact-target authority for one native automatic chat start."""
+
+    id: str
+    source_run_id: str
+    source_chain_id: str
+    chain_id: str
+    conversation_id: str
+    session_id: str
+    session_incarnation: str
+    owner_id: str
+    draft_revision: int
+    context_epoch: int
+    request_fingerprint: str
+    generation_reservation_id: str
+    state: str

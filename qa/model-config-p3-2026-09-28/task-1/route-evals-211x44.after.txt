@@ -1,0 +1,44 @@
+                                                                                                           ╭────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP │ F2 Lab │ F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Evals   Run and review evaluation jobs.                                                                                                                                                                    Ready
+ Modes:    Models    Speech    Evals
+Catalog                      < │ Detail                                                                                                                          Inspector                                       >
+ Benches (0)                ▾  │ Nothing here yet. Create a sample bench in the Catalog rail to get started — it builds a dataset and a run for you in one step. Inspector
+ Start here — no benches yet.  │                                                                                                                                  Run Bench: Blocked
+ The sample bench below builds │                                                                                                                                 ╭────────────────────────────────────────────────╮
+ a dataset and a target for    │                                                                                                                                 │                                                │
+ you, then runs it.            │                                                                                                                                 │  Select a bench in the Catalog rail to run     │
+  Create sample bench          │                                                                                                                                 │  it.                                           │
+                               │                                                                                                                                 │                                                │
+         + New bench           │                                                                                                                                 ╰────────────────────────────────────────────────╯
+  Create or import a dataset   │
+  first.                       │                                                                                                                                                     Run Bench
+    + New character bench      │
+  Import or create a probe     │
+  set first.                   │
+       + New skill eval        │
+  grade one skill: static +    │
+  judge + simulation           │
+ Datasets (0)               ▾  │
+        + New dataset          │
+           Import…             │
+        Import probes…         │
+ No datasets yet.              │
+ Runs (0)                   ▾  │
+ No runs yet.                  │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+                               │
+  ←/→ [ ] Move mode focus | Enter Go | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

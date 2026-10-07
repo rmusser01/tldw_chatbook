@@ -109,6 +109,11 @@ mapping[f'profile:{profile}:paths.data_dir']=data_base(config)
 print('TARGET_MAPPING',len(mapping),flush=True)
 from tldw_chatbook.Backup_Recovery import replacement,capture_service
 plan=service.preview_restore(inspection,mode='replace',destinations=mapping,target=target,profile_names={profile:name})
+if mode=='abort':
+ from tldw_chatbook.Backup_Recovery.restore_plan import required_rollback_dependencies
+ required=required_rollback_dependencies(plan)
+ if required:
+  plan=service.preview_restore(inspection,mode='replace',destinations=mapping,target=target,profile_names={profile:name},safety_scope=required)
 before=selector.read_bytes()
 if mode=='topology':
  from contextlib import contextmanager
@@ -323,6 +328,223 @@ assert bootstrap._records(bootstrap.default_bootstrap_root())[1]==before
 assert not blocked_attempts()
 print('fresh CLI retained current config scope')
 """
+
+
+_MULTI_PROFILE_SETUP = r"""
+import asyncio,os,sys
+from pathlib import Path
+from Tests.network_guard import install,blocked_attempts
+install()
+for name in ('sounddevice','pyaudio'):sys.modules[name]=None
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+import tldw_chatbook
+assert Path(tldw_chatbook.__file__).resolve()==Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])/'tldw_chatbook/__init__.py'
+from tldw_chatbook.app import TldwCli
+async def main():
+ app=TldwCli()
+ await app._shutdown_app_owned_lifecycles()
+ await app.tts_service.close();await app.tts_service.wait_closed()
+asyncio.run(main())
+assert not blocked_attempts()
+print('private profile initialized')
+"""
+
+_MULTI_PROFILE_SCOPE = r"""
+import os,sys
+from dataclasses import replace
+from pathlib import Path
+from Tests.network_guard import install,blocked_attempts
+install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+import tldw_chatbook
+assert Path(tldw_chatbook.__file__).resolve()==Path(os.environ['TLDW_TEST_INSTALLED_PACKAGE'])/'tldw_chatbook/__init__.py'
+from tldw_chatbook.Backup_Recovery import inventory,replacement,restore_plan
+from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+from tldw_chatbook.Backup_Recovery.storage_admission import _preview_reads
+home=Path.home();selectors=(home/'.config/tldw_cli/config.toml',home/'retargeted/config.toml')
+install_adapters()
+with _preview_reads():target=inventory.discover(selectors)
+assert target.complete,target.issues
+plan=restore_plan.RestorePlan(archive_digest='first-binding-current-profiles',mode='replace',restore=(),retire=(),preserve=tuple((item.logical_id,item.path) for item in target.items if item.path is not None),target_fingerprint='',target=target)
+plan=replace(plan,target_fingerprint=restore_plan._fingerprint(restore_plan._paths(plan),target))
+mode=sys.argv[1];selected=selectors[mode=='retargeted']
+if mode=='unknown':
+ (home/'.local/share/tldw_cli/unreviewed-profile').mkdir(mode=0o700)
+elif mode=='peer-drift':
+ selectors[1].write_bytes(selectors[1].read_bytes()+b'\n# changed after review\n')
+elif mode=='unreviewed-selector':
+ selected=home/'unreviewed/config.toml'
+elif mode=='approved-fields':
+ peer=next(item for item in target.items if item.owner=='config' and item.path==selectors[1])
+ target=replace(target,items=tuple(replace(item,dependencies=('changed-approved-dependency',)) if item==peer else item for item in target.items))
+ plan=replace(plan,target=target,target_fingerprint=restore_plan._fingerprint(restore_plan._paths(plan),target))
+before={selector:selector.read_bytes() for selector in selectors}
+expected={'unknown':'replacement_current_scope_unavailable','peer-drift':'target_changed','unreviewed-selector':'replacement_current_scope_changed','approved-fields':'replacement_current_scope_changed'}
+try:view=replacement._first_binding_inventory(plan,selected)
+except ValueError as error:
+ assert mode in expected and str(error)==expected[mode],type(error).__name__
+else:
+ assert mode in {'default','retargeted'},'unreviewed current scope accepted'
+ configs=[item for item in view.items if item.owner=='config']
+ assert len(configs)==1 and configs[0].path==selected
+ prefix=configs[0].logical_id.removesuffix('config')
+ assert view.complete and all(item.logical_id.startswith(prefix) or item.owner=='recovery.control' and item.status=='intentionally_excluded' for item in view.items)
+ assert not any(item.path==selectors[selected==selectors[0]] for item in view.items)
+ assert all(item in target.items for item in view.items)
+assert all(selector.read_bytes()==data for selector,data in before.items())
+assert not blocked_attempts()
+print('reviewed multi-profile scope checked')
+"""
+
+
+@pytest.mark.parametrize(
+    "mode",
+    (
+        "default",
+        "retargeted",
+        "unknown",
+        "peer-drift",
+        "unreviewed-selector",
+        "approved-fields",
+    ),
+)
+def test_first_binding_uses_full_reviewed_local_census_and_one_profile_view(
+    tmp_path, native_package, mode
+):
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    selectors = (home / ".config/tldw_cli/config.toml", home / "retargeted/config.toml")
+    environment = dict(
+        os.environ,
+        HOME=str(home),
+        USERPROFILE=str(home),
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
+        XDG_DATA_HOME=str(tmp_path / "data"),
+        PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
+        TLDW_TEST_MODE="1",
+        TLDW_DISABLE_CONFIG_WATCH="1",
+        PYTHONNOUSERSITE="1",
+        PYTHONPATH=os.pathsep.join(
+            (str(native_package), str(Path(__file__).resolve().parents[2]))
+        ),
+        TLDW_TEST_INSTALLED_PACKAGE=str(native_package),
+    )
+    for role, selector in zip(("default", "retargeted"), selectors, strict=True):
+        selector.parent.mkdir(mode=0o700, parents=True)
+        selector.write_text(
+            f'[general]\nusers_name="binding_{role}"\n[first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n[tldw_api]\nbase_url=""\n'
+        )
+        selector.chmod(0o600)
+        environment["TLDW_CONFIG_PATH"] = str(selector)
+        initialized = subprocess.run(  # nosec B603 - fixed private installed-product child
+            [sys.executable, "-c", _MULTI_PROFILE_SETUP],
+            env=environment,
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        (tmp_path / f"setup-{role}.log").write_text(
+            initialized.stdout + initialized.stderr
+        )
+        assert initialized.returncode == 0, "private_profile_setup_failed"
+    result = subprocess.run(  # nosec B603 - fixed private installed-product child
+        [sys.executable, "-c", _MULTI_PROFILE_SCOPE, mode],
+        env=environment,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    (tmp_path / "multi-profile-scope.log").write_text(result.stdout + result.stderr)
+    assert result.returncode == 0, "reviewed_multi_profile_scope_failed"
+    assert "reviewed multi-profile scope checked" in result.stdout
+
+
+def test_first_binding_refuses_projected_shared_registry_dependency_gap(
+    tmp_path, monkeypatch
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery import inventory, replacement, restore_plan
+    from tldw_chatbook.Backup_Recovery.config_adapter import _ChatbookRegistry
+    from tldw_chatbook.Backup_Recovery.models import StorageItem
+
+    selectors = tuple(tmp_path / f"config-{number}.toml" for number in range(2))
+    registry = tmp_path / "shared-registry.json"
+    registry.write_bytes(b"{}")
+    registry.chmod(0o600)
+    rows = []
+    for number, selector in enumerate(selectors):
+        selector.write_bytes(b"[general]\n")
+        selector.chmod(0o600)
+        prefix = f"profile:local{number}:"
+        archive = tmp_path / f"archive-{number}.zip"
+        archive.write_bytes(b"test-owned archive")
+        archive.chmod(0o600)
+        archive_id = prefix + "chatbooks.archives:owned"
+        rows.extend(
+            (
+                StorageItem("config", prefix + "config", selector, "included", ()),
+                StorageItem(
+                    "chatbooks.archives",
+                    archive_id,
+                    archive,
+                    "included",
+                    (prefix + "config",),
+                ),
+                StorageItem(
+                    "chatbooks.registry",
+                    prefix + "chatbooks.registry",
+                    registry,
+                    "included",
+                    (prefix + "config", archive_id),
+                    "shared-registry",
+                ),
+            )
+        )
+    target = inventory.classify_entries(
+        _ChatbookRegistry.shared_dependencies(tuple(rows))
+    )
+    assert target.complete
+    assert all(
+        len(item.dependencies) == 3
+        for item in target.items
+        if item.owner == "chatbooks.registry"
+    )
+    plan = restore_plan.RestorePlan(
+        archive_digest="first-binding-shared-local-registry",
+        mode="replace",
+        restore=(),
+        retire=(),
+        preserve=tuple((item.logical_id, item.path) for item in target.items),
+        target_fingerprint="",
+        target=target,
+    )
+    plan = replace(
+        plan,
+        target_fingerprint=restore_plan._fingerprint(restore_plan._paths(plan), target),
+    )
+
+    def current(chosen):
+        if chosen == selectors:
+            return target
+        assert chosen == (selectors[0],)
+        return inventory.classify_entries(
+            tuple(row for row in rows if row.logical_id.startswith("profile:local0:"))
+        )
+
+    monkeypatch.setattr(inventory, "discover", current)
+    with pytest.raises(
+        ValueError, match="^replacement_current_scope_(changed|unavailable)$"
+    ):
+        replacement._first_binding_inventory(plan, selectors[0])
 
 
 @pytest.mark.parametrize("scope", ["held", "missing_unbound", "missing_source", "fake"])

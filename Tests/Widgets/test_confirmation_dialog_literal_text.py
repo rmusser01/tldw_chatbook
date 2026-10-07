@@ -17,8 +17,12 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.widgets import Label
+from textual.color import Color
+from textual.containers import VerticalScroll
+from textual.widgets import Button, Label
 
+from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from tldw_chatbook.Widgets.cancel_confirmation_dialog import CancelConfirmationDialog
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 
@@ -85,3 +89,51 @@ async def test_callers_must_not_pre_escape():
     """
     _title, message = await _rendered("\\[TODO] pre-escaped")
     assert "\\[TODO]" in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("dismiss_key", ("enter", "escape"))
+async def test_cancel_confirmation_scroll_body_keeps_primary_border_and_safe_default(
+    dismiss_key: str,
+) -> None:
+    """Keep cancellation's border, literal prose and safe default together.
+
+    Args:
+        dismiss_key: The safe default action or the dialog's Escape binding.
+    """
+    app = ConsolidatedCSSApp(css_path=BUNDLED_STYLESHEET)
+    results: list[bool] = []
+    title = "Cancel [TODO] queued prompt?"
+    message = "Keep [/b] unsent prompt?"
+    dialog = CancelConfirmationDialog(title=title, message=message)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app.push_screen(dialog, results.append)
+        await pilot.pause()
+        body = dialog.query_one("#confirmation-dialog", VerticalScroll)
+        assert dialog.query_one(".dialog-title").render().plain == title
+        assert dialog.query_one(".dialog-message").render().plain == message
+        primary = Color.parse(str(app.get_css_variables()["primary"]))
+        accent = Color.parse(str(app.get_css_variables()["accent"]))
+        assert primary != accent, "the fixture must distinguish the two borders"
+        for edge in (
+            body.styles.border_top,
+            body.styles.border_right,
+            body.styles.border_bottom,
+            body.styles.border_left,
+        ):
+            assert edge == ("thick", primary), (
+                f"cancellation inherited the base accent border: {edge!r}"
+            )
+        keep_processing = dialog.query_one("#cancel-button", Button)
+        assert app.focused is keep_processing
+        region, clip = dialog._compositor.visible_widgets[keep_processing]
+        assert region.width > 0
+        assert region.height > 0
+        assert region.intersection(clip) == region
+        center = region.x + region.width // 2, region.y + region.height // 2
+        assert dialog.get_widget_at(*center)[0] is keep_processing
+        await pilot.press(dismiss_key)
+        await pilot.pause()
+        assert dialog not in app.screen_stack
+        assert results == [False]

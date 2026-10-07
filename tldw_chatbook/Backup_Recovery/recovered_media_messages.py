@@ -154,6 +154,44 @@ def bind_message_references(db) -> RecoveredMessageReferences | None:
         return None
 
 
+def references_absent(
+    binding: RecoveredMessageReferences | None, message_ids: tuple[str, ...]
+) -> bool:
+    """Return True only on positive evidence that no reference names these ids.
+
+    A release that could not verify its source normally leaves cleanup
+    pending. When the recovered-media catalog does not exist, or holds no
+    current-profile reference for these messages, there is nothing to
+    release -- a media-free delete must not warn (TASK-33628.2). Any doubt
+    (unreadable catalog, changed source) answers False, keeping the pending
+    retry.
+
+    Args:
+        binding: The service's bound source, or ``None`` when unbound (the
+            default recovered-media root and profile are inspected).
+        message_ids: Persisted ids whose references to look for.
+
+    Returns:
+        True only when no current-profile reference names these ids.
+    """
+    try:
+        if type(binding) is RecoveredMessageReferences:
+            root, profile = binding.source.root, binding.profile
+        else:
+            from tldw_chatbook.Utils.paths import get_user_data_dir
+
+            root = get_user_data_dir() / "recovered_media"
+            profile = recovered_media.current_profile_id()
+        return not recovered_media.message_references_exist(
+            root, profile, tuple(message_ids)
+        )
+    except Exception as exc:  # noqa: BLE001 - uncertainty keeps the pending retry
+        logger.debug(
+            "Recovered-media reference absence unproven: {}", type(exc).__name__
+        )
+        return False
+
+
 def release_after_message_delete(
     binding: RecoveredMessageReferences | None, db, message_ids: tuple[str, ...]
 ) -> bool:

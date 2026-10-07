@@ -58,6 +58,10 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBa
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 
+# The real ChatScreen/store goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 async def _settle(pilot, predicate, seconds: float = 8.0) -> bool:
     """Run the app loop until ``predicate()`` is true (or time out)."""
@@ -167,7 +171,7 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
             controller.fleet_wake,
             _drain(target.persisted_conversation_id, _survivor(run_id, session_id=target.id)),
         )
-        assert await _settle(pilot, lambda: gateway.payloads), (
+        assert await _settle(pilot, lambda: gateway.payloads, seconds=15.0), (
             "the wake turn never started streaming; "
             f"pending={controller.fleet_wake.has_pending(target.id)!r}, "
             f"delivering={controller.fleet_wake.delivering_conversation_ids()!r}, "
@@ -178,7 +182,9 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
         # woken session's tab shows RUNNING while the wake streams.
         await console._sync_native_console_chat_ui()
         await pilot.pause()
-        assert "●" in _tab_label(console, target.id), (
+        # An awaited sync may coalesce behind an existing worker. Observe
+        # its actual publication while the provider is still held.
+        assert await _settle(pilot, lambda: "●" in _tab_label(console, target.id)), (
             "precondition: the streaming wake turn paints RUNNING on its tab"
         )
 
@@ -192,7 +198,16 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
         assert stamped, "the wake turn never completed/stamped its ledger row"
 
         # NO interaction from here on: the terminal edge itself must repaint.
-        await pilot.pause(1.2)
+        assert await _settle(
+            pilot,
+            lambda: (
+                "●" not in _tab_label(console, target.id)
+                and "✓" in _tab_label(console, target.id)
+            ),
+        ), (
+            "the settled wake tab never repainted without user interaction: "
+            f"{_tab_label(console, target.id)!r}"
+        )
         label = _tab_label(console, target.id)
         assert "●" not in label, (
             "task-15862: the wake turn ended but its tab glyph froze at "
@@ -292,7 +307,7 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
             controller.fleet_wake,
             _drain(session.persisted_conversation_id, _survivor(run_id, session_id=session.id)),
         )
-        assert await _settle(pilot, lambda: gateway.payloads), (
+        assert await _settle(pilot, lambda: gateway.payloads, seconds=15.0), (
             "the wake turn never started streaming; "
             f"pending={controller.fleet_wake.has_pending(session.id)!r}, "
             f"delivering={controller.fleet_wake.delivering_conversation_ids()!r}, "
@@ -318,6 +333,15 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
         assert "sub-agent" in tooltip.lower(), (
             "the send button's hover copy must name the wake too, not the "
             f"queue's not-yet-accepted line: {tooltip!r}"
+        )
+        # TASK-33620.4 review: a keystroke re-syncs the composer from its OWN
+        # cache (`_sync_current_action_state`, no screen pass in between,
+        # asserted before the loop can tick). That cache dropped the wake
+        # flag, so the strip fell through to the queue's wait copy.
+        composer.insert_text("x")
+        resynced = str(composer._send_disabled_reason or "")
+        assert "sub-agent" in resynced.lower(), (
+            f"a keystroke mid-wake re-named the wait: {resynced!r}"
         )
 
         gate.set()

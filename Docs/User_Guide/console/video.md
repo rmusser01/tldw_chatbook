@@ -29,6 +29,16 @@ writing them into your chat database.
 - **Paid backends ask first.** When `[video_generation]
   confirm_cost_estimate` is on (default), cloud backends show the
   billing shape (per generated second) and wait for confirmation.
+  **Escape** (or **Cancel**) starts nothing and keeps your draft.
+- The Console stays responsive while a video generates, whether you sent
+  with **Enter** or the **Send** button: **Stop**, **F1** help, **Ctrl+Q**
+  and other commands (`/stop`, `/help`, …) keep working. Sending the same
+  unchanged draft again while its first run is still going does nothing.
+- If a generation fails or you stop it, the `/generate-video` command
+  comes back into the composer so **Enter** runs it again. If you have
+  typed something new or switched chats in the meantime, your new text is
+  left alone and the failure message shows the command to send again.
+  `/generate-image` works the same way.
 
 ### Backends
 
@@ -61,6 +71,17 @@ What that means in practice:
   `retention_ttl_hours` (default 24). A total store cap
   (`max_store_mb`, default 2048) always applies — the oldest videos are
   evicted first, even within a session.
+- If a finished video exceeds that cap, or cannot be stored, a
+  **Generated video** choice opens: **Keep here (remove other videos)** — or
+  **Retry** when storing failed — **Save to disk**, or **Discard**. The result is lost if you
+  discard it, so Escape asks first, and so does **Ctrl+Q** while the choice is
+  open (**Discard generated video and quit?**; **Stay** keeps the choice).
+  After **Save to disk**, Ctrl+Q asks the same question while the file picker
+  or its **Replace existing file?** / **Destination changed** question is
+  open; **Stay** returns you there. Cancelling the file picker itself (Escape or
+  **Cancel**) brings the **Generated video** choice back with the video still
+  there, as often as you like. Only an explicit discard throws it away:
+  **Discard** on that choice, or **Discard and quit** when Ctrl+Q asks.
 - **"Save"** on a ready video card copies the file to
   `[chat.videos] save_location` (default `~/Downloads`) — the only way a
   video escapes ephemerality, and always an explicit act.

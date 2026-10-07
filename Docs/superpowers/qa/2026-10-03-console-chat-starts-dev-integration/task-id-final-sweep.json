@@ -1,0 +1,24 @@
+{
+  "time": 1791056885.754355,
+  "argv": [
+    "git",
+    "for-each-ref",
+    "--format=%(objectname)"
+  ],
+  "unique_ref_trees": 452,
+  "worktrees": 89,
+  "head": "149adb53f1d10b090e31a5f458e8c2ffcd3ca458",
+  "origin_dev": "a5600366381f19d99dbd0dada655113316ede9f7",
+  "max_task_id_all_refs_worktrees": 34200,
+  "provisional_block": [
+    34201,
+    34202,
+    34203
+  ],
+  "duplicates": {
+    "33802": [
+      "task-33802 - Census-typing-burst-helper-spawn-flake-under-concurrent-IO-load.md",
+      "task-33802 - Design-Console-chat-destinations-and-bounded-agent-starts.md"
+    ]
+  }
+}

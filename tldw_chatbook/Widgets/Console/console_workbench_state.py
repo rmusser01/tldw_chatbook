@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+from tldw_chatbook.Chat.console_glyphs import GLYPH_HOOKS
 from tldw_chatbook.UI.Workbench.workbench_state import (
     Density,
     WorkbenchAction,
@@ -11,6 +12,7 @@ from tldw_chatbook.UI.Workbench.workbench_state import (
     WorkbenchPaneState,
     WorkbenchState,
 )
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 
 
 def build_console_workbench_state(
@@ -23,6 +25,9 @@ def build_console_workbench_state(
     density: str = "normal",
     run_active: bool = False,
     ephemeral: bool = False,
+    hook_attention: int = 0,
+    readiness_word: str = "",
+    blocked_turn: str = "",
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
@@ -39,6 +44,12 @@ def build_console_workbench_state(
             call sites do not need to change.
         can_send: Whether the visible composer draft can be sent.
         can_stop: Whether an active generation can be stopped.
+        hook_attention: Enabled hooks or permission errors needing attention.
+        readiness_word: The active chat's spec §5 readiness word
+            (TASK-33005.3); the header badge shows it unless a run is active.
+        blocked_turn: Why an accepted turn is stuck unsent, or "". A
+            stuck turn badges the header "Blocked", not the readiness word
+            (TASK-33621.2).
         density: Requested Workbench density, currently ``normal`` or ``compact``.
         ephemeral: Whether the active session is temporary. Retained for
             callers even though no top action reads it today: Save Chatbook
@@ -71,6 +82,14 @@ def build_console_workbench_state(
             tooltip="Configure provider, model, tools, and generation",
         ),
         WorkbenchAction(
+            id="hooks",
+            label=resolve_glyph(GLYPH_HOOKS)
+            + (f" {hook_attention}" if hook_attention else ""),
+            tooltip=f"Hook permissions: {hook_attention} need review"
+            if hook_attention
+            else "Review hook permissions",
+        ),
+        WorkbenchAction(
             id="attach-context",
             # TASK-32325: the label says what the button DOES (open the
             # rail); the tooltip carries the staging pointer. "Attach
@@ -78,9 +97,7 @@ def build_console_workbench_state(
             # with the rail already open by default the click looked like
             # a dead button.
             label="Context rail",
-            tooltip=(
-                "Open the Console context rail; stage sources from Library"
-            ),
+            tooltip=("Open the Console context rail; stage sources from Library"),
         ),
         WorkbenchAction(
             id="run-library-rag",
@@ -138,8 +155,15 @@ def build_console_workbench_state(
             subtitle="— Chat, source handoffs, live runs, and control actions.",
             # TASK-347: a live generation must not read "Ready". A run only
             # runs once past the blocker gate, so running takes precedence.
-            status="running" if run_active else ("blocked" if blocker else "ready"),
+            status="running"
+            if run_active
+            else ("blocked" if blocker or blocked_turn else "ready"),
             density=workbench_density,
+            # TASK-33005.3: the badge is the status row's readiness word, so
+            # the strip below keeps its width for the context/cost chip.
+            status_label=""
+            if run_active
+            else ("Blocked" if blocked_turn else readiness_word),
         ),
         modes=modes,
         actions=actions,

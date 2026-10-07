@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
+from . import bootstrap
 from .native_files import create_private_directory, flush_directory, pinned_directory
 from .native_platform import flush_file
 from .qualification import _qualified_identity, native_identity, qualified_for
@@ -288,6 +289,7 @@ class Admission:
             os.close(fd)
 
     @staticmethod
+    @bootstrap.advances_admission_epoch
     def _write_new_record(parent: int, name: str, data: bytes) -> None:
         fd = os.open(
             name,
@@ -303,6 +305,7 @@ class Admission:
         finally:
             os.close(fd)
 
+    @bootstrap.advances_admission_epoch
     def _write(
         self, parent: int, registry: _Registry, *, initial: bool = False
     ) -> None:
@@ -385,7 +388,7 @@ class Admission:
                     (
                         "path:" + str(root),
                         "path:" + str(resolved),
-                        f"inode:{info.st_dev}:{info.st_ino}",
+                        bootstrap.inode_token(info),
                     )
                 )
         return result
@@ -420,7 +423,7 @@ class Admission:
             roots = tuple(
                 Path(r) for r in entry.roots + entry.proposed if Path(r) not in omitted
             )
-            tokens[name] = set(entry.historical)
+            tokens[name] = bootstrap.identity_view(entry.historical)
             try:
                 if roots or not omitted.intersection(map(Path, entry.roots)):
                     # Malformed empty declarations remain invalid. Only a proved
@@ -488,7 +491,7 @@ class Admission:
         info = os.stat(root)
         if (
             "path:" + str(resolved) not in tokens
-            or f"inode:{info.st_dev}:{info.st_ino}" not in tokens
+            or bootstrap.inode_token(info) not in tokens
         ):
             raise AdmissionError("root_identity_unverified")
         return resolved, stat.S_ISDIR(info.st_mode)

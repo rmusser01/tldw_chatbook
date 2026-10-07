@@ -1084,7 +1084,9 @@ def library_rag_source_scope_summary(
     if not selected_types:
         return f"{prefix}: no sources selected"
     off_types = [
-        source_type for source_type in toggle_types if source_type not in selected_values
+        source_type
+        for source_type in toggle_types
+        if source_type not in selected_values
     ]
     selected_labels = ", ".join(
         _source_type_display_label(source_type) for source_type in selected_types
@@ -2005,8 +2007,7 @@ def library_rag_coverage_note(
     """
     route_notes = (
         tuple(
-            str(item)
-            for item in (diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or ())
+            str(item) for item in (diagnostics.get(LIBRARY_RAG_ROUTE_NOTES_KEY) or ())
         )
         if isinstance(diagnostics, Mapping)
         else ()

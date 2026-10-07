@@ -109,7 +109,11 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from loguru import logger
 
-from ...Chat.console_command_grammar import CommandParse
+from ...Chat.console_command_grammar import (
+    PROMPT_COMMAND_NAME,
+    SYSTEM_COMMAND_NAME,
+    CommandParse,
+)
 from ...Chat.console_provider_endpoints import (
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
@@ -642,16 +646,12 @@ class _ConsolePromptImprovementFlow:
                     or "Prompt improvement could not resolve the current provider "
                     "target. Review Console provider settings and reopen Improve."
                 ),
-                unavailable_recovery=(
-                    "draft" if projection_blocker else "provider"
-                ),
+                unavailable_recovery=("draft" if projection_blocker else "provider"),
             )
         resolved_target = (
             str(getattr(resolution, "provider", "") or ""),
             str(getattr(resolution, "model", "") or ""),
-            normalize_generic_endpoint_for_compare(
-                getattr(resolution, "base_url", "")
-            ),
+            normalize_generic_endpoint_for_compare(getattr(resolution, "base_url", "")),
         )
         if any(
             expected and expected != actual
@@ -1909,6 +1909,12 @@ class ConsolePromptsController:
             return
         query = parse.args.strip()
         resolved = await self._resolve_console_prompt_by_name(query) if query else None
+        # Lazy: keeps command_handoff off the boot path (ADR-097).
+        from .command_handoff import refuse_if_chat_changed
+
+        # The search let the user switch chats (TASK-33622.16).
+        if refuse_if_chat_changed(PROMPT_COMMAND_NAME):
+            return
         if resolved is not None:
             if self._is_recipe_prompt_record(resolved):
                 await self._append_native_console_system_message(
@@ -2056,6 +2062,13 @@ class ConsolePromptsController:
             await self._open_console_system_prompt_editor()
             return
         resolved = await self._resolve_console_prompt_by_name(args)
+        # Lazy: keeps command_handoff off the boot path (ADR-097).
+        from .command_handoff import refuse_if_chat_changed
+
+        # The search let the user switch chats, and "the active session"
+        # below would then be the other chat (TASK-33622.16).
+        if refuse_if_chat_changed(SYSTEM_COMMAND_NAME):
+            return
         if resolved is not None:
             if self._is_recipe_prompt_record(resolved):
                 await self._append_native_console_system_message(
@@ -2076,7 +2089,13 @@ class ConsolePromptsController:
                 )
                 return
             self._apply_console_session_system_prompt(system_prompt)
-            self._clear_console_composer_draft()
+            # Only the draft the send captured: text typed during the search
+            # stays (TASK-33622.16).
+            from .command_draft import take_command_draft
+
+            take_command_draft(
+                self._console_composer_or_none(), self._clear_console_composer_draft
+            )
             return
         await self._open_console_prompt_picker_for_apply_system(args)
 

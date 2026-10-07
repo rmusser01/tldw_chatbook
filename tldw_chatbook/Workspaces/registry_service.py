@@ -357,9 +357,7 @@ def _validate_ssh_python_interpreter(value: Any) -> None:
             one or more ``[A-Za-z0-9_./-]`` characters (no spaces or
             shell metacharacters) or starts with ``-``.
     """
-    if not isinstance(value, str) or not _SSH_PYTHON_INTERPRETER_RE.fullmatch(
-        value
-    ):
+    if not isinstance(value, str) or not _SSH_PYTHON_INTERPRETER_RE.fullmatch(value):
         raise WorkspaceRegistryServiceError(
             f"Invalid python interpreter {value!r}: allowed charset is "
             "[A-Za-z0-9_./-] with no spaces"
@@ -435,8 +433,7 @@ def _validate_ssh_overlap(
             )
         if existing_path in path.parents:
             raise WorkspaceRegistryServiceError(
-                f"{path} is inside the already-bound SSH root "
-                f"{binding.locator}."
+                f"{path} is inside the already-bound SSH root {binding.locator}."
             )
         if path in existing_path.parents:
             raise WorkspaceRegistryServiceError(
@@ -525,7 +522,12 @@ def binding_exclusion_entries(binding: Any) -> tuple[BindingExclusion, ...]:
         path = item.get("path")
         kind = item.get("kind", "directory")
         added_at = item.get("added_at", "")
-        if isinstance(path, str) and path and kind in {"file", "directory"} and isinstance(added_at, str):
+        if (
+            isinstance(path, str)
+            and path
+            and kind in {"file", "directory"}
+            and isinstance(added_at, str)
+        ):
             entries.append(BindingExclusion(path=path, kind=kind, added_at=added_at))
         else:
             dropped += 1
@@ -554,7 +556,12 @@ def _validated_exclusion_relative(binding: Any, path: str) -> PurePosixPath:
     """
     raw = str(path).strip()
     candidate = PurePosixPath(raw)
-    if not raw or raw.startswith("~") or candidate.is_absolute() or ".." in candidate.parts:
+    if (
+        not raw
+        or raw.startswith("~")
+        or candidate.is_absolute()
+        or ".." in candidate.parts
+    ):
         raise WorkspaceRegistryServiceError(
             "Exclusion path must be relative to the binding root."
         )
@@ -566,13 +573,9 @@ def _validated_exclusion_relative(binding: Any, path: str) -> PurePosixPath:
         # ValueError: embedded NUL bytes; RuntimeError: symlink loops.
         # Both must surface as the service's own error contract, not crash
         # the Settings handler with an unexpected exception type.
-        raise WorkspaceRegistryServiceError(
-            "Binding root is not resolvable."
-        ) from exc
+        raise WorkspaceRegistryServiceError("Binding root is not resolvable.") from exc
     if target != resolved_root and resolved_root not in target.parents:
-        raise WorkspaceRegistryServiceError(
-            "Exclusion path escapes the binding root."
-        )
+        raise WorkspaceRegistryServiceError("Exclusion path escapes the binding root.")
     if target == resolved_root:
         raise WorkspaceRegistryServiceError(
             "Exclude specific paths; remove the binding to exclude the whole root."
@@ -600,7 +603,12 @@ def _validated_remote_exclusion_relative(binding: Any, path: str) -> PurePosixPa
     """
     raw = str(path).strip()
     candidate = PurePosixPath(raw)
-    if not raw or raw.startswith("~") or candidate.is_absolute() or ".." in candidate.parts:
+    if (
+        not raw
+        or raw.startswith("~")
+        or candidate.is_absolute()
+        or ".." in candidate.parts
+    ):
         raise WorkspaceRegistryServiceError(
             "Exclusion path must be relative to the binding root."
         )
@@ -612,9 +620,7 @@ def _validated_remote_exclusion_relative(binding: Any, path: str) -> PurePosixPa
 
         root = parse_remote_locator(str(binding.locator)).path
     except (RemoteLocatorError, ValueError, TypeError) as exc:
-        raise WorkspaceRegistryServiceError(
-            "Binding root is not resolvable."
-        ) from exc
+        raise WorkspaceRegistryServiceError("Binding root is not resolvable.") from exc
     if candidate == PurePosixPath(".") or root == root / candidate:
         raise WorkspaceRegistryServiceError(
             "Exclude specific paths; remove the binding to exclude the whole root."
@@ -752,7 +758,9 @@ class LocalWorkspaceRegistryService:
         description: str = "",
         authority: WorkspaceAuthority | str = WorkspaceAuthority.LOCAL_ONLY,
         sync_status: WorkspaceSyncStatus | str = WorkspaceSyncStatus.NOT_CONFIGURED,
-        assistant_defaults: WorkspaceAssistantDefaults | None | object = _OMITTED_ASSISTANT_DEFAULTS,
+        assistant_defaults: WorkspaceAssistantDefaults
+        | None
+        | object = _OMITTED_ASSISTANT_DEFAULTS,
         confirm_read_write: bool = False,
         tool_profile_confirmation_token: str | None = None,
     ) -> WorkspaceRecord:
@@ -2806,16 +2814,12 @@ class LocalWorkspaceRegistryService:
         try:
             loc = parse_remote_locator(raw_locator)
         except RemoteLocatorError as exc:
-            raise WorkspaceRegistryServiceError(
-                f"Invalid SSH locator: {exc}"
-            ) from exc
+            raise WorkspaceRegistryServiceError(f"Invalid SSH locator: {exc}") from exc
         _validate_ssh_python_interpreter(python_interpreter)
         try:
             target = canonicalize_locator(loc, ssh_bin=ssh_bin)
         except RemoteLocatorError as exc:
-            raise WorkspaceRegistryServiceError(
-                f"Invalid SSH locator: {exc}"
-            ) from exc
+            raise WorkspaceRegistryServiceError(f"Invalid SSH locator: {exc}") from exc
         _validate_ssh_overlap(
             (target.hostname, target.port, target.user),
             loc.path,
@@ -2900,7 +2904,9 @@ class LocalWorkspaceRegistryService:
                 relative = _validated_exclusion_relative(binding, path)
                 absolute = Path(str(binding.locator)) / relative
                 kind = (
-                    "directory" if not absolute.exists() or absolute.is_dir() else "file"
+                    "directory"
+                    if not absolute.exists() or absolute.is_dir()
+                    else "file"
                 )
             key = relative.as_posix().casefold()
             entries = list(binding_exclusion_entries(binding))
@@ -2911,7 +2917,9 @@ class LocalWorkspaceRegistryService:
                     f"Exclusion limit reached ({_MAX_BINDING_EXCLUSIONS})."
                 )
             entries.append(
-                BindingExclusion(path=relative.as_posix(), kind=kind, added_at=self._now_factory())
+                BindingExclusion(
+                    path=relative.as_posix(), kind=kind, added_at=self._now_factory()
+                )
             )
             return self._save_binding_exclusions(binding, entries)
 
@@ -2939,7 +2947,11 @@ class LocalWorkspaceRegistryService:
             binding = self._binding_for_exclusion_edit(workspace_id, binding_id)
             relative = PurePosixPath(str(path).strip())
             key = relative.as_posix().casefold()
-            entries = [e for e in binding_exclusion_entries(binding) if e.path.casefold() != key]
+            entries = [
+                e
+                for e in binding_exclusion_entries(binding)
+                if e.path.casefold() != key
+            ]
             return self._save_binding_exclusions(binding, entries)
 
     def list_binding_exclusions(self, binding_id: str) -> tuple[BindingExclusion, ...]:
@@ -3112,9 +3124,7 @@ class LocalWorkspaceRegistryService:
             "ssh-filesystem",
             str(RuntimeBindingKind.SSH_FILESYSTEM),
         ):
-            raise WorkspaceRegistryServiceError(
-                f"SSH binding not found: {binding_id}"
-            )
+            raise WorkspaceRegistryServiceError(f"SSH binding not found: {binding_id}")
         metadata = dict(existing.metadata)
         metadata["access"] = "rw" if allow_write else "ro"
         return self.save_runtime_binding(

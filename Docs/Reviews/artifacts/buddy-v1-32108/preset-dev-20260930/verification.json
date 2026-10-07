@@ -1,0 +1,113 @@
+{
+  "tested_source": "ce02e03442986d706e73455536626700cf52422c",
+  "dev_base": "2a74675eea24bc2d96b40bf1da2d6550043a58a1",
+  "buddy_cases_passed": 16,
+  "incoming_provider_preset_cases_passed": 171,
+  "combined_cases_passed": 187,
+  "elapsed_seconds": 66.55,
+  "preflight_guards_passed": 11,
+  "reviewed_patches_preserved": 7,
+  "all_patches_identical": true,
+  "full_suite_run": false,
+  "paid_provider_calls": false,
+  "log_sha256": "9ec3ae4bc9cf44ee2bf3f04b4012769273f06e54f901be234132ad83371ea9aa",
+  "preflight_log_sha256": "48a7e70be9ce3535b7457bb830f85382a32287d733c002ed0c44ccba3f747f5b",
+  "profiles": {
+    "fresh": {
+      "profile": "fresh",
+      "headless": true,
+      "workspace_explicit_none": true,
+      "workspace_explicit_none_before": false,
+      "workspace_explicit_none_after": true,
+      "schema_version": 73,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "source_commit": "ce02e03442986d706e73455536626700cf52422c",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        }
+      }
+    },
+    "upgrade": {
+      "profile": "upgrade",
+      "headless": true,
+      "workspace_explicit_none": true,
+      "workspace_explicit_none_before": false,
+      "workspace_explicit_none_after": true,
+      "schema_version": 73,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "source_commit": "ce02e03442986d706e73455536626700cf52422c",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        }
+      }
+    }
+  },
+  "profile_receipt_sha256": {
+    "fresh": "156344e13e4c6ae111631815d5d0329bf3e16af9f8d28247780998ca8066a7e6",
+    "upgrade": "fce0d5fecbcfa67a93fb8a163f2e744f6808c6e962fbe69216d37e78f593552e"
+  }
+}

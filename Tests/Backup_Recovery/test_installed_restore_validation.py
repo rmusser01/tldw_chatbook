@@ -175,11 +175,17 @@ def test_actual_migrated_sqlite_is_revalidated_only_on_disposable_copy(
     original = private_sqlite.open_recovery_validation
     seen = []
 
-    def checked(owner, path, *, writable):
+    def checked(owner, path, *, writable, with_restrictions=False, cancel=None):
         seen.append(path)
         assert Path(path) not in dict(plan.restore).values()
         assert writable is False
-        return original(owner, path, writable=writable)
+        return original(
+            owner,
+            path,
+            writable=writable,
+            with_restrictions=with_restrictions,
+            cancel=cancel,
+        )
 
     monkeypatch.setattr(private_sqlite, "open_recovery_validation", checked)
     journal.validate_installed(candidate, plan)
@@ -461,26 +467,51 @@ Journal(Path(sys.argv[2]), sys.argv[3]).validate_installed(Path(sys.argv[1]), pl
     assert dict(plan.restore)["file"].read_bytes() == b"durable"
 
 
+@pytest.mark.parametrize("platform_name", [pytest.param(None, id="native"), "nt"])
 def test_reviewed_executable_bit_and_directory_time_survive_publication(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, platform_name
 ):
-    from Tests.Backup_Recovery import test_restore_plan
+    from types import SimpleNamespace
 
+    from Tests.Backup_Recovery import test_restore_plan
+    from tldw_chatbook.Backup_Recovery import restore_plan
+    from tldw_chatbook.Backup_Recovery.plan_records import load_plan
+    from tldw_chatbook.Utils.platform_files import os
+
+    platform_name = platform_name or os.name
     original = test_restore_plan.sealed
 
     def metadata(document):
         document["files"][0]["metadata"] = {
             "version": 1,
             "mode": 0o700,
-            "mtime_ns": 12000000000,
+            "mtime_ns": 12000000099,
         }
-        document["directories"][0]["metadata"]["mtime_ns"] = 11000000000
+        document["directories"][0]["metadata"]["mtime_ns"] = 11000000099
 
     monkeypatch.setattr(
         test_restore_plan, "sealed", lambda path: original(path, mutate=metadata)
     )
+    monkeypatch.setattr(
+        restore_plan,
+        "os",
+        SimpleNamespace(
+            name=platform_name,
+            stat=restore_plan.os.stat,
+            listdir=restore_plan.os.listdir,
+        ),
+    )
     candidate, plan, journal, _, _ = published(tmp_path)
-    assert dict(plan.restore)["file"].stat().st_mode & 0o777 == 0o600
+    assert load_plan(journal) == plan
+    assert os.stat(dict(plan.restore)["file"]).st_mode & 0o777 == 0o600
     journal.validate_installed(candidate, plan)
-    assert dict(plan.restore)["file"].stat().st_mode & 0o777 == 0o700
-    assert dict(plan.restore)["root"].stat().st_mtime_ns == 11000000000
+    file = os.stat(dict(plan.restore)["file"])
+    assert file.st_mode & 0o777 == (0o600 if platform_name == "nt" else 0o700)
+    assert file.st_mtime_ns == (12000000000 if platform_name == "nt" else 12000000099)
+    assert os.stat(dict(plan.restore)["root"]).st_mtime_ns == (
+        11000000000 if platform_name == "nt" else 11000000099
+    )
+    assert (
+        next(old.mtime_ns for key, old, _ in plan.metadata if key == "file")
+        == 12000000099
+    )

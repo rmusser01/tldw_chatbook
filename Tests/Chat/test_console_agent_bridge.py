@@ -178,6 +178,7 @@ from tldw_chatbook.Skills_Interop.skill_trust_models import SkillTrustBlockedErr
 from tldw_chatbook.Workspaces.change_turn_tracker import TurnChangeRecord
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
+from Tests.private_profile import private_profile_test
 from Tests.console_provider_doubles import provider_resolution
 
 
@@ -9750,8 +9751,11 @@ def test_live_snapshot_two_concurrent_subagents_get_distinct_run_ids_that_dont_c
         )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_fallback", [False, True])
+@private_profile_test
 def test_inline_fleet_off_spawn_still_produces_a_live_subagent_row(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, request, with_fallback
 ):
     """PR2b Task 2 explicit non-regression: `[agents] max_live_subagents
     <= 1` turns the fleet off entirely (`AgentService._fleet` stays
@@ -9771,14 +9775,48 @@ def test_inline_fleet_off_spawn_still_produces_a_live_subagent_row(
             1 if key == agent_service.MAX_LIVE_SUBAGENTS_KEY else default
         ),
     )
+    spawn_args = {"task": "compute 1+1"}
+    if with_fallback:
+        spawn_args["agent"] = "inline-fallback"
     scripts = [
-        [_fence("spawn_subagent", {"task": "compute 1+1"})],  # primary turn 1
+        [_fence("spawn_subagent", spawn_args)],  # primary turn 1
         ["2"],  # sub-agent turn (inline, so strictly ordered)
         ["Done: ", "2."],  # primary final
     ]
     bridge, _db, store, session, aid = _bridge(tmp_path, scripts)
+    if with_fallback:
+        _db.create_agent_definition(
+            AgentDefinition(
+                name="inline-fallback",
+                instructions="Compute the task.",
+                provider="llama_cpp",
+                model="test-model",
+                fallback_models=(("llama_cpp", "fallback-model"),),
+            )
+        )
+    live_targets = []
+    original_stream = bridge._gateway.stream_chat
 
+    async def observe_child_target(resolution, messages, **kwargs):
+        if _StreamingModelAdapter._is_subagent(messages):
+            summary = bridge.live_snapshot("conv-1").subagents[0]
+            live_targets.append((summary.resolved_provider, summary.resolved_model))
+            if with_fallback and resolution.model == "test-model":
+                from tldw_chatbook.Chat.Chat_Deps import ChatModelUnavailableError
+
+                raise ChatModelUnavailableError(provider="llama_cpp")
+        async for chunk in original_stream(resolution, messages, **kwargs):
+            yield chunk
+
+    monkeypatch.setattr(bridge._gateway, "stream_chat", observe_child_target)
     outcome = _run(bridge, store, session, aid)
+    expected_model = "fallback-model" if with_fallback else "test-model"
+    expected_targets = [("llama_cpp", "test-model")]
+    if with_fallback:
+        expected_targets.append(("llama_cpp", expected_model))
+    assert live_targets == expected_targets, [
+        step.result for step in outcome.steps if step.kind == STEP_TOOL_RESULT
+    ]
 
     assert outcome.status == "done"
     subagents = bridge.live_snapshot("conv-1").subagents
@@ -9787,8 +9825,15 @@ def test_inline_fleet_off_spawn_still_produces_a_live_subagent_row(
     # Unchanged from before this task: no coordinator exists on this
     # path, so there is nowhere to read a real terminal status from.
     assert subagents[0].status == "running"
-    assert subagents[0].run_id == ""
+    [child_record] = _db.list_runs("conv-1", agent_kind="subagent")
+    assert subagents[0].run_id == child_record["id"]
     assert subagents[0].handle_id == ""
+    assert subagents[0].resolved_provider == "llama_cpp"
+    assert subagents[0].resolved_model == expected_model
+    saved_child = _db.get_run(child_record["id"])
+    assert not [
+        step for step in saved_child["steps"] if step["kind"] == "capture_failed"
+    ]
 
 
 # -- PR3a-1 Task 6a: the fleet outlives the turn --------------------------
@@ -11568,6 +11613,7 @@ def test_per_call_routing_kwargs_re_resolve_and_forward(monkeypatch):
     assert adapter._resolution is parent
 
 
+@pytest.mark.bootstrap_profile
 def test_no_routing_kwargs_uses_parent_resolution_unchanged():
     """Only today's kwargs (api_endpoint/model naming the parent): the exact
     parent resolution OBJECT reaches ``stream_chat``, no re-resolution
@@ -11771,6 +11817,7 @@ def _custom_ep_parent_resolution():
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_custom_ep_parent_inheriting_child_overlays_parent_resolution():
     """A child whose resolved target IS the parent's raw slug names
     ``custom-ep:qwen-local`` on its calls: same target as the parent, so no
@@ -11794,6 +11841,7 @@ def test_custom_ep_parent_inheriting_child_overlays_parent_resolution():
     assert resolution.selected_provider == "custom-ep:qwen-local"
 
 
+@pytest.mark.bootstrap_profile
 def test_custom_ep_parent_child_routed_to_builtin_family_resolves_independently():
     """A child explicitly routed to the built-in FAMILY its parent's endpoint
     executes through (``llama_cpp`` under ``custom-ep:qwen-local``) is a
@@ -11949,6 +11997,7 @@ def test_same_provider_child_clears_parent_only_sampling_values():
     assert parent.seed == 123
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("family", ["llama_cpp", "openai_compatible"])
 def test_routed_adapter_real_gateway_keeps_saved_url_after_registry_edit(monkeypatch, family):
     import httpx
@@ -12208,3 +12257,46 @@ def test_run_teardown_settles_shell_when_tool_result_callback_never_arrives(
     assert not bridge._raw_shell_markers
     assert not bridge._tool_activity_runs
     assert not bridge._fleet_services
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("execution_key", ["custom-openai-api", "llama_cpp", "ollama"])
+def test_primary_custom_endpoint_keeps_identity_with_selectable_execution_key(
+    tmp_path, monkeypatch, execution_key
+):
+    """Primary bridge sends keep the selected endpoint's captured destination.
+
+    Args:
+        tmp_path: Isolated run database directory.
+        monkeypatch: Disable the external-config stream watchdog.
+        execution_key: Selectable provider spelling used for capabilities.
+    """
+    monkeypatch.setenv("TLDW_STREAM_STALL_TIMEOUT_SECONDS", "0")
+    gateway = _RoutingGateway()
+    bridge, db, store, session, assistant_id = _bridge_with_gateway(tmp_path, gateway)
+    run_configs = []
+    original_run_turn = AgentService.run_turn
+
+    def observe_config(service, **kwargs):
+        run_configs.append(kwargs["config"])
+        return original_run_turn(service, **kwargs)
+
+    monkeypatch.setattr(AgentService, "run_turn", observe_config)
+    parent = replace(
+        _custom_ep_parent_resolution(),
+        execution_key=execution_key,
+        readiness_key=execution_key,
+    )
+    try:
+        outcome = _run(bridge, store, session, assistant_id, resolution=parent)
+        assert outcome.status == RUN_DONE, outcome.steps
+        assert gateway.resolve_calls == []
+        assert gateway.stream_calls
+        assert run_configs and all(
+            config.base_url == parent.base_url for config in run_configs
+        )
+        for resolution, _messages, _kwargs in gateway.stream_calls:
+            assert resolution.base_url == parent.base_url
+            assert resolution.selected_provider == parent.selected_provider
+    finally:
+        db.close()

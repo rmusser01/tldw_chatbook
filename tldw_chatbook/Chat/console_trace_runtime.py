@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from collections.abc import Iterator
@@ -39,6 +40,7 @@ from tldw_chatbook.Chat.console_trace_service import (
     ConsoleTraceService,
     TraceCallIdentity,
     TraceCallPersistenceError,
+    _is_rendered_system_row,
 )
 from tldw_chatbook.DB.base_db import operation_owned_connection
 
@@ -378,6 +380,7 @@ class ConsoleTraceBoundaryFactory:
         idempotency_key = new_opaque_id()
         call_sequence = 0
         reserved = None
+        failed_call_retry = False
         with self._lock, operation_owned_connection(self.database):
             with self.database.transaction(immediate=True) as cursor:  # type: ignore[attr-defined]
                 unique_revision_ids = tuple(dict.fromkeys(revision_ids))
@@ -401,7 +404,20 @@ class ConsoleTraceBoundaryFactory:
                         ).fetchall()
                     )
                 by_revision = {str(row[0]): (str(row[1]), str(row[2])) for row in rows}
-                if any(revision_id not in by_revision for revision_id in revision_ids):
+                missing = [r for r in unique_revision_ids if r not in by_revision]
+                if missing:
+                    # TASK-34100.5 AC#7: name the opaque ids (no content) so
+                    # the intermittent first-send failure can be traced.
+                    from loguru import logger
+
+                    logger.warning(
+                        "Console trace reservation found no saved revision row "
+                        "(missing={}, active_missing={}, present={}/{})",
+                        missing,
+                        [r for r in active_revision_ids if r in missing],
+                        len(by_revision),
+                        len(unique_revision_ids),
+                    )
                     raise ValueError("trace_revision_unavailable")
                 current_revision_id = active_revision_ids[0]
                 conversation_id, turn_id = by_revision[current_revision_id]
@@ -489,10 +505,17 @@ class ConsoleTraceBoundaryFactory:
                         not in {
                             TraceCallState.RESPONSE_STARTED,
                             TraceCallState.COMPLETE,
+                            TraceCallState.ERROR,
                         }
                         or previous.policy_id != policy.policy_id
                         or tail is None
                         or previous.surface_node_id != tail.node_id
+                    ):
+                        raise ValueError("trace_tool_chain_unavailable")
+                    failed_call_retry = previous.state is TraceCallState.ERROR
+                    if failed_call_retry and (
+                        previous.outcome != TraceCallState.ERROR.value
+                        or previous.settled_at is None
                     ):
                         raise ValueError("trace_tool_chain_unavailable")
                 if owner is None:
@@ -635,6 +658,58 @@ class ConsoleTraceBoundaryFactory:
                         ),
                     )
                 )
+                if failed_call_retry and (
+                    admission.descriptors or admission.replacement_range is not None
+                ):
+                    # ERROR proves a finished attempt, never authority to add
+                    # unobserved tool results or replace its request surface.
+                    raise ValueError("trace_tool_chain_unavailable")
+                if (
+                    failed_call_retry
+                    and provenance.messages_payload
+                    and _is_rendered_system_row(
+                        provenance.messages_payload[0], request.messages_payload[0]
+                    )
+                ):
+                    # Rendered system changes deliberately bypass the history
+                    # delta for normal tool calls. A failed-attempt retry must
+                    # instead match the immediately preceding call's header.
+                    header = self.repository.get_request_header(
+                        cursor, previous.request_header_id
+                    )
+                    if header is None:
+                        raise ValueError("trace_tool_chain_unavailable")
+                    rows = [
+                        item
+                        for item in header.components
+                        if item.component_kind == "rendered_system_row"
+                    ]
+                    if len(rows) > 1:
+                        raise ValueError("trace_tool_chain_unavailable")
+                    if rows:
+                        key = ("rendered_system", "artifact", rows[0].artifact_id)
+                    else:
+                        projection = self.service._surface_projection(
+                            cursor, owner.root_segment_id, tail
+                        )
+                        key = projection.entries[0][1]
+                    artifact = (
+                        self.repository.get_artifact(cursor, key[2])
+                        if key[:2] == ("rendered_system", "artifact")
+                        else None
+                    )
+                    if artifact is None or not self.service._durable_reference_matches(
+                        cursor,
+                        provenance.messages_payload[0],
+                        request.messages_payload[0],
+                        key,
+                        {key: json.loads(artifact.sanitized_bytes)},
+                        owner_id=owner.owner_id,
+                        known_credentials=(
+                            getattr(_resolution, "api_key", None) or "",
+                        ),
+                    ):
+                        raise ValueError("trace_tool_chain_unavailable")
                 reserved = self.repository.reserve_call(
                     cursor,
                     owner_id=owner.owner_id,

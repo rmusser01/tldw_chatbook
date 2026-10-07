@@ -130,9 +130,7 @@ def project_console_send_authority(
     # snapshots produced before the rename (persisted/replayed state), and
     # losing the lookup would leave Run reading "Ready" while retrieval is
     # blocked -- silently, and in the one line pinned above the fold.
-    source = (
-        rows.get("Retrieval") or rows.get("Sources") or rows.get("RAG/source")
-    )
+    source = rows.get("Retrieval") or rows.get("Sources") or rows.get("RAG/source")
     recovery_required = any(
         rows.get(label) is not None for label in ("Recovery action", "Next action")
     )
@@ -148,6 +146,10 @@ def project_console_send_authority(
         run = "Blocked"
     elif state.run_active:
         run = "Running"
+    elif state.run_blocked_reason:
+        # TASK-33621.2: an accepted turn paused before the provider was
+        # contacted is not "Ready"; the transcript callout holds its actions.
+        run = f"Blocked — {state.run_blocked_reason}"
     elif state.run_failed:
         # TASK-24602. Ordered BELOW everything above it deliberately: a run in
         # flight, a pending approval and a blocked provider all describe what
@@ -280,9 +282,7 @@ class ConsoleSendAuthoritySummary(Static):
         if not self.is_mounted:
             return
         try:
-            heading = self.query_one(
-                f"#{CONSOLE_AUTHORITY_SUMMARY_HEADING_ID}", Static
-            )
+            heading = self.query_one(f"#{CONSOLE_AUTHORITY_SUMMARY_HEADING_ID}", Static)
         except (NoMatches, QueryError):
             pass
         else:

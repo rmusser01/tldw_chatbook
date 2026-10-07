@@ -1403,3 +1403,36 @@ def test_filter_reducer_ignores_superseded_generation_or_topology(
 
     assert result.kind == "ignored"
     assert result.state is loading
+
+
+def test_a_held_sync_folder_row_reads_needs_attention_instead_of_sync_managed():
+    """TASK-34000.2 AC#4 (review finding N-02): a root fenced on an open entry
+    is not syncing in either direction, yet its folder row kept reading
+    "⇄ Sync managed". The held state outranks the connected wording; a
+    folder that is not held is drawn exactly as before.
+    """
+    managed = _folder("managed", None, "/Managed")
+    other = _folder("other", None, "/Other")
+    branches = {
+        NotesBranchKey(None, "folders"): _branch(
+            None, "folders", items=(managed, other), total=2
+        ),
+    }
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states=branches,
+        expanded_folder_ids=set(),
+        protected_folder_ids=frozenset({"managed", "other"}),
+        attention_folder_ids=frozenset({"managed"}),
+    )
+
+    held_row = projection.row(FolderPlacementId.folder("managed"))
+    assert held_row is not None
+    assert held_row.status_text == tree_state.NOTES_TREE_SYNC_ATTENTION_STATUS
+    assert held_row.status_text == "⚠ Needs attention"
+    assert held_row.semantic_status == "needs_attention"
+
+    calm_row = projection.row(FolderPlacementId.folder("other"))
+    assert calm_row is not None
+    assert calm_row.status_text == "⇄ Sync managed"
+    assert calm_row.semantic_status == "connected"

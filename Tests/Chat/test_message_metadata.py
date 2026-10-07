@@ -12,10 +12,12 @@ import pytest
 
 from tldw_chatbook.Chat.message_metadata import (
     CHARACTER_EMOTE_FALLBACK_REASONS,
+    MESSAGE_ORIGIN_AGENT_CHAT_START,
     MESSAGE_ORIGIN_AGENT_WAKE,
     MESSAGE_ORIGINS,
     TEMPLATE_KINDS,
     TRANSCRIPT_STATUSES,
+    AgentChatStartMetadata,
     CharacterEmoteEventMetadata,
     CharacterEmoteMetadata,
     MessageMetadata,
@@ -252,7 +254,16 @@ def test_unknown_origin_is_refused_at_construction():
         MessageMetadata(origin="agent-wake")
 
     for origin in MESSAGE_ORIGINS:
-        assert MessageMetadata(origin=origin).origin == origin
+        provenance = None
+        if origin == MESSAGE_ORIGIN_AGENT_CHAT_START:
+            with pytest.raises(
+                ValueError, match="requires exact chat-start provenance"
+            ):
+                MessageMetadata(origin=origin)
+            provenance = AgentChatStartMetadata("attempt", "source-run", "source-chat")
+        assert (
+            MessageMetadata(origin=origin, agent_chat_start=provenance).origin == origin
+        )
 
 
 def test_from_json_degrades_an_unrecognised_origin_to_blank():
@@ -303,8 +314,13 @@ def test_character_emote_metadata_round_trips_as_bounded_scalars() -> None:
 @pytest.mark.parametrize(
     "events",
     [
-        tuple(CharacterEmoteEventMetadata(f"state-{index}", index) for index in range(6)),
-        (CharacterEmoteEventMetadata("sad", 9), CharacterEmoteEventMetadata("happy", 8)),
+        tuple(
+            CharacterEmoteEventMetadata(f"state-{index}", index) for index in range(6)
+        ),
+        (
+            CharacterEmoteEventMetadata("sad", 9),
+            CharacterEmoteEventMetadata("happy", 8),
+        ),
         (CharacterEmoteEventMetadata("sad", 13),),
     ],
 )
@@ -346,11 +362,14 @@ def test_character_emote_fallback_vocabulary_is_closed() -> None:
         )
 
     for reason in CHARACTER_EMOTE_FALLBACK_REASONS:
-        assert CharacterEmoteMetadata(
-            mood_label="neutral",
-            sanitized_utf16_length=0,
-            fallback_reason=reason,
-        ).fallback_reason == reason
+        assert (
+            CharacterEmoteMetadata(
+                mood_label="neutral",
+                sanitized_utf16_length=0,
+                fallback_reason=reason,
+            ).fallback_reason
+            == reason
+        )
 
 
 @pytest.mark.parametrize(
@@ -385,7 +404,9 @@ def test_malformed_character_emote_load_drops_only_nested_record(bad_emote) -> N
 
 
 def test_character_emote_payload_has_no_content_or_path_fields() -> None:
-    payload = json.dumps(json.loads(MessageMetadata(character_emote=_emote_metadata()).to_json()))
+    payload = json.dumps(
+        json.loads(MessageMetadata(character_emote=_emote_metadata()).to_json())
+    )
 
     for forbidden in (
         "assistant_text",
@@ -397,3 +418,73 @@ def test_character_emote_payload_has_no_content_or_path_fields() -> None:
         "server_id",
     ):
         assert forbidden not in payload
+
+
+# ---------------------------------------------------------------------------
+# TASK-33628.6: the root-level edit-fork marker.
+# ---------------------------------------------------------------------------
+
+
+def test_root_fork_marker_round_trips_beside_other_fields() -> None:
+    """The marker is a field, so every rewrite from the dataclass keeps it.
+
+    Writers replace a row's ``metadata_json`` with ``to_json()`` of the store's
+    copy (an in-place edit, a receipt attach). A marker kept outside the
+    dataclass would be dropped by the first of them.
+    """
+    from dataclasses import replace
+
+    metadata = MessageMetadata(
+        engine="realtime", transcript_status="final", root_fork=True
+    )
+
+    assert MessageMetadata().root_fork is False
+    assert MessageMetadata(root_fork=True).is_empty is False
+    assert json.loads(metadata.to_json())["root_fork"] is True
+    assert MessageMetadata.from_json(metadata.to_json()) == metadata
+    receipt = replace(
+        metadata, terminal_receipt_id="0b9f0d4e-2f40-4f1c-9a47-3d1c2b7e6a51"
+    )
+    assert MessageMetadata.from_json(receipt.to_json()) == receipt
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"), [(True, True), ("false", False), (None, False)]
+)
+def test_root_fork_marker_reads_without_inverting(stored, expected) -> None:
+    restored = MessageMetadata.from_json(json.dumps({"root_fork": stored}))
+
+    assert restored is not None
+    assert restored.root_fork is expected
+
+
+#: ``to_json`` of a receipt-only record, byte for byte, as every build before
+#: the marker existed wrote it.
+_PRE_MARKER_RECEIPT_JSON = (
+    '{"canvas_cards": [], "character_emote": null, "engine": "", '
+    '"interrupted": false, "model": "", "origin": "", "provider": "", '
+    '"template_kind": "", "template_source": "", '
+    '"terminal_receipt_id": "0b9f0d4e-2f40-4f1c-9a47-3d1c2b7e6a51", '
+    '"transcript_status": ""}'
+)
+
+
+def test_an_unmarked_record_keeps_the_bytes_it_had_before_the_marker() -> None:
+    """``root_fork`` is written only when it is true.
+
+    Ownership proofs compare a stored row with ``to_json()`` of the record they
+    expect, byte for byte, and rows saved by older builds carry no marker key.
+    Writing ``"root_fork": false`` on every row would stop those rows matching.
+    """
+    from dataclasses import replace
+
+    receipt = MessageMetadata(
+        terminal_receipt_id="0b9f0d4e-2f40-4f1c-9a47-3d1c2b7e6a51"
+    )
+
+    assert receipt.to_json() == _PRE_MARKER_RECEIPT_JSON
+    assert "root_fork" not in json.loads(MessageMetadata(engine="realtime").to_json())
+    assert json.loads(replace(receipt, root_fork=True).to_json()) == {
+        **json.loads(_PRE_MARKER_RECEIPT_JSON),
+        "root_fork": True,
+    }

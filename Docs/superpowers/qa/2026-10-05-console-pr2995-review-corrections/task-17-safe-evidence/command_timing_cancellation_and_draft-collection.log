@@ -1,0 +1,14 @@
+Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[lazy-enter]
+Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[lazy-send-button]
+Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[eager-enter]
+Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[eager-send-button]
+Tests/UI/test_console_video_send_freeze.py::test_another_command_runs_while_a_generation_is_in_flight
+Tests/UI/test_console_video_send_freeze.py::test_a_command_whose_modal_wait_is_cancelled_ends_quietly
+Tests/UI/test_console_video_send_freeze.py::test_stop_keeps_a_draft_typed_during_the_generation[enter]
+Tests/UI/test_console_video_send_freeze.py::test_stop_keeps_a_draft_typed_during_the_generation[send-button]
+Tests/UI/test_console_video_send_freeze.py::test_a_failed_generation_never_writes_into_the_chat_switched_to[typed]
+Tests/UI/test_console_video_send_freeze.py::test_a_failed_image_batch_still_offers_a_command_its_take_left_behind
+
+10 tests collected in 2.27s
+
+--- STDERR ---

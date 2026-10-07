@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved 16:05 · Next: Keep editing; changes save automatically.                      │
+│   a  │ Library notes · Ready                                        │  o      ‹ Notes      quotes                                                            │
+│   v  │ Notes (123)                                                  │  t                                                                                     │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s   In a synced folder · /private/tmp/claude-501/-U…quotes.md                         │
+│      │ copy or keep a folder synced, choose Add from files.         │     S                                                                                  │
+│      │                                                              │              Edit           Preview            Info               Save         Use in  │
+│      │ Filter                                                       │                                                                                        │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                                                              │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ quotes                                                                         ▎ │
+│      │                                                              │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Newest     Select                           │                                                                                        │
+│ ---> │    Add from files…     Export     Manage sync folders        │     Keywords                                                                           │
+│      │ Folders & placement                                          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder     ○ Move note              │     ▊ Comma-separated keywords                                                       ▎ │
+│      │    ○ Remove placement                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │                                                              │                                                                                        │
+│      │                                                              │<--- Body                                                                               │
+│      │  ▸ Agent_Lessons                                             │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▸ Journal                                                   │     ┃ > The best time to plant a tree was 20 years ago.                              ┃ │
+│      │  ▸ Meetings                                                  │     ┃                                                                                ┃ │
+│      │  ▸ Projects                                                  │     ┃ > Writing is thinking.                                                         ┃ │
+│ ---> │  ▸ Recipes                                                   │     ┃ the quick brown fox jumps over the lazy dog the quick brown fox jumps over     ┃ │
+│      │  ▸ Research                                                  │     ┃ the lazy dog the quick brown fox jumps over the lazy dog the quick brown fox   ┃ │
+│      │  ▸ Study                                                     │     ┃ jumps over the lazy dog the quick brown fox jumps over the lazy dog the        ┃ │
+│      │  ▾ VSync  ⇄ Sync managed                                     │     ┃ quick brown fox jumps over the lazy dog the quick brown fox jumps over the     ┃ │
+│      │    quotes · now                                              │     ┃ lazy dog the quick brown fox jumps over the lazy dog the quick brown fox       ┃ │
+│      │  ▾ Unfiled                                                   │     ┃ jumps over the lazy dog the quic                                               ┃ │
+│      │    Ideas inbox · 1m                                          │     ┃                                                                                ┃ │
+│      │    Reading list · 1d                                         │     ┃                                                                                ┃ │
+│      │    Index — start here · 3d                                   │     ┃                                                                                ┃ │
+│      │    Meeting Notes 2026-09-30 · 4d                             │     ┃                                                                                ┃ │
+│      │    Gardening log · 6d                                        │     ┃                                                                                ┃ │
+│      │    📚 Reading queue 2026 ✨ · 1w                             │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │    A very long note title that keeps going so we can test …  │                                                                                        │
+│      └──────────────────────────────────────────────────────────────┘                                                                      99 words · 4:405  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

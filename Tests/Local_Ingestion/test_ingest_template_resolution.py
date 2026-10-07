@@ -137,7 +137,8 @@ def _patch_config_default(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     monkeypatch.setattr(
         "tldw_chatbook.config.get_cli_setting",
         lambda section, key=None, default=None: (
-            name if (section, key) == ("chunking", "default_template")
+            name
+            if (section, key) == ("chunking", "default_template")
             else (default if default is not None else None)
         ),
     )
@@ -237,9 +238,7 @@ class TestResolveIngestTemplate:
         assert resolve_ingest_template(template_db, None) is None
         assert resolve_ingest_template(template_db, "") is None
 
-    def test_rechunk_order_per_media_then_config(
-        self, template_db, monkeypatch
-    ):
+    def test_rechunk_order_per_media_then_config(self, template_db, monkeypatch):
         from tldw_chatbook.Chunking.template_runtime import resolve_ingest_template
 
         _patch_config_default(monkeypatch, "big-words")
@@ -458,7 +457,9 @@ class TestIngestJobOptionsPrecedence:
             app,
             str(tmp_path / "doc.txt"),
             "plaintext",
-            _generic_snapshot(chunk_template="tiny-words", chunk_size=4, chunk_overlap=1),
+            _generic_snapshot(
+                chunk_template="tiny-words", chunk_size=4, chunk_overlap=1
+            ),
         )
         chunk_options = app._ingest_job_options(job)["chunk_options"]
         assert chunk_options["template"]["name"] == "tiny-words"
@@ -481,7 +482,12 @@ class TestIngestJobOptionsPrecedence:
             app, str(tmp_path / "doc.pdf"), "pdf", _generic_snapshot()
         )
         plain = app._ingest_job_options(plain_job)["chunk_options"]
-        assert plain == {"size": 1000, "max_size": 1000, "overlap": 100, "method": "words"}
+        assert plain == {
+            "size": 1000,
+            "max_size": 1000,
+            "overlap": 100,
+            "method": "words",
+        }
 
     def test_audio_video_method_injection_skipped_under_template(
         self, template_db, tmp_path
@@ -509,9 +515,7 @@ class TestIngestJobOptionsPrecedence:
         # the schema default ("chapters") is a builder default -> stripped
         snapshot_default = _generic_snapshot(chunk_template="tiny-words")
         snapshot_default["ebook"] = {"chunk_method": "chapters"}
-        job = _submit_job(
-            app, str(tmp_path / "book2.epub"), "ebook", snapshot_default
-        )
+        job = _submit_job(app, str(tmp_path / "book2.epub"), "ebook", snapshot_default)
         chunk_options = app._ingest_job_options(job)["chunk_options"]
         assert "method" not in chunk_options
 
@@ -528,9 +532,7 @@ class TestIngestJobOptionsPrecedence:
             "overlap": 100,
         }
 
-    def test_unresolvable_choice_fails_item_with_named_error(
-        self, media_db, tmp_path
-    ):
+    def test_unresolvable_choice_fails_item_with_named_error(self, media_db, tmp_path):
         from tldw_chatbook.Chunking.template_runtime import TemplateResolutionError
 
         app = _minimal_app(media_db)
@@ -543,9 +545,7 @@ class TestIngestJobOptionsPrecedence:
         with pytest.raises(TemplateResolutionError):
             app._ingest_job_options(job)
 
-    def test_invalid_template_fails_item_with_named_error(
-        self, media_db, tmp_path
-    ):
+    def test_invalid_template_fails_item_with_named_error(self, media_db, tmp_path):
         from tldw_chatbook.Chunking.chunking_interop_library import (
             InvalidTemplateError,
         )
@@ -588,18 +588,10 @@ class TestGovernancePlainText:
 
     def test_two_templates_different_persisted_rows(self, template_db, tmp_path):
         source = self._text_source(tmp_path)
-        _, tiny_rows = _ingest(
-            template_db, source, {"template": dict(TEMPLATE_TINY)}
-        )
-        _, big_rows = _ingest(
-            template_db, source, {"template": dict(TEMPLATE_BIG)}
-        )
-        assert tiny_rows == [
-            " ".join(_WORDS[i : i + 3]) for i in range(0, 24, 3)
-        ]
-        assert big_rows == [
-            " ".join(_WORDS[i : i + 12]) for i in range(0, 24, 12)
-        ]
+        _, tiny_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
+        _, big_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_BIG)})
+        assert tiny_rows == [" ".join(_WORDS[i : i + 3]) for i in range(0, 24, 3)]
+        assert big_rows == [" ".join(_WORDS[i : i + 12]) for i in range(0, 24, 12)]
 
     def test_builder_shaped_options_honor_template_despite_processor_defaults(
         self, template_db, tmp_path
@@ -611,9 +603,7 @@ class TestGovernancePlainText:
         _, rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
         assert len(rows) == 8
 
-    def test_user_changed_size_beats_template_end_to_end(
-        self, template_db, tmp_path
-    ):
+    def test_user_changed_size_beats_template_end_to_end(self, template_db, tmp_path):
         source = self._text_source(tmp_path)
         _, rows = _ingest(
             template_db,
@@ -630,9 +620,7 @@ class TestGovernancePlainText:
             source,
             {"method": "words", "size": 5, "max_size": 5, "overlap": 0},
         )
-        assert rows == [
-            " ".join(_WORDS[i : i + 5]) for i in range(0, 24, 5)
-        ]
+        assert rows == [" ".join(_WORDS[i : i + 5]) for i in range(0, 24, 5)]
 
 
 class TestGovernancePdfFamily:
@@ -646,6 +634,7 @@ class TestGovernancePdfFamily:
         monkeypatch.setattr(
             PDF_Processing_Lib, "pymupdf4llm_parse_pdf", lambda _path: _FIXTURE_TEXT
         )
+
         # process_pdf's metadata step unconditionally calls pymupdf.open
         # (and its error handlers reference the exception classes), so the
         # absent library is replaced with a minimal stand-in -- extraction
@@ -680,18 +669,10 @@ class TestGovernancePdfFamily:
 
     def test_two_templates_different_persisted_rows(self, template_db, tmp_path):
         source = self._pdf_source(tmp_path)
-        _, tiny_rows = _ingest(
-            template_db, source, {"template": dict(TEMPLATE_TINY)}
-        )
-        _, big_rows = _ingest(
-            template_db, source, {"template": dict(TEMPLATE_BIG)}
-        )
-        assert tiny_rows == [
-            " ".join(_WORDS[i : i + 3]) for i in range(0, 24, 3)
-        ]
-        assert big_rows == [
-            " ".join(_WORDS[i : i + 12]) for i in range(0, 24, 12)
-        ]
+        _, tiny_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
+        _, big_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_BIG)})
+        assert tiny_rows == [" ".join(_WORDS[i : i + 3]) for i in range(0, 24, 3)]
+        assert big_rows == [" ".join(_WORDS[i : i + 12]) for i in range(0, 24, 12)]
 
     def test_template_beats_processor_setdefaults(self, template_db, tmp_path):
         """process_pdf setdefaults sentences/500/100; the template's
@@ -709,9 +690,7 @@ class TestGovernanceEbookFamily:
     def _ebook_available(self, monkeypatch: pytest.MonkeyPatch):
         from tldw_chatbook.Local_Ingestion import Book_Ingestion_Lib
 
-        monkeypatch.setattr(
-            Book_Ingestion_Lib, "EBOOK_PROCESSING_AVAILABLE", True
-        )
+        monkeypatch.setattr(Book_Ingestion_Lib, "EBOOK_PROCESSING_AVAILABLE", True)
 
     def _fb2_source(self, tmp_path: Path) -> Path:
         body = "\n".join(
@@ -733,12 +712,8 @@ class TestGovernanceEbookFamily:
 
     def test_two_templates_different_persisted_rows(self, template_db, tmp_path):
         source = self._fb2_source(tmp_path)
-        _, tiny_rows = _ingest(
-            template_db, source, {"template": dict(TEMPLATE_TINY)}
-        )
-        _, big_rows = _ingest(
-            template_db, source, {"template": dict(TEMPLATE_BIG)}
-        )
+        _, tiny_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
+        _, big_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_BIG)})
         assert tiny_rows != big_rows
         # tiny (3-word) produces strictly more rows than big (12-word)
         assert len(tiny_rows) > len(big_rows) > 0
@@ -783,12 +758,8 @@ class TestGovernanceAudioVideoFamily:
 
     def test_two_templates_different_persisted_rows(self, template_db, tmp_path):
         source = self._audio_source(tmp_path)
-        _, tiny_rows = _ingest(
-            template_db, source, {"template": dict(TEMPLATE_TINY)}
-        )
-        _, big_rows = _ingest(
-            template_db, source, {"template": dict(TEMPLATE_BIG)}
-        )
+        _, tiny_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
+        _, big_rows = _ingest(template_db, source, {"template": dict(TEMPLATE_BIG)})
         assert tiny_rows != big_rows
         assert len(tiny_rows) > len(big_rows) > 0
 
@@ -812,18 +783,14 @@ class TestGovernanceAudioVideoFamily:
 
         monkeypatch.setattr(lfi, "LocalAudioProcessor", RecordingProcessor)
         source = self._audio_source(tmp_path)
-        _, rows = _ingest(
-            template_db, source, {"template": dict(TEMPLATE_TINY)}
-        )
+        _, rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
         assert observed["chunk_method"] == "words"
         assert observed["max_chunk_size"] == 3
         assert observed["chunk_overlap"] == 0
         assert observed["chunk_template"]["name"] == "tiny-words"
         assert len(rows) == 8
 
-    def test_video_branch_passes_template_explicitly(
-        self, tmp_path, monkeypatch
-    ):
+    def test_video_branch_passes_template_explicitly(self, tmp_path, monkeypatch):
         """The :1309-1315 re-projection: a stub stands in for the video
         processor and records the call (signature-checked)."""
         from tldw_chatbook.Local_Ingestion import local_file_ingestion as lfi
@@ -905,9 +872,7 @@ class TestImageSeamDocumented:
     ):
         source = tmp_path / "fixture.png"
         source.write_bytes(b"fake png bytes; OCR is stubbed")
-        _, rows = _ingest(
-            template_db, source, {"template": dict(TEMPLATE_TINY)}
-        )
+        _, rows = _ingest(template_db, source, {"template": dict(TEMPLATE_TINY)})
         # the branch still passes chunk_options=None to process_image
         assert self.stub.kwargs["chunk_options"] is None
         # ...and the shared tail produced template-sized chunks
@@ -950,9 +915,7 @@ class TestServerModeStripsTemplate:
         # the group's real options still travel ("engine" is not an alias)
         assert kwargs.get("engine") == "pymupdf"
 
-    def test_server_generic_group_source_never_carries_a_template(
-        self, tmp_path
-    ):
+    def test_server_generic_group_source_never_carries_a_template(self, tmp_path):
         """A generic-group source (.txt) iterates the generic dict in the
         builder's group loop -- the strip must hold there too."""
         from tldw_chatbook.Library.server_ingest_request import (
@@ -982,9 +945,7 @@ class TestServerModeStripsTemplate:
         )
         assert "chunk_template" not in kwargs
         assert "template" not in kwargs
-        assert not any(
-            str(value) == AUTO_SENTINEL_VALUE for value in kwargs.values()
-        )
+        assert not any(str(value) == AUTO_SENTINEL_VALUE for value in kwargs.values())
 
 
 # ---------------------------------------------------------------------------
@@ -1064,9 +1025,7 @@ class TestA24TemplateHealthSurfaces:
 
     def test_apply_still_applies_valid_templates(self):
         service = _admin_with_valid_and_invalid()
-        result = service.apply_template(
-            "valid-one", text="alpha beta gamma delta"
-        )
+        result = service.apply_template("valid-one", text="alpha beta gamma delta")
         assert result["chunks"] == ["alpha beta", "gamma delta"]
 
 
@@ -1096,9 +1055,7 @@ class TestResolveTemplateDeletedFilter:
             )
             """
         )
-        body = json.dumps(
-            {k: v for k, v in TEMPLATE_TINY.items() if k != "name"}
-        )
+        body = json.dumps({k: v for k, v in TEMPLATE_TINY.items() if k != "name"})
         conn.execute(
             "INSERT INTO ChunkingTemplates (uuid, name, template_json) "
             "VALUES ('u1', 'live', ?)",
@@ -1139,6 +1096,7 @@ class TestResolveTemplateDeletedFilter:
         assert "SELECT name, template_json FROM ChunkingTemplates" in " ".join(
             sql.split()
         )
+
 
 # ---------------------------------------------------------------------------
 # Task 4 (auto-selection spec §4.3/§4.4, ACs 7-11): the Auto sentinel
@@ -1191,15 +1149,18 @@ class TestResolveIngestTemplateAutoSentinel:
         assert decision.tier == "plan"
         assert decision.chunk_options and decision.chunk_options["method"] == "semantic"
 
-    def test_sentinel_with_classifier_win_returns_template_tier(
-        self, media_db
-    ):
+    def test_sentinel_with_classifier_win_returns_template_tier(self, media_db):
         from tldw_chatbook.Chunking.auto_selection import AutoDecision
         from tldw_chatbook.Chunking.template_runtime import resolve_ingest_template
 
         _seed_classifier_template(media_db)
         decision = resolve_ingest_template(
-            media_db, AUTO_SENTINEL_VALUE, media_type="pdf", title=None, filename=None, url=None
+            media_db,
+            AUTO_SENTINEL_VALUE,
+            media_type="pdf",
+            title=None,
+            filename=None,
+            url=None,
         )
         assert isinstance(decision, AutoDecision)
         assert decision.tier == "template"
@@ -1249,18 +1210,29 @@ class TestResolveIngestTemplateAutoSentinel:
             name="filename-gated",
             description="filename regex fixture",
             template_json={
-                "chunking": {"method": "words", "config": {"max_size": 4, "overlap": 0}},
+                "chunking": {
+                    "method": "words",
+                    "config": {"max_size": 4, "overlap": 0},
+                },
                 "classifier": {"filename_regex": r"report\.pdf", "min_score": 0.1},
             },
         )
         hit = resolve_ingest_template(
-            media_db, AUTO_SENTINEL_VALUE, media_type="document",
-            title=None, filename="report.pdf", url=None,
+            media_db,
+            AUTO_SENTINEL_VALUE,
+            media_type="document",
+            title=None,
+            filename="report.pdf",
+            url=None,
         )
         assert hit.tier == "template" and hit.template["name"] == "filename-gated"
         miss = resolve_ingest_template(
-            media_db, AUTO_SENTINEL_VALUE, media_type="document",
-            title=None, filename="other.txt", url=None,
+            media_db,
+            AUTO_SENTINEL_VALUE,
+            media_type="document",
+            title=None,
+            filename="other.txt",
+            url=None,
         )
         assert miss.tier != "template"
 
@@ -1268,14 +1240,10 @@ class TestResolveIngestTemplateAutoSentinel:
         """db=None: tier 1 vacuous, the planner still answers (never raises)."""
         from tldw_chatbook.Chunking.template_runtime import resolve_ingest_template
 
-        decision = resolve_ingest_template(
-            None, AUTO_SENTINEL_VALUE, media_type="pdf"
-        )
+        decision = resolve_ingest_template(None, AUTO_SENTINEL_VALUE, media_type="pdf")
         assert decision.tier == "plan"
 
-    def test_stored_per_media_path_is_unchanged_by_the_sentinel(
-        self, template_db
-    ):
+    def test_stored_per_media_path_is_unchanged_by_the_sentinel(self, template_db):
         """per_media keeps #2's exact behavior; only the picker tier detects
         the sentinel (re-chunk auto goes through resolve_for_rechunk)."""
         from tldw_chatbook.Chunking.template_runtime import (
@@ -1292,9 +1260,7 @@ class TestResolveIngestTemplateAutoSentinel:
         assert resolved is not None and resolved["name"] == "tiny-words"
         # A stored name that no longer resolves still raises (AC 37).
         with pytest.raises(TemplateResolutionError):
-            resolve_ingest_template(
-                template_db, picker_choice=None, per_media="ghost"
-            )
+            resolve_ingest_template(template_db, picker_choice=None, per_media="ghost")
 
 
 class TestResolveForRechunk:
@@ -1356,9 +1322,10 @@ class TestResolveForRechunk:
     def test_json_string_config_is_accepted(self, template_db):
         from tldw_chatbook.Chunking.template_runtime import resolve_for_rechunk
 
-        assert resolve_for_rechunk(template_db, '{"template": "tiny-words"}')[
-            "name"
-        ] == "tiny-words"
+        assert (
+            resolve_for_rechunk(template_db, '{"template": "tiny-words"}')["name"]
+            == "tiny-words"
+        )
         assert resolve_for_rechunk(template_db, "not json") is None
 
 
@@ -1373,7 +1340,9 @@ class TestAutoChainBuilder:
         the builder's own defaults (pdf 'words' injection) do not ride."""
         app = _minimal_app(template_db)
         job = _submit_job(
-            app, str(tmp_path / "doc.pdf"), "pdf",
+            app,
+            str(tmp_path / "doc.pdf"),
+            "pdf",
             _generic_snapshot(chunk_template=AUTO_SENTINEL_VALUE),
         )
         chunk_options = app._ingest_job_options(job)["chunk_options"]
@@ -1386,7 +1355,9 @@ class TestAutoChainBuilder:
     def test_user_changed_values_beat_the_plan(self, template_db, tmp_path):
         app = _minimal_app(template_db)
         job = _submit_job(
-            app, str(tmp_path / "doc.pdf"), "pdf",
+            app,
+            str(tmp_path / "doc.pdf"),
+            "pdf",
             _generic_snapshot(
                 chunk_template=AUTO_SENTINEL_VALUE, chunk_size=4, chunk_overlap=1
             ),
@@ -1401,7 +1372,9 @@ class TestAutoChainBuilder:
         _seed_classifier_template(media_db)
         app = _minimal_app(media_db)
         job = _submit_job(
-            app, str(tmp_path / "doc.pdf"), "pdf",
+            app,
+            str(tmp_path / "doc.pdf"),
+            "pdf",
             _generic_snapshot(chunk_template=AUTO_SENTINEL_VALUE),
         )
         chunk_options = app._ingest_job_options(job)["chunk_options"]
@@ -1426,12 +1399,12 @@ class TestAutoChainBuilder:
         )
         app = _minimal_app(template_db)
         auto_job = _submit_job(
-            app, str(tmp_path / "a.pdf"), "pdf",
+            app,
+            str(tmp_path / "a.pdf"),
+            "pdf",
             _generic_snapshot(chunk_template=AUTO_SENTINEL_VALUE),
         )
-        none_job = _submit_job(
-            app, str(tmp_path / "b.pdf"), "pdf", _generic_snapshot()
-        )
+        none_job = _submit_job(app, str(tmp_path / "b.pdf"), "pdf", _generic_snapshot())
         auto_options = app._ingest_job_options(auto_job)["chunk_options"]
         none_options = app._ingest_job_options(none_job)["chunk_options"]
         assert auto_options["auto"]["tier"] == "plain"
@@ -1445,7 +1418,9 @@ class TestAutoChainBuilder:
         audio/video re-projection defaults too."""
         app = _minimal_app(template_db)
         job = _submit_job(
-            app, str(tmp_path / "memo.wav"), "audio",
+            app,
+            str(tmp_path / "memo.wav"),
+            "audio",
             _generic_snapshot(chunk_template=AUTO_SENTINEL_VALUE),
         )
         chunk_options = app._ingest_job_options(job)["chunk_options"]
@@ -1495,7 +1470,9 @@ class TestAutoChainPdfSeam:
 
     def _auto_ingest(self, app, db, source) -> int:
         job = _submit_job(
-            app, str(source), "pdf",
+            app,
+            str(source),
+            "pdf",
             _generic_snapshot(chunk_template=AUTO_SENTINEL_VALUE),
         )
         options = app._ingest_job_options(job)
@@ -1526,9 +1503,7 @@ class TestAutoChainPdfSeam:
         try:
             source = self._pdf_source(tmp_path)
             _seed_classifier_template(media_db)
-            template_media = self._auto_ingest(
-                _minimal_app(media_db), media_db, source
-            )
+            template_media = self._auto_ingest(_minimal_app(media_db), media_db, source)
             plan_media = self._auto_ingest(_minimal_app(plan_db), plan_db, source)
 
             template_rows = _chunk_rows(media_db, template_media)
@@ -1556,9 +1531,10 @@ class TestAutoChainPdfSeam:
             plan_cfg = self._media_config(plan_db, plan_media)
             assert plan_cfg["mode"] == "auto"
             assert plan_cfg["auto_tier"] == "plan"
-            assert isinstance(
-                plan_cfg["auto_rationale"], list
-            ) and plan_cfg["auto_rationale"]
+            assert (
+                isinstance(plan_cfg["auto_rationale"], list)
+                and plan_cfg["auto_rationale"]
+            )
             assert "template" not in plan_cfg
             assert plan_cfg["method"] == "semantic"
             assert plan_cfg["chunk_size"] == 900
@@ -1566,9 +1542,7 @@ class TestAutoChainPdfSeam:
         finally:
             plan_db.close_connection()
 
-    def test_auto_template_tier_config_satisfies_both_readers(
-        self, media_db, tmp_path
-    ):
+    def test_auto_template_tier_config_satisfies_both_readers(self, media_db, tmp_path):
         """Reader 1 (LIKE) and reader 2 (json_extract) round-trip the
         template-tier row exactly as #2's do."""
         from tldw_chatbook.Chunking.chunking_interop_library import (

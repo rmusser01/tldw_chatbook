@@ -19,7 +19,7 @@ def _state(**overrides) -> ConsoleControlState:
         provider_label="Provider: Anthropic",
         model_label="Model: claude-3-haiku",
         assistant_label="Assistant: General",
-        rag_label="Library · Auto off · Agent blocked",
+        rag_label="Library · Auto off · Agent access off",
         sources_label="Sources: 0 staged",
         tools_label="Tools: 0 ready",
         approvals_label="Approvals: 0 pending",
@@ -61,7 +61,7 @@ async def test_status_chips_render_one_assistant_identity_label():
             ("#console-provider-chip", "Provider:"),
             ("#console-model-chip", "Model:"),
             ("#console-assistant-chip", "Assistant: General"),
-            ("#console-library-chip", "Library · Auto off · Agent blocked"),
+            ("#console-library-chip", "Library · Auto off · Agent access off"),
             ("#console-sources-chip", "Sources:"),
             ("#console-tools-chip", "Tools:"),
             ("#console-approvals-chip", "Approvals:"),
@@ -90,14 +90,16 @@ async def test_library_chip_keyboard_and_click_post_the_same_open_request() -> N
             chip.post_message = original
 
         assert len(posted) == 2
-        assert all(isinstance(item, ConsoleLibraryChip.OpenRequested) for item in posted)
+        assert all(
+            isinstance(item, ConsoleLibraryChip.OpenRequested) for item in posted
+        )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "label",
     (
-        "Library · Auto off · Agent blocked",
+        "Library · Auto off · Agent access off",
         "Library: blocked · policy unavailable",
     ),
 )

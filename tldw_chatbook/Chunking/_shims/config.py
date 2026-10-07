@@ -17,6 +17,7 @@ dict chatbook's own ``load_settings`` reads via ``get_toml_section("Chunking")``
 existing convention, which the engine's lookups also use) and a lowercase
 ``[chunking]`` table are accepted and merged.
 """
+
 import configparser
 from typing import Any, Dict
 
@@ -63,5 +64,10 @@ def load_comprehensive_config() -> _ChunkingConfigParser:
 
 
 def load_and_log_configs() -> Dict[str, Any]:
-    return {"chunking_config": {k: v for k, v in _chunking_section().items()
-            if isinstance(v, (str, int, float, bool))}}
+    return {
+        "chunking_config": {
+            k: v
+            for k, v in _chunking_section().items()
+            if isinstance(v, (str, int, float, bool))
+        }
+    }

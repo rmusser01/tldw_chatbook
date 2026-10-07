@@ -14,6 +14,7 @@ This ensures consistent behavior across all DB classes for:
 """
 
 import asyncio
+import functools
 import sqlite3
 import threading
 import time
@@ -39,7 +40,8 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     """Close only the thread-local handle opened by this synchronous operation.
 
     Inspect without acquiring a handle. A pre-existing registered connection,
-    including its active transaction, remains owned by the caller.
+    including its active transaction, remains owned by the caller unless retired
+    during the operation; a newly acquired replacement is operation-owned.
     """
     local = getattr(database, "_local", None)
     registry = getattr(database, "_connection_quiescence", None)
@@ -61,14 +63,16 @@ def operation_owned_connection(database: object) -> Iterator[None]:
         # evidence as the getter; a still-live borrowed handle remains owned.
         local = database._thread_local
         close = database.close
-        borrowed = _core_cached_connection(database, getattr(local, "conn", None)) is not None
+        previous = _core_cached_connection(database, getattr(local, "conn", None))
+        borrowed = previous is not None
     else:
         previous = getattr(local, "conn", None)
         borrowed = previous is not None and registry.is_registered(previous)
     try:
         yield
     finally:
-        if not borrowed and getattr(local, "conn", None) is not None:
+        current = getattr(local, "conn", None)
+        if current is not None and (not borrowed or current is not previous):
             close()
 
 
@@ -337,6 +341,58 @@ class _QuiescentSQLiteConnection(sqlite3.Connection):
         self._quiescence_registry: SQLiteConnectionQuiescenceRegistry | None = None
         self._quiescence_tokens: set[object] = set()
         self._quiescence_tokens_lock = threading.RLock()
+        # PERF-04 (TASK-33263): transaction-boundary observation for the
+        # semantic mutation guard, replacing a trace callback whose expanded
+        # SQL rendered every bound BLOB as hex on each statement.
+        self._transaction_boundary_listener: Callable[[], None] | None = None
+        self._observed_in_transaction = False
+
+    def set_transaction_boundary_listener(self, listener: Callable[[], None]) -> None:
+        """Call ``listener`` whenever this connection's transaction may have changed.
+
+        Every statement runs through a quiescent cursor, which compares
+        ``in_transaction`` before and after it. The comparison before a
+        statement also catches a transaction ended outside Python (C-level
+        ``commit()`` from ``with connection:``). ``executescript`` always
+        reports a boundary, since one script can COMMIT and BEGIN again
+        without changing ``in_transaction``.
+
+        Args:
+            listener: Zero-argument callback; must not execute SQL.
+        """
+
+        self._transaction_boundary_listener = listener
+        self._observed_in_transaction = self.in_transaction
+
+    def _observe_transaction_state(self, *, boundary: bool = False) -> None:
+        listener = self._transaction_boundary_listener
+        try:
+            in_transaction = self.in_transaction
+        except sqlite3.ProgrammingError:
+            # Closed: no transaction survives, so an open one reads as ended
+            # (a boundary, which fails closed) and the caller's own error wins.
+            in_transaction = False
+        if listener is not None and (
+            boundary or in_transaction != self._observed_in_transaction
+        ):
+            listener()
+        self._observed_in_transaction = in_transaction
+
+    def commit(self) -> None:
+        """Commit, then report the transaction boundary to the listener."""
+
+        try:
+            super().commit()
+        finally:
+            self._observe_transaction_state()
+
+    def rollback(self) -> None:
+        """Roll back, then report the transaction boundary to the listener."""
+
+        try:
+            super().rollback()
+        finally:
+            self._observe_transaction_state()
 
     def attach_quiescence_registry(
         self, registry: SQLiteConnectionQuiescenceRegistry
@@ -379,9 +435,23 @@ class _QuiescentSQLiteConnection(sqlite3.Connection):
         self,
         factory: type[sqlite3.Cursor] | None = None,
     ) -> sqlite3.Cursor:
-        """Create a cursor that tracks its complete execute/fetch lifetime."""
+        """Create a cursor that tracks its complete execute/fetch lifetime.
 
-        return super().cursor(factory or _QuiescentSQLiteCursor)
+        A caller's own cursor type is kept but always combined with the
+        tracked cursor: an untracked cursor could BEGIN a transaction the
+        mutation guard never sees (Qodo, #2894).
+
+        Args:
+            factory: Optional ``sqlite3.Cursor`` subclass to create.
+
+        Returns:
+            A cursor that is an instance of ``factory`` and is tracked.
+
+        Raises:
+            TypeError: ``factory`` is not a ``sqlite3.Cursor`` subclass.
+        """
+
+        return super().cursor(_tracked_cursor_type(factory or _QuiescentSQLiteCursor))
 
     def execute(  # type: ignore[override]
         self,
@@ -439,13 +509,35 @@ class _QuiescentSQLiteConnection(sqlite3.Connection):
         super().close()
 
 
+def _is_transaction_statement(sql: object) -> bool:
+    """Whether ``sql`` starts with BEGIN, COMMIT or ROLLBACK.
+
+    The trace callback's own rule: ``ROLLBACK TO <savepoint>`` keeps
+    ``in_transaction`` True yet ends the guarded work, so it is a boundary too
+    (Qodo, #2894). RELEASE never was one.
+
+    Args:
+        sql: The statement text a cursor was asked to run.
+
+    Returns:
+        True when the statement's first keyword is BEGIN, COMMIT or ROLLBACK.
+    """
+
+    if not isinstance(sql, str):
+        return False
+    words = sql.lstrip().split(None, 1)
+    return bool(words) and words[0].upper() in {"BEGIN", "COMMIT", "ROLLBACK"}
+
+
 class _QuiescentSQLiteCursor(sqlite3.Cursor):
     """Cursor that keeps a read reservation until results are consumed."""
 
     def __init__(self, connection: _QuiescentSQLiteConnection) -> None:
-        super().__init__(connection)
+        # Set before the next initializer: a composed caller cursor may run a
+        # statement from its own __init__ (Qodo, #2894).
         self._quiescent_connection = connection
         self._quiescence_token: object | None = None
+        super().__init__(connection)
 
     def _begin_use(self) -> None:
         self._release_use()
@@ -460,41 +552,75 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
         if self.description is None:
             self._release_use()
 
-    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
-        """Hold one use reservation through result consumption."""
+    def _tracked(
+        self,
+        run: Callable[..., sqlite3.Cursor],
+        *args: object,
+        boundary: bool = False,
+        boundary_if_run: bool = False,
+    ) -> sqlite3.Cursor:
+        """Run one statement call holding a use reservation, observing boundaries.
+
+        Both observations sit inside the handler that releases the reservation,
+        so a failure in either (a cursor kept past its connection's close) can
+        never leave the quiescence registry pinned.
+
+        ``boundary`` is reported even when the call fails (a script may have
+        committed and begun again before failing). ``boundary_if_run`` unless
+        the authorizer refused the statement (SQLITE_AUTH): a refused COMMIT
+        never ran, and the trace callback never reported one either. Any other
+        failure may have come after the statement ran (a caller cursor that
+        raises after ROLLBACK TO), so it is still a boundary: fail closed.
+        """
 
         self._begin_use()
+        connection = self._quiescent_connection
         try:
-            result = super().execute(sql, parameters)
+            connection._observe_transaction_state()
+            refused = False
+            try:
+                result = run(*args)
+            except sqlite3.DatabaseError as error:
+                refused = getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_AUTH
+                raise
+            finally:
+                connection._observe_transaction_state(
+                    boundary=boundary or (boundary_if_run and not refused)
+                )
         except BaseException:
             self._release_use()
             raise
         self._release_if_no_results()
         return result
+
+    def execute(self, sql: str, parameters: object = ()) -> sqlite3.Cursor:
+        """Hold one use reservation through result consumption."""
+
+        return self._tracked(
+            super().execute,
+            sql,
+            parameters,
+            boundary_if_run=_is_transaction_statement(sql),
+        )
 
     def executemany(self, sql: str, seq_of_parameters: object) -> sqlite3.Cursor:
         """Hold one use reservation through repeated execution."""
 
-        self._begin_use()
-        try:
-            result = super().executemany(sql, seq_of_parameters)
-        except BaseException:
-            self._release_use()
-            raise
-        self._release_if_no_results()
-        return result
+        return self._tracked(
+            super().executemany,
+            sql,
+            seq_of_parameters,
+            boundary_if_run=_is_transaction_statement(sql),
+        )
 
     def executescript(self, sql_script: str) -> sqlite3.Cursor:
-        """Hold one use reservation through script execution."""
+        """Hold one use reservation through script execution.
 
-        self._begin_use()
-        try:
-            result = super().executescript(sql_script)
-        except BaseException:
-            self._release_use()
-            raise
-        self._release_if_no_results()
-        return result
+        A script always reports a boundary: it can COMMIT and BEGIN again
+        without changing ``in_transaction``.
+        """
+
+        return self._tracked(super().executescript, sql_script, boundary=True)
 
     def fetchone(self) -> sqlite3.Row | tuple[object, ...] | None:
         """Release the reservation after the result set is exhausted."""
@@ -550,10 +676,53 @@ class _QuiescentSQLiteCursor(sqlite3.Cursor):
     def __del__(self) -> None:
         connection = getattr(self, "_quiescent_connection", None)
         token = getattr(self, "_quiescence_token", None)
-        if connection is not None:
-            self._quiescence_token = None
-            connection._end_cursor_use(token)
+        try:
+            if connection is not None:
+                self._quiescence_token = None
+                connection._end_cursor_use(token)
+        finally:
+            # A caller's composed cursor type comes after this one in the MRO
+            # and may have its own cleanup (Qodo, #2894).
+            finalize = getattr(super(), "__del__", None)
+            if finalize is not None:
+                finalize()
 
+
+@functools.lru_cache(maxsize=64)
+def _tracked_cursor_type(factory: type[sqlite3.Cursor]) -> type[sqlite3.Cursor]:
+    """Return ``factory`` combined with ``_QuiescentSQLiteCursor``.
+
+    Args:
+        factory: The cursor type a caller asked for.
+
+    Returns:
+        ``factory`` itself when it is already tracked, the tracked cursor for
+        a plain ``sqlite3.Cursor``, otherwise a subclass of both with the
+        tracked cursor first, so its statement methods bracket the caller's
+        overrides even when those skip ``super()``.
+
+    Raises:
+        TypeError: ``factory`` is not a ``sqlite3.Cursor`` subclass, or it is
+            a tracked subclass that replaces a statement method (the tracked
+            cursor cannot be put ahead of its own subclass). Either cannot be
+            made tracked, so refusing fails closed.
+    """
+
+    if not (isinstance(factory, type) and issubclass(factory, sqlite3.Cursor)):
+        raise TypeError("cursor factory must be a sqlite3.Cursor subclass")
+    if issubclass(factory, _QuiescentSQLiteCursor):
+        if any(
+            getattr(factory, name) is not getattr(_QuiescentSQLiteCursor, name)
+            for name in ("execute", "executemany", "executescript")
+        ):
+            raise TypeError(
+                "a tracked cursor subclass may not replace execute, "
+                "executemany or executescript"
+            )
+        return factory
+    if issubclass(_QuiescentSQLiteCursor, factory):
+        return _QuiescentSQLiteCursor
+    return type(f"_Quiescent{factory.__name__}", (_QuiescentSQLiteCursor, factory), {})
 
 class _SemanticMutationAuthorization:
     """Connection-local authorization read by SQLite mutation triggers.
@@ -573,11 +742,20 @@ class _SemanticMutationAuthorization:
         self._trace_gc_generation: int | None = None
 
     def trace_transaction(self, statement: str) -> None:
-        """Advance connection-local identity at transaction boundaries."""
+        """Advance connection-local identity at transaction boundaries.
+
+        Fallback for connections that cannot report boundaries themselves;
+        managed connections use :meth:`observe_transaction_boundary`.
+        """
 
         operation = statement.lstrip().split(None, 1)[0].upper()
         if operation in {"BEGIN", "COMMIT", "ROLLBACK"}:
             self._transaction_generation += 1
+
+    def observe_transaction_boundary(self) -> None:
+        """Advance connection-local identity: the transaction may have changed."""
+
+        self._transaction_generation += 1
 
     def sqlite_authorizer(
         self,
@@ -735,7 +913,15 @@ def register_semantic_mutation_guard(
         1,
         authorization._sqlite_trace_gc_delete_authorized,
     )
-    connection.set_trace_callback(authorization.trace_transaction)
+    if isinstance(connection, _QuiescentSQLiteConnection):
+        # PERF-04 (TASK-33263): no trace callback. On Python 3.12 it receives
+        # the expanded SQL, so SQLite hex-rendered every bound BLOB per
+        # statement and trigger step (a 3 MiB image insert took ~1.2 s).
+        connection.set_transaction_boundary_listener(
+            authorization.observe_transaction_boundary
+        )
+    else:
+        connection.set_trace_callback(authorization.trace_transaction)
     connection.set_authorizer(authorization.sqlite_authorizer)
     return authorization
 

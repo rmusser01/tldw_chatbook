@@ -2,7 +2,7 @@
 
 import importlib
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import replace
 from threading import Event
 
@@ -74,6 +74,244 @@ def test_real_installed_core_and_fts_survive(core_store):  # noqa: F811
             assert db.execute(
                 f"SELECT count(*) FROM {fts} WHERE {fts} MATCH 'nebula'"
             ).fetchone() == (1,)
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+def test_installed_reference_does_not_materialize_catalog_per_statement(
+    core_store,  # noqa: F811
+    monkeypatch,
+):
+    _, path, store, _ = core_store
+    store.close()
+    owner = validation._installed_owner("db.chachanotes.primary")
+    catalog = validation._catalog
+    calls = []
+
+    def observed(connection):
+        result = catalog(connection)
+        calls.append(result)
+        return result
+
+    monkeypatch.setattr(validation, "_catalog", observed)
+    assert validate_candidate(owner, path, Event(), migrate=False) == ()
+    assert len(calls) == 2 and calls[0] == calls[1]
+
+
+@pytest.mark.parametrize("limit,value", [("_CATALOG_LIMIT", 0), ("_CATALOG_BYTES", 1)])
+def test_reference_catalog_limits_refuse_before_next_installed_statement(
+    monkeypatch, limit, value
+):
+    from tldw_chatbook.DB import private_sqlite
+
+    connect = private_sqlite.connect_private_sqlite
+    tables = []
+
+    def observed(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+
+        def authorize(action, first, second, database, source):
+            if action == sqlite3.SQLITE_CREATE_TABLE:
+                tables.append(first)
+            return sqlite3.SQLITE_OK
+
+        connection.set_authorizer(authorize)
+        return connection
+
+    monkeypatch.setattr(private_sqlite, "connect_private_sqlite", observed)
+    monkeypatch.setattr(validation, limit, value)
+    with pytest.raises(ValueError, match="^sqlite_resource_limit$"):
+        validation._reference(("CREATE TABLE naïve(x)", "CREATE TABLE extra(y)"))
+    assert tables == ["naïve"]
+
+
+@pytest.fixture
+def legacy_fts_metadata(monkeypatch):
+    """Replay SQLite 3.37's declaration callbacks on a real frozen candidate."""
+    from tldw_chatbook.DB import private_sqlite
+
+    original = private_sqlite.open_recovery_validation
+
+    def install(
+        *,
+        query='PRAGMA table_xinfo("character_cards_fts")',
+        extra=None,
+        failure=None,
+    ):
+        observed = []
+
+        @contextmanager
+        def open_candidate(*args, **kwargs):
+            with original(*args, **kwargs) as (connection, restrictions):
+                observed.append(restrictions)
+
+                class Candidate:
+                    def __getattr__(self, name):
+                        return getattr(connection, name)
+
+                    def execute(self, sql):
+                        if sql == query:
+                            callbacks = [
+                                (
+                                    sqlite3.SQLITE_UPDATE,
+                                    "sqlite_master",
+                                    column,
+                                    "main",
+                                    None,
+                                )
+                                for column in (
+                                    "type",
+                                    "name",
+                                    "tbl_name",
+                                    "rootpage",
+                                    "sql",
+                                )
+                            ]
+                            if extra is not None:
+                                callbacks.append(extra)
+                            for callback in callbacks:
+                                if (
+                                    restrictions.authorize(*callback)
+                                    != sqlite3.SQLITE_OK
+                                ):
+                                    raise sqlite3.OperationalError(
+                                        "declaration refused"
+                                    )
+                            if failure == "prepare":
+                                raise sqlite3.OperationalError(
+                                    "metadata preparation failed"
+                                )
+                            if failure == "iterate":
+
+                                class FailedCursor:
+                                    def __iter__(self):
+                                        raise sqlite3.OperationalError(
+                                            "metadata iteration failed"
+                                        )
+
+                                return FailedCursor()
+                        return connection.execute(sql)
+
+                yield Candidate(), restrictions
+
+        monkeypatch.setattr(private_sqlite, "open_recovery_validation", open_candidate)
+        return observed
+
+    return install
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+@pytest.mark.parametrize("migrate", [False, True])
+def test_legacy_fts_metadata_accepts_frozen_candidate_without_changes(
+    core_store,  # noqa: F811
+    legacy_fts_metadata,
+    migrate,
+):
+    _, path, store, _ = core_store
+    store.close()
+    before = path.read_bytes()
+    observed = legacy_fts_metadata()
+    owner = validation._installed_owner("chat.attachments")
+    assert validate_candidate(owner, path, Event(), migrate=migrate) == ()
+    assert path.read_bytes() == before
+    for column in ("type", "name", "tbl_name", "rootpage", "sql"):
+        assert (
+            observed[0].authorize(
+                sqlite3.SQLITE_UPDATE, "sqlite_master", column, "main", None
+            )
+            == sqlite3.SQLITE_DENY
+        )
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+@pytest.mark.parametrize("failure", ["prepare", "iterate"])
+def test_legacy_fts_metadata_refusal_closes_declaration_scope(
+    core_store,  # noqa: F811
+    legacy_fts_metadata,
+    failure,
+):
+    _, path, store, _ = core_store
+    store.close()
+    before = path.read_bytes()
+    observed = legacy_fts_metadata(failure=failure)
+    owner = validation._installed_owner("chat.attachments")
+    assert validate_candidate(owner, path, Event(), migrate=False) == (
+        "sqlite_validation_unavailable",
+    )
+    assert (
+        observed[0].authorize(
+            sqlite3.SQLITE_UPDATE, "sqlite_master", "type", "main", None
+        )
+        == sqlite3.SQLITE_DENY
+    )
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+@pytest.mark.parametrize(
+    "extra",
+    [
+        (sqlite3.SQLITE_UPDATE, "sqlite_master", "rowid", "main", None),
+        (sqlite3.SQLITE_UPDATE, "notes", "content", "main", None),
+        (sqlite3.SQLITE_UPDATE, "sqlite_master", "type", "temp", None),
+        (sqlite3.SQLITE_UPDATE, "sqlite_master", "type", "main", "surprise"),
+        (sqlite3.SQLITE_INSERT, "sqlite_master", None, "main", None),
+        (sqlite3.SQLITE_DELETE, "sqlite_master", None, "main", None),
+    ],
+)
+def test_legacy_fts_metadata_refuses_unrelated_writes(
+    core_store,  # noqa: F811
+    legacy_fts_metadata,
+    extra,
+):
+    _, path, store, _ = core_store
+    store.close()
+    before = path.read_bytes()
+    legacy_fts_metadata(extra=extra)
+    owner = validation._installed_owner("chat.attachments")
+    assert validate_candidate(owner, path, Event(), migrate=True) == (
+        "sqlite_validation_unavailable",
+    )
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+@pytest.mark.parametrize(
+    "query",
+    [
+        'PRAGMA table_xinfo("canvas_revisions")',
+        'PRAGMA index_list("character_cards_fts")',
+    ],
+)
+def test_legacy_fts_declaration_permission_is_only_for_fts_columns(
+    core_store,  # noqa: F811
+    legacy_fts_metadata,
+    query,
+):
+    _, path, store, _ = core_store
+    store.close()
+    legacy_fts_metadata(query=query)
+    owner = validation._installed_owner("chat.attachments")
+    assert validate_candidate(owner, path, Event(), migrate=False) == (
+        "sqlite_validation_unavailable",
+    )
+
+
+@pytest.mark.parametrize("core_store", ["chachanotes"], indirect=True)
+def test_legacy_fts_metadata_does_not_inspect_uninstalled_catalog(
+    core_store,  # noqa: F811
+    legacy_fts_metadata,
+):
+    _, path, store, _ = core_store
+    store.close()
+    with closing(sqlite3.connect(path)) as db:
+        db.execute("CREATE VIRTUAL TABLE surprise USING fts5(content)")
+    before = path.read_bytes()
+    legacy_fts_metadata(failure="prepare")
+    owner = validation._installed_owner("chat.attachments")
+    assert validate_candidate(owner, path, Event(), migrate=True) == (
+        "unsupported_schema",
+    )
+    assert path.read_bytes() == before
 
 
 def test_owned_tts_reference_digest_checked_on_restricted_connection(tmp_path):
@@ -253,6 +491,97 @@ def test_research_older_migration_preserves_committed_rows(tmp_path):
         ).fetchall() == [("nebula", 0)]
 
 
+@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+def test_prompt_v4_staged_migration_preserves_source_and_prompt_data(
+    core_store,  # noqa: F811
+    tmp_path,
+):
+    from shutil import copyfile
+
+    name, source, store, db = core_store
+    seed_domain(name, store)
+    db.execute("DROP TABLE LocalPromptDrafts")
+    db.execute("UPDATE schema_version SET version=4")
+    db.commit()
+    store.close()
+    before = source.read_bytes()
+    owner = next(a for a in core_adapters() if a.owner_id == "db.prompts.primary")
+    with open_recovery_validation(owner.owner_id, source, writable=False) as db:
+        expected = db.execute("SELECT * FROM Prompts ORDER BY id").fetchall()
+    candidate = tmp_path / "candidate.db"
+    copyfile(source, candidate)
+    assert validate_candidate(owner, candidate, Event(), migrate=True) == ()
+    assert validation.validated_schema_version(owner, candidate, Event()) == 5
+    assert source.read_bytes() == before
+    with closing(sqlite3.connect(candidate)) as db:
+        assert db.execute("SELECT * FROM Prompts ORDER BY id").fetchall() == expected
+        assert db.execute(
+            "SELECT count(*) FROM prompts_fts WHERE prompts_fts MATCH 'nebula'"
+        ).fetchone() == (1,)
+        assert db.execute("SELECT count(*) FROM LocalPromptDrafts").fetchone() == (0,)
+        db.execute(
+            "INSERT INTO LocalPromptDrafts (content,created_at,updated_at) "
+            "VALUES ('Retained draft','2026-09-29','2026-09-29')"
+        )
+        db.commit()
+    assert validate_candidate(owner, candidate, Event(), migrate=False) == ()
+
+
+@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("version", [4, 5])
+def test_prompt_migration_rejects_extra_trigger_before_writing(core_store, version):  # noqa: F811
+    _, path, store, db = core_store
+    if version == 4:
+        db.execute("DROP TABLE LocalPromptDrafts")
+        db.execute("UPDATE schema_version SET version=4")
+    db.execute(
+        "CREATE TRIGGER surprise AFTER UPDATE ON schema_version "
+        "BEGIN SELECT load_extension('hostile'); END"
+    )
+    db.commit()
+    store.close()
+    before = path.read_bytes()
+    owner = next(a for a in core_adapters() if a.owner_id == "db.prompts.primary")
+    assert validate_candidate(owner, path, Event(), migrate=True) == (
+        "unsupported_schema",
+    )
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("core_store", ["prompts"], indirect=True)
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_prompt_failed_migration_rolls_back_created_table(
+    core_store,  # noqa: F811
+    cancelled,
+    monkeypatch,
+):
+    _, path, store, db = core_store
+    db.execute("DROP TABLE LocalPromptDrafts")
+    db.execute("UPDATE schema_version SET version=4")
+    db.commit()
+    store.close()
+    cancel = Event()
+    authorize = validation._Restrictions.authorize
+
+    def refuse_index(self, action, first, second, database, source):
+        if (
+            action == sqlite3.SQLITE_CREATE_INDEX
+            and first == "idx_local_prompt_drafts_updated"
+        ):
+            if cancelled:
+                cancel.set()
+            return sqlite3.SQLITE_DENY
+        return authorize(self, action, first, second, database, source)
+
+    monkeypatch.setattr(validation._Restrictions, "authorize", refuse_index)
+    owner = next(a for a in core_adapters() if a.owner_id == "db.prompts.primary")
+    assert validate_candidate(owner, path, cancel, migrate=True) == (
+        "cancelled" if cancelled else "sqlite_validation_unavailable",
+    )
+    assert validation.validated_schema_version(owner, path, Event()) == 4
+    assert owner.validate(path) == ()
+
+
 @pytest.mark.parametrize(
     "sql",
     [
@@ -419,6 +748,96 @@ def test_cancelled_query_stops_without_migration(tmp_path, monkeypatch):
     assert validate_candidate(owner, path, cancel, migrate=True) == ("cancelled",)
 
 
+def test_extension_restrictions_without_optional_enable_method(tmp_path, monkeypatch):
+    from tldw_chatbook.DB import private_sqlite
+
+    owner, path = research_candidate(tmp_path)
+    connector = private_sqlite._connect_registered_sqlite
+
+    class MissingOptionalMethod:
+        def __init__(self, connection):
+            self.connection = connection
+            enable_extensions = getattr(connection, "enable_load_extension", None)
+            if enable_extensions is None:
+                connection.setconfig(
+                    sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, True
+                )
+            else:
+                enable_extensions(True)
+            assert connection.getconfig(sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION)
+
+        def __getattr__(self, name):
+            if name == "enable_load_extension":
+                raise AttributeError(name)
+            return getattr(self.connection, name)
+
+    monkeypatch.setattr(
+        private_sqlite,
+        "_connect_registered_sqlite",
+        lambda *a, **kw: MissingOptionalMethod(connector(*a, **kw)),
+    )
+    assert validate_candidate(owner, path, Event(), migrate=True) == ()
+    with open_recovery_validation(owner.owner_id, path, writable=False) as connection:
+        assert (
+            connection.getconfig(sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION) is False
+        )
+        with pytest.raises(sqlite3.OperationalError, match="not authorized"):
+            connection.execute("SELECT load_extension('surprise')")
+        # Verify the configuration itself also refuses loading, apart from the authorizer.
+        connection.set_authorizer(None)
+        with pytest.raises(sqlite3.OperationalError, match="not authorized"):
+            connection.execute("SELECT load_extension('surprise')")
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "missing_setconfig",
+        "missing_getconfig",
+        "failed_setconfig",
+        "failed_getconfig",
+        "inert_setconfig",
+        "false_lookalike",
+        "missing_option",
+    ],
+)
+def test_extension_config_fallback_fails_closed(monkeypatch, failure):
+    option = sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION
+
+    class BrokenConfiguration:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def __getattr__(self, name):
+            if name == "enable_load_extension":
+                raise AttributeError(name)
+            return getattr(self.connection, name)
+
+        def setconfig(self, *args):
+            if failure == "missing_setconfig":
+                raise AttributeError("setconfig")
+            if failure == "failed_setconfig":
+                raise NotImplementedError
+            if failure != "inert_setconfig":
+                self.connection.setconfig(*args)
+
+        def getconfig(self, *args):
+            if failure == "missing_getconfig":
+                raise AttributeError("getconfig")
+            if failure == "failed_getconfig":
+                raise sqlite3.OperationalError
+            if failure == "false_lookalike":
+                return 0
+            return self.connection.getconfig(*args)
+
+    with closing(sqlite3.connect(":memory:")) as connection:
+        connection.setconfig(option, True)
+        if failure == "missing_option":
+            monkeypatch.delattr(sqlite3, "SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION")
+        with pytest.raises(ValueError, match="^sqlite_security_unavailable$"):
+            validation._restrict_connection(BrokenConfiguration(connection))
+
+
 @pytest.mark.parametrize(
     "missing",
     [
@@ -440,7 +859,10 @@ def test_missing_security_primitive_fails_closed(tmp_path, monkeypatch, missing)
             self.connection = connection
 
         def __getattr__(self, name):
-            if name == missing:
+            if name == missing or (
+                missing == "enable_load_extension"
+                and name in {"setconfig", "getconfig"}
+            ):
                 raise AttributeError(name)
             return getattr(self.connection, name)
 

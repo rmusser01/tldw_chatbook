@@ -1,0 +1,162 @@
+# TASK-33003.5 regression evidence (2026-09-29)
+base 735295adbb, head 480e948594 (code commit); 39 files, -n 6, bootstrap_all_plugin, fresh roots
+
+## junit diff
+base: {'passed': 2449, 'failed': 155, 'error': 0, 'skipped': 0} total 2604
+head: {'passed': 2467, 'failed': 157, 'error': 0, 'skipped': 0} total 2624
+red at base: 155 red at head: 157
+red only at head: 9
+  + Tests.UI.test_console_context_window_modal::test_full_modal_refreshes_capacity_and_ignores_late_previous_model[dismiss] (base: passed )
+  + Tests.UI.test_console_inspector_navigation::test_structural_control_and_boundary_removal_recovers_without_stale_reentry (base: passed )
+  + Tests.UI.test_console_internals_decomposition::test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable (base: passed )
+  + Tests.UI.test_console_native_chat_flow::test_console_add_api_key_recovery_tolerates_missing_session_settings (base: passed )
+  + Tests.UI.test_console_native_chat_flow::test_console_failed_stream_renders_retry_without_continue_and_recovers (base: passed )
+  + Tests.UI.test_console_native_chat_flow::test_console_new_chat_tab_appears_in_workspace_conversation_rail (base: passed )
+  + Tests.UI.test_console_session_settings::test_console_settings_modal_replaces_focused_sampling_input (base: passed )
+  + Tests.UI.test_console_settings_retention::test_quick_apply_retains_hidden_generation_values_and_live_endpoint (base: passed )
+  + Tests.UI.test_settings_configuration_hub::test_settings_provider_test_toast_states_success (base: passed )
+red only at base: 7
+  - Tests.UI.test_console_native_chat_flow::test_console_tab_switch_focuses_composer_for_immediate_typing (head: passed )
+  - Tests.UI.test_console_native_chat_flow::test_image_message_gets_inline_row_after_prep_and_toggle_cycles (head: passed )
+  - Tests.UI.test_console_provider_apply_defaults_flow::test_default_actions_persist_exact_scope_and_publish_blank_chat_defaults (head: passed )
+  - Tests.UI.test_console_provider_apply_defaults_flow::test_normal_sync_projects_delayed_first_persist_failure_for_switched_session (head: passed )
+  - Tests.UI.test_console_settings_retention::test_reopen_keeps_previously_applied_temperature[apply-full] (head: passed )
+  - Tests.UI.test_console_settings_retention::test_reopen_keeps_previously_applied_temperature[default-quick] (head: passed )
+  - Tests.UI.test_settings_configuration_hub::test_settings_provider_category_renders_local_api_key_setup_without_revealing_secret (head: passed )
+nodes only at base: 0 []
+nodes only at head: 20 ['Tests.UI.test_console_settings_unsaved_guard::test_apply_from_prompt_uses_the_apply_path_and_writes_no_config', 'Tests.UI.test_console_settings_unsaved_guard::test_apply_from_prompt_with_invalid_draft_stays_open', 'Tests.UI.test_console_settings_unsaved_guard::test_compaction_close_anyway_then_asks_about_edits', 'Tests.UI.test_console_settings_unsaved_guard::test_context_view_edit_is_named_in_the_prompt', 'Tests.UI.test_console_settings_unsaved_guard::test_d_types_into_a_field_while_no_prompt_is_open', 'Tests.UI.test_console_settings_unsaved_guard::test_discard_closes_without_applying[button]', 'Tests.UI.test_console_settings_unsaved_guard::test_discard_closes_without_applying[key]', 'Tests.UI.test_console_settings_unsaved_guard::test_edited_draft_asks_before_each_close_gesture[backdrop]', 'Tests.UI.test_console_settings_unsaved_guard::test_edited_draft_asks_before_each_close_gesture[cancel]', 'Tests.UI.test_console_settings_unsaved_guard::test_edited_draft_asks_before_each_close_gesture[escape]', 'Tests.UI.test_console_settings_unsaved_guard::test_keep_editing_returns_focus_to_the_edited_control[button]', 'Tests.UI.test_console_settings_unsaved_guard::test_keep_editing_returns_focus_to_the_edited_control[escape]', 'Tests.UI.test_console_settings_unsaved_guard::test_memory_reset_guard_comes_first_then_asks_about_edits[#console-settings-close-keep]', 'Tests.UI.test_console_settings_unsaved_guard::test_memory_reset_guard_comes_first_then_asks_about_edits[#console-settings-close-undo]', 'Tests.UI.test_console_settings_unsaved_guard::test_prompt_without_an_available_apply_offers_discard_and_keep', 'Tests.UI.test_console_settings_unsaved_guard::test_quick_surface_edit_carried_in_asks_then_applies_to_this_chat', 'Tests.UI.test_console_settings_unsaved_guard::test_unedited_draft_closes_immediately[backdrop]', 'Tests.UI.test_console_settings_unsaved_guard::test_unedited_draft_closes_immediately[cancel]', 'Tests.UI.test_console_settings_unsaved_guard::test_unedited_draft_closes_immediately[escape]', 'Tests.UI.test_console_settings_unsaved_guard::test_unsaved_labels_follow_effective_values_and_carried_edits']
+
+## head-only reds, each alone 3x per tree
+base | Tests/UI/test_console_context_window_modal.py::test_full_modal_refreshes_capacity_and_ignores_late_previous_model[dismiss] | run 1 | 1 passed in 2.40s
+base | Tests/UI/test_console_context_window_modal.py::test_full_modal_refreshes_capacity_and_ignores_late_previous_model[dismiss] | run 2 | 1 passed in 2.33s
+base | Tests/UI/test_console_context_window_modal.py::test_full_modal_refreshes_capacity_and_ignores_late_previous_model[dismiss] | run 3 | 1 passed in 2.32s
+base | Tests/UI/test_console_inspector_navigation.py::test_structural_control_and_boundary_removal_recovers_without_stale_reentry | run 1 | 1 passed in 8.94s
+base | Tests/UI/test_console_inspector_navigation.py::test_structural_control_and_boundary_removal_recovers_without_stale_reentry | run 2 | 1 passed in 9.15s
+base | Tests/UI/test_console_inspector_navigation.py::test_structural_control_and_boundary_removal_recovers_without_stale_reentry | run 3 | 1 passed in 8.44s
+base | Tests/UI/test_console_internals_decomposition.py::test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable | run 1 | 1 passed in 8.61s
+base | Tests/UI/test_console_internals_decomposition.py::test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable | run 2 | 1 passed in 8.15s
+base | Tests/UI/test_console_internals_decomposition.py::test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable | run 3 | 1 passed in 8.21s
+base | Tests/UI/test_console_native_chat_flow.py::test_console_add_api_key_recovery_tolerates_missing_session_settings | run 1 | 1 passed in 6.61s
+base | Tests/UI/test_console_native_chat_flow.py::test_console_add_api_key_recovery_tolerates_missing_session_settings | run 2 | 1 passed in 6.64s
+base | Tests/UI/test_console_native_chat_flow.py::test_console_add_api_key_recovery_tolerates_missing_session_settings | run 3 | 1 passed in 6.57s
+base | Tests/UI/test_console_native_chat_flow.py::test_console_failed_stream_renders_retry_without_continue_and_recovers | run 1 | 1 passed in 10.21s
+base | Tests/UI/test_console_native_chat_flow.py::test_console_failed_stream_renders_retry_without_continue_and_recovers | run 2 | 1 passed in 10.80s
+base | Tests/UI/test_console_native_chat_flow.py::test_console_failed_stream_renders_retry_without_continue_and_recovers | run 3 | 1 passed in 11.43s
+base | Tests/UI/test_console_native_chat_flow.py::test_console_new_chat_tab_appears_in_workspace_conversation_rail | run 1 | 1 passed in 7.65s
+base | Tests/UI/test_console_native_chat_flow.py::test_console_new_chat_tab_appears_in_workspace_conversation_rail | run 2 | 1 passed in 8.07s
+base | Tests/UI/test_console_native_chat_flow.py::test_console_new_chat_tab_appears_in_workspace_conversation_rail | run 3 | 1 passed in 7.89s
+base | Tests/UI/test_console_session_settings.py::test_console_settings_modal_replaces_focused_sampling_input | run 1 | 1 failed in 3.60s
+base | Tests/UI/test_console_session_settings.py::test_console_settings_modal_replaces_focused_sampling_input | run 2 | 1 passed in 3.47s
+base | Tests/UI/test_console_session_settings.py::test_console_settings_modal_replaces_focused_sampling_input | run 3 | 1 failed in 3.60s
+base | Tests/UI/test_console_settings_retention.py::test_quick_apply_retains_hidden_generation_values_and_live_endpoint | run 1 | 1 passed in 11.23s
+base | Tests/UI/test_console_settings_retention.py::test_quick_apply_retains_hidden_generation_values_and_live_endpoint | run 2 | 1 passed in 12.12s
+base | Tests/UI/test_console_settings_retention.py::test_quick_apply_retains_hidden_generation_values_and_live_endpoint | run 3 | 1 passed in 12.75s
+base | Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_toast_states_success | run 1 | 1 passed in 4.53s
+base | Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_toast_states_success | run 2 | 1 passed in 4.03s
+base | Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_toast_states_success | run 3 | 1 passed in 3.87s
+base | done
+head | Tests/UI/test_console_context_window_modal.py::test_full_modal_refreshes_capacity_and_ignores_late_previous_model[dismiss] | run 1 | 1 failed in 2.70s
+head | Tests/UI/test_console_context_window_modal.py::test_full_modal_refreshes_capacity_and_ignores_late_previous_model[dismiss] | run 2 | 1 failed in 2.59s
+head | Tests/UI/test_console_context_window_modal.py::test_full_modal_refreshes_capacity_and_ignores_late_previous_model[dismiss] | run 3 | 1 failed in 2.56s
+head | Tests/UI/test_console_inspector_navigation.py::test_structural_control_and_boundary_removal_recovers_without_stale_reentry | run 1 | 1 passed in 8.94s
+head | Tests/UI/test_console_inspector_navigation.py::test_structural_control_and_boundary_removal_recovers_without_stale_reentry | run 2 | 1 passed in 9.31s
+head | Tests/UI/test_console_inspector_navigation.py::test_structural_control_and_boundary_removal_recovers_without_stale_reentry | run 3 | 1 passed in 8.54s
+head | Tests/UI/test_console_internals_decomposition.py::test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable | run 1 | 1 passed in 8.57s
+head | Tests/UI/test_console_internals_decomposition.py::test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable | run 2 | 1 passed in 8.26s
+head | Tests/UI/test_console_internals_decomposition.py::test_console_rag_action_falls_back_to_default_top_k_when_profile_unavailable | run 3 | 1 passed in 8.28s
+head | Tests/UI/test_console_native_chat_flow.py::test_console_add_api_key_recovery_tolerates_missing_session_settings | run 1 | 1 passed in 6.57s
+head | Tests/UI/test_console_native_chat_flow.py::test_console_add_api_key_recovery_tolerates_missing_session_settings | run 2 | 1 passed in 6.59s
+head | Tests/UI/test_console_native_chat_flow.py::test_console_add_api_key_recovery_tolerates_missing_session_settings | run 3 | 1 passed in 6.50s
+head | Tests/UI/test_console_native_chat_flow.py::test_console_failed_stream_renders_retry_without_continue_and_recovers | run 1 | 1 passed in 10.30s
+head | Tests/UI/test_console_native_chat_flow.py::test_console_failed_stream_renders_retry_without_continue_and_recovers | run 2 | 1 passed in 10.73s
+head | Tests/UI/test_console_native_chat_flow.py::test_console_failed_stream_renders_retry_without_continue_and_recovers | run 3 | 1 passed in 11.14s
+head | Tests/UI/test_console_native_chat_flow.py::test_console_new_chat_tab_appears_in_workspace_conversation_rail | run 1 | 1 passed in 7.68s
+head | Tests/UI/test_console_native_chat_flow.py::test_console_new_chat_tab_appears_in_workspace_conversation_rail | run 2 | 1 passed in 8.10s
+head | Tests/UI/test_console_native_chat_flow.py::test_console_new_chat_tab_appears_in_workspace_conversation_rail | run 3 | 1 passed in 7.83s
+head | Tests/UI/test_console_session_settings.py::test_console_settings_modal_replaces_focused_sampling_input | run 1 | 1 passed in 3.57s
+head | Tests/UI/test_console_session_settings.py::test_console_settings_modal_replaces_focused_sampling_input | run 2 | 1 failed in 3.70s
+head | Tests/UI/test_console_session_settings.py::test_console_settings_modal_replaces_focused_sampling_input | run 3 | 1 passed in 3.61s
+head | Tests/UI/test_console_settings_retention.py::test_quick_apply_retains_hidden_generation_values_and_live_endpoint | run 1 | 1 passed in 11.38s
+head | Tests/UI/test_console_settings_retention.py::test_quick_apply_retains_hidden_generation_values_and_live_endpoint | run 2 | 1 passed in 12.44s
+head | Tests/UI/test_console_settings_retention.py::test_quick_apply_retains_hidden_generation_values_and_live_endpoint | run 3 | 1 passed in 12.89s
+head | Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_toast_states_success | run 1 | 1 passed in 4.55s
+head | Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_toast_states_success | run 2 | 1 passed in 4.06s
+head | Tests/UI/test_settings_configuration_hub.py::test_settings_provider_test_toast_states_success | run 3 | 1 passed in 3.87s
+head | done
+
+## negative controls (scratch tree at 480e948594)
+1. close path without the unsaved ask:
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_edited_draft_asks_before_each_close_gesture[escape]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_edited_draft_asks_before_each_close_gesture[backdrop]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_edited_draft_asks_before_each_close_gesture[cancel]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_keep_editing_returns_focus_to_the_edited_control[escape]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_keep_editing_returns_focus_to_the_edited_control[button]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_discard_closes_without_applying[key]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_discard_closes_without_applying[button]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_apply_from_prompt_uses_the_apply_path_and_writes_no_config
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_apply_from_prompt_with_invalid_draft_stays_open
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_context_view_edit_is_named_in_the_prompt
+10 failed, 10 deselected in 18.99s
+2. committed-only baseline:
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_unsaved_labels_follow_effective_values_and_carried_edits
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_unedited_draft_closes_immediately[escape]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_unedited_draft_closes_immediately[backdrop]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_unedited_draft_closes_immediately[cancel]
+4 failed, 16 deselected in 6.04s
+3. no reset/compaction chaining:
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_memory_reset_guard_comes_first_then_asks_about_edits[#console-settings-close-undo]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_memory_reset_guard_comes_first_then_asks_about_edits[#console-settings-close-keep]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_compaction_close_anyway_then_asks_about_edits
+3 failed, 17 deselected in 4.90s
+
+## fix round 1 (2026-09-29)
+
+### suspended-draft RED -> GREEN
+RED (before the fix, new test): test_suspended_draft_round_trip_keeps_its_edits_unsaved[True]
+  AssertionError: assert 'Esc close' == 'Esc close (asks: 1 unsaved)'   ([False] passed)
+negative control (fix line removed from on_mount, -p bootstrap_all_plugin -n 2):
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_suspended_draft_round_trip_keeps_its_edits_unsaved[True]
+FAILED Tests/UI/test_console_settings_unsaved_guard.py::test_credential_round_trip_keeps_the_restored_edit_unsaved
+2 failed, 1 passed in 23.87s
+probe (not committed): an unedited round-trip rebuilds the first modal's baseline exactly (DIFFS {}) for openai/gpt-5, anthropic, llama_cpp model=None, openai unlisted model; 4 passed
+
+### Tests/UI/test_console_modal_dismissal.py (-n 4), red nodes per tree
+  t5r1-dev: 6 red; names == t5r1-dev: True; messages == t5r1-dev: True
+  t5r1-mb: 6 red; names == t5r1-dev: True; messages == t5r1-dev: False
+  base-d6c: 6 red; names == t5r1-dev: True; messages == t5r1-dev: False
+  t5-base-tree: 6 red; names == t5r1-dev: True; messages == t5r1-dev: False
+  head-r1: 6 red; names == t5r1-dev: True; messages == t5r1-dev: False
+    test_settings_redirected_select_click_uses_real_mro_dispatch :: AssertionError: (Region(x=20, y=3, width=100, height=54), Region(x=0, y=0, width=0, height=0))
+    test_console_modal_launch_declarations_match_runtime_construction :: AssertionError: Console modal launch mismatch; unexpected=['ChangeRevertConfirmModal', 'ConsoleAgentHistoryModal', 'ConsoleAgentProgressModal', 'Conso
+    test_settings_clean_close_sources_restore_opener_focus[escape] :: assert [] == [None]
+    test_console_modal_inventory_matches_runtime_ast_and_transitive_launches :: AssertionError: assert {<class 'tldw...pModal'>, ...} == {<class 'tldw...xportDialog'>}
+    test_task2_modal_contract_table_is_complete_and_adopted :: AssertionError: assert 16 == 15
+    test_task2_contract_selector_exists_and_escape_returns_cancel_result[ConsoleModelPopover] :: TypeError: ConsoleModelPopover.__init__() missing 8 required keyword-only arguments: 'origin', 'app_config', 'initial_draft', 'scope_copy', 'durabilit
+  (t5r1-dev = origin/dev ecd99e68b6, t5r1-mb = merge-base 48019b1914, base-d6c = phase base, t5-base-tree = 735295adbb, head-r1 = fix round 1 working tree; the only message differences are in the two inventory tests, where the first member of a truncated set repr changes with set order; their mismatch lines are identical)
+  [escape] probe at head: focus at open = ConsoleProviderPickerInput#console-settings-provider-picker-input; after Esc 1: results [] (picker took it); after Esc 2: results [None]
+
+### live typing race (tmux driver, Temperature row in live-*-edited-235x52.txt)
+  round 0 head (committed live-edited-235x52.txt): '0'
+  fix round 1 head, burst typing: r1 '0.', repeat a '0', repeat b '0.'
+  base 735295adbb, burst typing: r1-before '0.9', repeat a '', repeat b ''
+  keys paced 100 ms: head '.9', '.9'; base '.9', '0.9'
+  211x44 fix round 1 head: '0.9'. Pilot typing (0 . 9 after end+8 backspace) at 211x44 and 235x52: '0.9' at each step, focus stays on Temperature.
+  repeat captures kept in scratchpad t5r1/typing-race/ (not committed)
+
+### regression, 9 files (every test file that names a suspended draft or the credential round-trip, plus the unsaved-guard, context-window and endpoint-discovery files)
+  files: Tests/UI/test_console_settings_unsaved_guard.py Tests/UI/test_console_session_settings.py Tests/UI/test_console_native_chat_flow.py Tests/UI/test_console_settings_geometry.py Tests/UI/test_settings_configuration_hub.py Tests/State/test_screen_state_store.py Tests/UI/test_console_subscription_readiness.py Tests/UI/test_console_context_window_modal.py Tests/UI/test_console_endpoint_discovery.py 
+  -p bootstrap_all_plugin, fresh TLDW_TEST_CONFIG_ROOT per tree, -n 6, -p no:randomly
+  base (480e948594, code identical to b4d447dc8b): 96 failed, 1295 passed in 767.23s
+  head (fix round 1):                              95 failed, 1299 passed in 799.14s
+  3 head-only nodes = the new tests, all pass; unsaved-guard file 23/23; AC#4 pins pass
+  red only at base: context_window_modal [dismiss] (rewritten in b4d447dc8b, expected) + 2 native_chat_flow nodes
+  red only at head: 2 native_chat_flow nodes
+  each of those 4 native_chat_flow nodes alone, 3x per tree:
+    base test_console_browser_selecting_default_native_session_uses_private_scratch: 1 passed 1 passed 1 passed
+    base test_console_edit_resend_clears_replaced_descendant_original_attempt: 1 passed 1 passed 1 passed
+    base test_console_regenerate_action_streams_selected_variant: 1 passed 1 passed 1 passed
+    base test_conversation_settings_return_atomic_failure_retains_retry_without_modal_owner[raise_once]: 1 passed 1 passed 1 passed
+    head test_console_browser_selecting_default_native_session_uses_private_scratch: 1 passed 1 passed 1 passed
+    head test_console_edit_resend_clears_replaced_descendant_original_attempt: 1 passed 1 passed 1 passed
+    head test_console_regenerate_action_streams_selected_variant: 1 passed 1 passed 1 passed
+    head test_conversation_settings_return_atomic_failure_retains_retry_without_modal_owner[raise_once]: 1 passed 1 passed 1 passed

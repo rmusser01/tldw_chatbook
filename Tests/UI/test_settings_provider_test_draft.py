@@ -1,11 +1,13 @@
 import asyncio
 import os
+import re
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from textual.widgets import Input, Static
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import (
     _active_destination_screen,
@@ -240,9 +242,7 @@ def test_failed_save_does_not_rebase_evidence_to_saved_identity():
     tested = _semantic_identity(
         "https://example.test/v1/chat/completions", draft_generation=1
     )
-    saved = _semantic_identity(
-        "https://example.test/v1/models", draft_generation=2
-    )
+    saved = _semantic_identity("https://example.test/v1/models", draft_generation=2)
     store = _settled_store(tested)
 
     assert not _rebase_after_save(
@@ -259,9 +259,7 @@ def test_conflict_invalidates_even_when_mutation_claims_fully_applied():
     tested = _semantic_identity(
         "https://example.test/v1/chat/completions", draft_generation=1
     )
-    saved = _semantic_identity(
-        "https://example.test/v1/models", draft_generation=2
-    )
+    saved = _semantic_identity("https://example.test/v1/models", draft_generation=2)
     store = _settled_store(tested)
 
     assert not _rebase_after_save(
@@ -278,9 +276,7 @@ def test_conflict_invalidates_active_test_token():
     tested = _semantic_identity(
         "https://example.test/v1/chat/completions", draft_generation=1
     )
-    saved = _semantic_identity(
-        "https://example.test/v1/models", draft_generation=2
-    )
+    saved = _semantic_identity("https://example.test/v1/models", draft_generation=2)
     store = ProviderTestEvidenceStore()
     token = store.begin(tested)
     lease = store.begin_save(tested)
@@ -377,9 +373,7 @@ def test_successful_save_cannot_rebase_to_an_older_draft_generation():
     tested = _semantic_identity(
         "https://example.test/v1/chat/completions", draft_generation=3
     )
-    older = _semantic_identity(
-        "https://example.test/v1/models", draft_generation=2
-    )
+    older = _semantic_identity("https://example.test/v1/models", draft_generation=2)
     store = _settled_store(tested)
 
     assert not _rebase_after_save(
@@ -461,9 +455,7 @@ def test_same_identity_late_save_cannot_cancel_newer_active_test(mutation):
 
 
 def test_save_lease_is_single_use_after_successful_rebase():
-    tested = _semantic_identity(
-        "https://example.test/v1/models", draft_generation=2
-    )
+    tested = _semantic_identity("https://example.test/v1/models", draft_generation=2)
     saved = _semantic_identity(
         "https://example.test/v1/chat/completions", draft_generation=3
     )
@@ -622,15 +614,20 @@ def test_current_fully_applied_save_advances_generation_without_preserved_eviden
             ProviderTestEvidence(tested, "reachable", ("model-a",)),
         )
     with pytest.raises(ValueError):
-        store.begin(_semantic_identity(
-            "https://example.test/v1/chat/completions", draft_generation=7
-        ))
+        store.begin(
+            _semantic_identity(
+                "https://example.test/v1/chat/completions", draft_generation=7
+            )
+        )
 
 
 def _base_config():
     return {
         "api_settings": {
-            "llama_cpp": {"api_url": "http://localhost:8080/completion", "api_key": "fake-saved-key-not-real"},
+            "llama_cpp": {
+                "api_url": "http://localhost:8080/completion",
+                "api_key": "fake-saved-key-not-real",
+            },
             "openai": {"api_key": "fake-other-key-not-real"},
         }
     }
@@ -652,7 +649,10 @@ def test_overlay_endpoint_only_deep_copies_and_preserves_others():
     assert merged["api_settings"]["llama_cpp"]["api_key"] == "fake-saved-key-not-real"
     assert merged["api_settings"]["openai"]["api_key"] == "fake-other-key-not-real"
     # input not mutated
-    assert base["api_settings"]["llama_cpp"]["api_url"] == "http://localhost:8080/completion"
+    assert (
+        base["api_settings"]["llama_cpp"]["api_url"]
+        == "http://localhost:8080/completion"
+    )
 
 
 def test_overlay_api_key_and_env_var():
@@ -710,7 +710,60 @@ def test_overlay_no_fields_is_a_faithful_copy():
 def _bare_settings_screen(app_config):
     screen = SettingsScreen.__new__(SettingsScreen)
     screen.app_instance = SimpleNamespace(app_config=app_config)
+    # No widgets or drafts: the probe worker's credential has nothing to read.
+    screen._provider_current_draft_credential = lambda: None
     return screen
+
+
+def _result_rows(detail: str) -> list[tuple[str, str]]:
+    """TASK-33002.2: split a rendered Test result into (label, text) rows."""
+    rows = []
+    for line in detail.splitlines():
+        label, _gap, text = line.partition("  ")
+        rows.append((label, text.strip()))
+    return rows
+
+
+_READINESS_WORD = re.compile(
+    r"Ready · not tested|Ready · (reachable|verified) \d\d:\d\d|Not ready · .+"
+)
+
+
+def _assert_labelled_rows(detail: str) -> dict[str, str]:
+    """One fact per labelled row; no pipe dump, no key=value config spellings.
+
+    TASK-33005.3 (rewritten on purpose): the spec §5 readiness word leads, in
+    its own Readiness row, above the five fact rows.
+    """
+    rows = _result_rows(detail)
+    assert rows[0][0] == "Readiness", detail
+    assert _READINESS_WORD.fullmatch(rows[0][1]), detail
+    assert sorted(label for label, _text in rows[1:]) == sorted(
+        ("Config", "Key", "Endpoint", "Model", "Generation")
+    ), detail
+    assert " | " not in detail
+    for spelling in ("model=", "api_key_source=", "configuration=", "api_key="):
+        assert spelling not in detail, detail
+    return dict(rows)
+
+
+def test_settings_provider_label_names_a_custom_endpoint_escaped():
+    """Qodo #2878 finding 3: Settings labels a ``custom-ep:`` id with its
+    registry entry's name, escaped because that name is user text."""
+    screen = _bare_settings_screen(
+        {
+            "custom_endpoints": {
+                "gpu-box": {
+                    "display_name": "GPU [box]",
+                    "base_url": "http://127.0.0.1:9999/v1",
+                    "family": "openai_compatible",
+                }
+            }
+        }
+    )
+
+    assert screen._provider_display_name("custom-ep:gpu-box") == r"GPU \[box]"
+    assert screen._provider_display_name("openai") == "OpenAI"
 
 
 def test_provider_source_ui_honors_persisted_explicit_keyless_decision():
@@ -756,8 +809,11 @@ def test_findings_show_draft_endpoint_tagged():
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("llama.cpp", app_config, environ={})
     detail, _summary, _passed = screen._build_provider_readiness_findings(
-        "llama.cpp", "llama-3", readiness,
-        draft_endpoint="http://localhost:9099", dirty={"endpoint"},
+        "llama.cpp",
+        "llama-3",
+        readiness,
+        draft_endpoint="http://localhost:9099",
+        dirty={"endpoint"},
     )
     assert "http://localhost:9099 (draft)" in detail
     assert "8080" not in detail
@@ -773,7 +829,11 @@ def test_local_configuration_check_never_claims_live_verification():
     )
 
     assert passed is True
-    assert detail.startswith("Configuration check |")
+    rows = _assert_labelled_rows(detail)
+    assert _result_rows(detail)[1] == ("Config", "OpenAI is configured")
+    # TASK-33002.2 AC#5: a cloud Test stays a local readiness check.
+    assert rows["Key"] == "saved in config · present, not verified"
+    assert rows["Generation"] == "not tested"
     assert "passed" not in summary.casefold()
     assert "verified" not in summary.casefold()
     assert "live generation has not been tested" in summary.casefold()
@@ -793,13 +853,144 @@ def test_exact_evidence_copy_keeps_listing_and_generation_independent():
         generation="not_tested",
     )
 
-    copy = SettingsScreen._provider_exact_evidence_copy(evidence, "gpt-4o")
+    app_config = {"api_settings": {"openai": {"api_key": "fake-test-key"}}}
+    readiness = get_provider_readiness("openai", app_config, environ={})
 
-    assert "credential present, not verified" in copy
-    assert "model listing reached" in copy
-    assert "selected model confirmed" in copy
-    assert "generation not tested" in copy
-    assert "generation succeeded" not in copy
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            readiness,
+            display_name="OpenAI",
+            model="gpt-4o",
+            endpoint="https://example.test/v1",
+            evidence=evidence,
+        )
+    )
+
+    assert rows["Key"] == "saved in config · present, not verified"
+    assert rows["Endpoint"] == "https://example.test/v1 · model listing reached"
+    assert rows["Model"] == "gpt-4o · listed by the server"
+    assert rows["Generation"] == "not tested"
+    # TASK-33005.3 (AC#4): a cloud listing that did not accept the key
+    # proves nothing about it.
+    assert rows["Readiness"] == "Ready · not tested"
+
+
+def test_a_key_accepted_by_its_listing_reads_verified_and_never_generated():
+    """TASK-33005.3 (AC#2/#5/#6): Settings words a listing-accepted cloud key
+    'Ready · verified HH:MM' and keeps Generation 'not tested'."""
+    from datetime import datetime
+
+    identity = _semantic_identity(
+        "https://example.test/v1/models",
+        provider_key="openai",
+        credential_source="stored",
+        credential_revision=7,
+    )
+    evidence = ProviderTestEvidence(
+        identity,
+        "reachable",
+        ("gpt-4o",),
+        credential="listing_accepted",
+        observed_at=datetime(2026, 10, 1, 14, 4).astimezone(),
+    )
+    app_config = {"api_settings": {"openai": {"api_key": "fake-test-key"}}}
+    readiness = get_provider_readiness("openai", app_config, environ={})
+
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            readiness,
+            display_name="OpenAI",
+            model="gpt-4o",
+            endpoint="https://example.test/v1",
+            evidence=evidence,
+        )
+    )
+
+    assert rows["Readiness"] == "Ready · verified 14:04"
+    # TASK-33005.4 (rewritten on purpose): the ADR-012 outcome phrase.
+    assert rows["Key"] == "saved in config · key accepted (1 model listed)"
+    assert rows["Generation"] == "not tested"
+
+
+def test_a_paid_test_of_another_model_never_verifies_the_settings_rows():
+    """Qodo #2958 finding 1: the Settings rows read the shared record, so a
+    Chat settings paid test of model-a must not read model-b verified here
+    either; the listing still reads "reachable"."""
+    from datetime import datetime
+
+    identity = _semantic_identity("http://127.0.0.1:9099/v1/models")
+    evidence = ProviderTestEvidence(
+        identity,
+        "reachable",
+        ("model-a", "model-b"),
+        generation="succeeded",
+        generation_model="model-a",
+        observed_at=datetime(2026, 10, 1, 9, 0).astimezone(),
+        generation_observed_at=datetime(2026, 10, 1, 9, 30).astimezone(),
+    )
+    readiness = get_provider_readiness("custom", {}, environ={})
+
+    def rows(model: str) -> dict[str, str]:
+        return dict(
+            SettingsScreen._provider_test_rows(
+                readiness,
+                display_name="Custom",
+                model=model,
+                endpoint="http://127.0.0.1:9099/v1",
+                evidence=evidence,
+            )
+        )
+
+    assert rows("model-a")["Readiness"] == "Ready · verified 09:30"
+    assert rows("model-a")["Generation"] == "succeeded"
+    assert rows("model-b")["Readiness"] == "Ready · reachable 09:00"
+    assert rows("model-b")["Generation"] == "not tested"
+
+
+@pytest.mark.parametrize(
+    ("listing", "category", "readiness_word", "key_text"),
+    (
+        ("unreachable", "unauthorized", "Not ready · key rejected", "key rejected"),
+        # Qodo #2958 finding 5 (owner ruling, rewritten on purpose): a 403 key
+        # check now records "listing unavailable", so neither row rejects the
+        # key and nothing blocks.
+        (
+            "model_listing_unavailable",
+            "http_status",
+            "Ready · not tested",
+            "present, not verified",
+        ),
+    ),
+    ids=("401", "403"),
+)
+def test_a_rejected_key_reads_rejected_on_the_key_row_too(
+    listing, category, readiness_word, key_text
+):
+    """TASK-33005 capture checkpoint (capture 08): Readiness said "Not ready ·
+    key rejected" while Key said "present, not verified". One rejection, one
+    word on both rows."""
+    identity = _semantic_identity(
+        "https://api.openai.com/v1/models",
+        provider_key="openai",
+        credential_source="stored",
+        credential_revision=7,
+    )
+    evidence = ProviderTestEvidence(identity, listing, (), category=category)
+    app_config = {"api_settings": {"openai": {"api_key": "fake-test-key"}}}
+    readiness = get_provider_readiness("openai", app_config, environ={})
+
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            readiness,
+            display_name="OpenAI",
+            model="gpt-4o",
+            endpoint="",
+            evidence=evidence,
+        )
+    )
+
+    assert rows["Readiness"] == readiness_word
+    assert rows["Key"] == f"saved in config · {key_text}"
 
 
 @pytest.mark.parametrize(
@@ -822,9 +1013,41 @@ def test_exact_evidence_copy_distinguishes_endpoint_failure_categories(
         category=category,
     )
 
-    copy = SettingsScreen._provider_exact_evidence_copy(evidence, "model-a")
+    readiness = get_provider_readiness("custom", {}, environ={})
 
-    assert f"model listing failed ({expected})" in copy
+    rows = SettingsScreen._provider_test_rows(
+        readiness,
+        display_name="Custom",
+        model="model-a",
+        endpoint="https://example.test/v1",
+        evidence=evidence,
+    )
+
+    # TASK-33002.2 AC#2: the failed listing leads the facts, instead of
+    # "configured"; TASK-33005.3 put the readiness word above them.
+    assert rows[0][0] == "Readiness"
+    label, text = rows[1]
+    assert label == "Endpoint"
+    assert f"model listing failed ({expected})" in text
+    assert dict(rows)["Config"] == "Custom is configured"
+
+
+def test_cloud_endpoint_row_names_the_default_the_field_shows():
+    """Captures flag 10: the Endpoint row said "provider default" while the
+    empty Endpoint field showed https://api.openai.com/v1."""
+    app_config = {"api_settings": {"openai": {"api_key": "fake-test-key"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("openai", app_config, environ={})
+
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            readiness, display_name="OpenAI", model="gpt-4o", endpoint=""
+        )
+    )
+
+    assert rows["Endpoint"] == (
+        f"{screen._provider_endpoint_placeholder('openai')} (provider default)"
+    )
 
 
 def test_provider_edit_stale_copy_requires_a_new_configuration_check():
@@ -839,11 +1062,18 @@ def test_findings_relabel_draft_api_key_source_and_hide_value():
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
     detail, summary, _passed = screen._build_provider_readiness_findings(
-        "OpenAI", "gpt-4o", readiness,
-        draft_endpoint="", dirty={"api_key"},
+        "OpenAI",
+        "gpt-4o",
+        readiness,
+        draft_endpoint="",
+        dirty={"api_key"},
     )
-    assert "api_key_source=draft api_key (unsaved)" in detail
-    assert "fake-draft-key-not-real" not in detail and "fake-draft-key-not-real" not in summary
+    rows = _assert_labelled_rows(detail)
+    assert rows["Key"] == "entered here, not saved yet · present, not verified"
+    assert (
+        "fake-draft-key-not-real" not in detail
+        and "fake-draft-key-not-real" not in summary
+    )
 
 
 def test_findings_tag_draft_env_var_and_never_leak_value():
@@ -855,42 +1085,228 @@ def test_findings_tag_draft_env_var_and_never_leak_value():
     with patch.dict(os.environ, {"MY_CUSTOM_CRED": "env-secret-XYZ"}, clear=False):
         readiness = get_provider_readiness("OpenAI", app_config)
         detail, summary, _passed = screen._build_provider_readiness_findings(
-            "OpenAI", "gpt-4o", readiness,
-            draft_endpoint="", dirty={"credential_env_var"},
+            "OpenAI",
+            "gpt-4o",
+            readiness,
+            draft_endpoint="",
+            dirty={"credential_env_var"},
         )
-    assert "(draft env var)" in detail
-    assert "MY_CUSTOM_CRED=<redacted>" in detail
+    rows = _assert_labelled_rows(detail)
+    assert rows["Key"] == (
+        "from env var MY_CUSTOM_CRED (draft) · present, not verified"
+    )
     assert "env-secret-XYZ" not in detail and "env-secret-XYZ" not in summary
 
 
-def test_mask_url_userinfo_masks_password_in_endpoint():
-    from tldw_chatbook.UI.Screens.settings_screen import _mask_url_userinfo
+@pytest.mark.parametrize(
+    "missing_env",
+    (True, False),
+)
+def test_findings_key_row_names_its_source_never_its_value(missing_env):
+    """TASK-33002.2 AC#3: saved in config, from env var NAME, or missing."""
+    environ = {} if missing_env else {"OPENAI_API_KEY": "sk-env-value-canary"}
+    app_config = {"api_settings": {"openai": {"api_key_env_var": "OPENAI_API_KEY"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("OpenAI", app_config, environ=environ)
+    detail, summary, _passed = screen._build_provider_readiness_findings(
+        "OpenAI",
+        "gpt-4o",
+        readiness,
+        draft_endpoint="",
+        dirty=set(),
+    )
 
-    assert _mask_url_userinfo("http://user:s3cret@host:8080/v1") == "http://user:***@host:8080/v1"
-    assert _mask_url_userinfo("http://:s3cret@host/v1") == "http://***@host/v1"
-    # password-less / non-URL inputs are unchanged
-    assert _mask_url_userinfo("http://localhost:9099") == "http://localhost:9099"
-    assert _mask_url_userinfo("") == ""
-    # username-only userinfo (no password) is left as-is
-    assert _mask_url_userinfo("http://user@host/v1") == "http://user@host/v1"
-    # malformed/out-of-range port must not raise (uses .port property otherwise)
-    assert _mask_url_userinfo("http://u:p@host:99999/v1") == "http://u:***@host:99999/v1"
-    assert _mask_url_userinfo("http://u:p@host:notaport/v1") == "http://u:***@host:notaport/v1"
-    # IPv6 host keeps its brackets while the password is masked
-    assert (
-        _mask_url_userinfo("http://u:p@[::1]:8080/v1") == "http://u:***@[::1]:8080/v1"
+    rows = _assert_labelled_rows(detail)
+    if missing_env:
+        # Round-1 I2: the Key row owns the blocker, so it leads with a
+        # Settings-local next step; Config states only the verdict (spec §5:
+        # each fact once) and no row spells a config table.
+        assert _result_rows(detail)[1] == (  # [0] is Readiness (TASK-33005.3)
+            "Key",
+            "missing — enter one in the API key field or set OPENAI_API_KEY",
+        )
+        assert rows["Config"] == "OpenAI is not ready"
+        assert "api_settings" not in detail + summary
+        assert (
+            summary
+            == "Configuration check blocked: OpenAI is not ready: Missing API key."
+        )
+    else:
+        assert rows["Key"] == "from env var OPENAI_API_KEY · present, not verified"
+    assert "sk-env-value-canary" not in detail + summary
+
+
+@pytest.mark.parametrize(
+    ("provider", "app_config", "environ", "lead"),
+    (
+        # ADR-179: the key is set (env or saved) but the workspace URL is not.
+        (
+            "Databricks",
+            {"api_settings": {}},
+            {"DATABRICKS_TOKEN": "dapi-canary-value-0123456789"},
+            ("Endpoint", "not set — enter the workspace URL in the Endpoint field"),
+        ),
+        (
+            "Databricks",
+            {
+                "api_settings": {
+                    "databricks": {"api_key": "dapi-canary-value-0123456789"}
+                }
+            },
+            {},
+            ("Endpoint", "not set — enter the workspace URL in the Endpoint field"),
+        ),
+        # _invalid_settings_readiness: a malformed provider table.
+        (
+            "QwenCloud",
+            {"api_settings": {"qwencloud": "not-a-table"}},
+            {"DASHSCOPE_API_KEY": "sk-canary-value-0123456789"},
+            (
+                "Config",
+                (
+                    "{name} is not ready: Invalid provider settings — fix this "
+                    "provider's settings in Advanced Config"
+                ),
+            ),
+        ),
+    ),
+)
+def test_key_row_never_claims_missing_when_another_setting_blocks(
+    provider, app_config, environ, lead
+):
+    """Round-1 I1 (AC#3): readiness drops the credential source whenever it
+    blocks, so a non-key blocker must not read as a missing key."""
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness(provider, app_config, environ=environ)
+    assert not readiness.ready
+    detail, summary, _passed = screen._build_provider_readiness_findings(
+        provider,
+        "some-model",
+        readiness,
+        draft_endpoint="",
+        dirty=set(),
+    )
+
+    rows = _assert_labelled_rows(detail)
+    assert rows["Key"] == "not checked until the provider is ready"
+    display = screen._provider_display_name(provider)
+    assert _result_rows(detail)[1] == (lead[0], lead[1].format(name=display))
+    if lead[0] != "Config":
+        assert rows["Config"] == f"{display} is not ready"
+    assert "api_settings" not in detail + summary
+    assert "canary" not in detail + summary
+
+
+def test_findings_never_print_a_custom_named_credential_query_param():
+    """TASK-486 (absorbed by TASK-33002.2 AC#4): name-based redaction misses
+    ``?mycred=``, so the Endpoint row shows the endpoint without its query."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("llama_cpp", app_config, environ={})
+
+    for evidence in (
+        None,
+        ProviderProbeResult(endpoint="unreachable", model_ids=(), category="timeout"),
+        ProviderProbeResult(endpoint="reachable", model_ids=("llama-3",)),
+    ):
+        detail, summary, _passed = screen._build_provider_readiness_findings(
+            "llama_cpp",
+            "llama-3",
+            readiness,
+            draft_endpoint="http://localhost:9099/v1?mycred=SEKRET",
+            dirty={"endpoint"},
+            evidence=evidence,
+        )
+
+        rows = _assert_labelled_rows(detail)
+        assert rows["Endpoint"].startswith("http://localhost:9099/v1 (draft)")
+        assert "SEKRET" not in detail and "mycred" not in detail
+        assert "SEKRET" not in summary and "mycred" not in summary
+
+
+def test_failed_probe_leads_with_the_failure_and_a_next_step():
+    """TASK-33002.2 AC#2 + AC#6: an unreachable server leads with the failure
+    and what to do, and the one-line toast says the same thing."""
+    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+    screen = _bare_settings_screen(app_config)
+    readiness = get_provider_readiness("llama_cpp", app_config, environ={})
+
+    detail, summary, passed = screen._build_provider_readiness_findings(
+        "llama_cpp",
+        "llama-3",
+        readiness,
+        draft_endpoint="http://127.0.0.1:9099",
+        dirty=set(),
+        evidence=ProviderProbeResult(
+            endpoint="unreachable", model_ids=(), category="connection_refused"
+        ),
+    )
+
+    assert passed is True  # the configuration itself is complete
+    _assert_labelled_rows(detail)
+    label, text = _result_rows(detail)[1]  # [0] is Readiness (TASK-33005.3)
+    assert label == "Endpoint"
+    assert text == (
+        "http://127.0.0.1:9099 · model listing failed (connection refused) "
+        "— start the server or check the URL"
+    )
+    assert "configuration is complete" not in detail
+    assert "\n" not in summary
+    assert summary == (
+        "Model listing failed (connection refused) — start the server or check "
+        "the URL; generation not tested."
     )
 
 
-def test_findings_mask_endpoint_userinfo_password():
+def test_generation_row_and_in_flight_line_read_stored_generation_evidence():
+    """TASK-33002 rider: the Generation row and the in-flight (checking) line
+    report the stored generation fact, never a hard-coded "not tested"."""
+    identity = _semantic_identity("http://127.0.0.1:9099", provider_key="llama_cpp")
+    evidence = ProviderTestEvidence(
+        # Qodo #2958 (rewritten on purpose): a paid test names its model.
+        identity,
+        "testing",
+        (),
+        generation="succeeded",
+        generation_model="llama-3",
+    )
+    readiness = get_provider_readiness(
+        "llama.cpp",
+        {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}},
+        environ={},
+    )
+
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            readiness,
+            display_name="llama.cpp",
+            model="llama-3",
+            endpoint="http://127.0.0.1:9099",
+            evidence=evidence,
+            checking=True,
+        )
+    )
+
+    assert rows["Endpoint"] == "http://127.0.0.1:9099 · checking the model listing"
+    assert rows["Generation"] == "succeeded"
+    assert "not tested" not in " ".join(rows.values())
+
+
+def test_findings_never_print_endpoint_userinfo():
+    """TASK-33002.2: the Endpoint row uses safe_endpoint_display, which never
+    echoes user information (the endpoint contract rejects it anyway)."""
     app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("llama.cpp", app_config, environ={})
     detail, summary, _passed = screen._build_provider_readiness_findings(
-        "llama.cpp", "llama-3", readiness,
-        draft_endpoint="http://user:hunter2@host:9099/v1", dirty={"endpoint"},
+        "llama.cpp",
+        "llama-3",
+        readiness,
+        draft_endpoint="http://user:hunter2@localhost:9099/v1",
+        dirty={"endpoint"},
     )
-    assert "http://user:***@host:9099/v1 (draft)" in detail
+    rows = _assert_labelled_rows(detail)
+    assert "user" not in rows["Endpoint"] and "hunter2" not in rows["Endpoint"]
     assert "hunter2" not in detail and "hunter2" not in summary
 
 
@@ -899,8 +1315,11 @@ def test_findings_no_draft_has_no_tags():
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("llama.cpp", app_config, environ={})
     detail, _summary, _passed = screen._build_provider_readiness_findings(
-        "llama.cpp", "llama-3", readiness,
-        draft_endpoint="http://localhost:8080", dirty=set(),
+        "llama.cpp",
+        "llama-3",
+        readiness,
+        draft_endpoint="http://localhost:8080",
+        dirty=set(),
     )
     assert "(draft)" not in detail and "(unsaved)" not in detail
     assert "http://localhost:8080" in detail
@@ -908,22 +1327,30 @@ def test_findings_no_draft_has_no_tags():
 
 def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
     """TASK-366: a config-ready provider with no default model must not read
-    'is ready' next to 'configuration=blocked' — the detail leads with one verdict
-    consistent with the final status line, and still explains the block."""
+    'is ready' -- the blocking Model row leads (TASK-33002.2) and still
+    explains the block."""
     app_config = {"api_settings": {"openai": {"api_key": "placeholder-not-a-real-key"}}}
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
     assert readiness.ready is True  # config-level readiness is fine...
 
     detail, _summary, passed = screen._build_provider_readiness_findings(
-        "OpenAI", "", readiness,
-        draft_endpoint="", dirty=set(),
+        "OpenAI",
+        "",
+        readiness,
+        draft_endpoint="",
+        dirty=set(),
     )
 
     assert passed is False
-    assert "configuration=blocked" in detail
+    _assert_labelled_rows(detail)
+    # TASK-33002.2 AC#2: the blocking fact leads.
+    # [0] is the Readiness word (TASK-33005.3); the blocking fact leads the rest.
+    assert _result_rows(detail)[:2] == [
+        ("Readiness", "Not ready · no model"),
+        ("Model", "not set — choose a default model"),
+    ]
     assert "is ready" not in detail  # no contradictory ready claim
-    assert "model" in detail.lower()  # verdict still explains the block
 
 
 def test_findings_keep_configuration_only_verdict_when_passing():
@@ -933,16 +1360,54 @@ def test_findings_keep_configuration_only_verdict_when_passing():
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
 
     detail, summary, passed = screen._build_provider_readiness_findings(
-        "OpenAI", "gpt-4o", readiness,
-        draft_endpoint="", dirty=set(),
+        "OpenAI",
+        "gpt-4o",
+        readiness,
+        draft_endpoint="",
+        dirty=set(),
     )
 
     assert passed is True
-    assert "configuration=complete" in detail
+    _assert_labelled_rows(detail)
+    assert _result_rows(detail)[1] == (
+        "Config",
+        f"{screen._provider_display_name('OpenAI')} is configured",
+    )
     assert "is ready" not in detail
     assert "status=ready" not in detail
     assert "configured" in summary.lower()
     assert "live generation has not been tested" in summary.lower()
+
+
+def test_overview_shows_the_leading_test_row_and_the_endpoint_row():
+    """TASK-33002.2: Settings Overview's one-line "Last connection test" row
+    shows the result's leading row, never the whole multi-line table.
+    Captures flag 10: when Config led, the row said only "Config: llama.cpp
+    is configured" and never whether the endpoint was reached, so the
+    Endpoint row follows the lead."""
+    headline = SettingsScreen._provider_test_headline
+
+    assert (
+        headline(
+            "Endpoint    http://127.0.0.1:9099 · model listing failed (timeout)\n"
+            "Config      llama.cpp is configured\nGeneration  not tested"
+        )
+        == "Endpoint: http://127.0.0.1:9099 · model listing failed (timeout)"
+    )
+    assert headline(
+        "Config      llama.cpp is configured\nKey         not required\n"
+        "Endpoint    http://127.0.0.1:9198 · model listing reached\n"
+        "Generation  not tested"
+    ) == (
+        "Config: llama.cpp is configured; "
+        "Endpoint: http://127.0.0.1:9198 · model listing reached"
+    )
+    for sentinel in (
+        SettingsScreen._PROVIDER_TEST_NOT_RUN_COPY,
+        SettingsScreen._PROVIDER_TEST_STALE_COPY,
+        "Configuration check cancelled; run again.",
+    ):
+        assert headline(sentinel) == sentinel
 
 
 def test_mark_provider_test_result_stale_invalidates_prior_verdict():
@@ -951,8 +1416,7 @@ def test_mark_provider_test_result_stale_invalidates_prior_verdict():
     No-op when nothing has run or it is already stale."""
     screen = _bare_settings_screen({})
     screen._provider_test_result = (
-        "Configuration check | llama.cpp configuration is complete | "
-        "model=llama-3 | configuration=complete"
+        "Config      llama.cpp is configured\nModel       llama-3"
     )
 
     screen._mark_provider_test_result_stale()
@@ -1058,8 +1522,6 @@ async def test_probe_worker_cancellation_clears_exact_testing_state(monkeypatch)
             screen,
             "https://example.test/v1",
             "custom",
-            "Provider test",
-            "Provider test",
             identity,
             token,
         )
@@ -1071,10 +1533,14 @@ async def test_probe_worker_cancellation_clears_exact_testing_state(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("draft_key", [None, "sk-draft-vllm-key"])
 async def test_chat_settings_probe_worker_passes_explicit_chat_catalog_purpose(
-    monkeypatch,
+    monkeypatch, draft_key
 ):
+    """The probe carries the draft's key when it has one (TASK-33005.2 review
+    I-1: a keyless probe of a keyed server read as "key rejected")."""
     screen = _bare_settings_screen({})
+    screen._provider_current_draft_credential = lambda: draft_key
     screen._update_provider_test_result = lambda: None
     screen._apply_provider_endpoint_probe_outcome = lambda *_args, **_kwargs: None
     captured: dict[str, object] = {}
@@ -1097,14 +1563,13 @@ async def test_chat_settings_probe_worker_passes_explicit_chat_catalog_purpose(
         screen,
         "https://example.test/v1/chat/completions",
         "openai",
-        "Provider test",
-        "Provider test passed",
     )
 
     assert captured == {
         "base_url": "https://example.test/v1/chat/completions",
         "provider": "openai",
         "purpose": "chat_catalog",
+        **({"api_key": draft_key} if draft_key else {}),
     }
 
 
@@ -1139,8 +1604,6 @@ async def test_stale_probe_cancellation_does_not_clear_newer_testing_token(monke
             screen,
             "https://example.test/v1",
             "custom",
-            "Old provider test",
-            "Old provider test",
             older,
             stale_token,
         )
@@ -1294,7 +1757,8 @@ async def _reachable_endpoint_probe(
 
 
 @pytest.mark.asyncio
-async def test_test_provider_button_click_runs_the_check():
+@private_profile_test
+async def test_test_provider_button_click_runs_the_check(request):
     """AC#2: clicking #settings-test-provider (not the 't' hotkey) runs the test."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
@@ -1318,12 +1782,14 @@ async def test_test_provider_button_click_runs_the_check():
             await _wait_for_settings_text(screen, pilot, "model listing reached")
 
         result_text = _provider_test_result_text(screen)
-        assert "Configuration check" in result_text
         assert result_text != "Configuration check has not run."
+        rows = _assert_labelled_rows(result_text)
+        assert rows["Endpoint"].endswith("· model listing reached")
 
 
 @pytest.mark.asyncio
-async def test_test_provider_button_runs_with_provider_input_focused():
+@private_profile_test
+async def test_test_provider_button_runs_with_provider_input_focused(request):
     """AC#3: a real mouse click on the button still runs the check, starting
     from an Input-focused state.
 
@@ -1363,7 +1829,7 @@ async def test_test_provider_button_runs_with_provider_input_focused():
             )
             await _wait_for_settings_text(screen, pilot, "model listing reached")
 
-        assert "Configuration check" in _provider_test_result_text(screen)
+        _assert_labelled_rows(_provider_test_result_text(screen))
 
 
 @pytest.mark.asyncio
@@ -1424,7 +1890,10 @@ async def test_t_hotkey_does_not_run_test_while_input_focused():
 
 
 @pytest.mark.asyncio
-async def test_model_edit_during_probe_rejects_late_old_model_result(monkeypatch):
+@private_profile_test
+async def test_model_edit_during_probe_rejects_late_old_model_result(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
     app.app_config["api_settings"] = {
@@ -1470,7 +1939,10 @@ async def test_model_edit_during_probe_rejects_late_old_model_result(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_probe_worker_unexpected_exception_settles_bounded_failure(monkeypatch):
+@private_profile_test
+async def test_probe_worker_unexpected_exception_settles_bounded_failure(
+    request, monkeypatch
+):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
     app.app_config["api_settings"] = {
@@ -1507,17 +1979,25 @@ async def test_probe_worker_unexpected_exception_settles_bounded_failure(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_test_provider_result_shows_draft_endpoint():
+@private_profile_test
+async def test_test_provider_result_shows_draft_endpoint(request):
     """Wiring: a staged (unsaved) endpoint edit reaches the Test result.
 
     Exercises the widget-reading wrapper (``_provider_readiness_test_report``)
     that Task 2's unit tests (above) did not cover, by typing a draft endpoint
     into the real ``#settings-provider-endpoint-value`` input, firing its
     change handler (staging it dirty), then running the test via the button.
-    The model is left unset so readiness never "passes" and no async endpoint
-    probe worker starts -- keeping the assertion on the synchronously-set
-    pre-probe detail line, which is where the draft tag is threaded through.
+
+    TASK-33005.4 (AC#11, rewritten on purpose): a missing model no longer
+    skips the listing, so the probe is stubbed and must receive the draft
+    endpoint; the draft tag still threads through the Endpoint row.
     """
+    probed = []
+
+    async def probe(base_url, **kwargs):
+        probed.append(base_url)
+        return await _reachable_endpoint_probe(base_url)
+
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": ""}
     app.app_config["api_settings"] = {
@@ -1535,9 +2015,605 @@ async def test_test_provider_result_shows_draft_endpoint():
         screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
         await pilot.pause()
 
-        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "Configuration check")
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            probe,
+        ):
+            await _click_scrolled_settings_button(
+                screen, pilot, "#settings-test-provider"
+            )
+            await _wait_for_settings_text(screen, pilot, "model listing reached")
 
         detail = _provider_test_result_text(screen)
-        assert "http://localhost:9099 (draft)" in detail
-        assert "configuration=blocked" in detail
+        rows = _assert_labelled_rows(detail)
+        assert probed == ["http://localhost:9099"]
+        assert (
+            rows["Endpoint"] == "http://localhost:9099 (draft) · model listing reached"
+        )
+        assert _result_rows(detail)[1] == ("Model", "not set — choose a default model")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_custom_named_credential_query_param_never_reaches_rows_or_toast(
+    request,
+):
+    """TASK-486 (absorbed by TASK-33002.2 AC#4), through the real screen: a
+    typed endpoint carrying ``?mycred=SEKRET`` is probed as typed, but neither
+    the result rows nor the toast ever print the credential."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+    probed: list[str] = []
+
+    async def refused_probe(base_url: str, **_kwargs: object):
+        probed.append(base_url)
+        return SettingsEndpointProbeOutcome(
+            state="unreachable",
+            summary="unreachable: connection refused",
+            category="connection_refused",
+        )
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts: list[str] = []
+        host.notify = lambda message, **_kwargs: toasts.append(str(message))
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "http://localhost:9099/v1?mycred=SEKRET"
+        screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
+        await pilot.pause()
+
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            refused_probe,
+        ):
+            screen.action_settings_test_category()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        result = _provider_test_result_text(screen)
+        assert probed and "SEKRET" in probed[0]  # the probe got the typed URL
+        assert "SEKRET" not in result and "mycred" not in result
+        rows = _assert_labelled_rows(result)
+        assert rows["Endpoint"].startswith("http://localhost:9099/v1 (draft)")
+        assert toasts, "the Test produced no toast"
+        assert all("SEKRET" not in toast and "mycred" not in toast for toast in toasts)
+        assert toasts[-1].startswith("Model listing failed (connection refused)")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_identity_less_probe_finishing_after_an_edit_leaves_the_new_draft_stale(
+    request,
+):
+    """Qodo #2878 finding 2: a keyless provider with a query-bearing endpoint
+    forms no draft identity, so the evidence store never guards its probe. An
+    edit made while it runs must still keep its outcome and toast off the new
+    draft."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+    release = asyncio.Event()
+
+    async def held_probe(_base_url: str, **_kwargs: object):
+        await release.wait()
+        return await _reachable_endpoint_probe(_base_url)
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        toasts: list[str] = []
+        host.notify = lambda message, **_kwargs: toasts.append(str(message))
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "http://localhost:9099/v1?tag=a"
+        screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
+        await pilot.pause()
+        assert screen._provider_current_draft_identity() is None
+
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            held_probe,
+        ):
+            screen.action_settings_test_category()
+            await pilot.pause()
+            assert "checking" in _provider_test_result_text(screen).lower()
+
+            endpoint.value = "http://localhost:9100/v1"
+            screen.handle_provider_endpoint_changed(
+                Input.Changed(endpoint, endpoint.value)
+            )
+            await pilot.pause()
+            toasts.clear()
+
+            release.set()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert (
+            _provider_test_result_text(screen)
+            == SettingsScreen._PROVIDER_TEST_STALE_COPY
+        )
+        assert toasts == []
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_marks_the_discarded_drafts_test_rows_stale(request):
+    """Captures flag 1 (settings-pm-test-after-revert): the Test rows kept
+    describing a draft endpoint after Revert put the saved one back, and they
+    survived a later Save."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "http://localhost:9"
+        await pilot.pause()
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            _reachable_endpoint_probe,
+        ):
+            await _click_scrolled_settings_button(
+                screen, pilot, "#settings-test-provider"
+            )
+            await _wait_for_settings_text(screen, pilot, "model listing reached")
+        assert "http://localhost:9 (draft)" in _provider_test_result_text(screen)
+
+        screen.action_settings_revert_category()
+        await pilot.pause()
+        await pilot.click("#confirm-button")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert endpoint.value == "http://localhost:8080"
+        assert (
+            _provider_test_result_text(screen)
+            == SettingsScreen._PROVIDER_TEST_STALE_COPY
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_wrapped_endpoint_row_stays_in_the_value_column_at_211x44(request):
+    """Gap review Critical 1: the Test rows were one padded string, so a
+    long Endpoint value wrapped back to column 0 under the labels
+    (capture settings-pm-test-failed-211x44 put "URL" in the label column).
+    Asserted on the painted frame: every continuation line is blank across
+    the label column."""
+    from textual.containers import VerticalScroll
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+    long_endpoint = "http://127.0.0.1:9/" + "/".join(["segment"] * 20)
+
+    async def refused_probe(_base_url: str, **_kwargs: object):
+        return SettingsEndpointProbeOutcome(
+            state="unreachable",
+            summary="unreachable: connection refused",
+            category="connection_refused",
+        )
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = long_endpoint
+        screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
+        await pilot.pause()
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            refused_probe,
+        ):
+            screen.action_settings_test_category()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        result = screen.query_one("#settings-provider-test-result", Static)
+        screen.query_one("#settings-detail-pane-body", VerticalScroll).scroll_to_widget(
+            result, animate=False, immediate=True, top=True, force=True
+        )
+        await pilot.pause()
+        region = result.region
+        strips = host.screen._compositor.render_strips()
+        painted = [
+            strips[y].crop(region.x, region.right).text
+            for y in range(region.y, region.bottom)
+        ]
+        labels = ("Readiness", "Endpoint", "Config", "Key", "Model", "Generation")
+        label_cells = len("Generation  ")
+
+        assert painted[0].startswith("Readiness"), painted  # TASK-33005.3
+        assert painted[1].startswith("Endpoint"), painted
+        continuations = [
+            line for line in painted if line.strip() and not line.startswith(labels)
+        ]
+        assert continuations, f"the Endpoint value never wrapped: {painted}"
+        assert all(
+            len(line) - len(line.lstrip()) == label_cells for line in continuations
+        ), "\n".join(painted)
+        assert _result_rows(_provider_test_result_text(screen))[1][0] == "Endpoint"
+
+
+async def _test_reachable_llama_cpp(
+    screen, pilot, probe=_reachable_endpoint_probe
+) -> str:
+    with patch(
+        "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+        probe,
+    ):
+        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
+        await _wait_for_settings_text(screen, pilot, "model listing reached")
+    return _provider_test_result_text(screen)
+
+
+async def _confirm_revert(screen, pilot) -> None:
+    screen.action_settings_revert_category()
+    await pilot.pause()
+    await pilot.click("#confirm-button")
+    await pilot.pause()
+    await pilot.pause()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_revert_of_a_temperature_only_draft_keeps_a_fresh_test_result(request):
+    """Gap review Important 2: Revert marked the Test rows stale even when
+    the discarded draft touched no tested field."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        tested = await _test_reachable_llama_cpp(screen, pilot)
+        assert "http://localhost:8080 · model listing reached" in tested
+
+        temperature = screen.query_one("#settings-model-profile-temperature", Input)
+        temperature.value = "0.3"
+        await pilot.pause()
+        assert _provider_test_result_text(screen) == tested
+        await _confirm_revert(screen, pilot)
+
+        assert _provider_test_result_text(screen) == tested
+        identity = screen._provider_current_draft_identity()
+        evidence = screen._provider_evidence_store().evidence_for(identity)
+        assert evidence is not None and evidence.endpoint == "reachable"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_probe_in_flight_at_revert_cannot_settle_onto_the_saved_identity(
+    request,
+):
+    """Gap review Important 3: Revert left the discarded draft's probe token
+    live, so its late result replaced the stale marker with rows crediting
+    the saved endpoint with the draft's failure."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+    release = asyncio.Event()
+
+    async def held_refused_probe(_base_url: str, **_kwargs: object):
+        await release.wait()
+        return SettingsEndpointProbeOutcome(
+            state="unreachable",
+            summary="unreachable: connection refused",
+            category="connection_refused",
+        )
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.value = "http://localhost:9"
+        screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
+        await pilot.pause()
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            held_refused_probe,
+        ):
+            screen.action_settings_test_category()
+            await pilot.pause()
+            assert "checking the model listing" in _provider_test_result_text(screen)
+
+            await _confirm_revert(screen, pilot)
+            assert endpoint.value == "http://localhost:8080"
+            assert (
+                _provider_test_result_text(screen)
+                == SettingsScreen._PROVIDER_TEST_STALE_COPY
+            )
+
+            release.set()
+            await pilot.app.workers.wait_for_complete()
+            await pilot.pause()
+
+        assert (
+            _provider_test_result_text(screen)
+            == SettingsScreen._PROVIDER_TEST_STALE_COPY
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_test_result_grid_stays_selectable_and_copyable(request):
+    """The label/value grid render made Widget.get_selection return None,
+    so the Test result could no longer be selected or copied; the plain
+    Static had returned its text (TASK-33002.2)."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        tested = await _test_reachable_llama_cpp(screen, pilot)
+        result = screen.query_one("#settings-provider-test-result", Static)
+
+        result.text_select_all()
+        await pilot.pause()
+        assert result.screen.get_selected_text() == tested
+
+        result.screen.action_copy_text()
+        assert pilot.app.clipboard == tested
+
+
+def test_snapshot_restore_holds_no_private_evidence_copy():
+    """TASK-33005.1 (AC#6, controller ruling 3): the late-handoff restore no
+    longer copies the evidence store, so it can never roll back a result
+    Chat settings or the Console settled in the shared owner meanwhile."""
+    from dataclasses import fields
+
+    from tldw_chatbook.UI.Screens.settings_screen import (
+        _VllmDefaultPresentationSnapshot,
+    )
+
+    names = {item.name for item in fields(_VllmDefaultPresentationSnapshot)}
+    assert "provider_test_evidence_store" not in names
+    assert "provider_credential_revision" not in names
+    assert "provider_draft_generation" in names
+
+
+def test_settings_identity_stamps_the_key_digest_every_surface_computes():
+    """TASK-33005.1 (AC#1, ruling 2): the credential revision is the digest
+    of the key a send would use -- never Settings' own edit counter -- so the
+    same saved key is the same connection in Settings, Chat settings and the
+    Console, and a typed key is a different one."""
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        connection_credential_revision,
+    )
+
+    app_config = {
+        "api_settings": {
+            "openai": {
+                "api_url": "https://api.openai.com/v1",
+                "api_key": "sk-saved-test-key",
+                "credential_source": "stored",
+            }
+        }
+    }
+    screen = _bare_settings_screen(app_config)
+    screen._settings_drafts = {}
+    saved = connection_credential_revision(
+        get_provider_readiness(
+            "openai", app_config, background_credentials=True
+        ).api_key
+    )
+    assert saved == connection_credential_revision("sk-saved-test-key")
+    untouched = {"api_key": "", "credential_env_var": ""}
+    assert (
+        screen._provider_draft_credential_revision("openai", "stored", untouched)
+        == saved
+    )
+    typed = {"api_key": "sk-typed-test-key", "credential_env_var": ""}
+    assert screen._provider_draft_credential_revision(
+        "openai", "draft", typed
+    ) == connection_credential_revision("sk-typed-test-key")
+    assert screen._provider_draft_credential_revision("openai", "none", typed) == 0
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_returning_to_settings_shows_the_shared_test_result(request):
+    """TASK-33005.1 (AC#6, AC#1): Settings is rebuilt on every visit, so its
+    draft store starts empty; the result an earlier visit settled lives in
+    the app's shared owner and shows again instead of "has not run"."""
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        provider_connection_evidence,
+    )
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://localhost:8080"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        first = _active_destination_screen(host)
+        tested = await _test_reachable_llama_cpp(first, pilot)
+        identity = first._provider_current_draft_identity()
+
+        await host.pop_screen()
+        await host.push_screen(SettingsScreen(app))
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        second = _active_destination_screen(host)
+
+        assert second is not first
+        assert _provider_test_result_text(second) == tested
+        overview = second._settings_overview_presentation()
+        rows = {
+            row.key: row.value
+            for row in (*overview.primary_rows, *overview.advanced_rows)
+        }
+        assert "model listing reached" in rows["last_connection_test"]
+        shared = provider_connection_evidence(host).evidence_for(identity)
+        assert shared is not None and shared.endpoint == "reachable"
+        assert shared.observed_at is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "llama_settings",
+    [
+        {"api_url": "http://localhost:8080"},
+        # Review M-5: a stored key, so the credential revision is not 0.
+        {"api_url": "http://localhost:8080", "api_key": "sk-llama-stored-test-key"},
+        # Review finding 5: Chat settings reads the explicit source ("stored"),
+        # Settings what resolves (nothing) -- still one keyless connection.
+        {"api_url": "http://localhost:8080", "credential_source": "stored"},
+    ],
+    ids=["keyless", "stored-key", "stored-source-without-key"],
+)
+@private_profile_test
+async def test_settings_test_result_reaches_chat_settings_for_the_same_connection(
+    llama_settings, request
+):
+    """TASK-33005.1 (AC#1): a Settings 't' on the saved llama.cpp connection
+    is what Chat settings shows for that connection -- the two surfaces keep
+    their own draft stores but share settled evidence.
+
+    TASK-33005.2 review: the Console keys it identically (finding 4), and the
+    probe carries the saved key a send uses (I-1).
+
+    TASK-33005.3 (AC#8): Settings' Readiness row, the Console (status row,
+    rail and switcher all render ``readiness_words``) and Chat settings show
+    the same word for the connection at the same moment."""
+    from Tests.UI.test_console_session_settings import _readiness_text
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        ConsoleSettingsContextEstimate,
+        build_console_settings_readiness,
+        readiness_words,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        provider_connection_evidence,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "llama-3"}
+    app.app_config["api_settings"] = {"llama_cpp": dict(llama_settings)}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        sent = []
+
+        async def probe(base_url, **kwargs):
+            sent.append(kwargs.get("api_key"))
+            return await _reachable_endpoint_probe(base_url)
+
+        await _test_reachable_llama_cpp(screen, pilot, probe)
+        tested = screen._provider_current_draft_identity()
+        assert sent == [llama_settings.get("api_key")]
+        console = build_console_settings_readiness(
+            ConsoleSessionSettings(provider="llama_cpp", model="llama-3"),
+            app_config=app.app_config,
+            connection_evidence=provider_connection_evidence(host),
+        )
+        assert console.endpoint == "reachable"
+        word = f"Ready · reachable {console.observed_at.astimezone():%H:%M}"
+        assert readiness_words(console) == word
+        assert _result_rows(_provider_test_result_text(screen))[0] == (
+            "Readiness",
+            word,
+        )
+        # Same endpoint and key; a revision-0 source is one keyless
+        # connection whichever surface spelled it (Task 1 review F5).
+        assert (
+            console.connection.connection_identity,
+            console.connection.credential_revision,
+        ) == (tested.connection_identity, tested.credential_revision)
+
+        await host.push_screen(
+            ConsoleSettingsModal(
+                settings=ConsoleSessionSettings(
+                    provider="llama_cpp", model="llama-3", base_url=None
+                ),
+                app_config=app.app_config,
+                providers_models={"llama_cpp": ["llama-3"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+        modal = host.screen
+        identity = modal._current_connection_probe_identity()
+        evidence = modal._connection_evidence_store.evidence_for(identity)
+
+        assert evidence is not None
+        assert evidence.endpoint == "reachable"
+        assert evidence.model_ids == ("llama-3",)
+        assert "Endpoint · Reachable" in _readiness_text(modal)
+        assert _readiness_text(modal).startswith(f"{word}\n")
+        assert identity.credential_revision == tested.credential_revision
+        assert (identity.credential_revision != 0) is ("api_key" in llama_settings)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_cloud_provider_is_one_connection_in_settings_and_chat_settings(
+    request,
+):
+    """Review I-3: with no base URL, Chat settings keyed a cloud provider on a
+    sentinel endpoint and Settings had no identity at all, so a cloud result
+    could never cross surfaces. Both now key the endpoint a send uses."""
+    from dataclasses import replace
+
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        ConsoleSettingsContextEstimate,
+    )
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_modal import (
+        ConsoleSettingsModal,
+    )
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4o"}
+    app.app_config["api_settings"] = {"openai": {"api_key": "sk-cloud-saved-test-key"}}
+    host = StyledSettingsDestinationHarness(app, "settings")
+
+    async with host.run_test(size=(190, 55)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        in_settings = _active_destination_screen(
+            host
+        )._provider_current_draft_identity()
+        await host.push_screen(
+            ConsoleSettingsModal(
+                settings=ConsoleSessionSettings(provider="openai", model="gpt-4o"),
+                app_config=app.app_config,
+                providers_models={"openai": ["gpt-4o"]},
+                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+                can_save=True,
+            )
+        )
+        await pilot.pause()
+        in_chat_settings = host.screen._current_connection_probe_identity()
+
+    assert in_settings is not None and in_chat_settings is not None
+    assert in_settings.connection_identity == canonical_connection_identity(
+        "openai", "https://api.openai.com/v1"
+    )
+    assert replace(in_settings, draft_generation=0) == replace(
+        in_chat_settings, draft_generation=0
+    )

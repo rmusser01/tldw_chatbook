@@ -280,21 +280,30 @@ class TestCharacterCard:
             card.load_character(data)
             await pilot.pause()
 
-            assert str(
-                pilot.app.query_one(
-                    "#personas-character-card-name", Static
-                ).renderable
-            ) == "Name: Detective?Sam"
-            assert str(
-                pilot.app.query_one(
-                    "#personas-character-card-description", Static
-                ).renderable
-            ) == "Description: Noir?detective"
-            assert str(
-                pilot.app.query_one(
-                    "#personas-character-card-greeting-preview", Static
-                ).renderable
-            ) == "Evening?."
+            assert (
+                str(
+                    pilot.app.query_one(
+                        "#personas-character-card-name", Static
+                    ).renderable
+                )
+                == "Name: Detective?Sam"
+            )
+            assert (
+                str(
+                    pilot.app.query_one(
+                        "#personas-character-card-description", Static
+                    ).renderable
+                )
+                == "Description: Noir?detective"
+            )
+            assert (
+                str(
+                    pilot.app.query_one(
+                        "#personas-character-card-greeting-preview", Static
+                    ).renderable
+                )
+                == "Evening?."
+            )
 
         assert data == original
 
@@ -316,14 +325,22 @@ class TestCharacterCard:
             card.load_character(data)
             await pilot.pause()
 
-            assert str(
-                pilot.app.query_one("#personas-character-card-tags", Static).renderable
-            ) == "Tags: solo"
-            assert str(
-                pilot.app.query_one(
-                    "#personas-character-card-greeting-preview", Static
-                ).renderable
-            ) == "<dict>"
+            assert (
+                str(
+                    pilot.app.query_one(
+                        "#personas-character-card-tags", Static
+                    ).renderable
+                )
+                == "Tags: solo"
+            )
+            assert (
+                str(
+                    pilot.app.query_one(
+                        "#personas-character-card-greeting-preview", Static
+                    ).renderable
+                )
+                == "<dict>"
+            )
 
             data["tags"] = DangerousIterable()
             card.load_character(data)

@@ -1,0 +1,230 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+______ test_late_recovery_cleanup_preserves_new_owner_uncertainty[False] _______
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10fc974a0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10e7b02f0>
+unknown_root = False
+
+    @pytest.mark.parametrize("unknown_root", [False, True])
+    def test_late_recovery_cleanup_preserves_new_owner_uncertainty(
+        db, monkeypatch, unknown_root
+    ):
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        old = db.automatic_work
+        peer = AgentRunsDB(db.db_path, client_id="replacement", reconcile_on_init=False)
+        committed, release = threading.Event(), threading.Event()
+        transaction = old.transaction
+    
+        @contextmanager
+        def pause_after_real_commit():
+            with transaction() as conn:
+                yield conn
+            committed.set()
+            assert release.wait(10)
+    
+        monkeypatch.setattr(old, "transaction", pause_after_real_commit)
+    
+        def recover_old():
+            try:
+                return old.recover(current_owner_id="first-recovery")
+            finally:
+                db.close_connection()
+    
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            recovery = pool.submit(recover_old)
+            try:
+                assert committed.wait(5)
+                ledger = peer.automatic_work
+                ledger.recover(current_owner_id="replacement")
+                root = chain(peer, conversation="replacement-source", submission="replacement")
+                source = peer.create_run(
+                    conversation_id="replacement-source", agent_kind="primary", work_chain_id=root
+                )
+                start = prepare(peer, source, "target", "uncertain", owner_id="replacement")
+                assert ledger.accept_chat_start(start.id, owner_id="replacement")
+                ledger._restrict_chat_start(
+                    start.id, owner_id="replacement", chain_id=None if unknown_root else root
+                )
+                before = ledger.snapshot(root)
+                assert before.status == "active" and before.used["generation"] == 1
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    ledger.check_active(root, owner_id="replacement")
+                release.set()
+                assert recovery.result(timeout=5) == 0
+                assert ledger.read_chat_start_attempt(start.id, owner_id="replacement").state == "accepted"
+                assert ledger.snapshot(root).used == before.used
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    ledger.check_active(root, owner_id="replacement")
+                # Same-owner recovery has not reconciled the accepted uncertainty.
+                ledger.recover(current_owner_id="replacement")
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    prepare(peer, source, "sibling", "sibling", owner_id="replacement")
+                assert not ledger.abort_chat_start(start.id, owner_id="replacement")
+                assert not ledger.accept_chat_start(start.id, owner_id="replacement")
+                # Verified settlement retains the original charge and root pause.
+                assert ledger.mark_chat_start_review_required(start.id, owner_id="replacement")
+                with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+                    ledger.check_active(root, owner_id="replacement")
+                assert ledger.snapshot(root).used == before.used
+                ledger.recover(current_owner_id="sequential-replacement")
+                healthy = chain(peer, conversation="healthy", submission="healthy")
+                assert ledger.check_active(healthy, owner_id="sequential-replacement").status == "active"
+            finally:
+                release.set()
+>               recovery.result(timeout=5)
+
+Tests/DB/test_automatic_chat_starts.py:574: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+Tests/DB/test_automatic_chat_starts.py:553: in test_late_recovery_cleanup_preserves_new_owner_uncertainty
+    assert recovery.result(timeout=5) == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def recover_old():
+        try:
+            return old.recover(current_owner_id="first-recovery")
+        finally:
+>           db.close_connection()
+            ^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'AgentRunsDB' object has no attribute 'close_connection'. Did you mean: '_get_connection'?
+
+Tests/DB/test_automatic_chat_starts.py:531: AttributeError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 22:01:26.274 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 22:01:26.354 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 22:01:26.432 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 22:01:26.434 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-10-03 22:01:26.675 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-fix1-red-profile-jbryksbq/pytest/test_late_recovery_cleanup_pre0/runs.sqlite [Client: automatic-test]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 22:01:26.753 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-fix1-red-profile-jbryksbq/pytest/test_late_recovery_cleanup_pre0/runs.sqlite [Client: replacement]
+_______ test_late_recovery_cleanup_preserves_new_owner_uncertainty[True] _______
+
+db = <tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10fe7f800>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10fbf8860>
+unknown_root = True
+
+    @pytest.mark.parametrize("unknown_root", [False, True])
+    def test_late_recovery_cleanup_preserves_new_owner_uncertainty(
+        db, monkeypatch, unknown_root
+    ):
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    
+        old = db.automatic_work
+        peer = AgentRunsDB(db.db_path, client_id="replacement", reconcile_on_init=False)
+        committed, release = threading.Event(), threading.Event()
+        transaction = old.transaction
+    
+        @contextmanager
+        def pause_after_real_commit():
+            with transaction() as conn:
+                yield conn
+            committed.set()
+            assert release.wait(10)
+    
+        monkeypatch.setattr(old, "transaction", pause_after_real_commit)
+    
+        def recover_old():
+            try:
+                return old.recover(current_owner_id="first-recovery")
+            finally:
+                db.close_connection()
+    
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            recovery = pool.submit(recover_old)
+            try:
+                assert committed.wait(5)
+                ledger = peer.automatic_work
+                ledger.recover(current_owner_id="replacement")
+                root = chain(peer, conversation="replacement-source", submission="replacement")
+                source = peer.create_run(
+                    conversation_id="replacement-source", agent_kind="primary", work_chain_id=root
+                )
+                start = prepare(peer, source, "target", "uncertain", owner_id="replacement")
+                assert ledger.accept_chat_start(start.id, owner_id="replacement")
+                ledger._restrict_chat_start(
+                    start.id, owner_id="replacement", chain_id=None if unknown_root else root
+                )
+                before = ledger.snapshot(root)
+                assert before.status == "active" and before.used["generation"] == 1
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    ledger.check_active(root, owner_id="replacement")
+                release.set()
+                assert recovery.result(timeout=5) == 0
+                assert ledger.read_chat_start_attempt(start.id, owner_id="replacement").state == "accepted"
+                assert ledger.snapshot(root).used == before.used
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    ledger.check_active(root, owner_id="replacement")
+                # Same-owner recovery has not reconciled the accepted uncertainty.
+                ledger.recover(current_owner_id="replacement")
+                with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                    prepare(peer, source, "sibling", "sibling", owner_id="replacement")
+                assert not ledger.abort_chat_start(start.id, owner_id="replacement")
+                assert not ledger.accept_chat_start(start.id, owner_id="replacement")
+                # Verified settlement retains the original charge and root pause.
+                assert ledger.mark_chat_start_review_required(start.id, owner_id="replacement")
+                with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+                    ledger.check_active(root, owner_id="replacement")
+                assert ledger.snapshot(root).used == before.used
+                ledger.recover(current_owner_id="sequential-replacement")
+                healthy = chain(peer, conversation="healthy", submission="healthy")
+                assert ledger.check_active(healthy, owner_id="sequential-replacement").status == "active"
+            finally:
+                release.set()
+>               recovery.result(timeout=5)
+
+Tests/DB/test_automatic_chat_starts.py:574: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:449: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+Tests/DB/test_automatic_chat_starts.py:553: in test_late_recovery_cleanup_preserves_new_owner_uncertainty
+    assert recovery.result(timeout=5) == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py:401: in __get_result
+    raise self._exception
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py:59: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def recover_old():
+        try:
+            return old.recover(current_owner_id="first-recovery")
+        finally:
+>           db.close_connection()
+            ^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'AgentRunsDB' object has no attribute 'close_connection'. Did you mean: '_get_connection'?
+
+Tests/DB/test_automatic_chat_starts.py:531: AttributeError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 22:01:27.169 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-fix1-red-profile-jbryksbq/pytest/test_late_recovery_cleanup_pre1/runs.sqlite [Client: automatic-test]
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 22:01:27.253 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - AgentRunsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-fix1-red-profile-jbryksbq/pytest/test_late_recovery_cleanup_pre1/runs.sqlite [Client: replacement]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-fix1-red.xml -
+============================= slowest 25 durations =============================
+
+(6 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/DB/test_automatic_chat_starts.py::test_late_recovery_cleanup_preserves_new_owner_uncertainty[False]
+FAILED Tests/DB/test_automatic_chat_starts.py::test_late_recovery_cleanup_preserves_new_owner_uncertainty[True]
+2 failed, 29 deselected in 1.63s

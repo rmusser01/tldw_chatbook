@@ -56,9 +56,16 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+from Tests.Agents.test_hook_permissions import hook_file as _hook_file
+import toml
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
+
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
+hook_file = _hook_file
 
 
 def _marked(app, conversation_id) -> bool:
@@ -145,7 +152,11 @@ async def test_a_wake_delivered_with_no_view_keeps_the_unseen_mark(tmp_path):
             "the user has no way to learn the supervisor turn ever ran"
         )
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -169,7 +180,11 @@ async def test_a_wake_delivered_to_the_attached_view_still_clears_the_mark(
             "a wake the attached view reported as in-view must still clear"
         )
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +229,11 @@ async def test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone(
             "that is gone -- with no composer there is no user to lose to"
         )
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +291,11 @@ async def test_a_delivery_started_with_no_view_re_arms_at_the_next_attach(
     finally:
         gateway.stream_gate.set()
         await _settle(lambda: not wake.delivering_conversation_ids())
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -291,7 +314,11 @@ async def test_attaching_with_no_delivery_in_flight_arms_nothing(tmp_path):
         runtime.attach_view(_mounted_view(delivery_ui_hook=armed.append))
         assert armed == []
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +361,11 @@ async def test_a_whole_turn_runs_with_no_view_attached(tmp_path):
         ]
         assert replies, "the viewless turn produced no assistant reply"
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -386,7 +417,11 @@ async def test_a_viewless_turn_calls_none_of_the_departed_views_hooks(tmp_path):
         )
         assert history_calls == ["attached", "detached"]
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -415,7 +450,11 @@ async def test_the_display_name_slot_is_never_cleared_to_none(tmp_path):
         assert controller._global_user_display_name is app_owned_display_name
         assert controller._presentation_context_for(session.id).user_name == "User"
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -513,7 +552,11 @@ async def test_skill_confirms_armed_viewless_wait_and_remount_without_denial(
             "script": {"allow": True, "remember": False},
         }
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -580,7 +623,11 @@ async def test_an_approval_round_armed_with_no_view_is_not_lost(tmp_path):
         worker.join(timeout=10)
         assert decisions == {"write_file": "deny"}, decisions
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -614,7 +661,11 @@ async def test_a_runtime_that_never_had_a_view_answers_viewless(tmp_path):
             "could have seen"
         )
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -689,33 +740,20 @@ def _pre_tool_use_hook() -> dict:
     return {"event": "PreToolUse", "command": [sys.executable, "-c", "pass"]}
 
 
-def test_ensure_run_hooks_is_none_without_config_until_hooks_appear():
-    """No ``[hooks]`` configured -> ``None``, and that answer is LIVE.
-
-    ``None`` is the contract every later fire site skips on -- but it is
-    NOT latched (Ruling R17): while unconfigured, every call re-runs the
-    same cheap parse the engine itself runs per fire, so the first-ever
-    ``[hooks]`` entry a mid-session settings reload delivers takes effect
-    without an app restart. Once an ENGINE is built it latches for the
-    app lifetime (spec section 4 singleton) -- that half lives in the
-    next test.
-    """
-    runtime = ConsoleRuntime(app=None)
-    assert runtime.ensure_run_hooks() is None
-    assert runtime.ensure_run_hooks() is None  # still no config to find
-
-    app = _HooksApp(hooks_section=None)
-    runtime = ConsoleRuntime(app=app)
-    assert runtime.ensure_run_hooks() is None
-    assert runtime.ensure_run_hooks() is None
-
-    app.app_config["hooks"] = {"enabled": True, "hook": [_pre_tool_use_hook()]}
+def test_same_engine_detects_saved_hooks_added_mid_session(hook_file):
+    hook_file.write_text(toml.dumps({"hooks": {"hook": []}}))
+    runtime = ConsoleRuntime(app=_HooksApp(None))
+    assert runtime.run_hooks_engine is None
     engine = runtime.ensure_run_hooks()
-    assert engine is not None, (
-        "the first-ever [hooks] entry arrived mid-session and stayed "
-        "inert -- presence must re-detect while unconfigured (R17)"
-    )
-    assert runtime.ensure_run_hooks() is engine  # built now: identity latches
+    assert not engine.fire("UserPromptSubmit", session_id="s").blocked
+    hook_file.write_text(toml.dumps({"hooks": {"hook": [_pre_tool_use_hook()]}}))
+    assert runtime.ensure_run_hooks() is engine
+    assert engine.fire("UserPromptSubmit", session_id="s").blocked
+    owner = runtime.ensure_hook_permissions()
+    pending = owner.snapshot()
+    owner.approve(pending, [pending.rows[0].entry.key])
+    assert not engine.fire("UserPromptSubmit", session_id="s").blocked
+    engine.close()
 
 
 @pytest.mark.asyncio
@@ -760,23 +798,40 @@ def test_ensure_run_hooks_builds_one_engine_when_hooks_are_configured():
     )
 
 
-def test_the_engine_reads_the_app_config_live_on_every_fire():
-    """The same running guard sees hook removal on a settings reload."""
+def test_the_engine_reads_saved_config_not_the_app_cache(hook_file):
     import sys
     from tldw_chatbook.Agents.agent_models import ToolCall
 
-    app = _HooksApp({"hook": [{
-        "event": "PreToolUse", "command": [sys.executable, "-c", "raise SystemExit(2)"],
-    }]})
+    hook_file.write_text(
+        toml.dumps(
+            {
+                "hooks": {
+                    "hook": [
+                        {
+                            "event": "PreToolUse",
+                            "command": [sys.executable, "-c", "raise SystemExit(2)"],
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    app = _HooksApp(None)
     runtime = ConsoleRuntime(app=app)
     engine = runtime.ensure_run_hooks()
-    assert engine is not None
+    owner = runtime.ensure_hook_permissions()
+    pending = owner.snapshot()
+    owner.approve(pending, [pending.rows[0].entry.key])
     wrapped = engine.wrap_review(lambda calls, run_id: {}, session_id="s")
     call = ToolCall("calculator", {}, "c1")
-    assert wrapped([call], "run")["c1"].startswith("hook: ")
-    app.app_config = {}
-    assert wrapped([call], "run") == {}
-    engine.close()
+    try:
+        assert wrapped([call], "run")["c1"].startswith("hook: ")
+        app.app_config = {}
+        assert wrapped([call], "run")["c1"].startswith("hook: ")
+        hook_file.write_text(toml.dumps({"hooks": {"hook": []}}))
+        assert wrapped([call], "run") == {}
+    finally:
+        engine.close()
 
 
 def test_concurrent_first_hook_access_shares_one_engine(monkeypatch):
@@ -814,12 +869,15 @@ def test_concurrent_first_hook_access_shares_one_engine(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_dispose_closes_previously_built_hooks():
+async def test_dispose_closes_previously_built_hooks(hook_file):
     """An existing engine must stop accepting commands when its app exits."""
     runtime = ConsoleRuntime(app=_HooksApp({"hook": [_pre_tool_use_hook()]}))
     engine = runtime.ensure_run_hooks()
     assert engine is not None
-    assert not (await engine.fire_async("PreToolUse", session_id="s")).blocked
+    owner = runtime.ensure_hook_permissions()
+    pending = owner.snapshot()
+    owner.approve(pending, [pending.rows[0].entry.key])
+    assert not (await engine.fire_async("PostToolUse", session_id="s")).blocked
     await runtime.dispose()
     assert runtime.ensure_run_hooks() is None
     # Existing per-run closures can retain the engine after runtime disposal.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 import re
@@ -172,6 +173,38 @@ def resolve_send_system_prompt(
     )
 
 
+def session_send_system_prompt(
+    session: object, *, fallback: str | None, global_user_name: Callable[[], object]
+) -> str | None:
+    """Resolve :func:`resolve_send_system_prompt` for one Console session.
+
+    TASK-33004.2: the one place that picks a session's kind-appropriate name
+    and template, for the selection builder and the controller alike.
+
+    Args:
+        session: A ``ConsoleChatSession`` (or None).
+        fallback: Prompt kept unless a named persona/character template expands.
+        global_user_name: Returns the global display name; a raise means "User".
+
+    Returns:
+        The fresh expansion, or ``fallback``.
+    """
+    kind = getattr(session, "assistant_kind", None)
+    if kind not in {"persona", "character"}:
+        return fallback
+    try:
+        global_default = global_user_name()
+    except Exception:
+        global_default = "User"
+    return resolve_send_system_prompt(
+        identity_name=session_assistant_display_name(session),
+        identity_template=getattr(session, f"{kind}_system_template"),
+        user_name_override=session.user_display_name_override,
+        global_default=global_default,
+        fallback=fallback,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ConsolePresentationContext:
     """Identity inputs used to project one Console transcript message."""
@@ -230,7 +263,13 @@ def resolve_console_message_presentation(
 
     if message.role is ConsoleMessageRole.USER:
         speaker_label = sanitize_character_display_label(
-            context.user_name,
+            (
+                "Agent handoff"
+                if getattr(message.metadata, "origin", None) == "agent_chat_start"
+                else "Unverified handoff"
+                if getattr(message.metadata, "origin", None) == "untrusted"
+                else context.user_name
+            ),
             max_characters=CHAT_DISPLAY_NAME_MAX_CELLS,
         )
         speaker_tone = "user"

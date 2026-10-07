@@ -1,0 +1,767 @@
+{
+  "targets": [
+    {
+      "id": "5dfc28d3-28c4-4a71-b227-e67739b99d88",
+      "title": "LIVE_WS_DRAFT",
+      "scope_type": "workspace",
+      "workspace_id": "console-start-verification",
+      "handoff": {
+        "created_via": "new_chat",
+        "draft": "EDITED_WS_DRAFT_SURVIVES_RESTART",
+        "draft_revision": 2,
+        "source_run_id": "0369603b-c9b4-4dc0-b242-6fd3a6e33a23",
+        "state": "pending",
+        "version": 2
+      },
+      "generation_snapshot": {
+        "provider": "llama_cpp",
+        "model": "local-model",
+        "streaming": true,
+        "max_tokens": 128
+      },
+      "messages": [],
+      "attempts": []
+    },
+    {
+      "id": "b5e25f36-0907-43f4-a735-4f171b6fbb09",
+      "title": "LIVE_CASUAL_DRAFT",
+      "scope_type": "global",
+      "workspace_id": null,
+      "handoff": {
+        "created_via": "new_chat",
+        "draft": "",
+        "draft_revision": 4,
+        "source_run_id": "b5161fff-8179-4e6f-8ab5-4646c392a32e",
+        "state": "pending",
+        "version": 2
+      },
+      "generation_snapshot": {
+        "provider": "llama_cpp",
+        "model": "local-model",
+        "streaming": true,
+        "max_tokens": 128
+      },
+      "messages": [],
+      "attempts": []
+    },
+    {
+      "id": "fc1d7a68-128e-4000-b07d-017f1a6e3c3f",
+      "title": "LIVE_WS_START",
+      "scope_type": "workspace",
+      "workspace_id": "console-start-verification",
+      "handoff": {
+        "created_via": "new_chat",
+        "draft": "",
+        "draft_revision": 2,
+        "source_run_id": "7492a111-0c53-40be-a9e9-ce1d1af4ca90",
+        "state": "consumed",
+        "version": 2,
+        "accepted_attempt_id": "6a83a846-c4de-4952-956e-f73fb995ccaf"
+      },
+      "generation_snapshot": {
+        "provider": "llama_cpp",
+        "model": "local-model",
+        "streaming": true,
+        "max_tokens": 128
+      },
+      "messages": [
+        {
+          "id": "7b4057dc-d97c-4f34-9789-1d58d864cd17",
+          "role": "user",
+          "content": "Reply only WS_START_OK",
+          "generation_state": null,
+          "origin": "agent_chat_start",
+          "provenance": {
+            "attempt_id": "6a83a846-c4de-4952-956e-f73fb995ccaf",
+            "source_conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+            "source_run_id": "7492a111-0c53-40be-a9e9-ce1d1af4ca90"
+          },
+          "terminal_receipt_id": ""
+        },
+        {
+          "id": "cfe56287-9b2d-4b0f-8f9f-7da551000fc8",
+          "role": "assistant",
+          "content": "WS_START_OK",
+          "generation_state": "failed",
+          "origin": null,
+          "provenance": null,
+          "terminal_receipt_id": "284f129b-72d1-4892-8834-0253cf3cf7fd"
+        }
+      ],
+      "attempts": [
+        {
+          "id": "6a83a846-c4de-4952-956e-f73fb995ccaf",
+          "source_run_id": "7492a111-0c53-40be-a9e9-ce1d1af4ca90",
+          "source_chain_id": "dc25940ead1e473ba31b38b541a413ab",
+          "chain_id": "559e674d4855458babc30858d9f0a6ee",
+          "conversation_id": "fc1d7a68-128e-4000-b07d-017f1a6e3c3f",
+          "session_id": "da287cf8-ebb9-4963-81c8-bbf57a54a9c5",
+          "session_incarnation": "b61e4d7b-597e-46da-9ae1-bb679afa1bfa",
+          "owner_id": "9615a07ac7f8406eb9ef8de4b280d1e5",
+          "draft_revision": 1,
+          "context_epoch": 0,
+          "request_fingerprint": "562be8fe8a4356286c00e5ec75107960c5d5e4d50f690b8a1d3a3cf6cb3d4404",
+          "generation_reservation_id": "5477bd1583bf43f6904a18b65875b84c",
+          "state": "completed",
+          "created_at": 1790993909.868025,
+          "accepted_at": 1790993909.9566028,
+          "completed_at": 1790993915.973601
+        }
+      ]
+    },
+    {
+      "id": "705c0e44-82ea-40c0-9a36-94700c6bffaf",
+      "title": "LIVE_CASUAL_START",
+      "scope_type": "global",
+      "workspace_id": null,
+      "handoff": {
+        "created_via": "new_chat",
+        "draft": "",
+        "draft_revision": 2,
+        "source_run_id": "8f43f47f-c143-4903-8f37-4155e050b630",
+        "state": "consumed",
+        "version": 2,
+        "accepted_attempt_id": "f4f6d786-bc46-4510-80e4-a63952da3400"
+      },
+      "generation_snapshot": {
+        "provider": "llama_cpp",
+        "model": "local-model",
+        "streaming": true,
+        "max_tokens": 128
+      },
+      "messages": [
+        {
+          "id": "753cf8c4-caf3-4762-bf27-f4b52209e738",
+          "role": "user",
+          "content": "/settings @everyone Reply only CASUAL_START_OK",
+          "generation_state": null,
+          "origin": "agent_chat_start",
+          "provenance": {
+            "attempt_id": "f4f6d786-bc46-4510-80e4-a63952da3400",
+            "source_conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+            "source_run_id": "8f43f47f-c143-4903-8f37-4155e050b630"
+          },
+          "terminal_receipt_id": ""
+        },
+        {
+          "id": "55640e22-9cc6-4990-b9d4-50e24d35f30f",
+          "role": "assistant",
+          "content": "CASUAL_START_OK",
+          "generation_state": "failed",
+          "origin": null,
+          "provenance": null,
+          "terminal_receipt_id": "cde227ba-d576-40a8-a05a-c196304eb6c4"
+        }
+      ],
+      "attempts": [
+        {
+          "id": "f4f6d786-bc46-4510-80e4-a63952da3400",
+          "source_run_id": "8f43f47f-c143-4903-8f37-4155e050b630",
+          "source_chain_id": "dd7982b6085042d59871ddbc9f2ad5a3",
+          "chain_id": "9edf0f5fdf9d44cea66f971e121f9f01",
+          "conversation_id": "705c0e44-82ea-40c0-9a36-94700c6bffaf",
+          "session_id": "714455e5-9fa7-4823-adc5-5da7c0d2e664",
+          "session_incarnation": "b7a097b6-b566-47b2-a1a8-b1deabd3f82c",
+          "owner_id": "9615a07ac7f8406eb9ef8de4b280d1e5",
+          "draft_revision": 1,
+          "context_epoch": 0,
+          "request_fingerprint": "b2ed3884c0dd4b1d65ef04573a839cc5f8a1f8535cfe5ed4c10ff86dfc80095d",
+          "generation_reservation_id": "3d04ff712b1444e19f848bb778b9a9ef",
+          "state": "completed",
+          "created_at": 1790994131.906989,
+          "accepted_at": 1790994131.9134521,
+          "completed_at": 1790994137.2657762
+        }
+      ]
+    },
+    {
+      "id": "bda34a98-69fe-453a-8a55-39225e4e2277",
+      "title": "LIVE_WS_NONSTREAM",
+      "scope_type": "workspace",
+      "workspace_id": "console-start-verification",
+      "handoff": {
+        "created_via": "new_chat",
+        "draft": "",
+        "draft_revision": 2,
+        "source_run_id": "aeded1dd-b841-4ca8-bf04-a8b507edc638",
+        "state": "consumed",
+        "version": 2,
+        "accepted_attempt_id": "57de38fd-fd0c-4058-bf04-212acd445811"
+      },
+      "generation_snapshot": {
+        "provider": "llama_cpp",
+        "model": "local-model",
+        "streaming": false,
+        "max_tokens": 128
+      },
+      "messages": [
+        {
+          "id": "1af6705d-6c2e-4b82-bfe0-47c9cd41758e",
+          "role": "user",
+          "content": "Reply only NONSTREAM_WS_OK",
+          "generation_state": null,
+          "origin": "agent_chat_start",
+          "provenance": {
+            "attempt_id": "57de38fd-fd0c-4058-bf04-212acd445811",
+            "source_conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+            "source_run_id": "aeded1dd-b841-4ca8-bf04-a8b507edc638"
+          },
+          "terminal_receipt_id": ""
+        },
+        {
+          "id": "c9be68e1-4bcc-419d-8c89-b916c69c8ee9",
+          "role": "assistant",
+          "content": "NONSTREAM_WS_OK",
+          "generation_state": "complete",
+          "origin": null,
+          "provenance": null,
+          "terminal_receipt_id": "4bbd2317-fe7f-4f8d-929d-ff1a7c674b63"
+        }
+      ],
+      "attempts": [
+        {
+          "id": "57de38fd-fd0c-4058-bf04-212acd445811",
+          "source_run_id": "aeded1dd-b841-4ca8-bf04-a8b507edc638",
+          "source_chain_id": "769c226f4cc547eda8601f3d7e78cb92",
+          "chain_id": "fbfb1d0e6d0c4e01a236957818d610d6",
+          "conversation_id": "bda34a98-69fe-453a-8a55-39225e4e2277",
+          "session_id": "96f18868-4001-4d1b-92e7-5ef13e7a4729",
+          "session_incarnation": "b5fdd248-8caf-4d84-94e4-7198efa6b5d6",
+          "owner_id": "b11ba9fa836b4c94b8d88bd50ff2c63c",
+          "draft_revision": 1,
+          "context_epoch": 0,
+          "request_fingerprint": "14186e8090107c2d6b9068576eb666ef7e2cfe8c8ebfdfff94278e3743695ae8",
+          "generation_reservation_id": "0ac9a6366562406ea2d9024cc0074d6f",
+          "state": "completed",
+          "created_at": 1790995097.980622,
+          "accepted_at": 1790995098.079963,
+          "completed_at": 1790995100.411694
+        }
+      ]
+    },
+    {
+      "id": "6ea2e7c4-0a3b-4f33-924c-97f524b60124",
+      "title": "STOP_TARGET",
+      "scope_type": "global",
+      "workspace_id": null,
+      "handoff": {
+        "created_via": "new_chat",
+        "draft": "",
+        "draft_revision": 2,
+        "source_run_id": "e02f4c92-798e-47e6-b82c-b0fd9df779c6",
+        "state": "consumed",
+        "version": 2,
+        "accepted_attempt_id": "d0e952bc-e48f-4abd-812c-0fbfc9815cbc"
+      },
+      "generation_snapshot": {
+        "provider": "llama_cpp",
+        "model": "local-model",
+        "streaming": false,
+        "max_tokens": 128
+      },
+      "messages": [
+        {
+          "id": "71f69f42-ae60-4e2c-8ad6-4155c71d8b5a",
+          "role": "user",
+          "content": "Count from 1 to 500 with one number on each line. Do not call any tool.",
+          "generation_state": null,
+          "origin": "agent_chat_start",
+          "provenance": {
+            "attempt_id": "d0e952bc-e48f-4abd-812c-0fbfc9815cbc",
+            "source_conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+            "source_run_id": "e02f4c92-798e-47e6-b82c-b0fd9df779c6"
+          },
+          "terminal_receipt_id": ""
+        },
+        {
+          "id": "b806dde8-6774-45c4-afc8-b9226b23b152",
+          "role": "assistant",
+          "content": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46",
+          "generation_state": "complete",
+          "origin": null,
+          "provenance": null,
+          "terminal_receipt_id": "b20151ed-4aec-44d9-9c4d-456e901e38cd"
+        }
+      ],
+      "attempts": [
+        {
+          "id": "d0e952bc-e48f-4abd-812c-0fbfc9815cbc",
+          "source_run_id": "e02f4c92-798e-47e6-b82c-b0fd9df779c6",
+          "source_chain_id": "18b354cdd0824f95a92f93d9c3091ce1",
+          "chain_id": "4eb2a79b4b4744bf993280c520074f52",
+          "conversation_id": "6ea2e7c4-0a3b-4f33-924c-97f524b60124",
+          "session_id": "3391013b-bf96-4b2c-b514-2734ce095cdd",
+          "session_incarnation": "2767e6e5-5e69-42e2-9ec2-23de8d68cd76",
+          "owner_id": "b11ba9fa836b4c94b8d88bd50ff2c63c",
+          "draft_revision": 1,
+          "context_epoch": 0,
+          "request_fingerprint": "aa1339a43dded758eb1788fe018634c9e42772e7dfdbb7d7f85a3a3eca21af16",
+          "generation_reservation_id": "ed9f509e82264d038938f4d466d1c711",
+          "state": "completed",
+          "created_at": 1790995193.469003,
+          "accepted_at": 1790995193.511096,
+          "completed_at": 1790995198.3970308
+        }
+      ]
+    },
+    {
+      "id": "7da8d4ee-933c-4d54-b4fc-7324635e210b",
+      "title": "STOP_LONG",
+      "scope_type": "global",
+      "workspace_id": null,
+      "handoff": {
+        "created_via": "new_chat",
+        "draft": "",
+        "draft_revision": 2,
+        "source_run_id": "99b3ca6c-2139-4530-8825-255298e4b4a6",
+        "state": "consumed",
+        "version": 2,
+        "accepted_attempt_id": "401c3eb0-1df8-4375-a6ae-9ced8487e100"
+      },
+      "generation_snapshot": {
+        "provider": "llama_cpp",
+        "model": "local-model",
+        "streaming": false,
+        "max_tokens": 1024
+      },
+      "messages": [
+        {
+          "id": "75c053aa-8004-4823-9245-68e19d299f5b",
+          "role": "user",
+          "content": "Count from 1 to 500 with one number on each line. Do not call any tool.",
+          "generation_state": null,
+          "origin": "agent_chat_start",
+          "provenance": {
+            "attempt_id": "401c3eb0-1df8-4375-a6ae-9ced8487e100",
+            "source_conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+            "source_run_id": "99b3ca6c-2139-4530-8825-255298e4b4a6"
+          },
+          "terminal_receipt_id": ""
+        },
+        {
+          "id": "60fa6b84-cb74-4fec-b6dc-8b600880e9a2",
+          "role": "assistant",
+          "content": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27\n28\n29\n30\n31\n32\n33\n34\n35\n36\n37\n38\n39\n40\n41\n42\n43\n44\n45\n46\n47\n48\n49\n50\n51\n52\n53\n54\n55\n56\n57\n58\n59\n60\n61\n62\n63\n64\n65\n66\n67\n68\n69\n70\n71\n72\n73\n74\n75\n76\n77\n78\n79\n80\n8cal\n82\n83\n84\n85\n86\n87\n88\n89\n90\n91\n92\n93\n94\n95\n96\n97\n98\n99\n100\n101\n102\n103\n104\n105\n106\n107\n108\n109\n110\n111\n112\n113\n114\n115\n116\n117\n118\n119\n120\n121\n122\n123\n124\n125\n126\n127\n128\n129\n130\n131\n132\n133\n134\n135\n136\n137\n138\n139\n140\n141\n142\n143\n144\n145\n146\n147\n148\n149\n150\n151\n152\n153\n154\n155\n156\n157\n158\n159\n160\n161\n162\n163\n164\n165\n166\n167\n168\n169\n170\n171\n172\n173\n174\n175\n176\n177\n178\n179\n180\n181\n182\n183\n184\n185\n186\n187\n188\n189\n190\n191\n192\n193\n194\n195\n196\n197\n198\n199\n200\n201\n202\n203\n204\n205\n206\n207\n208\n209\n210\n211\n212\n213\n214\n215\n216\n217\n218\n219\n220\n221\n222\n223\n224\n225\n226\n227\n228\n229\n230\n231\n232\n233\n234\n235\n236\n237\n238\n239\n240\n241\n242\n243\n244\n245\n246\n247\n248\n249\n250\n251\n252\n253\n254\n255\n256\n257\n258\n259\n260\n261\n262\n263\n264\n265\n266\n267\n268\n269\n270\n271\n272\n273\n274\n275\n276\n277\n278\n279\n280\n281\n282\n283\n",
+          "generation_state": "complete",
+          "origin": null,
+          "provenance": null,
+          "terminal_receipt_id": "30d2439f-ce7d-4f27-ac80-888603984663"
+        }
+      ],
+      "attempts": [
+        {
+          "id": "401c3eb0-1df8-4375-a6ae-9ced8487e100",
+          "source_run_id": "99b3ca6c-2139-4530-8825-255298e4b4a6",
+          "source_chain_id": "64c09fa0091d41009acf405c9c31c81b",
+          "chain_id": "b4e92bd2251d4b47a8802e90738ee7b9",
+          "conversation_id": "7da8d4ee-933c-4d54-b4fc-7324635e210b",
+          "session_id": "4a0c6696-0191-4e9e-9ed3-f74793ef2e0e",
+          "session_incarnation": "73a01312-8002-4a10-800b-93d70a3208e9",
+          "owner_id": "a7d37b35862d4a77af3edc351e20d9e9",
+          "draft_revision": 1,
+          "context_epoch": 0,
+          "request_fingerprint": "aa1339a43dded758eb1788fe018634c9e42772e7dfdbb7d7f85a3a3eca21af16",
+          "generation_reservation_id": "c7dbdde26be74eaf8c2890b9b13e5a80",
+          "state": "completed",
+          "created_at": 1790995516.217569,
+          "accepted_at": 1790995516.267509,
+          "completed_at": 1790995541.081578
+        }
+      ]
+    },
+    {
+      "id": "34d46999-51de-4788-8516-72c257f63764",
+      "title": "REFUSED_START",
+      "scope_type": "global",
+      "workspace_id": null,
+      "handoff": {
+        "created_via": "new_chat",
+        "draft": "Reply only REFUSED_SHOULD_NOT_RUN",
+        "draft_revision": 1,
+        "source_run_id": "ba2153c1-e22d-48a0-ab54-79575ae18c0b",
+        "state": "pending",
+        "version": 2
+      },
+      "generation_snapshot": {
+        "provider": "llama_cpp",
+        "model": "local-model",
+        "streaming": false,
+        "max_tokens": 1024
+      },
+      "messages": [],
+      "attempts": []
+    },
+    {
+      "id": "2f83a499-1bc7-41e3-8bd9-1063e8c352da",
+      "title": "STOP_FINAL",
+      "scope_type": "global",
+      "workspace_id": null,
+      "handoff": {
+        "created_via": "new_chat",
+        "draft": "",
+        "draft_revision": 2,
+        "source_run_id": "b8580230-ff51-46e7-b033-5c20bed5b601",
+        "state": "consumed",
+        "version": 2,
+        "accepted_attempt_id": "118fa2d5-6a44-4221-9a25-9576be737b7d"
+      },
+      "generation_snapshot": {
+        "provider": "llama_cpp",
+        "model": "local-model",
+        "streaming": false,
+        "max_tokens": 1024
+      },
+      "messages": [
+        {
+          "id": "257bb1f7-9ed2-4105-9609-c23355dfe716",
+          "role": "user",
+          "content": "Count from 1 to 500 with one number on each line. Do not call any tool.",
+          "generation_state": null,
+          "origin": "agent_chat_start",
+          "provenance": {
+            "attempt_id": "118fa2d5-6a44-4221-9a25-9576be737b7d",
+            "source_conversation_id": "b97dcede-5abc-42a1-a1f6-b765f165afb6",
+            "source_run_id": "b8580230-ff51-46e7-b033-5c20bed5b601"
+          },
+          "terminal_receipt_id": ""
+        },
+        {
+          "id": "1ef30357-7c68-4b2c-86f7-fc5d865184cd",
+          "role": "assistant",
+          "content": "",
+          "generation_state": "stopped",
+          "origin": null,
+          "provenance": null,
+          "terminal_receipt_id": null
+        }
+      ],
+      "attempts": [
+        {
+          "id": "118fa2d5-6a44-4221-9a25-9576be737b7d",
+          "source_run_id": "b8580230-ff51-46e7-b033-5c20bed5b601",
+          "source_chain_id": "378b5f3525e249c083bf521fa559bf76",
+          "chain_id": "4dd15473451b408f8456133288f6660b",
+          "conversation_id": "2f83a499-1bc7-41e3-8bd9-1063e8c352da",
+          "session_id": "f29c5445-539e-423b-83a5-856c246dcae1",
+          "session_incarnation": "95f21342-130f-422e-b7ce-45448e8be669",
+          "owner_id": "c2e2b19b3ada425f83b99f73aad17051",
+          "draft_revision": 1,
+          "context_epoch": 0,
+          "request_fingerprint": "aa1339a43dded758eb1788fe018634c9e42772e7dfdbb7d7f85a3a3eca21af16",
+          "generation_reservation_id": "97cccf9512b24f628556d2852bbfcf8d",
+          "state": "completed",
+          "created_at": 1790996672.2455838,
+          "accepted_at": 1790996672.777237,
+          "completed_at": 1790996685.393064
+        }
+      ]
+    }
+  ],
+  "chains": [
+    {
+      "id": "0d1455a8c1384e7da2a41e60b0aa6db5",
+      "conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+      "root_submission_id": "f93d1303a05f46e49b21a689b119cab9",
+      "allowance_root_chain_id": null,
+      "status": "active"
+    },
+    {
+      "id": "762c03ec143d45258d8b46a4ec861995",
+      "conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+      "root_submission_id": "e550d95b2978407f900fc3414c1eb815",
+      "allowance_root_chain_id": null,
+      "status": "active"
+    },
+    {
+      "id": "dc25940ead1e473ba31b38b541a413ab",
+      "conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+      "root_submission_id": "d3187a00343e49fdb2d142378f622554",
+      "allowance_root_chain_id": null,
+      "status": "review_required"
+    },
+    {
+      "id": "559e674d4855458babc30858d9f0a6ee",
+      "conversation_id": "fc1d7a68-128e-4000-b07d-017f1a6e3c3f",
+      "root_submission_id": "chat-start:6a83a846-c4de-4952-956e-f73fb995ccaf",
+      "allowance_root_chain_id": "dc25940ead1e473ba31b38b541a413ab",
+      "status": "active"
+    },
+    {
+      "id": "dd7982b6085042d59871ddbc9f2ad5a3",
+      "conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+      "root_submission_id": "c17ce82d1af84954aae71ca62fd327e1",
+      "allowance_root_chain_id": null,
+      "status": "review_required"
+    },
+    {
+      "id": "9edf0f5fdf9d44cea66f971e121f9f01",
+      "conversation_id": "705c0e44-82ea-40c0-9a36-94700c6bffaf",
+      "root_submission_id": "chat-start:f4f6d786-bc46-4510-80e4-a63952da3400",
+      "allowance_root_chain_id": "dd7982b6085042d59871ddbc9f2ad5a3",
+      "status": "active"
+    },
+    {
+      "id": "769c226f4cc547eda8601f3d7e78cb92",
+      "conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+      "root_submission_id": "805d62df133242e9a9b222cd9d74b294",
+      "allowance_root_chain_id": null,
+      "status": "active"
+    },
+    {
+      "id": "fbfb1d0e6d0c4e01a236957818d610d6",
+      "conversation_id": "bda34a98-69fe-453a-8a55-39225e4e2277",
+      "root_submission_id": "chat-start:57de38fd-fd0c-4058-bf04-212acd445811",
+      "allowance_root_chain_id": "769c226f4cc547eda8601f3d7e78cb92",
+      "status": "active"
+    },
+    {
+      "id": "18b354cdd0824f95a92f93d9c3091ce1",
+      "conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+      "root_submission_id": "f0e0e1177a544860aedc574d573a87d0",
+      "allowance_root_chain_id": null,
+      "status": "active"
+    },
+    {
+      "id": "4eb2a79b4b4744bf993280c520074f52",
+      "conversation_id": "6ea2e7c4-0a3b-4f33-924c-97f524b60124",
+      "root_submission_id": "chat-start:d0e952bc-e48f-4abd-812c-0fbfc9815cbc",
+      "allowance_root_chain_id": "18b354cdd0824f95a92f93d9c3091ce1",
+      "status": "active"
+    },
+    {
+      "id": "64c09fa0091d41009acf405c9c31c81b",
+      "conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+      "root_submission_id": "ce0d8f7df7304544b0527b50bed8fdcc",
+      "allowance_root_chain_id": null,
+      "status": "active"
+    },
+    {
+      "id": "b4e92bd2251d4b47a8802e90738ee7b9",
+      "conversation_id": "7da8d4ee-933c-4d54-b4fc-7324635e210b",
+      "root_submission_id": "chat-start:401c3eb0-1df8-4375-a6ae-9ced8487e100",
+      "allowance_root_chain_id": "64c09fa0091d41009acf405c9c31c81b",
+      "status": "active"
+    },
+    {
+      "id": "85b9ecf541b84c76bc7be37a841dd259",
+      "conversation_id": "ba3e38cb-a22b-4551-8812-e29a084490d2",
+      "root_submission_id": "b07dacdc00af4251b052caf633c1da59",
+      "allowance_root_chain_id": null,
+      "status": "active"
+    },
+    {
+      "id": "378b5f3525e249c083bf521fa559bf76",
+      "conversation_id": "b97dcede-5abc-42a1-a1f6-b765f165afb6",
+      "root_submission_id": "1baa9ca1c2e7461ab1d716e89761cea4",
+      "allowance_root_chain_id": null,
+      "status": "review_required"
+    },
+    {
+      "id": "4dd15473451b408f8456133288f6660b",
+      "conversation_id": "2f83a499-1bc7-41e3-8bd9-1063e8c352da",
+      "root_submission_id": "chat-start:118fa2d5-6a44-4221-9a25-9576be737b7d",
+      "allowance_root_chain_id": "378b5f3525e249c083bf521fa559bf76",
+      "status": "active"
+    }
+  ],
+  "reservations": [
+    {
+      "id": "5477bd1583bf43f6904a18b65875b84c",
+      "chain_id": "559e674d4855458babc30858d9f0a6ee",
+      "owner_id": "9615a07ac7f8406eb9ef8de4b280d1e5",
+      "kind": "generation",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790993909.868025,
+      "updated_at": 1790993909.9566028
+    },
+    {
+      "id": "4d0b3e7fa9d3497397df458f827ac926:model",
+      "chain_id": "559e674d4855458babc30858d9f0a6ee",
+      "owner_id": "9615a07ac7f8406eb9ef8de4b280d1e5",
+      "kind": "model_call",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790993911.459758,
+      "updated_at": 1790993911.459758
+    },
+    {
+      "id": "4d0b3e7fa9d3497397df458f827ac926:tokens",
+      "chain_id": "559e674d4855458babc30858d9f0a6ee",
+      "owner_id": "9615a07ac7f8406eb9ef8de4b280d1e5",
+      "kind": "tokens",
+      "amount": 3824,
+      "state": "uncertain",
+      "actual_amount": null,
+      "created_at": 1790993911.459758,
+      "updated_at": 1790993915.8190012
+    },
+    {
+      "id": "3d04ff712b1444e19f848bb778b9a9ef",
+      "chain_id": "9edf0f5fdf9d44cea66f971e121f9f01",
+      "owner_id": "9615a07ac7f8406eb9ef8de4b280d1e5",
+      "kind": "generation",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790994131.906989,
+      "updated_at": 1790994131.9134521
+    },
+    {
+      "id": "51b2e7699a2a4d9b8822c543c419d828:model",
+      "chain_id": "9edf0f5fdf9d44cea66f971e121f9f01",
+      "owner_id": "9615a07ac7f8406eb9ef8de4b280d1e5",
+      "kind": "model_call",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790994132.816733,
+      "updated_at": 1790994132.816733
+    },
+    {
+      "id": "51b2e7699a2a4d9b8822c543c419d828:tokens",
+      "chain_id": "9edf0f5fdf9d44cea66f971e121f9f01",
+      "owner_id": "9615a07ac7f8406eb9ef8de4b280d1e5",
+      "kind": "tokens",
+      "amount": 3797,
+      "state": "uncertain",
+      "actual_amount": null,
+      "created_at": 1790994132.816733,
+      "updated_at": 1790994137.129795
+    },
+    {
+      "id": "0ac9a6366562406ea2d9024cc0074d6f",
+      "chain_id": "fbfb1d0e6d0c4e01a236957818d610d6",
+      "owner_id": "b11ba9fa836b4c94b8d88bd50ff2c63c",
+      "kind": "generation",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790995097.980622,
+      "updated_at": 1790995098.079963
+    },
+    {
+      "id": "a5432f9edcd045559b73e5238e630283:model",
+      "chain_id": "fbfb1d0e6d0c4e01a236957818d610d6",
+      "owner_id": "b11ba9fa836b4c94b8d88bd50ff2c63c",
+      "kind": "model_call",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790995099.378627,
+      "updated_at": 1790995099.378627
+    },
+    {
+      "id": "a5432f9edcd045559b73e5238e630283:tokens",
+      "chain_id": "fbfb1d0e6d0c4e01a236957818d610d6",
+      "owner_id": "b11ba9fa836b4c94b8d88bd50ff2c63c",
+      "kind": "tokens",
+      "amount": 3822,
+      "state": "settled",
+      "actual_amount": 3910,
+      "created_at": 1790995099.378627,
+      "updated_at": 1790995100.264184
+    },
+    {
+      "id": "ed9f509e82264d038938f4d466d1c711",
+      "chain_id": "4eb2a79b4b4744bf993280c520074f52",
+      "owner_id": "b11ba9fa836b4c94b8d88bd50ff2c63c",
+      "kind": "generation",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790995193.469003,
+      "updated_at": 1790995193.511096
+    },
+    {
+      "id": "4ade56ea8a1f4a19908aa0601f038eb9:model",
+      "chain_id": "4eb2a79b4b4744bf993280c520074f52",
+      "owner_id": "b11ba9fa836b4c94b8d88bd50ff2c63c",
+      "kind": "model_call",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790995195.0412219,
+      "updated_at": 1790995195.0412219
+    },
+    {
+      "id": "4ade56ea8a1f4a19908aa0601f038eb9:tokens",
+      "chain_id": "4eb2a79b4b4744bf993280c520074f52",
+      "owner_id": "b11ba9fa836b4c94b8d88bd50ff2c63c",
+      "kind": "tokens",
+      "amount": 3808,
+      "state": "settled",
+      "actual_amount": 4014,
+      "created_at": 1790995195.0412219,
+      "updated_at": 1790995198.323106
+    },
+    {
+      "id": "c7dbdde26be74eaf8c2890b9b13e5a80",
+      "chain_id": "b4e92bd2251d4b47a8802e90738ee7b9",
+      "owner_id": "a7d37b35862d4a77af3edc351e20d9e9",
+      "kind": "generation",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790995516.217569,
+      "updated_at": 1790995516.267509
+    },
+    {
+      "id": "1db984481ec64d1881ba20a4b4f81ce9:model",
+      "chain_id": "b4e92bd2251d4b47a8802e90738ee7b9",
+      "owner_id": "a7d37b35862d4a77af3edc351e20d9e9",
+      "kind": "model_call",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790995517.721834,
+      "updated_at": 1790995517.721834
+    },
+    {
+      "id": "1db984481ec64d1881ba20a4b4f81ce9:tokens",
+      "chain_id": "b4e92bd2251d4b47a8802e90738ee7b9",
+      "owner_id": "a7d37b35862d4a77af3edc351e20d9e9",
+      "kind": "tokens",
+      "amount": 4704,
+      "state": "settled",
+      "actual_amount": 4910,
+      "created_at": 1790995517.721834,
+      "updated_at": 1790995540.745505
+    },
+    {
+      "id": "97cccf9512b24f628556d2852bbfcf8d",
+      "chain_id": "4dd15473451b408f8456133288f6660b",
+      "owner_id": "c2e2b19b3ada425f83b99f73aad17051",
+      "kind": "generation",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790996672.2455838,
+      "updated_at": 1790996672.777237
+    },
+    {
+      "id": "5284c911831c4ff695f2aa13218c9ac5:model",
+      "chain_id": "4dd15473451b408f8456133288f6660b",
+      "owner_id": "c2e2b19b3ada425f83b99f73aad17051",
+      "kind": "model_call",
+      "amount": 1,
+      "state": "committed",
+      "actual_amount": null,
+      "created_at": 1790996674.497259,
+      "updated_at": 1790996674.497259
+    },
+    {
+      "id": "5284c911831c4ff695f2aa13218c9ac5:tokens",
+      "chain_id": "4dd15473451b408f8456133288f6660b",
+      "owner_id": "c2e2b19b3ada425f83b99f73aad17051",
+      "kind": "tokens",
+      "amount": 4704,
+      "state": "uncertain",
+      "actual_amount": null,
+      "created_at": 1790996674.497259,
+      "updated_at": 1790996693.969753
+    }
+  ]
+}

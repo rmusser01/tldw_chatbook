@@ -27,9 +27,11 @@ class _Store(_RawDeclaration):
         leaves = {self.leaf}
         if self.owner_id == "mcp.permissions":
             leaves.add(self.leaf + ".bak")
-        family = suffix == "fresh" or (
-            self.owner_id == "mcp.permissions" and suffix == "fresh.bak"
-        ) or re.fullmatch(r"history\.[0-9a-f]{64}", suffix)
+        family = (
+            suffix == "fresh"
+            or (self.owner_id == "mcp.permissions" and suffix == "fresh.bak")
+            or re.fullmatch(r"history\.[0-9a-f]{64}", suffix)
+        )
         selected = dict(plan.restore)
         roots = dict(plan.destinations)
         producer = {row.logical_id: row for row in document.producer_inventory}
@@ -46,21 +48,29 @@ class _Store(_RawDeclaration):
             or not payload.logical_id.startswith(key + ":")
             or not family
             or payload.owner_id != self.owner_id
-            or item is None or item.owner_id != self.owner_id
+            or item is None
+            or item.owner_id != self.owner_id
             or item.status != "included"
             or item.dependencies != (prefix + "config",)
-            or original is None or original.owner_id != self.owner_id
+            or original is None
+            or original.owner_id != self.owner_id
             or selected.get(key) != canonical
-            or config is None or config.owner_id != "config"
+            or config is None
+            or config.owner_id != "config"
             or selected.get(prefix + "config") != config_target
-            or root is None or not root.synthetic or root.parent_id is not None
+            or root is None
+            or not root.synthetic
+            or root.parent_id is not None
             or payload.parent_id != root.logical_id
             or payload.relative_path not in leaves
-            or suffix == "fresh" and payload.relative_path != self.leaf
-            or suffix == "fresh.bak" and payload.relative_path != self.leaf + ".bak"
+            or suffix == "fresh"
+            and payload.relative_path != self.leaf
+            or suffix == "fresh.bak"
+            and payload.relative_path != self.leaf + ".bak"
             or sum(row.root_id == payload.root_id for row in document.files) != 1
             or sum(row.root_id == payload.root_id for row in document.directories) != 1
-            or parent is None or target != parent / payload.relative_path
+            or parent is None
+            or target != parent / payload.relative_path
             or target.parent == canonical.parent
         ):
             raise ValueError("owner_relocation_unverified:" + self.owner_id)
@@ -87,10 +97,30 @@ class _Store(_RawDeclaration):
             fresh = inventory_path(context, self.owner_id, path)
             history = inventory_history(context, self.owner_id, path)
         except (OSError, ValueError, TypeError):
-            return original + (StorageItem(self.owner_id, storage_logical_id(context, self.owner_id, "fresh"), None, "unavailable"),)
-        return original + tuple(self._item(config, retained, suffix) for suffix, retained in history) + (
-            tuple(self._item(config, fresh.with_name(fresh.name + suffix), "fresh" + suffix) for suffix in suffixes)
-            if fresh is not None else ()
+            return original + (
+                StorageItem(
+                    self.owner_id,
+                    storage_logical_id(context, self.owner_id, "fresh"),
+                    None,
+                    "unavailable",
+                    (storage_logical_id(context, "config"),),
+                ),
+            )
+        return (
+            original
+            + tuple(
+                self._item(config, retained, suffix) for suffix, retained in history
+            )
+            + (
+                tuple(
+                    self._item(
+                        config, fresh.with_name(fresh.name + suffix), "fresh" + suffix
+                    )
+                    for suffix in suffixes
+                )
+                if fresh is not None
+                else ()
+            )
         )
 
 

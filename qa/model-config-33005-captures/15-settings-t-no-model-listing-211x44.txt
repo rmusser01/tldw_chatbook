@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s · 2 unsaved | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)   │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │  Connect                                                                                                              │  │  │  │                                         │
+│  category search             │  │  │ │ Provider                                                                                                              │▁ │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │ Unsaved changes                         │
+│  Core                        │  │  │ │ ▊  llama                                                                                                            ▎ │  │  │  │  Guided edits: Save or Revert changes.  │
+│      Overview (view)         │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │     Save (s)                            │
+│    > Providers & Models *    │  │  │ │ Cloud                                                                                                                 │  │  │  │    Revert (r)                           │
+│      Web Search              │  │  │ │ Ollama Cloud                                                                                                          │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │ Local                                                                                                                 │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ llama.cpp                                                                                                          ▅▅ │  │  │  │  Focused setting: Model                 │
+│      Appearance              │  │  │ │ Llamafile                                                                                                             │▂ │  │  │  Purpose: Sets the model new chats      │
+│      Theme                   │  │  │ │ Ollama                                                                                                                │  │  │  │  start with; open chats nobody has    ▄ │
+│      Splash Screen           │  │  │ │ Choose a provider or enter a supported provider alias.                                                                │  │  │  │  used yet follow it.                    │
+│      Console Behavior        │  │  │ │ Model                   │ Model name                                                                                  │  │  │  │  Saved as: chat_defaults.model          │
+│  Data & Privacy              │  │  │ │ Endpoint                │ http://127.0.0.1:9199                                                                       │  │  │  │  Save: staged - press s to save, r to   │
+│      Storage                 │  │  │ │                                                                                                                       │  │  │  │  revert                                 │
+│      Workspaces              │  │  │ │  Credentials                                                                                                          │  │  │  │  Validation: model name is required     │
+│      Tool Profiles           │  │  │ │  API key source: not required for this provider                                                                       │  │  │  │  before provider-backed generation      │
+│      Privacy & Security      │  │  │ │ API key                 │ No credential required                                                                      │  │  │  │  can run                                │
+│      Network                 │  │  │ │                          Clear saved key                                                                              │  │  │  │  Runtime owner: Settings persisted      │
+│      My Profile              │  │  │ │ Env var                 │ LLAMA_CPP_API_KEY                                                                           │  │  │  │  defaults; Console runtime selection    │
+│  Troubleshooting             │  │  │ │  Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.         │  │  │  │  Writes allowed: Yes                    │
+│      Diagnostics (view)      │  │  │ │  Test Provider                                                                                                        │  │  │  │  Owns: chat_defaults.provider           │
+│      About (view)            │  │  │ │  Checks the settings, then lists models without generating: a cloud provider's listing checks the API key, a local    │  │  │  │  chat_defaults.model                  ▃ │
+│      Agents                  │  │  │ │  server's shows it answers. Nothing is saved.                                                                         │  │  │  │  api_settings.<provider>.               │
+│  Expert                      │  │  │ │ Readiness   Not ready · no model                                                                                      │  │  │  │    endpoint                             │
+│      Hooks                   │  │  │ │ Model       not set — choose a default model                                                                          │  │  │  │  api_settings.<provider>.               │
+│      Internal Prompts        │  │  │ │ Config      llama.cpp is configured                                                                                   │  │  │  │    api_key                              │
+│      Advanced Config         │  │  │ │ Key         not required                                                                                              │  │  │  │  api_settings.<provider>.               │
+│   Domain Defaults ▸ (11)     │  │  │ │ Endpoint    http://127.0.0.1:9199 · model listing reached                                                             │  │  │  │    api_key_env_var                      │
+│                              │  │  │ │ Generation  not tested                                                                                                │  │  │  │  api_settings.<provider>.               │
+│                              │  │  │ │  Provider settings have not been saved this session.                                                                  │  │  │  │    api_mode                             │
+│                              │  │  │ │                                                                                                                       │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

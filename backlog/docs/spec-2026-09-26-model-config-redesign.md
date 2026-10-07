@@ -457,6 +457,7 @@ Each UI phase updates `Docs/User_Guide/{console,settings}.md` and runs
 | Chat settings layout | TASK-33006 | Root-cause fixes; Field table; Density tokens; Switch model; Shared readiness evidence | C8(1) in the UI; C1(b) "Use saved defaults" | new work (task-32864 excludes this modal) |
 | Settings ▸ Providers & Models reorder | TASK-33007 | Root-cause fixes; Field table; Density tokens; Switch model; Shared readiness evidence | C4; C1(a) "Applies to" row | absorbs task-31202 and the card slice of task-1378 |
 | First run, connect in place | TASK-33008 | Root-cause fixes; Switch model; Shared readiness evidence; Settings reorder | C1 recovery dead end (D4) | absorbs task-32572; then run task-1379 |
+| Burn down follow-up riders | TASK-33641 | First run, connect in place (all earlier phases) | Every rider filed during P1–P8 and the hotfixes | added by owner decision 2026-09-29 |
 
 **Root-cause fixes.** No layout change.
 - Guard `chat_defaults.model` by provider (rule 1). Add the missing test for

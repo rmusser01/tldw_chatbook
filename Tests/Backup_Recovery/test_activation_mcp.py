@@ -115,7 +115,7 @@ async def run():
         assert result['result']=={'tools':[]}
         return
     if route=='inspection':
-        assert local.get_external_servers()
+        assert local.get_external_servers() == []
         assert delegate.get_status()
         assert (await delegate.request('tools/list'))=={'tools':[]}
         return
@@ -315,9 +315,9 @@ async def spawn(*args,**kwargs):
     return process
 asyncio.create_subprocess_exec=spawn
 original_send=client_module._StdioJSONRPCConnection._send_message
-async def send(self,payload):
+async def send(self,payload,*,_dispatch=None):
     if payload.get('method') in ('initialize','tools/list','tools/call'): assert_held()
-    return await original_send(self,payload)
+    return await original_send(self,payload,_dispatch=_dispatch)
 client_module._StdioJSONRPCConnection._send_message=send
 if route=='timeout': client_module.CONNECT_TIMEOUT_SECONDS=.15
 async def run():
@@ -379,7 +379,7 @@ async def run():
         if route=='cancel': waiter.cancel()
         try: result=await waiter
         except asyncio.CancelledError: assert route=='cancel'
-        else: assert 'Timed out' in result['error'],result
+        else: assert result['error']=='mcp_transport_unavailable',result
         # Removing a request future is not completion of the child operation.
         assert process.returncode is not None, 'accepted tool still runs after waiter release'
         assert not finished.exists()
@@ -414,8 +414,8 @@ async def run():
     client_module._TERMINATE_TIMEOUT_SECONDS=.4
     sent=asyncio.Event(); stopping=asyncio.Event(); requests=[]
     original_send=session._send_message
-    async def send(payload):
-        await original_send(payload)
+    async def send(payload,*,_dispatch=None):
+        await original_send(payload,_dispatch=_dispatch)
         if payload.get('method')=='tools/call':
             requests.append(payload['id'])
             if len(requests)==2: sent.set()
@@ -446,7 +446,7 @@ async def run():
         results=await asyncio.gather(first,second,return_exceptions=True)
         assert isinstance(results[0],asyncio.CancelledError)
         if route=='repeated': assert isinstance(results[1],asyncio.CancelledError)
-        else: assert 'MCP connection closed' in results[1]['error'],results
+        else: assert results[1]['error']=='mcp_transport_unavailable',results
         assert process.returncode is not None
         assert not finished.exists()
         assert not client.sessions and not client._pending_connections
@@ -487,7 +487,7 @@ async def run():
         assert_held()
         release.write_text('go')
         result=await asyncio.wait_for(waiter,2)
-        assert 'Timed out' in result['error'],result
+        assert result['error']=='mcp_transport_unavailable',result
         assert finished.exists() and process.returncode is not None
     finally:
         process.terminate=original_terminate; process.kill=original_kill
@@ -519,11 +519,11 @@ async def run():
     try:
         result=await client.call_tool('real','sentinel',{})
         if route=='server_error':
-            assert 'completed server refusal' in result['error']
+            assert result['error']=='mcp_rpc_error'
             assert process.returncode is None and client.sessions['real'] is session
             assert (await session.list_tools()).tools[0].name=='sentinel'
         else:
-            assert 'MCP transport unavailable' in result['error'],result
+            assert result['error']=='mcp_transport_unavailable',result
             assert process.returncode is not None and not finished.exists()
     finally:
         release.write_text('go')

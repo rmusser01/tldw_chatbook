@@ -58,10 +58,6 @@ _AUDITED_LITERAL_ALLOWLIST: dict[str, tuple[int, int]] = {
         1,
         1,
     ),
-    # Audit-leave: picker classification on identity-derived execution keys
-    # (custom-hosted never appears there; custom-ep ids classify via the
-    # custom group keys).
-    "tldw_chatbook/Widgets/Console/console_provider_picker.py": (1, 0),
     # The legacy named handlers and their ADR-066 wire keys (untouched by
     # the swap; the kill switch keeps them the live path when off).
     "tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py": (3, 2),

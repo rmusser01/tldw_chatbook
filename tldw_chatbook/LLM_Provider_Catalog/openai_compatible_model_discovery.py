@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     MODEL_IDS_MAX_COUNT,
     MODEL_PROBE_RESPONSE_MAX_BYTES,
     UnsupportedModelResponseEncoding,
+    connect_error_is_refused,
     read_bounded_model_response,
 )
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
@@ -87,6 +88,8 @@ _EXPLICIT_OPENAI_COMPATIBLE_ENDPOINT_PATHS = frozenset(
         # DeepInfra's OpenAI-compatible base (TASK-33201); models live at
         # /v1/openai/models.
         "/v1/openai",
+        # Kilo Gateway base (TASK-33351); models live at /api/gateway/models.
+        "/api/gateway",
     }
 )
 _EXACT_SENSITIVE_METADATA_KEYS = frozenset(
@@ -364,6 +367,7 @@ def _models_path_for_endpoint_path(path: str) -> str | None:
         "/openai/v1",
         "/inference/v1",
         "/v1/openai",
+        "/api/gateway",
     }:
         return f"{normalized_path}/models"
     if normalized_path in {"/completion", "/completions"}:
@@ -545,6 +549,11 @@ def _scrub_model_metadata_value(
                 raise ValueError("Invalid models response: metadata key is invalid")
             if _is_sensitive_metadata_key(key):
                 continue
+            if type(nested_value) is str and len(nested_value) > MODEL_METADATA_MAX_VALUE_CHARS:
+                # Drop the field, keep the model: Together ships chat templates
+                # up to 16 KB in config.chat_template, and rejecting them
+                # listed nothing for every Together user (TASK-34361).
+                continue
             result[key] = _scrub_model_metadata_value(
                 nested_value,
                 depth=depth + 1,
@@ -590,6 +599,46 @@ def _safe_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a model's safe metadata, dropping only what breaks a bound.
+
+    One model's oversized details must not cost the user the whole list:
+    Vercel's tiered pricing (270 items against a 256-item bound) listed none
+    of its 407 models (TASK-34363). A top-level field that breaks a bound on
+    its own is dropped first; if the rest together still exceed a bound, the
+    largest fields go, biggest first, until they fit. Nothing unbounded is
+    ever kept. The work is bounded: a model with more top-level fields than
+    the item bound cannot fit and gets no metadata, and each surviving field
+    is measured once.
+
+    Args:
+        model_payload: One model object from a ``/models`` response.
+
+    Returns:
+        The model's metadata within every bound; empty when no field fits.
+    """
+    try:
+        return _safe_model_metadata(model_payload)
+    except ValueError:
+        pass
+    if len(model_payload) > MODEL_METADATA_MAX_ITEMS:
+        return {}
+    kept: dict[str, Any] = {}
+    for key, value in model_payload.items():
+        try:
+            _safe_model_metadata({key: value})
+        except ValueError:
+            continue
+        kept[key] = value
+    largest_first = sorted(kept, key=lambda name: len(json.dumps(kept[name])), reverse=True)
+    for name in largest_first:
+        try:
+            return _safe_model_metadata(kept)
+        except ValueError:
+            del kept[name]
+    return {}
+
+
 def normalize_models_response(
     payload: Mapping[str, Any],
     *,
@@ -630,7 +679,7 @@ def normalize_models_response(
                 source="runtime_discovered",
                 endpoint_fingerprint=endpoint_fingerprint,
                 discovered_at=now_iso,
-                metadata_raw_safe=_safe_model_metadata(item),
+                metadata_raw_safe=_bounded_model_metadata(item),
             )
         )
 
@@ -641,13 +690,24 @@ def _discovery_error(
     kind: DiscoveryErrorKind,
     message: str,
     recovery_hint: str,
+    category: str | None = None,
 ) -> ModelDiscoveryError:
     """Build a typed safe discovery error."""
     return ModelDiscoveryError(
         kind=kind,
         message=message,
         recovery_hint=recovery_hint,
+        category=category,
     )
+
+
+def _transport_category(error: httpx.HTTPError) -> str:
+    """Name a failed request's bounded category (TASK-33005.4 AC#4)."""
+    if isinstance(error, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(error, httpx.ConnectError) and connect_error_is_refused(error):
+        return "connection_refused"
+    return "connection_error"
 
 
 @_provider_recovery.discovery_call
@@ -755,6 +815,9 @@ async def discover_openai_compatible_models(
                             "missing_credentials",
                             "The models endpoint rejected the configured credentials.",
                             "Check the API key configured for this provider.",
+                            "unauthorized"
+                            if exc.response.status_code == 401
+                            else "forbidden",
                         ),
                     )
                 if exc.response.status_code == 404:
@@ -767,6 +830,7 @@ async def discover_openai_compatible_models(
                             "unsupported_endpoint",
                             "The models endpoint is unavailable.",
                             "Enter the model ID used by this endpoint.",
+                            "http_status",
                         ),
                     )
                 return None, ModelDiscoveryResult(
@@ -778,9 +842,10 @@ async def discover_openai_compatible_models(
                         "request_failed",
                         "Model discovery request failed.",
                         "Check the endpoint URL, server availability, and credentials.",
+                        "http_status",
                     ),
                 )
-            except httpx.HTTPError:
+            except httpx.HTTPError as exc:
                 return None, ModelDiscoveryResult(
                     provider=provider,
                     provider_list_key=provider_list_key,
@@ -790,6 +855,7 @@ async def discover_openai_compatible_models(
                         "request_failed",
                         "Model discovery request failed.",
                         "Check the endpoint URL, server availability, and credentials.",
+                        _transport_category(exc),
                     ),
                 )
             if body is None:
@@ -819,6 +885,10 @@ async def discover_openai_compatible_models(
                         "Use an endpoint that returns a JSON object with a data array of model IDs.",
                     ),
                 )
+            if type(payload) is list:
+                # Together answers /models with the bare array, no envelope
+                # (TASK-34361, Tests/fixtures/cloud_live/together.json).
+                payload = {"data": payload}
             if type(payload) is not dict or type(payload.get("data")) is not list:
                 return None, ModelDiscoveryResult(
                     provider=provider,
@@ -887,11 +957,12 @@ async def discover_openai_compatible_models(
         else:
             async with _provider_recovery.discovery_native_context(
                 build_httpx_async_client(
-                    timeout=timeout_seconds, **_provider_recovery.discovery_client_options()
+                    timeout=timeout_seconds,
+                    **_provider_recovery.discovery_client_options(),
                 )
             ) as active_client:
                 payloads, request_error = await _request_payloads(active_client)
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
         return ModelDiscoveryResult(
             provider=provider,
             provider_list_key=provider_list_key,
@@ -901,6 +972,7 @@ async def discover_openai_compatible_models(
                 "request_failed",
                 "Model discovery request failed.",
                 "Check the endpoint URL, server availability, and credentials.",
+                _transport_category(exc),
             ),
         )
     if request_error is not None:

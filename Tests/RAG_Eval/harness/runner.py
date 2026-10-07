@@ -62,6 +62,7 @@ as 0.0 would look like a quality regression instead of a broken seam. The
 shortfall stays visible because ``overall["num_queries"]`` is the count that
 was actually averaged.
 """
+
 from __future__ import annotations
 
 import math
@@ -273,9 +274,7 @@ class EvalReport:
             "num_scored": self.num_scored,
             "num_negative": self.num_negative,
             "num_scoped": self.num_scoped,
-            "modes": {
-                mode: report.to_dict() for mode, report in self.modes.items()
-            },
+            "modes": {mode: report.to_dict() for mode, report in self.modes.items()},
         }
 
     def format_summary(self) -> str:
@@ -382,9 +381,7 @@ def count_scored(golden: Sequence[GoldenQuery]) -> int:
     Returns:
         The count excluding every `UNAVERAGED_CATEGORIES` member.
     """
-    return sum(
-        1 for query in golden if query.category not in UNAVERAGED_CATEGORIES
-    )
+    return sum(1 for query in golden if query.category not in UNAVERAGED_CATEGORIES)
 
 
 def build_query_scope(
@@ -630,9 +627,7 @@ def _build_mode_report(
     # number. Same mechanism as the negative exclusion above, one category
     # further out.
     averaged = [
-        outcome
-        for outcome in scored
-        if outcome.category not in UNAVERAGED_CATEGORIES
+        outcome for outcome in scored if outcome.category not in UNAVERAGED_CATEGORIES
     ]
     overall = _metrics_for(averaged, k)
     per_category: dict[str, dict[str, float]] = {}
@@ -672,7 +667,13 @@ def _build_mode_report(
         negatives=negatives,
         latency=latency,
         runtime_backends=tuple(
-            sorted({outcome.runtime_backend for outcome in outcomes if outcome.runtime_backend})
+            sorted(
+                {
+                    outcome.runtime_backend
+                    for outcome in outcomes
+                    if outcome.runtime_backend
+                }
+            )
         ),
         errors=tuple(
             (outcome.query_id, outcome.error)
@@ -754,9 +755,7 @@ def _format_summary(report: EvalReport) -> str:
     if categories:
         lines.append("")
         lines.append(f"per category — recall@{k} (precision@{k})")
-        column = f"{'category':<22}" + "".join(
-            f"{mode:>20}" for mode in report.modes
-        )
+        column = f"{'category':<22}" + "".join(f"{mode:>20}" for mode in report.modes)
         lines.append(column)
         lines.append("-" * len(column))
         for category in categories:
@@ -823,11 +822,14 @@ def _scoped_lines(report: EvalReport) -> list[str]:
     """
     if not report.num_scoped:
         return []
-    lines = ["", (
-        f"scoped (excluded from every average above) — {report.num_scoped} "
-        "queries run under a real retrieval scope; reported in their own "
-        "category cell"
-    )]
+    lines = [
+        "",
+        (
+            f"scoped (excluded from every average above) — {report.num_scoped} "
+            "queries run under a real retrieval scope; reported in their own "
+            "category cell"
+        ),
+    ]
     for mode, mode_report in report.modes.items():
         outcomes = [
             outcome

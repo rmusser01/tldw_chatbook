@@ -164,6 +164,23 @@ LibraryFileNotesWorkspace Tree:focus > .tree--cursor {
     text-style: bold underline;
 }
 
+/* TASK-33003.6 (WCAG 1.4.11): on the model-configuration surfaces (Chat
+   settings; Settings ▸ Providers & Models) the $surface highlight above
+   measured 1.12:1. There it is a bar in the readable primary tint, which
+   the theme guard pins to 4.5:1 on panel and surface, so the bar reads at
+   3:1+ against the other options and its panel-coloured label stays AA
+   (test_theme_contrast.py). The ids outrank `OptionList:focus`; the
+   modal's type selector needs its own `:focus` form too. Switch model's
+   pair list (TASK-33004.4) is never focused, so it needs only the first. */
+ConsoleSettingsModal OptionList > .option-list--option-highlighted,
+ConsoleSettingsModal OptionList:focus > .option-list--option-highlighted,
+ConsoleModelPopover OptionList > .option-list--option-highlighted,
+#settings-providers-models-card OptionList > .option-list--option-highlighted {
+    background: $ds-active-fg;
+    color: $ds-surface-panel;
+    text-style: bold;
+}
+
 OptionList > .option-list--option-hover,
 Tree > .tree--highlight-line {
     background: $surface-lighten-1;

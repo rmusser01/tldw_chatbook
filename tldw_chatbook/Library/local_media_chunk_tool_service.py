@@ -229,9 +229,7 @@ class LocalMediaChunkToolService:
         except Exception:  # noqa: BLE001 — scrubbed, never escapes the tool
             return _storage_error_payload()
 
-    def _dispatch(
-        self, tool_name: str, arguments: Mapping[str, Any]
-    ) -> dict[str, Any]:
+    def _dispatch(self, tool_name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
         descriptor = LIBRARY_TOOL_DESCRIPTORS.get(tool_name)
         if descriptor is None:
             raise _invalid(f"unknown Library tool: {tool_name!r}")
@@ -319,7 +317,9 @@ class LocalMediaChunkToolService:
         for key in ("media_type", "author", "ingestion_date", "last_modified"):
             value = row.get(key)
             if value is not None:
-                item[key] = value if isinstance(value, (str, int, float, bool)) else str(value)
+                item[key] = (
+                    value if isinstance(value, (str, int, float, bool)) else str(value)
+                )
         return item
 
     def _chunk_rows(self, media_id: int) -> list[dict[str, Any]]:
@@ -344,19 +344,27 @@ class LocalMediaChunkToolService:
         way, matching the reading service's own queries over this table.
         """
         if chunk_type is None or chunk_type == _PRIMARY_FAMILY_LABEL:
-            row = self._media_db.get_connection().execute(
-                "SELECT MIN(chunk_index) AS lo, MAX(chunk_index) AS hi "
-                "FROM UnvectorizedMediaChunks "
-                "WHERE media_id = ? AND deleted = 0 AND chunk_type IS NULL",
-                (media_id,),
-            ).fetchone()
+            row = (
+                self._media_db.get_connection()
+                .execute(
+                    "SELECT MIN(chunk_index) AS lo, MAX(chunk_index) AS hi "
+                    "FROM UnvectorizedMediaChunks "
+                    "WHERE media_id = ? AND deleted = 0 AND chunk_type IS NULL",
+                    (media_id,),
+                )
+                .fetchone()
+            )
         else:
-            row = self._media_db.get_connection().execute(
-                "SELECT MIN(chunk_index) AS lo, MAX(chunk_index) AS hi "
-                "FROM UnvectorizedMediaChunks "
-                "WHERE media_id = ? AND deleted = 0 AND chunk_type = ?",
-                (media_id, chunk_type),
-            ).fetchone()
+            row = (
+                self._media_db.get_connection()
+                .execute(
+                    "SELECT MIN(chunk_index) AS lo, MAX(chunk_index) AS hi "
+                    "FROM UnvectorizedMediaChunks "
+                    "WHERE media_id = ? AND deleted = 0 AND chunk_type = ?",
+                    (media_id, chunk_type),
+                )
+                .fetchone()
+            )
         if row is None or row["lo"] is None:
             return None
         return int(row["lo"]), int(row["hi"])
@@ -472,9 +480,7 @@ class LocalMediaChunkToolService:
             )
 
         page = nodes[offset : offset + max_nodes]
-        payload_nodes = [
-            self._structure_node(node, span_rows) for node in page
-        ]
+        payload_nodes = [self._structure_node(node, span_rows) for node in page]
         has_more = offset + len(page) < pageable_total
 
         if not chunk_rows:
@@ -501,7 +507,9 @@ class LocalMediaChunkToolService:
         }
 
     @staticmethod
-    def _structure_node(node: Mapping[str, Any], span_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def _structure_node(
+        node: Mapping[str, Any], span_rows: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """One navigation node in the structure payload shape (spec §4.1)."""
         title, _ = normalize_display_text(
             node.get("title"), max_bytes=DISPLAY_NAME_MAX_BYTES
@@ -517,9 +525,7 @@ class LocalMediaChunkToolService:
                 int(end) if end is not None else None,
             ],
         }
-        chunk_span = LocalMediaChunkToolService._chunk_span_for(
-            start, end, span_rows
-        )
+        chunk_span = LocalMediaChunkToolService._chunk_span_for(start, end, span_rows)
         if chunk_span is not None:
             payload["chunk_span"] = chunk_span
         return payload
@@ -678,15 +684,18 @@ class LocalMediaChunkToolService:
 
     @staticmethod
     def _json_safe_chunk(chunk: Mapping[str, Any]) -> dict[str, Any]:
-        return {key: chunk[key] for key in (
-            "chunk_index",
-            "chunk_type",
-            "text",
-            "start_char",
-            "end_char",
-            "word_count",
-            "metadata",
-        )}
+        return {
+            key: chunk[key]
+            for key in (
+                "chunk_index",
+                "chunk_type",
+                "text",
+                "start_char",
+                "end_char",
+                "word_count",
+                "metadata",
+            )
+        }
 
     # -- library_list_chunk_specs / library_save_chunk_spec (spec §4.3) ------
 
@@ -808,9 +817,7 @@ class LocalMediaChunkToolService:
         if self._policy_enforcer is None:
             return
         try:
-            self._policy_enforcer.require_allowed(
-                action_id=SPEC_SAVE_POLICY_ACTION_ID
-            )
+            self._policy_enforcer.require_allowed(action_id=SPEC_SAVE_POLICY_ACTION_ID)
         except PolicyDeniedError as exc:
             raise LibraryToolError(
                 ERROR_FEATURE_UNAVAILABLE,
@@ -818,15 +825,13 @@ class LocalMediaChunkToolService:
                 f" policy ({SPEC_SAVE_POLICY_ACTION_ID}): {exc.user_message}",
                 details={
                     "policy_action": SPEC_SAVE_POLICY_ACTION_ID,
-                    "reason_code": str(
-                        getattr(exc, "reason_code", "authority_denied")
-                    ),
+                    "reason_code": str(getattr(exc, "reason_code", "authority_denied")),
                 },
             ) from exc
 
     @staticmethod
     def _validate_spec_save_arguments(
-        arguments: Mapping[str, Any]
+        arguments: Mapping[str, Any],
     ) -> tuple[str, str | None, list[str] | None]:
         """Type-check the save args; returns ``(name, description, tags)``.
 
@@ -1023,9 +1028,7 @@ class LocalMediaChunkToolService:
         if self._policy_enforcer is None:
             return
         try:
-            self._policy_enforcer.require_allowed(
-                action_id=RECHUNK_POLICY_ACTION_ID
-            )
+            self._policy_enforcer.require_allowed(action_id=RECHUNK_POLICY_ACTION_ID)
         except PolicyDeniedError as exc:
             raise LibraryToolError(
                 ERROR_FEATURE_UNAVAILABLE,
@@ -1034,9 +1037,7 @@ class LocalMediaChunkToolService:
                 f" {exc.user_message}",
                 details={
                     "policy_action": RECHUNK_POLICY_ACTION_ID,
-                    "reason_code": str(
-                        getattr(exc, "reason_code", "authority_denied")
-                    ),
+                    "reason_code": str(getattr(exc, "reason_code", "authority_denied")),
                 },
             ) from exc
 

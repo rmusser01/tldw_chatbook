@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from .assistant_generation_state import normalize_assistant_generation_state
+
 # One object, re-imported from the stdlib-only leaf (TASK-23020): Chat-leg
 # modules (console_exchange_export and the exchange export dialog) read the
 # profile vocabulary from `trace_export_profiles` so a single-name import
@@ -790,6 +791,7 @@ def _upsert_field_decision(
         decisions.append(decision)
     else:
         decisions[existing_index] = decision
+
 
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 

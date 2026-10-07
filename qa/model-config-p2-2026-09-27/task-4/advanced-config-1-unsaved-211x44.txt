@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Advanced Config
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Validate, then Save · 1 unsaved | Draft kept when you leave; use raw editor controls.                              │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Advanced Config                                                                                                           │  │  │ Selected category: Advanced Config      │
+│                              │  │  │  ▶ Raw editing guide                                                                                                       │  │  │ Unsaved changes                         │
+│  Core                        │  │  │                                                                                                                            │  │  │  Guided edits: use Raw TOML controls.   │
+│     Overview (view)          │  │  │                                                                                                                            │  │  │ Local-only: saves write your config     │
+│     Providers & Models       │  │  │                      Validate Raw TOML                                              Save Raw TOML                          │  │  │ file.                                   │
+│     Web Search               │  │  │                         Load Backup                                                Revert Raw TOML                         │  │  │ Impact and boundaries                   │
+│     Speech & TTS             │  │  │ Not validated.                                                                                                             │  │  │ Raw TOML view and expert configuration  │
+│  Interface                   │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │ editing.                                │
+│     Appearance               │  │  │ │ config_schema_version = 1                                                                                              │ │  │  │  Runtime owner: Settings advanced       │
+│     Theme                    │  │  │ │  # t4                                                                                                                  │ │  │  │  editor                                 │
+│     Splash Screen            │  │  │ │ [general]                                                                                                              │ │  │  │                                         │
+│     Console Behavior         │  │  │ │ default_tab = "chat"                                                                                                   │ │  │  │  Writes allowed: Yes                    │
+│  Data & Privacy              │  │  │ │ focus_mode = false                                                                                                     │ │  │  │                                         │
+│     Storage                  │  │  │ │ default_theme = "textual-dark"                                                                                         │ │  │  │  Owns: raw TOML                         │
+│     Workspaces               │  │  │ │ palette_theme_limit = 1                                                                                                │ │  │  │                                         │
+│     Tool Profiles            │  │  │ │ log_level = "INFO"                                                                                                     │ │  │  │  Affected config: raw TOML for every    │
+│     Privacy & Security       │  │  │ │ users_name = "verify_t33002_4"                                                                                         │ │  │  │  loaded configuration section           │
+│     Network                  │  │  │ │ shutdown_grace_seconds = 120.0                                                                                         │ │  │  │                                         │
+│     My Profile               │  │  │ │                                                                                                                        │ │  │  │  Recovery: validate current text, save  │
+│  Troubleshooting             │  │  │ │ [console]                                                                                                              │ │  │  │  atomically, then restore from backup   │
+│     Diagnostics (view)       │  │  │ │ collapse_large_pastes = true                                                                                           │ │  │  │  if needed                              │
+│     About (view)             │  │  │ │ show_model_thinking = true                                                                                             │ │  │  │                                         │
+│     Agents                   │  │  │ │ thinking_history_policy_default = "auto"                                                                               │ │  │  │  Boundary: save is blocked until the    │
+│  Expert                      │  │  │ │ reasoning_history = "auto"                                                                                             │ │  │  │  exact current text validates           │
+│     Internal Prompts         │  │  │ │ stack_collapsed_rail_labels = false                                                                                    │ │  │  │                                         │
+│   > Advanced Config *        │  │  │ │ rail_layout_scope = "global"                                                                                           │ │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │ │ assistant_library_access_default = false                                                                               │ │  │  │                                         │
+│                              │  │  │ │ paste_collapse_threshold = 50                                                                                          │ │  │  │                                         │
+│                              │  │  │ │ local_tools_enabled = true                                                                                             │ │  │  │                                         │
+│                              │  │  │ │ interrupt_bell = true                                                                                                  │ │  │  │                                         │
+│                              │  │  │ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │                                         │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  Esc, r revert raw draft | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

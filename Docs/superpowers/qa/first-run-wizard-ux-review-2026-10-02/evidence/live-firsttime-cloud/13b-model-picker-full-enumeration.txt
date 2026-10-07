@@ -1,0 +1,21 @@
+# OpenAI model picker contents (20 entries, wraps after the 20th), walked with Down x150 from the live wizard. Index order from the recommended entry:
+1. tts-1-hd-1106   (recommended)
+2. gpt-realtime-mini
+3. gpt-4o-transcribe-diarize
+4. o3-mini-2025-01-31
+5. o4-mini-deep-research
+6. gpt-5.4
+7. gpt-5-codex
+8. gpt-audio-1.5
+9. gpt-image-1-mini
+10. gpt-4-0613
+11. gpt-4o-search-preview-2025-03-11
+12. tts-1
+13. omni-moderation-2024-09-26
+14. gpt-4-turbo-2024-04-09
+15. gpt-realtime-2.1-mini
+16. gpt-realtime-2025-08-28
+17. gpt-live-transcribe
+18. gpt-3.5-turbo-0125
+19. gpt-5-mini
+20. gpt-5.4-2026-03-05

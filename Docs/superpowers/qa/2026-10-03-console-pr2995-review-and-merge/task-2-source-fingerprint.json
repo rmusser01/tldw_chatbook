@@ -1,0 +1,16 @@
+{
+  "base": "bc7c2dde9febfd93cbc3bc115c8cbc61c3ee752b",
+  "source_commit": "0d2e581ba96ef00adb02e2c800cd449582f8a629",
+  "parent": "bc7c2dde9febfd93cbc3bc115c8cbc61c3ee752b",
+  "tree": "7df8040caa0af034f67ff1c827116580cb2476de",
+  "paths": {
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "git_blob": "817dcc0c4a2e365f3ff8ca66ee29669b614e9078",
+      "sha256": "df2496a5ad4874bf4af1e2111809b19a6470ff787e2b9e312be9aeadb12da26b"
+    },
+    "Docs/User_Guide/console/agent-runs-and-tools.md": {
+      "git_blob": "d210a6b2d65c4c57adcb86ec8d8cfac39e6ee471",
+      "sha256": "b2a16d2efaef534a341fcfc5bd112b014e3d9ecc554ea3141a741a2f1f56610f"
+    }
+  }
+}

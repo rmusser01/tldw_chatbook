@@ -10,8 +10,18 @@ import pytest
 import pytest_asyncio
 import toml
 
-from textual.widgets import Button, Checkbox, Input, Label, Select, Static, Switch, TextArea
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Input,
+    Label,
+    Select,
+    Static,
+    Switch,
+    TextArea,
+)
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
 import tldw_chatbook.app as app_module
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
@@ -19,11 +29,13 @@ from tldw_chatbook.UI.Tools_Settings_Window import ToolsSettingsWindow
 from tldw_chatbook.UI.Outputs_Panel import OutputsPanel
 from tldw_chatbook.UI.Sharing_Panel import SharingPanel
 from tldw_chatbook.UI.Screens.tools_settings_screen import ToolsSettingsScreen
+
 # Import DEFAULT_CONFIG_PATH to be monkeypatched, and the function that uses it
 import tldw_chatbook.config
 
 # Import test utilities
 import sys
+
 sys.path.append(str(Path(__file__).parent.parent))
 from db_test_utilities import TestDatabaseSchema
 
@@ -105,7 +117,7 @@ def mock_config_path(monkeypatch, temp_config_path: Path):
     default_initial_content = {"initial_setting": "default_value"}
     create_dummy_config(temp_config_path, default_initial_content)
 
-    monkeypatch.setattr(tldw_chatbook.config, 'DEFAULT_CONFIG_PATH', temp_config_path)
+    monkeypatch.setattr(tldw_chatbook.config, "DEFAULT_CONFIG_PATH", temp_config_path)
 
     # `_get_effective_config_path()` (the function every read/write path in
     # this module actually calls -- `load_cli_config_and_ensure_existence`,
@@ -126,7 +138,7 @@ def mock_config_path(monkeypatch, temp_config_path: Path):
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 @pytest.fixture
@@ -136,7 +148,9 @@ def mock_app_instance():
 
 
 @pytest_asyncio.fixture
-async def settings_window(mock_app_instance, temp_config_path: Path) -> ToolsSettingsWindow:
+async def settings_window(
+    mock_app_instance, temp_config_path: Path
+) -> ToolsSettingsWindow:
     """
     Fixture to create ToolsSettingsWindow, mount it within a test app,
     and ensure it uses the temporary config path.
@@ -154,12 +168,15 @@ async def settings_window(mock_app_instance, temp_config_path: Path) -> ToolsSet
         yield window
 
 
-
-
 @pytest.mark.asyncio
-async def test_load_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path):
+async def test_load_config_values(
+    settings_window: ToolsSettingsWindow, temp_config_path: Path
+):
     """Test if configuration values are loaded and displayed correctly."""
-    expected_config_content = {"general": {"model": "gpt-4"}, "api_keys": {"openai": "sk-..."}}
+    expected_config_content = {
+        "general": {"model": "gpt-4"},
+        "api_keys": {"openai": "sk-..."},
+    }
     create_dummy_config(temp_config_path, expected_config_content)
 
     # Force reload within the window or re-initialize to pick up new config
@@ -178,8 +195,12 @@ async def test_load_config_values(settings_window: ToolsSettingsWindow, temp_con
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
 
     # To ensure it loads the *expected_config_content* and not initial_window_config:
-    reloaded_config = tldw_chatbook.config.load_cli_config_and_ensure_existence(force_reload=True)
-    config_text_area.text = toml.dumps(reloaded_config)  # Manually set text after explicit load
+    reloaded_config = tldw_chatbook.config.load_cli_config_and_ensure_existence(
+        force_reload=True
+    )
+    config_text_area.text = toml.dumps(
+        reloaded_config
+    )  # Manually set text after explicit load
 
     assert config_text_area.text.strip() != ""
     loaded_text_area_config = toml.loads(config_text_area.text)
@@ -188,7 +209,9 @@ async def test_load_config_values(settings_window: ToolsSettingsWindow, temp_con
 
 
 @pytest.mark.asyncio
-async def test_save_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance):
+async def test_save_config_values(
+    settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance
+):
     """Test if configuration values can be saved correctly."""
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
     save_button = settings_window.query_one("#save-config-button", Button)
@@ -211,7 +234,9 @@ async def test_save_config_values(settings_window: ToolsSettingsWindow, temp_con
 
 
 @pytest.mark.asyncio
-async def test_reload_config_values(settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance):
+async def test_reload_config_values(
+    settings_window: ToolsSettingsWindow, temp_config_path: Path, mock_app_instance
+):
     """Test if configuration values can be reloaded correctly."""
     # 1. Setup initial config on disk
     original_disk_config = {"settings": {"feature_x": True, "version": 1}}
@@ -225,27 +250,35 @@ async def test_reload_config_values(settings_window: ToolsSettingsWindow, temp_c
     # Press reload to make sure it's showing original_disk_config
     await settings_window.on_button_pressed(Button.Pressed(reload_button))
     mock_app_instance.notify.assert_called_with("Configuration reloaded.")
-    assert toml.loads(config_text_area.text)["settings"] == original_disk_config[
-        "settings"
-    ]
+    assert (
+        toml.loads(config_text_area.text)["settings"]
+        == original_disk_config["settings"]
+    )
 
     # 3. Modify the TextArea to simulate user changes (these are not saved yet)
     user_modified_text_dict = {"settings": {"feature_x": False, "version": 2}}
     config_text_area.text = toml.dumps(user_modified_text_dict)
-    assert toml.loads(config_text_area.text) == user_modified_text_dict  # Verify change in TextArea
+    assert (
+        toml.loads(config_text_area.text) == user_modified_text_dict
+    )  # Verify change in TextArea
 
     # 4. Simulate reload button press again
     await settings_window.on_button_pressed(Button.Pressed(reload_button))
-    mock_app_instance.notify.assert_called_with("Configuration reloaded.")  # Called again
+    mock_app_instance.notify.assert_called_with(
+        "Configuration reloaded."
+    )  # Called again
 
     # 5. Verify TextArea content is reverted to original_disk_config (ignoring user_modified_text_dict)
-    assert toml.loads(config_text_area.text)["settings"] == original_disk_config[
-        "settings"
-    ]
+    assert (
+        toml.loads(config_text_area.text)["settings"]
+        == original_disk_config["settings"]
+    )
 
 
 @pytest.mark.asyncio
-async def test_save_invalid_toml_format(settings_window: ToolsSettingsWindow, mock_app_instance):
+async def test_save_invalid_toml_format(
+    settings_window: ToolsSettingsWindow, mock_app_instance
+):
     """Test saving invalid TOML data reports an error."""
     config_text_area = settings_window.query_one("#config-text-area", TextArea)
     save_button = settings_window.query_one("#save-config-button", Button)
@@ -304,6 +337,7 @@ async def test_save_io_error(
 # write atomically, matching TASK-851's three encryption entry points.
 # ===========================================
 
+
 @pytest.mark.asyncio
 async def test_save_raw_toml_config_writes_effective_path_not_default_decoy(
     monkeypatch, tmp_path
@@ -327,7 +361,6 @@ async def test_save_raw_toml_config_writes_effective_path_not_default_decoy(
 
     app = _build_full_tools_app()
     async with _mounted_tools_window(app) as (window, _pilot):
-
         config_text_area = window.query_one("#config-text-area", TextArea)
         new_config_dict = {"user": {"name": "profile_user"}}
         config_text_area.text = toml.dumps(new_config_dict)
@@ -359,9 +392,10 @@ async def test_save_raw_toml_config_is_atomic_on_serialization_failure(
     content -- or a raised exception -- ever reaches the file).
     """
     initial_config = {"initial": "value", "user": {"name": "before"}}
-    async with mount_settings_window(
-        initial_config, temp_config_path, monkeypatch
-    ) as (window, pilot):
+    async with mount_settings_window(initial_config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         original_bytes = temp_config_path.read_bytes()
 
         config_text_area = window.query_one("#config-text-area", TextArea)
@@ -404,7 +438,6 @@ async def test_save_raw_toml_config_roundtrips_with_no_profile_override(
 
     app = _build_full_tools_app()
     async with _mounted_tools_window(app) as (window, _pilot):
-
         config_text_area = window.query_one("#config-text-area", TextArea)
         new_config_dict = {"user": {"name": "default_user"}}
         config_text_area.text = toml.dumps(new_config_dict)
@@ -549,7 +582,9 @@ async def test_web_deep_search_switch_off_round_trips_to_false_on_save(
     switch = settings_window.query_one(
         f"#tool-switch-{WEB_DEEP_SEARCH_TOOL_NAME}", Switch
     )
-    switch.value = True  # flip ON first so OFF below is a genuine change, not a no-op default
+    switch.value = (
+        True  # flip ON first so OFF below is a genuine change, not a no-op default
+    )
     switch.value = False
 
     save_button = settings_window.query_one("#save-tool-settings", Button)
@@ -582,6 +617,7 @@ async def test_web_deep_search_switch_resets_to_off(
 # Database Tools Tests
 # ===========================================
 
+
 @pytest.fixture
 def test_db_dir(tmp_path):
     """Create a directory with test databases."""
@@ -590,8 +626,9 @@ def test_db_dir(tmp_path):
 
     # Create test databases with sample data
     databases = {
-        'ChaChaNotes.db': TestDatabaseSchema.CONVERSATIONS_SCHEMA + TestDatabaseSchema.MESSAGES_SCHEMA,
-        'Client_Media_DB.db': """
+        "ChaChaNotes.db": TestDatabaseSchema.CONVERSATIONS_SCHEMA
+        + TestDatabaseSchema.MESSAGES_SCHEMA,
+        "Client_Media_DB.db": """
             CREATE TABLE IF NOT EXISTS media (
                 id INTEGER PRIMARY KEY,
                 title TEXT,
@@ -599,7 +636,7 @@ def test_db_dir(tmp_path):
             );
             INSERT INTO media (title, content) VALUES ('Test Media', 'Content');
         """,
-        'Prompts_DB.db': """
+        "Prompts_DB.db": """
             CREATE TABLE IF NOT EXISTS prompts (
                 id INTEGER PRIMARY KEY,
                 name TEXT,
@@ -607,29 +644,29 @@ def test_db_dir(tmp_path):
             );
             INSERT INTO prompts (name, content) VALUES ('Test Prompt', 'Content');
         """,
-        'Evals_DB.db': """
+        "Evals_DB.db": """
             CREATE TABLE IF NOT EXISTS evaluations (
                 id INTEGER PRIMARY KEY,
                 name TEXT,
                 score REAL
             );
         """,
-        'RAG_Indexing_DB.db': """
+        "RAG_Indexing_DB.db": """
             CREATE TABLE IF NOT EXISTS embeddings (
                 id INTEGER PRIMARY KEY,
                 content TEXT,
                 vector BLOB
             );
         """,
-        'Subscriptions_DB.db': """
+        "Subscriptions_DB.db": """
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id INTEGER PRIMARY KEY,
                 name TEXT,
                 url TEXT
             );
-        """
+        """,
     }
-    
+
     db_paths = {}
     for db_name, schema in databases.items():
         db_path = db_dir / db_name
@@ -639,8 +676,8 @@ def test_db_dir(tmp_path):
         conn.execute("PRAGMA user_version = 1")
         conn.commit()
         conn.close()
-        db_paths[db_name.replace('.db', '')] = str(db_path)
-    
+        db_paths[db_name.replace(".db", "")] = str(db_path)
+
     return db_dir, db_paths
 
 
@@ -648,35 +685,17 @@ def test_db_dir(tmp_path):
 def mock_database_path_lookup(test_db_dir, monkeypatch):
     """Mock the database path lookup functions."""
     db_dir, db_paths = test_db_dir
-    
+
     def mock_get_db_path(db_name):
         return db_paths.get(db_name, str(db_dir / f"{db_name}.db"))
-    
+
     # Mock the app instance's database path method
     monkeypatch.setattr(
         "tldw_chatbook.UI.Tools_Settings_Window.ToolsSettingsWindow._get_database_path",
-        mock_get_db_path
+        mock_get_db_path,
     )
-    
+
     return db_paths
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -770,7 +789,9 @@ def test_retired_database_tool_operations_are_absent():
 
 
 @pytest.mark.asyncio
-async def test_create_chatbook_button(settings_window: ToolsSettingsWindow, mock_app_instance):
+async def test_create_chatbook_button(
+    settings_window: ToolsSettingsWindow, mock_app_instance
+):
     """Test that chatbook creation button exists and works."""
     # Find the create chatbook button
     create_button = settings_window.query_one("#db-create-chatbook", Button)
@@ -802,7 +823,6 @@ async def test_tools_settings_window_no_longer_exposes_unified_mcp_view():
     """
     app = _build_full_tools_app()
     async with _mounted_tools_window(app) as (window, _pilot):
-
         assert not window.query("#ts-nav-unified-mcp")
         assert not window.query("#ts-view-unified-mcp")
         assert not window.query("#unified-mcp-panel")
@@ -855,7 +875,9 @@ def _mcp_retirement_offense(py_file: Path) -> str | None:
                 return f"from {node.module} import ... (line {node.lineno})"
             for alias in node.names:
                 if alias.name in _RETIRED_MCP_SYMBOL_NAMES:
-                    return f"from {node.module} import {alias.name} (line {node.lineno})"
+                    return (
+                        f"from {node.module} import {alias.name} (line {node.lineno})"
+                    )
         elif isinstance(node, ast.Name) and node.id in _RETIRED_MCP_SYMBOL_NAMES:
             return f"reference to {node.id} (line {node.lineno})"
         elif isinstance(node, ast.Attribute) and node.attr in _RETIRED_MCP_SYMBOL_NAMES:
@@ -885,8 +907,16 @@ def test_unified_mcp_panel_modules_have_zero_importers_repo_wide():
             if offense is not None:
                 offenders.append(f"{py_file.relative_to(project_root)}: {offense}")
     assert offenders == [], f"stray references to retired MCP modules: {offenders}"
-    assert not (project_root / "tldw_chatbook" / "UI" / "MCP_Modules" / "unified_mcp_panel.py").exists()
-    assert not (project_root / "tldw_chatbook" / "UI" / "MCP_Modules" / "unified_mcp_sections.py").exists()
+    assert not (
+        project_root / "tldw_chatbook" / "UI" / "MCP_Modules" / "unified_mcp_panel.py"
+    ).exists()
+    assert not (
+        project_root
+        / "tldw_chatbook"
+        / "UI"
+        / "MCP_Modules"
+        / "unified_mcp_sections.py"
+    ).exists()
     assert not (project_root / "Tests" / "UI" / "test_unified_mcp_panel.py").exists()
 
 
@@ -942,17 +972,30 @@ async def test_sharing_panel_rejects_local_mode_with_explicit_guidance():
 
         assert panel.query_one("#sharing-disabled", Static).display is True
         assert panel.query_one("#sharing-main").display is False
-        assert panel.query_one("#sharing-create-workspace-share-btn", Button).disabled is True
+        assert (
+            panel.query_one("#sharing-create-workspace-share-btn", Button).disabled
+            is True
+        )
 
 
 @pytest.mark.asyncio
 async def test_sharing_panel_routes_server_workspace_share_and_token_operations():
     scope_service = MagicMock()
-    scope_service.share_workspace = AsyncMock(return_value={"id": "server:share:7", "access_level": "view_chat"})
-    scope_service.list_workspace_shares = AsyncMock(return_value={"shares": [{"id": "server:share:7"}], "total": 1})
-    scope_service.create_share_token = AsyncMock(return_value={"id": "server:share_token:5", "raw_token": "raw-token"})
-    scope_service.list_share_tokens = AsyncMock(return_value={"tokens": [{"id": "server:share_token:5"}], "total": 1})
-    scope_service.list_shared_with_me = AsyncMock(return_value={"items": [{"id": "server:share:9"}], "total": 1})
+    scope_service.share_workspace = AsyncMock(
+        return_value={"id": "server:share:7", "access_level": "view_chat"}
+    )
+    scope_service.list_workspace_shares = AsyncMock(
+        return_value={"shares": [{"id": "server:share:7"}], "total": 1}
+    )
+    scope_service.create_share_token = AsyncMock(
+        return_value={"id": "server:share_token:5", "raw_token": "raw-token"}
+    )
+    scope_service.list_share_tokens = AsyncMock(
+        return_value={"tokens": [{"id": "server:share_token:5"}], "total": 1}
+    )
+    scope_service.list_shared_with_me = AsyncMock(
+        return_value={"items": [{"id": "server:share:9"}], "total": 1}
+    )
     app = _build_full_tools_app(
         runtime_backend="server",
         sharing_scope_service=scope_service,
@@ -1031,7 +1074,10 @@ async def test_outputs_panel_rejects_local_mode_with_explicit_guidance():
 async def test_outputs_panel_routes_server_template_and_artifact_operations():
     scope_service = MagicMock()
     scope_service.list_output_templates = AsyncMock(
-        return_value={"items": [{"id": "server:output_template:7", "name": "Weekly Briefing"}], "total": 1}
+        return_value={
+            "items": [{"id": "server:output_template:7", "name": "Weekly Briefing"}],
+            "total": 1,
+        }
     )
     scope_service.create_output_template = AsyncMock(
         return_value={"id": "server:output_template:7", "name": "Weekly Briefing"}
@@ -1040,10 +1086,19 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
         return_value={"entity_kind": "output_template_preview", "rendered": "# Preview"}
     )
     scope_service.list_outputs = AsyncMock(
-        return_value={"items": [{"id": "server:output:11", "title": "Weekly Briefing"}], "total": 1, "page": 1, "size": 10}
+        return_value={
+            "items": [{"id": "server:output:11", "title": "Weekly Briefing"}],
+            "total": 1,
+            "page": 1,
+            "size": 10,
+        }
     )
     scope_service.create_output = AsyncMock(
-        return_value={"id": "server:output:11", "entity_kind": "output_render_result", "title": "Weekly Briefing"}
+        return_value={
+            "id": "server:output:11",
+            "entity_kind": "output_render_result",
+            "title": "Weekly Briefing",
+        }
     )
     scope_service.delete_output = AsyncMock(
         return_value={"entity_kind": "output_delete", "success": True, "output_id": 11}
@@ -1064,7 +1119,9 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
         panel.query_one("#outputs-template-name", Input).value = "Weekly Briefing"
         panel.query_one("#outputs-template-type", Select).value = "briefing_markdown"
         panel.query_one("#outputs-template-format", Select).value = "md"
-        panel.query_one("#outputs-template-description", Input).value = "Render a weekly markdown briefing"
+        panel.query_one(
+            "#outputs-template-description", Input
+        ).value = "Render a weekly markdown briefing"
         panel.query_one("#outputs-template-body", TextArea).text = "# {{ job.name }}"
         panel.query_one("#outputs-template-default", Checkbox).value = True
         panel.query_one("#outputs-preview-template-id", Input).value = "7"
@@ -1078,7 +1135,9 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
         panel.query_one("#outputs-artifact-page", Input).value = "1"
         panel.query_one("#outputs-artifact-size", Input).value = "10"
         panel.query_one("#outputs-artifact-run-id", Input).value = "77"
-        panel.query_one("#outputs-artifact-workspace-tag", Input).value = "workspace:demo"
+        panel.query_one(
+            "#outputs-artifact-workspace-tag", Input
+        ).value = "workspace:demo"
         panel.query_one("#outputs-create-template-id", Input).value = "7"
         panel.query_one("#outputs-create-item-ids", Input).value = "1,2"
         panel.query_one("#outputs-create-title", Input).value = "Weekly Briefing"
@@ -1135,17 +1194,24 @@ async def test_outputs_panel_routes_server_template_and_artifact_operations():
             delete_file=True,
         )
         rendered_status = str(panel.query_one("#outputs-status", Static).render())
-        assert "server:output:11" in rendered_status or "output_delete" in rendered_status
+        assert (
+            "server:output:11" in rendered_status or "output_delete" in rendered_status
+        )
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_config_path):
+async def test_chat_api_key_field_prefilled_for_config_key(
+    monkeypatch, temp_config_path
+):
     config = {
         "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {"openai": {"api_key": "test-configured-key"}},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.password is True
         assert field.value == "test-configured-key"
@@ -1153,26 +1219,36 @@ async def test_chat_api_key_field_prefilled_for_config_key(monkeypatch, temp_con
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_field_disabled_for_keyless_provider(monkeypatch, temp_config_path):
+async def test_chat_api_key_field_disabled_for_keyless_provider(
+    monkeypatch, temp_config_path
+):
     config = {
         "providers": {"Ollama": ["llama3"], "OpenAI": ["gpt-4o"]},
         "chat_defaults": {"provider": "Ollama", "model": "llama3"},
         "api_settings": {},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.disabled is True
         assert "No API key needed" in field.placeholder
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_config_path):
+async def test_chat_api_key_field_reloads_on_provider_change(
+    monkeypatch, temp_config_path
+):
     config = {
         "providers": {"OpenAI": ["gpt-4o"], "Ollama": ["llama3"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {"openai": {"api_key": "test-configured-key"}},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.value == "test-configured-key"
 
@@ -1184,13 +1260,18 @@ async def test_chat_api_key_field_reloads_on_provider_change(monkeypatch, temp_c
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_save_writes_config_and_updates_live_config(monkeypatch, temp_config_path):
+async def test_chat_api_key_save_writes_config_and_updates_live_config(
+    monkeypatch, temp_config_path
+):
     config = {
         "providers": {"OpenAI": ["gpt-4o"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         window.app_instance.app_config = {"api_settings": {}}
         window.query_one("#general-chat-api-key", Input).value = "test-brand-new-key"
 
@@ -1202,7 +1283,10 @@ async def test_chat_api_key_save_writes_config_and_updates_live_config(monkeypat
         assert written["api_settings"]["openai"]["api_key"] == "test-brand-new-key"
 
         # Live app config updated in place (no restart needed)
-        assert window.app_instance.app_config["api_settings"]["openai"]["api_key"] == "test-brand-new-key"
+        assert (
+            window.app_instance.app_config["api_settings"]["openai"]["api_key"]
+            == "test-brand-new-key"
+        )
 
 
 @pytest.mark.asyncio
@@ -1212,7 +1296,10 @@ async def test_chat_api_key_save_skips_blank(monkeypatch, temp_config_path):
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         window.app_instance.app_config = {"api_settings": {}}
         window.query_one("#general-chat-api-key", Input).value = "   "
         assert window._save_chat_api_key() is False
@@ -1221,14 +1308,19 @@ async def test_chat_api_key_save_skips_blank(monkeypatch, temp_config_path):
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_field_clears_when_provider_blanked(monkeypatch, temp_config_path):
+async def test_chat_api_key_field_clears_when_provider_blanked(
+    monkeypatch, temp_config_path
+):
     """Blanking the provider must clear the field, not leave the prior key visible."""
     config = {
         "providers": {"OpenAI": ["gpt-4o"]},
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-4o"},
         "api_settings": {"openai": {"api_key": "test-configured-key"}},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         field = window.query_one("#general-chat-api-key", Input)
         assert field.value == "test-configured-key"
 
@@ -1242,7 +1334,9 @@ async def test_chat_api_key_field_clears_when_provider_blanked(monkeypatch, temp
 
 
 @pytest.mark.asyncio
-async def test_chat_api_key_save_pushes_decrypted_key_to_live_config_when_encrypted(monkeypatch, temp_config_path):
+async def test_chat_api_key_save_pushes_decrypted_key_to_live_config_when_encrypted(
+    monkeypatch, temp_config_path
+):
     """With config encryption on, the live app_config must receive the DECRYPTED
     key, never the on-disk ciphertext (which chat would send verbatim and fail)."""
     # A session password unlocks the field and enables encrypt-on-write.
@@ -1253,7 +1347,10 @@ async def test_chat_api_key_save_pushes_decrypted_key_to_live_config_when_encryp
         "api_settings": {},
         "encryption": {"enabled": True},
     }
-    async with mount_settings_window(config, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window(config, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         window.app_instance.app_config = {"api_settings": {}}
         window.query_one("#general-chat-api-key", Input).value = "test-secret-live-key"
 
@@ -1351,7 +1448,10 @@ async def test_get_database_path_resolves_via_config_resolvers_and_honours_profi
         get_user_folder_name,
     )
 
-    async with mount_settings_window({}, temp_config_path, monkeypatch) as (window, pilot):
+    async with mount_settings_window({}, temp_config_path, monkeypatch) as (
+        window,
+        pilot,
+    ):
         expected = {
             "chachanotes": get_chachanotes_db_path(),
             "media": get_media_db_path(),
@@ -1693,7 +1793,9 @@ async def test_export_conversations_fails_loudly_for_unresolvable_chachanotes(
         calls = window.app_instance.notify.call_args_list
         assert calls, "no notification at all for an unresolvable export database"
         error_calls = _notify_calls_with_severity(window.app_instance.notify, "error")
-        assert error_calls, f"unresolvable ChaChaNotes database was not reported: {calls}"
+        assert error_calls, (
+            f"unresolvable ChaChaNotes database was not reported: {calls}"
+        )
         assert not _notify_calls_with_severity(window.app_instance.notify, "success"), (
             f"export falsely reported success despite an unresolvable database: {calls}"
         )
@@ -1911,13 +2013,11 @@ def test_compose_and_reset_database_config_form_reuse_the_resolver_helper():
     ]
     for source, label in ((compose_source, "compose"), (reset_source, "reset")):
         assert "_resolved_db_path_display" in source, (
-            f"_{label}_database_config_form no longer reuses "
-            "_resolved_db_path_display"
+            f"_{label}_database_config_form no longer reuses _resolved_db_path_display"
         )
         for literal in disagreeing_literals:
             assert literal not in source, (
-                f"stale hardcoded literal {literal!r} still present in "
-                f"{label} form"
+                f"stale hardcoded literal {literal!r} still present in {label} form"
             )
 
     # Strip comment-only lines first: a stale explanatory comment mentioning
@@ -2043,9 +2143,7 @@ async def test_reset_then_save_discards_a_previously_configured_override(
         assert not _notify_calls_with_severity(window.app_instance.notify, "error"), (
             window.app_instance.notify.call_args_list
         )
-        assert (
-            "chachanotes_db_path" not in _read_raw_effective_database_section()
-        ), (
+        assert "chachanotes_db_path" not in _read_raw_effective_database_section(), (
             "Reset then Save must clear the previously configured override, "
             "not reinstate it"
         )
@@ -2079,8 +2177,7 @@ async def test_save_database_config_form_persists_a_genuine_custom_path(
         )
         stored = _read_raw_effective_database_section().get("prompts_db_path")
         assert stored == str(custom_path), (
-            "a genuine custom path must be persisted verbatim on disk, got "
-            f"{stored!r}"
+            f"a genuine custom path must be persisted verbatim on disk, got {stored!r}"
         )
         assert get_prompts_db_path() == custom_path.expanduser().resolve()
 
@@ -2114,9 +2211,7 @@ async def test_save_without_editing_then_switching_profile_still_moves_resolved_
             window.app_instance.notify.call_args_list
         )
 
-        assert save_setting_to_cli_config(
-            "general", "users_name", "second_profile_927"
-        )
+        assert save_setting_to_cli_config("general", "users_name", "second_profile_927")
         assert get_user_folder_name() == "second_profile_927"
         assert get_user_folder_name() != original_profile
 

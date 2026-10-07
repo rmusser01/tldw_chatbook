@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from textual.widgets import Button
 
+from Tests.app_module_patches import set_app_global
 import tldw_chatbook.app as app_module
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_chat_models import (
@@ -96,15 +97,19 @@ class _BlockingProviderGateway:
         self._block_forever = asyncio.Event()
 
     async def resolve_for_send(self, selection) -> ConsoleProviderResolution:
-        return with_destination(ConsoleProviderResolution(
-            provider=selection.provider,
-            base_url="",
-            model=(
-                selection.explicit_model or selection.configured_model or "gpt-task-650"
-            ),
-            ready=True,
-            execution_key="openai",
-        ))
+        return with_destination(
+            ConsoleProviderResolution(
+                provider=selection.provider,
+                base_url="",
+                model=(
+                    selection.explicit_model
+                    or selection.configured_model
+                    or "gpt-task-650"
+                ),
+                ready=True,
+                execution_key="openai",
+            )
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         del resolution, messages
@@ -124,7 +129,7 @@ def _disable_splash(monkeypatch: pytest.MonkeyPatch) -> None:
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 def _production_app(monkeypatch: pytest.MonkeyPatch) -> TldwCli:

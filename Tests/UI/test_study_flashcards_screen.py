@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_study_dashboard import DashboardQuizScopeService
 import tldw_chatbook.app as app_module
@@ -428,7 +429,7 @@ def _disable_full_app_splash(monkeypatch: pytest.MonkeyPatch) -> None:
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 def _build_full_study_app(app_instance):
@@ -1369,7 +1370,6 @@ async def test_start_review_blocks_when_pending_session_teardown_keeps_failing()
         assert controller._pending_review_session_teardown is not None
 
 
-
 def _review_candidates(count: int = 6) -> list[dict]:
     """`count` distinct due cards, so a review queue can actually advance."""
     return [
@@ -1656,9 +1656,7 @@ async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
 
     db = CharactersRAGDB(str(tmp_path / "study.db"), "study-review-probe")
     deck_id = db.create_deck("Doubling deck")
-    card_id = db.create_flashcard(
-        {"deck_id": deck_id, "front": "Q", "back": "A"}
-    )
+    card_id = db.create_flashcard({"deck_id": deck_id, "front": "Q", "back": "A"})
     local = LocalStudyService(db)
 
     class RealDbStudyScopeService(FakeStudyScopeService):

@@ -13,6 +13,7 @@ from threading import Event
 import pytest
 
 from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
+from Tests.Backup_Recovery.test_replacement import profile_provider
 from tldw_chatbook.Backup_Recovery import (
     archive_reader,
     bootstrap,
@@ -418,7 +419,9 @@ def test_later_snapshot_credentials_use_fresh_scope_without_shared_overwrite(
         installed_purpose = json.loads(targets.read_bytes())["targets"][0][
             "auth_reference"
         ].removeprefix("keyring:")
-        store.set_secret("peer", "api_key", "foreign-shared-value")
+        profile_provider(store).store_scoped_credential(
+            "peer", "api_key", "foreign-shared-value"
+        )
         # Review the actual empty keyring slots named by installed setup markers.
         # The held safety capture below must reproduce these exact issue codes.
         configured = tomllib.loads(case[-1].read_text())
@@ -469,9 +472,18 @@ def test_later_snapshot_credentials_use_fresh_scope_without_shared_overwrite(
             "api_key",
             installed_purpose,
         }
-        assert store.get_secret("peer", restored) == "current-shared-secret"
-        assert store.get_secret("peer", "api_key") == "foreign-shared-value"
-        assert store.get_secret("peer", installed_purpose) == "captured-new-secret"
+        assert (
+            profile_provider(store)._get_credential_secret("peer", restored)
+            == "current-shared-secret"
+        )
+        assert (
+            profile_provider(store)._get_credential_secret("peer", "api_key")
+            == "foreign-shared-value"
+        )
+        assert (
+            profile_provider(store)._get_credential_secret("peer", installed_purpose)
+            == "captured-new-secret"
+        )
         assert case[-1].read_bytes() == original_config
 
 

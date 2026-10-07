@@ -385,43 +385,6 @@ async def test_restore_paths_do_not_execute_trigger_schema_ddl(notes_scope_servi
     assert schema_ddl == []
 
 
-def test_db_initialization_repairs_legacy_notes_fts_update_trigger(tmp_path):
-    """A legacy trigger is repaired once during DB initialization."""
-    db_path = tmp_path / "legacy-notes-trigger.db"
-    original = CharactersRAGDB(str(db_path), client_id="legacy-writer")
-    with original.transaction() as conn:
-        conn.execute("DROP TRIGGER notes_au")
-        conn.execute(
-            """
-            CREATE TRIGGER notes_au
-            AFTER UPDATE ON notes BEGIN
-              INSERT INTO notes_fts(notes_fts,rowid,title,content)
-              VALUES('delete',old.rowid,old.title,old.content);
-              INSERT INTO notes_fts(rowid,title,content)
-              SELECT new.rowid,new.title,new.content
-              WHERE new.deleted = 0;
-            END;
-            """
-        )
-    original.close_connection()
-
-    repaired = CharactersRAGDB(str(db_path), client_id="repair-reader")
-    try:
-        trigger_row = (
-            repaired.get_connection()
-            .execute(
-                "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
-                ("notes_au",),
-            )
-            .fetchone()
-        )
-        normalized_sql = " ".join(str(trigger_row["sql"]).lower().split())
-        assert "where old.deleted = 0" in normalized_sql
-        assert "where new.deleted = 0" in normalized_sql
-    finally:
-        repaired.close_connection()
-
-
 @pytest.mark.asyncio
 async def test_delete_with_stale_version_raises_conflict_and_does_not_remove(
     notes_scope_service,

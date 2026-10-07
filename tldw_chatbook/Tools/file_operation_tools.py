@@ -159,6 +159,12 @@ _FILE_TOOL_PATH_ARGS: dict[str, tuple[str, bool]] = {
     "write_file": ("file_path", True),
 }
 
+#: Built-in tools whose RELATIVE path argument resolves inside the run's
+#: private sandbox (``validate_path_multi`` anchors relative paths to the
+#: first root only). The workspace-context note names these so an agent does
+#: not expect a relative path to land in a bound folder (TASK-33940.1).
+SCRATCH_RELATIVE_PATH_TOOLS: frozenset[str] = frozenset(_FILE_TOOL_PATH_ARGS)
+
 
 def path_precheck_failed(
     tool_name: str,

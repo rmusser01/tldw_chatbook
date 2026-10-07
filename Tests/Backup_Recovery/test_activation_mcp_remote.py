@@ -1,13 +1,15 @@
 """Restored remote MCP definitions stay inert until their local review."""
 
+import errno
 import inspect
 
 import pytest
 
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
+from Tests.Backup_Recovery.test_mcp_recovery_review import _APPROVED_SETUP
 
 _SCRIPT = r"""
-import asyncio, os, sys, types
+import asyncio, json, os, sys, types
 from pathlib import Path
 from types import SimpleNamespace
 from Tests.network_guard import install, blocked_attempts
@@ -20,7 +22,7 @@ from tldw_chatbook.Backup_Recovery.control_records import admission_authority, r
 route, state = sys.argv[1:]
 selector = Path(os.environ['TLDW_CONFIG_PATH'])
 base = selector.parent.parent
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="' + str(base/'data') + '"\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir=' + json.dumps(str(base/'data'),ensure_ascii=False) + '\n',encoding='utf-8')
 selector.chmod(0o600)
 from tldw_chatbook import config
 data = config.get_user_data_dir()
@@ -52,11 +54,12 @@ access = ServerAccessContext(
         governance=True, advanced=True,
     ),
 )
-context_store.save(UnifiedMCPContext(
+server_context = UnifiedMCPContext(
     selected_source='server', selected_active_server_id='server-a',
     selected_scope='personal', selected_section='overview',
     per_server_state={'server-a': access},
-))
+)
+context_store.save(server_context)
 permission_store = MCPPermissionStore(paths['permissions']/'mcp_permissions.json')
 # Imported permission state remains recovery evidence, never activation authority.
 permission_store.set_global_default('allow')
@@ -76,7 +79,7 @@ if state not in ('ordinary','unqualified'):
     (root/('pending-'+bootstrap._key('restore')+'.json')).unlink()
     activation = ActivationStore(control/'activation')
     for owner in owners:
-        if state == 'approved' or state == 'config_only' and owner == 'config':
+        if state == 'owner_flag' or state == 'config_only' and owner == 'config':
             activation.approve('generation', owner)
     if state == 'missing':
         (activation._generation('generation')/'required.json').unlink()
@@ -141,19 +144,21 @@ async def run():
     if route == 'load_section':
         return await plane.load_section('overview')
     if route == 'run_action':
+        plane.context = server_context
+        assert plane.selected_source == 'server'
         return await plane.run_action(
             'external_server.secret.set',
             {'server_id':'external-a','secret':'never-resolve-this'},
         )
     if route == 'inspection':
         assert [item.server_id for item in target_store.list_targets()] == ['server-a']
-        assert (await plane.load_context()).selected_active_server_id == 'server-a'
-        assert plane.runtime_state_override().active_server_id == 'server-a'
+        assert await plane.load_context() == UnifiedMCPContext()
+        assert plane.runtime_state_override().active_server_id is None
         assert isinstance(plane.available_actions(), list)
         return {'inspected': True}
     raise AssertionError(route)
 
-denied = state not in ('ordinary','approved','unqualified')
+denied = state not in ('ordinary','unqualified')
 try:
     result = asyncio.run(run())
 except PermissionError as exc:
@@ -194,7 +199,7 @@ def test_inactive_remote_mcp_denies_before_client_or_cache(tmp_path, route):
     "state",
     [
         "ordinary",
-        "approved",
+        "owner_flag",
         "unqualified",
         "config_only",
         "missing",
@@ -209,15 +214,25 @@ def test_remote_mcp_observes_actual_independent_sources(tmp_path, state):
     _run(tmp_path, "load_section", state, script=_SCRIPT)
 
 
-@pytest.mark.parametrize("state", ["ordinary", "approved", "targets"])
+@pytest.mark.parametrize("state", ["ordinary", "owner_flag", "targets"])
 def test_direct_remote_mcp_observes_configured_target_store(tmp_path, state):
     _run(tmp_path, "direct_factory", state, script=_SCRIPT)
 
 
-_RETENTION = _SCRIPT.split("events = []")[0] + r"""
-import threading
+_RETENTION = (
+    _APPROVED_SETUP
+    + r"""
 from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
 from tldw_chatbook.MCP.activation import MCPActivationRequired
+from tldw_chatbook.MCP.unified_control_models import (
+    ConfiguredServerTarget, SectionCapabilityFlags, ServerAccessContext,
+)
+
+target = ConfiguredServerTarget(
+    server_id='server-a', label='Server A', base_url='https://blocked.invalid/api',
+    auth_reference='imported-secret-reference', is_default=True,
+)
+plane.target_store.save_targets([target])
 
 events = []
 entered = asyncio.Event()
@@ -225,12 +240,18 @@ release = asyncio.Event()
 
 def assert_held():
     try:
-        with authority.maintenance(('profile',), .03):
+        with authority.maintenance(tuple(witness['namespaces']), .03):
             raise AssertionError('remote MCP await lost native admission')
     except AdmissionTimeout:
         pass
 
 class WaitingServer:
+    async def resolve_access_context(self, **kwargs):
+        return ServerAccessContext(
+            server_id='server-a', selected_scope='personal', selected_section='overview',
+            section_capabilities=SectionCapabilityFlags(overview=True),
+        )
+
     async def get_overview(self, **kwargs):
         events.append('entered')
         entered.set()
@@ -239,14 +260,10 @@ class WaitingServer:
         events.append('finished')
         return {'server_id':'server-a'}
 
-local = SimpleNamespace(store=SimpleNamespace(path=local_path))
-plane = UnifiedMCPControlPlaneService(
-    target_store=target_store, context_store=context_store,
-    local_service=local, server_service=WaitingServer(),
-)
-plane._permission_store = permission_store
+plane.server_service = WaitingServer()
 
 async def run():
+    await plane.select_server_target('server-a')
     accepted = asyncio.create_task(plane.load_section('overview'))
     await entered.wait()
     assert_held()
@@ -268,14 +285,80 @@ async def run():
 
 asyncio.run(run())
 assert events == ['entered','finished'], events
-with authority.maintenance(('profile',),1): pass
+with authority.maintenance(tuple(witness['namespaces']),1): pass
 assert not blocked_attempts()
 print('retired and reopened')
 """
+)
 
 
 def test_remote_mcp_accepted_await_retains_lease_and_denies_new_intake(tmp_path):
-    _run(tmp_path, "retained", "approved", script=_RETENTION)
+    _run(tmp_path, "retained", "fresh", script=_RETENTION)
+
+
+@pytest.mark.parametrize(
+    "script,route,state",
+    [(_SCRIPT, "load_section", "ordinary"), (_RETENTION, "retained", "fresh")],
+    ids=["configured", "restored"],
+)
+def test_remote_mcp_fixtures_preserve_unicode_paths(tmp_path, script, route, state):
+    profile = tmp_path / "profilé-😄"
+    profile.mkdir(mode=0o700)
+    _run(profile, route, state, script=script)
+
+
+@pytest.mark.parametrize("error", [None, errno.EACCES, errno.EIO, errno.ENOTSUP])
+def test_remote_permission_writer_uses_windows_directory_barrier(
+    tmp_path, monkeypatch, error
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.MCP import permission_store
+    from tldw_chatbook.Utils import file_durability, platform_files
+
+    events = []
+
+    def open_directory(path, flags):
+        assert path == tmp_path
+        assert flags == 3
+        events.append("open")
+        return 57
+
+    def flush_directory(fd):
+        assert fd == 57
+        events.append("flush")
+        if error is not None:
+            raise OSError(error, "native_directory_flush_failed")
+
+    def close_directory(fd):
+        assert fd == 57
+        events.append("close")
+
+    def posix_open(*args):
+        raise AssertionError("Windows directory opened through stdlib os")
+
+    monkeypatch.setattr(
+        permission_store, "os", SimpleNamespace(name="nt", O_RDONLY=0, open=posix_open)
+    )
+    monkeypatch.setattr(
+        platform_files,
+        "os",
+        SimpleNamespace(
+            O_RDONLY=0,
+            O_DIRECTORY=1,
+            O_NOFOLLOW=2,
+            open=open_directory,
+            close=close_directory,
+        ),
+    )
+    monkeypatch.setattr(file_durability, "flush_directory", flush_directory)
+    if error is None:
+        permission_store._fsync_parent_directory(tmp_path)
+    else:
+        with pytest.raises(OSError) as caught:
+            permission_store._fsync_parent_directory(tmp_path)
+        assert caught.value.errno == error
+    assert events == ["open", "flush", "close"]
 
 
 def test_remote_mcp_supported_operation_set_has_no_unguarded_async_route():
@@ -294,7 +377,9 @@ def test_remote_mcp_supported_operation_set_has_no_unguarded_async_route():
     }
     assert public_async == set(_REMOTE_SERVER_OPERATIONS)
     assert all(
-        getattr(getattr(ServerUnifiedMCPService, name), "_mcp_activation_guarded", False)
+        getattr(
+            getattr(ServerUnifiedMCPService, name), "_mcp_activation_guarded", False
+        )
         for name in public_async
     )
     assert all(

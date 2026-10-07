@@ -287,9 +287,7 @@ def _run_inventory(
         repository,
         dataset_id=DATASET,
         enrolled_note_ids=(
-            {IDS["note_enrolled"]}
-            if enrolled_note_ids is None
-            else enrolled_note_ids
+            {IDS["note_enrolled"]} if enrolled_note_ids is None else enrolled_note_ids
         ),
         enrolled_conversation_ids=(
             {"conversation-enrolled"}
@@ -306,10 +304,14 @@ def _run_inventory(
 def _intent_rows(path: Path) -> list[dict[str, object]]:
     db = CharactersRAGDB(path, client_id="inventory-tests")
     try:
-        rows = db.get_connection().execute(
-            "SELECT rowid, intent_id, domain, object_id, operation, payload_json, "
-            "source_version FROM notes_organization_sync_intents ORDER BY rowid"
-        ).fetchall()
+        rows = (
+            db.get_connection()
+            .execute(
+                "SELECT rowid, intent_id, domain, object_id, operation, payload_json, "
+                "source_version FROM notes_organization_sync_intents ORDER BY rowid"
+            )
+            .fetchall()
+        )
         return [dict(row) for row in rows]
     finally:
         db.close_connection()
@@ -424,9 +426,7 @@ def test_inventory_orders_adopted_resources_links_and_evidenced_tombstones(
     )
     assert logical.index(
         ("notes.keyword_collection", IDS["collection_remote"], "upsert")
-    ) < logical.index(
-        ("notes.keyword_collection", IDS["collection_child"], "upsert")
-    )
+    ) < logical.index(("notes.keyword_collection", IDS["collection_child"], "upsert"))
     assert logical.index(
         ("notes.folder", IDS["folder_parent"], "upsert")
     ) < logical.index(("notes.folder", IDS["folder_child"], "upsert"))
@@ -542,9 +542,10 @@ def test_inventory_orders_adopted_resources_links_and_evidenced_tombstones(
         ),
     }
     for domain, object_id in evidenced_deleted_links:
-        assert payloads[(domain, "tombstone", object_id)] == payloads[
-            (domain, "upsert", object_id)
-        ]
+        assert (
+            payloads[(domain, "tombstone", object_id)]
+            == payloads[(domain, "upsert", object_id)]
+        )
     tombstones = {
         (str(row["domain"]), str(row["object_id"]))
         for row in rows
@@ -706,7 +707,9 @@ def test_inventory_resumes_every_commit_without_duplicates_or_skips(
         }
         assert resumed == reference
         assert len(resumed_rows) == len(resumed)
-        assert all(resumed[key][0] == intent_id for key, intent_id in before_resume.items())
+        assert all(
+            resumed[key][0] == intent_id for key, intent_id in before_resume.items()
+        )
 
 
 def test_completed_inventory_reopens_with_skips_and_holds_on_later_drift(
@@ -721,16 +724,20 @@ def test_completed_inventory_reopens_with_skips_and_holds_on_later_drift(
     with pytest.raises(InjectedCrash):
         _run_inventory(
             path,
-            after_commit=lambda phase, key: (_ for _ in ()).throw(InjectedCrash())
-            if phase == "complete"
-            else None,
+            after_commit=lambda phase, key: (
+                (_ for _ in ()).throw(InjectedCrash()) if phase == "complete" else None
+            ),
         )
     db = CharactersRAGDB(path, client_id="inventory-tests")
-    checkpoint = db.get_connection().execute(
-        "SELECT inventory_phase, last_inventory_key FROM "
-        "notes_organization_sync_checkpoints WHERE server_profile_id = ? AND dataset_id = ?",
-        (PROFILE, DATASET),
-    ).fetchone()
+    checkpoint = (
+        db.get_connection()
+        .execute(
+            "SELECT inventory_phase, last_inventory_key FROM "
+            "notes_organization_sync_checkpoints WHERE server_profile_id = ? AND dataset_id = ?",
+            (PROFILE, DATASET),
+        )
+        .fetchone()
+    )
     db.close_connection()
     assert checkpoint["inventory_phase"] == "complete"
     assert checkpoint["last_inventory_key"] is not None
@@ -790,17 +797,18 @@ def test_inventory_holds_on_source_drift_instead_of_rebuilding_snapshot(
     with pytest.raises(InjectedCrash):
         _run_inventory(
             path,
-            after_commit=lambda phase, key: (_ for _ in ()).throw(InjectedCrash())
-            if phase == "resources" and key is not None
-            else None,
+            after_commit=lambda phase, key: (
+                (_ for _ in ()).throw(InjectedCrash())
+                if phase == "resources" and key is not None
+                else None
+            ),
         )
     assert len(_intent_rows(path)) == 1
     durable_before = _durable_inventory_bytes(path)
     db = CharactersRAGDB(path, client_id="inventory-tests")
     with db.transaction() as cursor:
         cursor.execute(
-            "UPDATE keywords SET keyword = 'Newer snapshot value' "
-            "WHERE sync_id = ?",
+            "UPDATE keywords SET keyword = 'Newer snapshot value' WHERE sync_id = ?",
             (IDS["keyword_deleted"],),
         )
     db.close_connection()
@@ -828,9 +836,11 @@ def test_inventory_holds_on_relationship_evidence_drift_without_durable_writes(
     with pytest.raises(InjectedCrash):
         _run_inventory(
             path,
-            after_commit=lambda phase, key: (_ for _ in ()).throw(InjectedCrash())
-            if phase == "resources" and key is not None
-            else None,
+            after_commit=lambda phase, key: (
+                (_ for _ in ()).throw(InjectedCrash())
+                if phase == "resources" and key is not None
+                else None
+            ),
         )
     durable_before = _durable_inventory_bytes(path)
     db = CharactersRAGDB(path, client_id="inventory-tests")
@@ -881,9 +891,11 @@ def test_inventory_holds_on_dependency_set_drift_without_durable_writes(
     with pytest.raises(InjectedCrash):
         _run_inventory(
             path,
-            after_commit=lambda phase, key: (_ for _ in ()).throw(InjectedCrash())
-            if phase == "resources" and key is not None
-            else None,
+            after_commit=lambda phase, key: (
+                (_ for _ in ()).throw(InjectedCrash())
+                if phase == "resources" and key is not None
+                else None
+            ),
         )
     durable_before = _durable_inventory_bytes(path)
 
@@ -1006,10 +1018,15 @@ def test_inventory_does_not_republish_applied_remote_state(tmp_path: Path) -> No
         ).run()
 
         assert result.status == "complete"
-        assert db.get_connection().execute(
-            "SELECT COUNT(*) FROM notes_organization_sync_intents "
-            "WHERE server_profile_id = ? AND dataset_id = ? AND object_id = ?",
-            (PROFILE, DATASET, object_id),
-        ).fetchone()[0] == 0
+        assert (
+            db.get_connection()
+            .execute(
+                "SELECT COUNT(*) FROM notes_organization_sync_intents "
+                "WHERE server_profile_id = ? AND dataset_id = ? AND object_id = ?",
+                (PROFILE, DATASET, object_id),
+            )
+            .fetchone()[0]
+            == 0
+        )
     finally:
         db.close_connection()

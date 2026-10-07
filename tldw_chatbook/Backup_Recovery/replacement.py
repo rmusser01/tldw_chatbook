@@ -218,9 +218,10 @@ def _checked_originals(plan, journal, session):
         entries = normalized_originals(
             Inventory(tuple(entries), True, plan.target_fingerprint, ())
         ).items
-        directories = {
-            item.path: item for item in entries if item.status == "included_directory"
-        }
+        directories = {}
+        for item in entries:
+            if item.status == "included_directory":
+                directories.setdefault(item.path, []).append(item)
         normalized = []
         for item in entries:
             info = os.stat(item.path, follow_symlinks=False)
@@ -238,13 +239,44 @@ def _checked_originals(plan, journal, session):
                 )
             elif ancestors:
                 root = min(ancestors, key=lambda path: len(path.parts))
+                roots = directories[root]
+                if item.status == "included_directory" and item.path == root:
+                    roots = [item]
+                elif len(roots) > 1:
+                    roots = [
+                        row
+                        for row in roots
+                        if item.metadata is not None
+                        and item.metadata.root_id
+                        in {
+                            row.logical_id,
+                            row.metadata.root_id if row.metadata else None,
+                        }
+                    ]
+                if len(roots) != 1:
+                    raise ValueError("rollback_inventory_incomplete")
+                root_item = roots[0]
+                parents = directories.get(item.path.parent, [])
+                if len(parents) > 1:
+                    parents = [
+                        row
+                        for row in parents
+                        if item.metadata is not None
+                        and item.metadata.parent_id == row.logical_id
+                        and row.metadata is not None
+                        and row.metadata.root_id
+                        in {
+                            root_item.logical_id,
+                            root_item.metadata.root_id if root_item.metadata else None,
+                        }
+                    ]
+                    if len(parents) != 1:
+                        raise ValueError("rollback_inventory_incomplete")
                 meta = FileMetadata(
                     1,
-                    directories[root].logical_id,
+                    root_item.logical_id,
                     item.path.relative_to(root).as_posix() if item.path != root else "",
-                    directories[item.path.parent].logical_id
-                    if item.path.parent in directories
-                    else None,
+                    parents[0].logical_id if parents else None,
                     "directory" if stat.S_ISDIR(info.st_mode) else "file",
                     stat.S_IMODE(info.st_mode),
                     info.st_mtime_ns,
@@ -338,6 +370,7 @@ def capture_verify_rollback(
     create_private_directory(stage / "payload")
     owners = {owner.owner_id: owner for owner in install_adapters()}
     staged, aliases, versions, physical = [], {}, {}, {}
+    total = 0
     captured = {}
     raw_originals = {}
     entries = [item for item in inventory.items if item.status == "included"]
@@ -392,11 +425,9 @@ def capture_verify_rollback(
             staged.append((item, path))
             if item.shared_group:
                 aliases.setdefault(item.shared_group, []).append(item.logical_id)
-            total = sum(os.stat(path).st_size for _, path in staged)
-            if (
-                total > limits.expanded_bytes
-                or os.stat(path).st_size > limits.member_bytes
-            ):
+            size = os.stat(path).st_size
+            total += size
+            if total > limits.expanded_bytes or size > limits.member_bytes:
                 raise ValueError("rollback_capture_limit")
             require_capacity({stage: total, destination.parent: total * 5})
         from .rag_projection_validation import validate_groups
@@ -409,7 +440,15 @@ def capture_verify_rollback(
         rebound = _replace(
             inventory, items=tuple(_replace(item, path=path) for item, path in staged)
         )
-        issues = process_credentials(stage, rebound, mode="rollback", encrypted=True)
+        from .credentials import profile_credential_scopes
+
+        issues = process_credentials(
+            stage,
+            rebound,
+            mode="rollback",
+            encrypted=True,
+            profile_scopes=profile_credential_scopes(plan.target),
+        )
         if set(issues) != set(acknowledged_credential_issues):
             raise RollbackCredentialReviewRequired(issues)
         material = stage / "credential-recovery.json"
@@ -729,14 +768,27 @@ def _first_binding_scope_available(inventory):
 
 
 def _first_binding_inventory(plan, selector):
-    """Rediscover one actual current profile, never an imported source locator."""
-    from .inventory import discover
+    """Prove the reviewed local census before binding one current profile."""
+    from .inventory import classify_entries, discover
     from .storage_admission import _preview_reads
 
     recheck_targets(plan)
     install_adapters()
+    selectors = tuple(
+        sorted(
+            {
+                item.path
+                for item in plan.target.items
+                if item.owner == "config"
+                and item.status == "included"
+                and item.path is not None
+            }
+        )
+    )
+    if selector not in selectors:
+        raise ValueError("replacement_current_scope_changed")
     with _preview_reads():
-        current = discover((selector,))
+        current = discover(selectors)
     if not _first_binding_scope_available(current):
         raise ValueError("replacement_current_scope_unavailable")
     approved = {item.logical_id: item for item in plan.target.items}
@@ -753,7 +805,30 @@ def _first_binding_inventory(plan, selector):
         ) != (previous.owner, previous.path, previous.status, previous.dependencies):
             raise ValueError("replacement_current_scope_changed")
     recheck_targets(plan)
-    return current
+    configs = [
+        item
+        for item in current.items
+        if item.owner == "config" and item.path == selector
+    ]
+    if len(configs) != 1 or (
+        len(configs[0].logical_id.split(":")) != 3
+        or not configs[0].logical_id.startswith("profile:")
+        or not configs[0].logical_id.endswith(":config")
+    ):
+        raise ValueError("replacement_current_scope_changed")
+    prefix = configs[0].logical_id.removesuffix("config")
+    selected = classify_entries(
+        tuple(
+            item
+            for item in current.items
+            if item.logical_id.startswith(prefix)
+            or item.owner == "recovery.control"
+            and item.status == "intentionally_excluded"
+        )
+    )
+    if not _first_binding_scope_available(selected):
+        raise ValueError("replacement_current_scope_unavailable")
+    return selected
 
 
 def _preserved_default_controls(plan, document, parent, protected):
@@ -963,9 +1038,12 @@ def _first_profile_container(
             raise ValueError("replacement_config_container_unverified")
         state.append((item.path, item.metadata, info.st_dev, info.st_ino, info.st_mode))
     if user_data:
-        tokens = {f"inode:{dev}:{ino}" for _, _, dev, ino, _ in state}
+        from .bootstrap import identity_view, inode_token_for
+
+        tokens = {inode_token_for(ino) for _, _, _dev, ino, _ in state}
+
         if any(
-            tokens.intersection(entry["historical"])
+            tokens.intersection(identity_view(entry["historical"]))
             for name, entry in registry.items()
             if name not in names or any(name in row["namespaces"] for row in profiles)
         ):
@@ -1239,9 +1317,8 @@ def _ensure_first_bindings(
                 not any(_contains_owned_path(root, item.path) for root in roots)
                 for item in inventories[selector].items
                 if item.path is not None
-                and item.status in {
-                    "included", "included_directory", "missing_required"
-                }
+                and item.status
+                in {"included", "included_directory", "missing_required"}
             ):
                 raise ValueError("replacement_current_scope_changed")
             reader._check(cancel)
@@ -1416,6 +1493,10 @@ def replace(
     if not set(descriptor.get("credential_issues", ())) <= set(
         plan.acknowledged_credential_issues
     ):
+        if descriptor["credential_issues"] == [
+            "credential_isolated_retention_required"
+        ]:
+            raise CaptureReviewRequired(("credential_isolated_retention_required",))
         raise ValueError("credential_omission_acknowledgement_required")
     recheck_targets(plan)
     control_root = lexical_path(control_root)

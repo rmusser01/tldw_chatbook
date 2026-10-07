@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 import re
 from typing import Any
 
+from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
 from tldw_chatbook.Chat.console_glyphs import GLYPH_COLLAPSE_LEFT, GLYPH_COLLAPSED
 from tldw_chatbook.Utils.Utils import coerce_bool_flag
 
@@ -603,6 +604,11 @@ def _has_row_match(rows: tuple[Any, ...], candidates: set[str]) -> bool:
     return False
 
 
+_ACTIVE_RUN_STATUS_VALUES = frozenset(
+    status.value for status in FEEDBACK_ACTIVE_RUN_STATUSES
+)
+
+
 def _has_setup_blocker_row(rows: tuple[Any, ...]) -> bool:
     for row in rows:
         label, status, value, text = _row_text_parts(row)
@@ -651,9 +657,16 @@ def build_console_inspector_rail_badge(
     """Build the right rail badge from run, review, tool, and staged state.
 
     Task-400: the staged-sources Context section lives in the Inspector rail,
-    so its "N staged"/"staged" badge surfaces here. Action-required signals
-    (failed/setup/blocked/approvals/tools) keep precedence; staged context
-    outranks the informational artifact/source readiness fallbacks.
+    so its "N staged"/"staged" badge surfaces here. Precedence: failed,
+    setup, blocked, approvals, then an active run (``running``), then tools;
+    staged context outranks the informational artifact/source readiness
+    fallbacks.
+
+    TASK-33620.4: an active run is read from the STRUCTURED ``run_status``
+    (the canonical active set) and shows ``running`` just below approvals
+    (above the ``tools`` count hook, which production never populates),
+    never ``setup`` -- the row-text match below turned every healthy run
+    into ``setup`` while the Provider row mislabelled it blocked.
 
     Args:
         run_status: Current Console run status value or enum.
@@ -686,6 +699,9 @@ def build_console_inspector_rail_badge(
         return "1 approval"
     if approvals > 1:
         return f"{approvals} approvals"
+
+    if normalized_run_status in _ACTIVE_RUN_STATUS_VALUES:
+        return "running"
 
     if _coerce_non_negative_int(tool_count) > 0:
         return "tools"

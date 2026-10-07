@@ -1,0 +1,16 @@
+from common import *
+import ast,copy
+p='Tests/UI/test_console_runtime_ownership.py';before=blob(BASE,p);actual=(W/p).read_bytes();a=ast.parse(actual);b=ast.parse(before);selected='_post_reconciliation_admission_screen';keywords={'consume_pending_vllm_console_intent','consume_pending_llamacpp_console_intent'};removed=[]
+for n in a.body:
+ if isinstance(n,ast.FunctionDef) and n.name==selected:
+  for c in ast.walk(n):
+   if isinstance(c,ast.Call) and isinstance(c.func,ast.Name) and c.func.id=='SimpleNamespace':
+    for kw in list(c.keywords):
+     if kw.arg in keywords:
+      assert isinstance(kw.value,ast.Name) and kw.value.id=='no_op';removed.append(kw.arg);c.keywords.remove(kw)
+assert set(removed)==keywords and len(removed)==2
+assert ast.dump(a,include_attributes=False)==ast.dump(b,include_attributes=False)
+added=b'        consume_pending_vllm_console_intent=no_op,\n        consume_pending_llamacpp_console_intent=no_op,\n';assert actual.count(added)==1 and actual.replace(added,b'')==before
+original_assertions=[ast.dump(n,include_attributes=False) for n in ast.walk(b) if isinstance(n,ast.Assert)];actual_assertions=[ast.dump(n,include_attributes=False) for n in ast.walk(ast.parse(actual)) if isinstance(n,ast.Assert)];assert original_assertions==actual_assertions
+original_defs={n.name:ast.dump(n,include_attributes=False) for n in b.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef))};actual_defs={n.name:ast.dump(n,include_attributes=False) for n in ast.parse(actual).body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef))};assert all(original_defs[k]==actual_defs[k] for k in original_defs if k!=selected)
+print('Read-only executable reversal: exact original bytes and full AST restored; original assertion identity and every nonselected declaration preserved.')

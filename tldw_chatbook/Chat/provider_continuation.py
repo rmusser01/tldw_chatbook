@@ -46,6 +46,31 @@ ContinuationProvider = Literal[
     "nebius",
     "novita",
     "minimax",
+    # TASK-33350 model-maker presets.
+    "mimo",
+    "tokenhub",
+    "byteplus",
+    "stepfun",
+    # TASK-33351 gateway/host presets.
+    "vercel",
+    "zenmux",
+    "kilo",
+    "siliconflow",
+    "baseten",
+    "gmi",
+    "ollama_cloud",
+    "upstage",
+    "arcee",
+    "qianfan",
+    "nous",
+    "venice",
+    "meta",
+    # TASK-33505..33509 follow-up presets.
+    "azure",
+    "wandb",
+    "cloudflare",
+    "opencode_zen",
+    "commandcode",
 ]
 ContinuationProtocol = Literal["chat_completions", "responses"]
 ContinuationState = Literal["active", "complete"]
@@ -107,6 +132,28 @@ _PAIRINGS = frozenset(
         ("nebius", "chat_completions"),
         ("novita", "chat_completions"),
         ("minimax", "chat_completions"),
+        ("mimo", "chat_completions"),
+        ("tokenhub", "chat_completions"),
+        ("byteplus", "chat_completions"),
+        ("stepfun", "chat_completions"),
+        ("vercel", "chat_completions"),
+        ("zenmux", "chat_completions"),
+        ("kilo", "chat_completions"),
+        ("siliconflow", "chat_completions"),
+        ("baseten", "chat_completions"),
+        ("gmi", "chat_completions"),
+        ("ollama_cloud", "chat_completions"),
+        ("upstage", "chat_completions"),
+        ("arcee", "chat_completions"),
+        ("qianfan", "chat_completions"),
+        ("nous", "chat_completions"),
+        ("venice", "chat_completions"),
+        ("meta", "chat_completions"),
+        ("azure", "chat_completions"),
+        ("wandb", "chat_completions"),
+        ("cloudflare", "chat_completions"),
+        ("opencode_zen", "chat_completions"),
+        ("commandcode", "chat_completions"),
     }
 )
 _CALL_STATES = frozenset({"pending", "executing", "completed", "failed"})
@@ -166,7 +213,7 @@ class ContinuationRound:
 class ProviderContinuationCheckpoint:
     """Canonical V1 durable provider continuation."""
 
-    schema_version: Literal[1]
+    schema_version: Literal[1, 2]
     checkpoint_revision: int
     provider: ContinuationProvider
     protocol: ContinuationProtocol
@@ -174,6 +221,7 @@ class ProviderContinuationCheckpoint:
     api_base_url: str
     state: ContinuationState
     rounds: tuple[ContinuationRound, ...]
+    managed_resume: str | None = None
 
     def __repr__(self) -> str:
         return (
@@ -450,7 +498,7 @@ def _checkpoint_value(checkpoint: ProviderContinuationCheckpoint) -> dict[str, o
                 "calls": calls,
             }
         )
-    return {
+    value = {
         "schema_version": checkpoint.schema_version,
         "checkpoint_revision": checkpoint.checkpoint_revision,
         "provider": checkpoint.provider,
@@ -460,6 +508,12 @@ def _checkpoint_value(checkpoint: ProviderContinuationCheckpoint) -> dict[str, o
         "state": checkpoint.state,
         "rounds": rounds,
     }
+
+    if checkpoint.schema_version == 2:
+        value["managed_resume"] = _strict_json_loads(checkpoint.managed_resume)
+    elif checkpoint.managed_resume is not None:
+        _fail()
+    return value
 
 
 def _canonical_dump(checkpoint: ProviderContinuationCheckpoint) -> str:
@@ -488,10 +542,23 @@ def _parse_value(value: object) -> ProviderContinuationCheckpoint:
         _bounded_utf8(raw, _MAX_PAYLOAD_BYTES)
         value = _strict_json_loads(raw)
     payload_nodes, _ = _json_shape(value)
-    item = _exact_mapping(value, _TOP_LEVEL_KEYS)
-
-    if type(item["schema_version"]) is not int or item["schema_version"] != 1:
+    version = value.get("schema_version") if type(value) is dict else None
+    if type(version) is not int or version not in {1, 2}:
         _fail()
+    item = _exact_mapping(
+        value, _TOP_LEVEL_KEYS | {"managed_resume"} if version == 2 else _TOP_LEVEL_KEYS
+    )
+    managed_resume = None
+    if version == 2:
+        # Ordinary V1 parsing/startup must not import the plugin service/trust stack.
+        from tldw_chatbook.Plugins.continuation import validate_envelope
+
+        managed_resume = json.dumps(
+            validate_envelope(item["managed_resume"]),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
     revision = item["checkpoint_revision"]
     if type(revision) is not int or cast(int, revision) <= 0:
         _fail()
@@ -571,7 +638,8 @@ def _parse_value(value: object) -> ProviderContinuationCheckpoint:
         _fail()
 
     checkpoint = ProviderContinuationCheckpoint(
-        schema_version=1,
+        schema_version=version,
+        managed_resume=managed_resume,
         checkpoint_revision=cast(int, revision),
         provider=cast(ContinuationProvider, provider),
         protocol=cast(ContinuationProtocol, protocol),

@@ -45,7 +45,10 @@ from textual.widgets import Checkbox, Input
 # Repo-root resolution, matching test_non_obscuring_focus_contract.py --
 # layout-stable regardless of how the package itself is installed/imported.
 _BUNDLED_CSS_PATH = (
-    Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+    Path(__file__).resolve().parents[2]
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
 )
 assert _BUNDLED_CSS_PATH.is_file(), (
     f"Production CSS bundle not found at {_BUNDLED_CSS_PATH} -- these tests "
@@ -143,7 +146,8 @@ async def test_compact_checkbox_focused_frame_shows_its_label() -> None:
     both the unfixed and fixed bundle) found that widget is squeezed to
     ZERO content rows by a separate, pre-existing, focus-INDEPENDENT bug --
     `Checkbox { width: 100%; height: 2; }`, an unscoped rule in features/
-    _conversations.tcss, collides with `ToggleButton`'s own `border: tall`
+    _conversations.tcss (since retired, TASK-18960), collided with
+    `ToggleButton`'s own `border: tall`
     (2 rows) even while BLURRED, leaving no row for the label at all. That
     is a different root cause than this task's outline-over-content-row
     family and out of this fix's bounded scope; a compact Checkbox isolates

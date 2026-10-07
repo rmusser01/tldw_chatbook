@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 import tldw_chatbook.app as app_module
+from Tests.app_module_patches import set_app_global
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_TAB_REGIONS
 
@@ -27,7 +28,7 @@ def _disable_full_app_splash(monkeypatch: pytest.MonkeyPatch) -> None:
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 def _mark_console_onboarding_complete(app) -> None:

@@ -67,7 +67,9 @@ class _FakeAnthropicResponse:
         return None
 
 
-def _install_model_setting(monkeypatch: pytest.MonkeyPatch, section: str, model: str) -> None:
+def _install_model_setting(
+    monkeypatch: pytest.MonkeyPatch, section: str, model: str
+) -> None:
     """Route the module's config lookups: the model under test, defaults otherwise."""
 
     def fake_get_cli_setting(sec: str, key: str, default: object = None) -> object:
@@ -82,7 +84,9 @@ def _capture_openai_payload(monkeypatch: pytest.MonkeyPatch, model: str) -> dict
     _install_model_setting(monkeypatch, "openai_api", model)
     captured: dict = {}
 
-    def fake_session_post(self, url, headers=None, json=None, stream=False, timeout=None, **kwargs):
+    def fake_session_post(
+        self, url, headers=None, json=None, stream=False, timeout=None, **kwargs
+    ):
         captured["url"] = url
         captured["json"] = json
         return _FakeOpenAIResponse()
@@ -107,7 +111,9 @@ def _capture_anthropic_payload(monkeypatch: pytest.MonkeyPatch, model: str) -> d
     # _post_with_retry transport's session, so the fake moves to the
     # Session.post seam like the other providers.
     monkeypatch.setattr(sgl.requests.Session, "post", fake_post)
-    result = sgl.summarize_with_anthropic("test-key", "some input text", "Summarize this.")
+    result = sgl.summarize_with_anthropic(
+        "test-key", "some input text", "Summarize this."
+    )
     assert result == "anthropic summary", result
     assert "json" in captured, "summarize_with_anthropic never posted a request"
     return captured["json"]
@@ -220,7 +226,9 @@ def test_anthropic_fallback_default_model_is_currently_served(monkeypatch):
     # _post_with_retry transport's session, so the fake moves to the
     # Session.post seam like the other providers.
     monkeypatch.setattr(sgl.requests.Session, "post", fake_post)
-    result = sgl.summarize_with_anthropic("test-key", "some input text", "Summarize this.")
+    result = sgl.summarize_with_anthropic(
+        "test-key", "some input text", "Summarize this."
+    )
     assert result == "anthropic summary", result
     payload = captured["json"]
     assert payload["model"] == "claude-haiku-4-5"

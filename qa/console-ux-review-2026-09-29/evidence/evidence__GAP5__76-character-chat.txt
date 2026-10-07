@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 M╭──────────────────────────────────────────────────────────╮
+──────────────────────────────────────────────────────────────────────────────────────────────────│                                                          │──
+ Console — Chat, source handoffs, live runs, and control actions.                                 │ Started a new chat with Captain Mirela Voss.             │
+   New tab     Settings     Context rail     Search Library     Help                              │                                                          │
+──────────────────────────────────────────────────────────────────────────────────────────────────╰──────────────────────────────────────────────────────────╯──
+                             │ Conversation | Chat with Captain Mirela Voss                                                                          │
+                  Context ◂  │   Using my Library s…  ✕  Give me two tiny c…  ✕  Chat with Captain…   ✕    New tab     Temporary                     │
+   Terminal                  │                                                                                                                       │
+  ▊  Filter      ▎           │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                         ✕  │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                       │
+                             │                                                                                                                       │
+   New conversation          │                                                                                                                       │
+  Chats                 ▾    │                                                                                                                       │
+   Give me two tiny …  💬  ▆ │                                                                                                                       │
+   Using my Library …  💬    │                                                                                                                       │
+                             │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Character · Captain Mi ▾    │                                                                                                                       │
+                             │                                                                                                                       │
+          ▛▜▄▄▄▄▛▀           │                                                                                                                       │◂ Inspect
+        ▛▗▄▄▟  ▙▄▄▖▜         │                                                                                                                       │
+        ▄▝        ▀▙         │                                                                                                                       │
+       ▗▌          ▝▌        │                                                                                                                       │
+       ▐▌          ▗▌        │                                                                                                                       │
+        ▜▖        ▗▛▘      ▁ │                                                                                                                       │
+         ▀▀▀▀▀▀▀▀▀▀▙         │                                                                                                                       │
+          ▄      ▄   ▌       │                                                                                                                       │
+                     ▌       │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                     ▌       │  ▊ Captain Mirela Voss                                                                                                │
+                     ▌       │  ▊                                                                                                                    │
+  Captain Mirela Voss ·      │  ▊  Welcome aboard the Kestrel, deckhand. Stow your bag and mind the rigging.                                         │
+  Local · Open               │  ▊                                                                                                                    │
+ ▼ Model · Agent · Details   │  ▊                                                                                                                    │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Staged for next send · 3 sources                                                                                                                    Un-stage
+ zephyr-irrigation — media
+ copper-lantern — media
+ quillmere-battery — media
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: set     Character: Captain Mirela Voss
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                            Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

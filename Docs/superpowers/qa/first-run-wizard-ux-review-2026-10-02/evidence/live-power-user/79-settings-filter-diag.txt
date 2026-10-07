@@ -1,0 +1,35 @@
+┌──────────────────────────────┐  │  ┌──
+│                              │  │  │  
+│  diag                        │  │  │  
+│  Filter: diag | 3 matches |  │  │  │  
+│  Enter opens Diagnostics     │  │  │  
+│  (Troubleshooting) | Next:   │  │  │  
+│  Overview (Core)             │  │  │ ┌
+│                              │  │  │ │
+│  Core                        │  │  │ │
+│    > Overview (view)         │  │  │ │
+│  Troubleshooting             │  │  │ │
+│      Diagnostics (view)      │  │  │ │
+│   Domain Defaults ▾ (11)     │  │  │ │
+│      Video Gen               │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ │
+│                              │  │  │ └
+│                              │  │  │  
+│                              │  │  │  
+│                              │  │  │  
+│                              │  │  │  
+│                              │  │  │  
+│                              │  │  │  
+│                              │  │  │  

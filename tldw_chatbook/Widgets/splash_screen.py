@@ -351,9 +351,7 @@ class SplashScreen(Container):
                 # TASK-2154.10 (AC-04): render the SAME card's static content
                 # instead of playing its effect -- branding and readability
                 # survive, motion does not.
-                logger.info(
-                    f"Reduced motion: rendering '{self.card_name}' statically"
-                )
+                logger.info(f"Reduced motion: rendering '{self.card_name}' statically")
                 self._display_static_fallback()
                 return
             # Start animation
@@ -557,9 +555,10 @@ class SplashScreen(Container):
         pushed the initial screen, so F9 mid-splash landed the user on
         Settings. That is the exact behaviour task-1339 locked (see
         ``test_navigation_keypress_during_splash_is_safely_ignored``).
-        Stopping the event keeps every already-decided contract intact; the
-        cost is that ``ctrl+q`` during the splash dismisses it and needs a
-        second press to quit, which no task or test has asserted otherwise.
+        Stopping the event keeps every already-decided contract intact.
+        ``ctrl+q`` never reaches this handler: TASK-33622.10 made the app's
+        Ctrl+Q a priority binding, which Textual runs before dispatching the
+        key to the focused splash, so it quits rather than dismissing.
         """
         if self.skip_on_keypress and not self._skip_requested:
             event.stop()

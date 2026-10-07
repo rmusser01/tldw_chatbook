@@ -132,7 +132,9 @@ class NotesScopeService:
     ) -> dict[str, Any] | None:
         if self.organization_sync_service is None:
             return self._sync_v2_profile_scope(explicit)
-        normalized = self._sync_v2_profile_scope(explicit) if explicit is not None else None
+        normalized = (
+            self._sync_v2_profile_scope(explicit) if explicit is not None else None
+        )
         if explicit is not None and normalized is None:
             raise ValueError("Invalid Sync v2 profile scope.")
         return self.organization_sync_service.resolve_profile_scope(normalized)
@@ -874,7 +876,9 @@ class NotesScopeService:
                 note_id=note_id,
                 **profile_scope,
             )
-        return await self._run_folder_repository(repository.attach_manual, folder_id=folder_id, note_id=note_id)
+        return await self._run_folder_repository(
+            repository.attach_manual, folder_id=folder_id, note_id=note_id
+        )
 
     async def detach_note_from_folder(
         self,
@@ -899,7 +903,12 @@ class NotesScopeService:
                 expected_version=expected_version,
                 **profile_scope,
             )
-        return await self._run_folder_repository(repository.detach_manual, folder_id=folder_id, note_id=note_id, expected_version=expected_version)
+        return await self._run_folder_repository(
+            repository.detach_manual,
+            folder_id=folder_id,
+            note_id=note_id,
+            expected_version=expected_version,
+        )
 
     async def convert_note_folder_owner_to_manual(
         self,
@@ -921,7 +930,9 @@ class NotesScopeService:
                 owner_id=owner_id,
                 **profile_scope,
             )
-        return await self._run_folder_repository(repository.convert_owner_to_manual, owner_id=owner_id)
+        return await self._run_folder_repository(
+            repository.convert_owner_to_manual, owner_id=owner_id
+        )
 
     async def remove_note_folder_owner_memberships(
         self,
@@ -943,7 +954,9 @@ class NotesScopeService:
                 owner_id=owner_id,
                 **profile_scope,
             )
-        return await self._run_folder_repository(repository.remove_owner_memberships, owner_id=owner_id)
+        return await self._run_folder_repository(
+            repository.remove_owner_memberships, owner_id=owner_id
+        )
 
     async def list_note_folder_restore_reviews(
         self,
@@ -983,7 +996,9 @@ class NotesScopeService:
                 desired=tuple(desired),
                 **profile_scope,
             )
-        return await self._run_folder_repository(repository.reconcile_managed, owner_id=owner_id, desired=tuple(desired))
+        return await self._run_folder_repository(
+            repository.reconcile_managed, owner_id=owner_id, desired=tuple(desired)
+        )
 
     def record_sync_mirror_report(
         self,
@@ -1953,7 +1968,8 @@ class NotesScopeService:
                 if (
                     type(self) is NotesScopeService
                     and type(service) is NotesInteropService
-                    and getattr(list_notes, "__func__", None) is NotesInteropService.list_notes
+                    and getattr(list_notes, "__func__", None)
+                    is NotesInteropService.list_notes
                     and type(template) is CharactersRAGDB
                     and not template.is_memory_db
                     and current_thread() is not main_thread()
@@ -2000,9 +2016,7 @@ class NotesScopeService:
         normalized_scope = self._normalize_scope(scope)
         self._enforce_policy(self._note_action_id(normalized_scope, "list"))
         if normalized_scope is not ScopeType.LOCAL_NOTE:
-            raise ValueError(
-                "Deleted notes are only listed for local notes."
-            )
+            raise ValueError("Deleted notes are only listed for local notes.")
         from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 
         return await asyncio.to_thread(
@@ -2092,6 +2106,7 @@ class NotesScopeService:
                 and type(template) is CharactersRAGDB
                 and not template.is_memory_db
             ):
+
                 def count_in_worker():
                     db = service._get_db(local_user)
                     try:

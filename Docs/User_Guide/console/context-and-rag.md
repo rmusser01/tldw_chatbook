@@ -38,7 +38,7 @@ Where this page's controls live:
   panel](#the-environment-panel-environment-tasks-agents) below), the
   "Sources — next send" tray, the Library search controls, the
   retrieval-scope row, the "Prefill" rows when one is armed, the
-  run/readiness groups, the "Selected turn" block, "Session Settings", the
+  run/readiness groups, the "Selected turn" block, "Chat settings", the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom. Press **Alt+I**
   to open the rail and put the caret on the send summary; press it again to
@@ -88,6 +88,43 @@ Applying settings preserves the values shown for the conversation, including
 previous edits. Making a new default also saves that profile for subsequent
 chats; changing only Streaming does not reset other fields.
 
+### When a chat reaches its context limit
+
+What happens depends on **When limit nears** in Conversation settings >
+Context and memory:
+
+- **Ask** (the default). When a message you send would take the chat past its
+  compaction threshold, the message is held before anything is sent or saved.
+  A card above the transcript shows how many tokens the chat uses out of its
+  budget, and offers three choices:
+  - **Compact and send** summarizes older turns, then sends your message. The
+    summary is one extra model call and may be billed. If it fails, the card
+    stays, says why, and your message is still held.
+  - **Send without compacting** sends this one message as it is. Older turns
+    that do not fit the model's context window are left out of the request.
+  - **Cancel send** sends nothing and compacts nothing; your message goes back
+    to the composer.
+- **Automatic** compacts and sends without asking.
+- **Off** never compacts.
+
+A send that cannot show the card (a queued prompt, Retry or Regenerate) stops
+with a note instead: use **Compact now** in Conversation settings > Context
+and memory, then send again.
+
+When compacting cannot make enough room, the message is not sent and the note
+says what fills the window and what to change:
+
+- **Max tokens** (Conversation settings > Model and generation) plus the
+  safety margin already use the whole window: lower Max tokens.
+- The system prompt, tools and attached context need more than the window
+  leaves: remove attached sources or tools, or lower Max tokens.
+- The message does not fit and there are no older complete turns to compact:
+  shorten it or its attachments, lower Max tokens, or start a new chat.
+
+If the model's context window is an estimate (shown as "Model window (est.)"),
+the card and the note say so. Set the real value in **F4 Settings > Providers
+& Models**.
+
 ### Per-turn micro-compaction
 
 With compaction mode **Automatic**, setting `[console]
@@ -102,6 +139,57 @@ bypassed (micro-compaction only runs in Automatic), and `0` (the default)
 turns the feature off entirely. Each fold rewrites the memory row, which
 breaks the provider prompt cache from that row onward — the cadence bounds
 that to 1 in N turns.
+
+### When compaction fails
+
+A compaction that cannot finish says why, in the transcript and in the run
+status. The note names the cause, for example "the model returned an empty,
+oversized or malformed summary" or "the summary plus the recent turns kept
+with it would still be over the target size". It also says what the failed
+summary call spent, as input and output tokens, with its cost when the model
+is priced. Before a send, the note starts with "Your message was not sent". A
+failed **Compact now** starts with "Compaction failed and nothing changed";
+when the chat has no older complete turns yet, it says "Nothing to compact
+yet" instead.
+
+A note that held your message, or that reports a failed **Compact now**, also
+gives a next step. "Nothing to compact yet" is not a failure and gives none.
+In **Chat settings > Context and memory** you can raise
+**Conversation max tokens**, set **If compaction fails** to **Omit older
+context** (the message is then sent without compacting), or set **When limit
+nears** to **Off**. You can also start a new chat. In a saved chat, the
+unsent turn stays in response recovery, so you can **Retry response** or
+**Discard** it once you have changed something.
+
+With **If compaction fails** set to **Omit older context**, a failed automatic
+compaction does not hold the message: it is sent without compacting. The
+failed summary call was still made, so a note starting "Your message was sent
+without compacting" names the cause and what the call spent. It appears once,
+on the send that made the call. **Compact now** is not a send, so it always
+reports its failure, whatever this setting says.
+
+After a failed summary call, automatic compaction pauses for that chat on that
+model. A Retry, a new send, a **Continue** or **Regenerate** of the latest
+reply, or a micro-compaction tick makes no further summary call, so nothing
+more is billed. Instead, the note says "automatic compaction is paused … No
+new summary call was made". A failed **Compact now** or a failed
+micro-compaction tick pauses it too. The pause lifts when
+the chat's compaction settings change (budget, **When limit nears**, **Reduce
+context to**, **Summary response max**, **Keep after compaction**,
+representation, or model), when an earlier message changes (edit, delete,
+branch switch, or memory reset), or when a compaction succeeds. It is kept in
+memory only, so it also ends when the app restarts; the first automatic
+attempt after a restart may make one more summary call. Changing only **If
+compaction fails** keeps the pause in place, so the chat goes out without
+compacting. **Compact now** is an explicit retry and makes at most one summary
+call; it makes none when there is nothing to summarize or when the target
+size leaves no room for a summary. If the conversation changed while it was
+being summarized, the note asks you to send again, and automatic compaction
+is not paused. No send makes more than one automatic summary call.
+
+The compaction attempt ledger records the reason code in its `failure_reason`
+column, and the app log writes `console_compaction_failed reason=…`. Neither
+contains transcript or summary text.
 
 ### Upstream model catalog (models.dev)
 
@@ -457,6 +545,15 @@ Click the cost chip for **Usage & cost**, or press **Ctrl+Shift+P** / choose
 being inspected. The modal stays bound to that chat and profile. **Close** and
 `Escape` return to your previous control.
 
+Hovering the cost chip shows a summary: context fullness, conversation budget,
+compaction, current spend and the next-send estimate. When the session's
+provider sends rate-limit headers (OpenAI and Anthropic do, as do many
+compatible APIs), the last line shows how much its most recent reply said was
+left. For example: `Rate limit at 14:32:05: 4,999/5,000 requests left (resets
+14:32:53) · 39,200/40,000 tokens left (resets 14:32:06)`. The times are clock
+times from that reply. A provider that sends no rate-limit headers adds no
+line.
+
 The section list and reader sit side by side in a wide terminal. At narrower
 widths, select an item and press `Enter` to open its reader; **Back to sections**
 returns to the same selection. Resizing preserves the selected item and reader
@@ -509,16 +606,17 @@ provider-internal framing and prompt-cache markers. The llama.cpp capture is the
 literal wire payload. Missing captures can reflect capture being off, a failed
 capture, or purged history; the modal does not reconstruct missing requests.
 
-**View: Safe/Full** controls local disclosure in both historical views. Changing
-it clears both readers and their cached bodies; switching to Full requires the
-existing confirmation. **Capture settings** applies to future capture and is a
+**View: Safe/Full** (or **v**) controls local disclosure in both historical
+views. Changing it clears both readers and their cached bodies; switching to
+Full requires the existing confirmation, and **Keep Safe** or **Esc** leaves it
+on Safe. **Capture settings** applies to future capture and is a
 separate choice. **Export selected call…** opens the existing governed export
 dialog. If the conversation, profile, or capture authority changes, stale content
 cannot return through a delayed load or export.
 
 ### Thinking history replay
 
-Open the current conversation's Console settings and find **Thinking history
+Open the current conversation's Chat settings and find **Thinking history
 replay**. Its saved policy belongs to the conversation and affects future
 provider requests, not whether Thinking rows are visible:
 
@@ -550,9 +648,29 @@ The Inspector places a one-line **Project** status above **Sources**:
 row to open this viewer's metadata-only **Project Instructions** section. It
 shows whether the feature is enabled, the selected binding and locator match,
 override/standard precedence, relative source paths, scopes, byte counts,
-active or omitted outcomes, and deduplicated warning codes. Removed or
-retargeted bindings offer **Choose folder** and **Disable**; **Off** offers
-**Enable**. There is no automatic-file editor or second settings surface.
+active or omitted outcomes, and deduplicated warning codes. When no folder is
+selected yet (**Choose folder**) or a binding was removed or retargeted
+(**Warning**), the section offers **Choose folder** and **Disable**; **Off**
+offers **Enable**. There is no automatic-file editor or second settings
+surface.
+
+**Choose folder** and **Enable** open a picker titled "Project instructions
+need a folder" that lists the folders bound to this conversation's workspace.
+Pick one to select it: you return to the Inspector, its state updates, and the
+Inspect rail's **Project** row stops reading **Choose folder**. **Esc** or
+**Cancel** returns to the Inspector with the selection unchanged, and
+**Disable** turns project instructions off. The Default workspace cannot bind
+folders, so there the picker shows only "No eligible folders"; bind one in a
+named workspace first.
+
+The choice is stored with the conversation and kept after a restart. In a new
+chat with no messages yet, it is saved in the same step as your first
+message, so it is kept even if that send then stops before a reply (for
+example, when the chat shows **Blocked**). Choosing again while the first
+message is still being saved, or while the chat is stopped like that, is
+stored too. A new chat where you never chose a folder reopens the way you
+left it — project instructions on, no folder (**Choose folder**) — not
+**Off**.
 
 The **Context** view's explicit **Preview** sections are the only automatic UI
 surface that may show the exact instruction body, as a disposable preview of
@@ -863,7 +981,7 @@ visit. Whatever is currently staged, the strip's count, the tray's
 "Sources N" count, and the Inspector's Source Readiness line ("Evidence:
 N/N available") always agree on the same number.
 
-Staged evidence also counts toward the Console Settings context estimate
+Staged evidence also counts toward the Chat settings context estimate
 and the running-session cost chip — it used to report zero for anything
 staged but not yet sent. The estimate counts the staged snippets as
 they'll actually be sent (each capped at 4,000 characters, the same cap

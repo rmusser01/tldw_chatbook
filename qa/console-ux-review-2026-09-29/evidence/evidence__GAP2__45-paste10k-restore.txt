@@ -1,0 +1,52 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                                            Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                         │ Conversation | Chat 25                                                                                                                                                               │
+                              Context ◂  │         Chat 1         ✕  Long build log rev…  ✕        Chat 3         ✕        Chat 4         ✕        Chat 5         ✕        Chat 6         ✕        Chat 7         ✕        Cha▸ │
+   Terminal                              │                                                                                                                                                                                      │
+ ──────────────────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                                                        ✕  │
+ Workspaces                         ▸    │                                                                                                                                                                                      │
+ ──────────────────────────────────────  │                                                                                                                                                                                      │
+ Conversations                      ▾    │                                                                                                                                                                                      │
+           Archive this chat             │                                                                                                                                                                                      │
+            Archived chats               │                                                                                                                                                                                      │
+           Search all chats…             │                                                                                                                                                                                      │
+   Chat 25                               │                                                                                                                                                                                      │
+                                         │                                                                                                                                                                                      │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                                                      │
+  ▊  Filter visible titles   ▎           │                                                                                                                                                                                      │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                                                      │
+                                         │                                                                                                                                                                                      │◂ Inspect
+  83 more conversations — search with    │                                                                                                                                                                                      │
+  Ctrl+K                                 │                                                                                                                                                                                      │
+  Chats                             ▾    │                                                                                                                                                                                      │
+   Chat 25                         ⛔    │                                                                                                                                                                                      │
+   Blocked                               │                                                                                                                                                                                      │
+   Chat 24                         💬    │                                                                                                                                                                                      │
+   Chat 23                         💬 ▄  │                                                                                                                                                                                      │
+   Chat 22                         💬    │                                                                                                                                                                                      │
+   Chat 21                         💬    │                                                                                                                                                                                      │
+   Chat 20                         💬    │                                                                                                                                                                                      │
+   Chat 19                         💬  ▁ │                                                                                                                                                                                      │
+ ▼ more — scroll                         │                                                                                                                                                                                      │
+ ──────────────────────────────────────  │                                                                                                                                                                                      │
+ Character · No chats               ▸    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ──────────────────────────────────────  │   System                                                                                                                                                                             │
+ ▼ Agent · Details                       │   Message blocked: remove unsafe markup or shorten your message.                                                                                                                     │
+                                         │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ blocked
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 100%+ · Current $0.00 · On next send
+
+█  Composer ▾  Menu  ... 09992 INFO build step 9992: compiled module_1.py in 8.2s; cache=hit; payload=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx                                                              Send | $       Dictate
+█                    09993 INFO build step 9993: compiled module_2.py in 9.3s; cache=miss; payload=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+█                    09994 INFO build step 9994: compiled module_3.py in 10.4s; cache=hit; payload=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+█                    09995 INFO build step 9995: compiled module_4.py in 11.5s; cache=hit; payload=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+█                    09996 INFO build step 9996: compiled module_5.py in 12.6s; cache=miss; payload=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+█                    09997 INFO build step 9997: compiled module_6.py in 0.7s; cache=hit; payload=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+█                    09998 INFO build step 9998: compiled module_7.py in 1.8s; cache=hit; payload=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+█                    09999 INFO build step 9999: compiled module_8.py in 2.9s; cache=miss; payload=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit

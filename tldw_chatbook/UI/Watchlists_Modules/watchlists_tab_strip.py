@@ -64,4 +64,4 @@ class WatchlistsTabStrip(Horizontal):
         if not button_id.startswith(prefix):
             return
         event.stop()
-        self.post_message(SectionSelected(button_id[len(prefix):]))
+        self.post_message(SectionSelected(button_id[len(prefix) :]))

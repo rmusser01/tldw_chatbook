@@ -28,6 +28,7 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
     resolve_adaptive_reader_layout,
 )
 from tldw_chatbook.Widgets.Library.library_adaptive_reader_shell import (
+    LIBRARY_ADAPTIVE_READER_CLASSES,
     AdaptiveReaderShellResized,
     LibraryAdaptiveReaderShell,
     PaneToggleRequested,
@@ -46,6 +47,16 @@ LIBRARY_SOURCES = (
 
 def _library_sources_text() -> str:
     return "\n".join(p.read_text(encoding="utf-8") for p in LIBRARY_SOURCES)
+
+
+#: Roleplay frame B0: the CSS-ownership pins key on the Library
+#: DESTINATION classes the shared shell is built with, not on literals, so a
+#: rename on either side fails here instead of leaving the grips unstyled.
+_SHELL = f".{LIBRARY_ADAPTIVE_READER_CLASSES.shell}"
+_SHELL_RULE = f"{_SHELL} {{"
+_WORK_RULE = f"{_SHELL} > .{LIBRARY_ADAPTIVE_READER_CLASSES.work} {{"
+_GRIP_RULE = f"{_SHELL} > .{LIBRARY_ADAPTIVE_READER_CLASSES.grip} {{"
+_GRIP_FOCUS_RULE = f"{_SHELL} > .{LIBRARY_ADAPTIVE_READER_CLASSES.grip}:focus {{"
 
 
 class _ParamSheet(NamedTuple):
@@ -594,12 +605,9 @@ async def test_all_five_regions_remain_inside_representative_media_widths(width)
 def test_shared_shell_structure_is_owned_by_shared_tcss_selectors():
     source = _library_sources_text()
 
-    assert ".library-adaptive-reader-shell {" in source
-    assert ".library-adaptive-reader-shell > .library-adaptive-reader-work {" in source
-    assert (
-        ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {"
-        in source
-    )
+    assert _SHELL_RULE in source
+    assert _WORK_RULE in source
+    assert _GRIP_RULE in source
 
 
 @pytest.mark.parametrize(
@@ -627,10 +635,7 @@ def test_no_sheet_declares_a_grip_width_beside_the_inline_one(
     dead for Media, dead for the three siblings task-31951 narrowed, and a
     second (stale) answer to a question the resolver already settles.
     """
-    grip_block = sheet.text.split(
-        ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {",
-        1,
-    )[1].split("}", 1)[0]
+    grip_block = sheet.text.split(_GRIP_RULE, 1)[1].split("}", 1)[0]
 
     for declaration in ("width:", "min-width:", "max-width:"):
         assert declaration not in grip_block, (sheet.name, declaration)
@@ -639,19 +644,13 @@ def test_no_sheet_declares_a_grip_width_beside_the_inline_one(
 
 def test_shared_tcss_owns_the_calm_visual_contract_for_every_reader():
     source = _library_sources_text()
-    shared_grip = source.split(
-        ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip {",
-        1,
-    )[1].split("}", 1)[0]
+    shared_grip = source.split(_GRIP_RULE, 1)[1].split("}", 1)[0]
 
     assert "background: $ds-surface-raised;" in shared_grip
     assert "color: $ds-text-muted;" in shared_grip
     assert "text-style: none;" in shared_grip
     assert "outline: none;" in shared_grip
-    assert (
-        ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:focus {"
-        in source
-    )
+    assert _GRIP_FOCUS_RULE in source
     # task-31276: the focused grip carries NO outline on any edge. The grip is
     # as tall as the shell, so "endcaps" land on the reader's first and last
     # content rows -- the top one abutted the Reader identity line and read as

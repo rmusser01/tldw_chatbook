@@ -128,9 +128,7 @@ def _preparation(context: ConsoleTurnExecutionContext) -> ConsoleTurnPreparation
         queue_generation=None,
         pre_send_title="Qualification",
         pre_send_conversation_id=None,
-        state=initial_preparation_state(
-            context.library_authority.policy.auto_retrieve
-        ),
+        state=initial_preparation_state(context.library_authority.policy.auto_retrieve),
         pause_kind=None,
         one_shot_bypass=False,
         ephemeral=False,
@@ -203,10 +201,18 @@ def test_four_policy_combinations_compose_only_the_authorized_provider(
     (
         (RetrievalScript.success(), ConsoleTurnPreparationState.READY, None, True),
         (RetrievalScript.zero(), ConsoleTurnPreparationState.READY, None, False),
-        (RetrievalScript.failure(), ConsoleTurnPreparationState.PAUSED,
-         ConsolePreparationPauseKind.RETRIEVAL, False),
-        (RetrievalScript.timeout(), ConsoleTurnPreparationState.PAUSED,
-         ConsolePreparationPauseKind.RETRIEVAL, False),
+        (
+            RetrievalScript.failure(),
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.RETRIEVAL,
+            False,
+        ),
+        (
+            RetrievalScript.timeout(),
+            ConsoleTurnPreparationState.PAUSED,
+            ConsolePreparationPauseKind.RETRIEVAL,
+            False,
+        ),
     ),
 )
 async def test_automatic_preparation_uses_fixed_categories_and_scripted_outcomes(
@@ -246,7 +252,9 @@ async def test_automatic_preparation_uses_fixed_categories_and_scripted_outcomes
 
 
 @pytest.mark.asyncio
-async def test_recording_provider_covers_stream_tool_continuation_and_redacts_bodies() -> None:
+async def test_recording_provider_covers_stream_tool_continuation_and_redacts_bodies() -> (
+    None
+):
     tool_batch = ToolBatchScript.library_search_then_continue()
     recorder = RecordingConsoleProvider(
         stream_scripts=[StreamScript.tokens("hel", "lo")],
@@ -338,9 +346,7 @@ async def test_restart_recovery_requires_explicit_production_action(
             else real_get_cli_setting(section, key, default)
         ),
     )
-    db, conversation_id, repository = _database(
-        tmp_path / f"recovery-{action}.sqlite"
-    )
+    db, conversation_id, repository = _database(tmp_path / f"recovery-{action}.sqlite")
     checkpoint = _insert(db, repository, _acceptance(conversation_id))
     if started:
         _start(repository, checkpoint)
@@ -401,7 +407,7 @@ async def test_prompt_queue_drains_through_controller_and_recording_gateway() ->
     )
     await asyncio.wait_for(recorder.stream_started[0].wait(), timeout=1)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
-    queued = controller.queue_prompt(
+    queued = await controller.queue_prompt(
         session.id,
         text="second prompt",
         expected_revision=snapshot.revision,

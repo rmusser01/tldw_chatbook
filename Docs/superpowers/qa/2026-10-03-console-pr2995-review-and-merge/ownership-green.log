@@ -1,0 +1,75 @@
+...........................................x................--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+..........--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+. [ 91%]
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.                                                                  [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/conftest.py:609: UserWarning: open file descriptors grew by 489 over the test session (start=14, end=503, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+66.28s call     Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+51.54s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[selection_only]
+41.14s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[caret_only]
+39.09s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+37.69s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]
+34.28s call     Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send
+29.54s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]
+24.80s call     Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+22.59s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+22.26s call     Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target
+21.00s call     Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime
+20.00s call     Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+19.28s call     Tests/UI/test_console_runtime_ownership.py::test_clearing_agent_handoff_in_mounted_composer_persists_before_exit
+17.67s call     Tests/UI/test_console_runtime_ownership.py::test_post_unmount_raw_refusal_restores_on_second_console_visit
+14.80s call     Tests/UI/test_console_runtime_ownership.py::test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
+4.90s call     Tests/UI/test_console_runtime_ownership.py::test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle
+2.49s teardown Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[selection_only]
+2.03s teardown Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[caret_only]
+1.96s call     Tests/UI/test_console_runtime_ownership.py::test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements
+1.90s teardown Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[replacement]
+1.75s teardown Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[switch_away]
+1.72s teardown Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[same_text]
+1.68s call     Tests/UI/test_console_runtime_ownership.py::test_terminal_manager_is_app_owned_unarmed_and_reads_config_replacements
+1.60s teardown Tests/UI/test_console_runtime_ownership.py::test_native_acceptance_consumes_only_open_target_revision[unchanged]
+1.11s setup    Tests/UI/test_console_runtime_ownership.py::test_console_runtime_owns_one_screen_free_persona_buddy_sink
+=========================== short test summary info ============================
+XFAIL Tests/UI/test_console_runtime_ownership.py::test_captured_attach_timer_overlap_rearms_real_sync_worker - TASK-32873: the real sync worker now reads whole-screen owner state (library projection, staged evidence, active settings, Textual message-pump context) that a bare __new__ ChatScreen mount cannot satisfy; needs the app_factory real-mount rewrite. Tracked in the task notes.
+78 passed, 1 xfailed, 5 warnings in 521.98s (0:08:41)

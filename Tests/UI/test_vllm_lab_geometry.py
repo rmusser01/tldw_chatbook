@@ -13,6 +13,7 @@ from textual.pilot import Pilot
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, Select
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
@@ -55,7 +56,7 @@ def _no_splash(monkeypatch):
             return False
         return _real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
+    set_app_global(monkeypatch, "get_cli_setting", fake_get_cli_setting)
 
 
 VLLM_GEOMETRY_STATES = (

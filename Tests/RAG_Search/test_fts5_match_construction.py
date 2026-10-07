@@ -86,6 +86,7 @@ Real databases throughout for the behavioural half (a real
 maintaining the FTS indexes), because the thing under test is FTS5's own
 parse of the expression -- a mock would pin nothing.
 """
+
 import asyncio
 import json
 import sqlite3
@@ -235,7 +236,7 @@ PROMPT_ROWS = [
         "Draft the ceramic kiln firing schedule for the studio.",
     ),
 ]
-AND_HIT_QUERY = "wombat burrow"                      # every token present
+AND_HIT_QUERY = "wombat burrow"  # every token present
 OR_ONLY_QUERY = "how does the wombat template work"  # "template"/"work" absent
 # The PREFIX mechanism at fixture scale (TASK-15700): the prompt says
 # "inspection", the query says "inspect". Both tokens are content words, so
@@ -561,9 +562,7 @@ def test_the_prefix_form_really_is_wider_than_the_and_over_the_same_terms():
                 "SELECT rowid FROM docs WHERE docs MATCH ?", (expression,)
             ).fetchall()
 
-        service = _make_service(
-            construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX
-        )
+        service = _make_service(construction=FTS_MATCH_CONSTRUCTION_AND_THEN_PREFIX)
         primary, fallback = service._fts5_match_expressions("wombat")
 
         assert match(primary) == [], "the AND form must NOT reach 'wombats'"
@@ -797,9 +796,7 @@ def test_a_matching_and_never_runs_the_fallback(
     calls = _prompts_fts_spy(monkeypatch)
 
     results = asyncio.run(
-        service._keyword_search(
-            AND_HIT_QUERY, top_k=5, keyword_source_types={"prompt"}
-        )
+        service._keyword_search(AND_HIT_QUERY, top_k=5, keyword_source_types={"prompt"})
     )
 
     assert [r.metadata["doc_title"] for r in results] == ["Wombat shift handover"]
@@ -825,9 +822,7 @@ def test_a_zero_row_and_falls_back_to_the_or_form_exactly_once(
     calls = _prompts_fts_spy(monkeypatch)
 
     results = asyncio.run(
-        service._keyword_search(
-            OR_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"}
-        )
+        service._keyword_search(OR_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"})
     )
 
     assert [r.metadata["doc_title"] for r in results] == ["Wombat shift handover"]
@@ -880,9 +875,7 @@ def test_the_shipped_construction_runs_one_fallback_per_zero_row_sub_leg(
     calls = _prompts_fts_spy(monkeypatch)
 
     results = asyncio.run(
-        service._keyword_search(
-            OR_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"}
-        )
+        service._keyword_search(OR_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"})
     )
 
     assert results == []
@@ -908,9 +901,7 @@ def test_the_or_construction_stamps_its_rows_as_the_or_form(tmp_path: Path) -> N
     service = _make_service(construction="or", prompts_db_path=db_path)
 
     results = asyncio.run(
-        service._keyword_search(
-            OR_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"}
-        )
+        service._keyword_search(OR_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"})
     )
 
     assert [r.metadata["doc_title"] for r in results] == ["Wombat shift handover"]
@@ -944,9 +935,7 @@ def test_notes_sub_leg_falls_back_independently(
     monkeypatch.setattr(RAGService, "_chacha_notes_fts", staticmethod(spy))
 
     results = asyncio.run(
-        service._keyword_search(
-            OR_ONLY_QUERY, top_k=5, keyword_source_types={"note"}
-        )
+        service._keyword_search(OR_ONLY_QUERY, top_k=5, keyword_source_types={"note"})
     )
 
     assert [r.metadata["doc_title"] for r in results] == ["Saltmarsh hide"]
@@ -985,9 +974,7 @@ def test_conversations_sub_leg_falls_back_independently(
         calls.append(escaped_query)
         return original(conn, escaped_query, limit, allowed_ids)
 
-    monkeypatch.setattr(
-        RAGService, "_chacha_conversations_fts", staticmethod(spy)
-    )
+    monkeypatch.setattr(RAGService, "_chacha_conversations_fts", staticmethod(spy))
 
     results = asyncio.run(
         service._keyword_search(
@@ -1032,9 +1019,7 @@ def test_media_sub_leg_falls_back_independently(
     monkeypatch.setattr(RAGService, "_perform_fts5_search", spy)
 
     results = asyncio.run(
-        service._keyword_search(
-            OR_ONLY_QUERY, top_k=5, keyword_source_types={"media"}
-        )
+        service._keyword_search(OR_ONLY_QUERY, top_k=5, keyword_source_types={"media"})
     )
 
     assert [r.metadata["doc_title"] for r in results] == ["Burrow survey"]
@@ -1084,9 +1069,7 @@ def test_sub_legs_carry_and_and_fallback_rows_in_one_query_primary_first(
         )
     )
 
-    stamps = {
-        r.metadata["source_type"]: r.metadata["fts_match"] for r in results
-    }
+    stamps = {r.metadata["source_type"]: r.metadata["fts_match"] for r in results}
     assert stamps == {"media": FTS_MATCH_AND, "prompt": FTS_MATCH_OR}
 
     # The tier order, in sequence: every primary-form row precedes every
@@ -1145,9 +1128,7 @@ def test_a_failing_fallback_degrades_the_sub_leg_like_the_primary(
     monkeypatch.setattr(RAGService, "_prompts_fts", staticmethod(spy))
 
     results = asyncio.run(
-        service._keyword_search(
-            OR_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"}
-        )
+        service._keyword_search(OR_ONLY_QUERY, top_k=5, keyword_source_types={"prompt"})
     )
     assert results == []
 
@@ -1172,9 +1153,7 @@ def test_the_and_construction_keeps_the_hybrid_key_byte_identical():
         "10",
         json.dumps({}, sort_keys=True),
         "fusion:"
-        + json.dumps(
-            {"alpha": 0.7, "rrf_k": 5, "pool_multiplier": 2}, sort_keys=True
-        ),
+        + json.dumps({"alpha": 0.7, "rrf_k": 5, "pool_multiplier": 2}, sort_keys=True),
     ]
     assert cache._make_key(
         "quokka",
@@ -1237,12 +1216,14 @@ def test_the_keyword_search_type_keys_the_construction_too():
     cache = SimpleRAGCache(enabled=True)
 
     legacy = cache._make_key("quokka", "keyword", 10)
-    assert cache._make_key(
-        "quokka", "keyword", 10, None, None, None, None, FTS_MATCH_AND
-    ) == legacy
-    assert cache._make_key(
-        "quokka", "keyword", 10, None, None, None, None, "and_then_or"
-    ) != legacy
+    assert (
+        cache._make_key("quokka", "keyword", 10, None, None, None, None, FTS_MATCH_AND)
+        == legacy
+    )
+    assert (
+        cache._make_key("quokka", "keyword", 10, None, None, None, None, "and_then_or")
+        != legacy
+    )
 
 
 def test_the_search_path_passes_the_construction_into_the_cache_key(

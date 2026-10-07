@@ -17,9 +17,16 @@ PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review"]
 PUSH_ONLY_CANCELLATION = (
     "${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}"
 )
+LANES = (
+    "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
+    "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
+)
 FAST_LANE_TARGETS = (
     "Tests/CI",
     "Tests/test_smoke.py",
+    "Tests/MCP/test_approval_timeout_policy.py",
+    "Tests/MCP/test_control_plane_bridge.py",
+    "Tests/MCP/test_live_server_request_wiring.py",
     "Tests/Agents/test_execution_capacity.py",
     "Tests/Agents/test_fleet_messages.py",
     "Tests/Agents/test_session_todo_store.py",
@@ -33,6 +40,40 @@ FAST_LANE_TARGETS = (
     "Tests/UI/test_mcp_workbench.py",
     "Tests/UI/test_mcp_tools_mode.py",
     "Tests/Widgets/test_detach_safe_text_area.py",
+    "Tests/Architecture/test_console_controllers_define_their_self_attributes.py",
+    # TASK-34000.1: a Screen that flushes on navigation must answer the quit
+    # walk; quit prompts are awaited only through the choke point; the Notes
+    # autosave max-wait arithmetic. Static AST scans (one cached tree walk
+    # each) and pure unit tests: a few seconds for the lane in total.
+    "Tests/Architecture/test_flush_screens_have_quit_hooks.py",
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+    "Tests/Library/test_library_note_autosave_max_wait.py",
+    # TASK-34000 wave 1a final review (I2): the fast pins for the export seam
+    # (atomic write, no-clobber, symlink write-through, the Report and
+    # Collections replace checks) and for every sync status publication
+    # carrying its time. About 6 s together; nothing else gated them.
+    "Tests/Library/test_library_file_export.py",
+    "Tests/Architecture/test_notes_sync_snapshot_construction.py",
+    # TASK-34100.5: the first-reply and handoff unit guards -- the direct
+    # runtime's unavailable tools never reach the agent catalog, plain arrival
+    # words, the missing-revision trace diagnostic, the provider's own reason
+    # on a failed first reply, and the cold local first-token window. Pure
+    # unit tests, a few seconds together.
+    "Tests/Agents/test_mcp_unavailable_builtin_tools.py",
+    "Tests/Chat/test_console_arrival_vocabulary.py",
+    "Tests/Chat/test_console_trace_missing_revision_diagnostic.py",
+    "Tests/Chat/test_first_reply_failure_copy.py",
+    "Tests/Chat/test_first_token_window.py",
+)
+#: The lasting-sync real-stack files (a real database, a real ``.md``, the
+#: production runtime). They are ``bootstrap_profile``, so they run in the
+#: admission-sensitive invocation, never in the sandboxed one above. Pinned as
+#: a subset: that step also holds other teams' files.
+NOTES_SYNC_REAL_STACK_TARGETS = (
+    "Tests/Notes/test_notes_sync_tail_edit.py",
+    "Tests/Notes/test_notes_sync_delete_restore_signal.py",
+    "Tests/Notes/test_notes_sync_resave_window.py",
+    "Tests/Notes/test_notes_sync_attention_fence.py",
 )
 HEAVY_JOB_KEYS = {
     "core-tests",
@@ -66,9 +107,7 @@ def _named_step(job: dict, name: str) -> dict:
 def _pytest_targets(run: str) -> tuple[str, ...]:
     tokens = shlex.split(run.replace("\\\n", " "))
     return tuple(
-        token
-        for token in tokens[1:]
-        if token == "Tests" or token.startswith("Tests/")
+        token for token in tokens[1:] if token == "Tests" or token.startswith("Tests/")
     )
 
 
@@ -89,28 +128,24 @@ def _assert_required_aggregation(workflow: dict) -> None:
 
     verdict = _named_step(required, "Require successful PR fast lane")
     assert not verdict.get("continue-on-error", False)
-    assert verdict["if"] == (
-        "${{ github.event_name == 'pull_request' && "
-        "needs.pr-fast-lane.result != 'success' }}"
-    )
+    assert verdict["if"] == f"${{{{ ({LANES}) && needs.pr-fast-lane.result != 'success' }}}}"
     assert "needs.pr-fast-lane.result" in verdict["run"]
     assert "exit 1" in verdict["run"]
 
     ui_verdict = _named_step(required, "Require successful UI fast lane")
     assert not ui_verdict.get("continue-on-error", False)
-    assert ui_verdict["if"] == (
-        "${{ github.event_name == 'pull_request' && "
-        "needs.ui-fast-lane.result != 'success' }}"
-    )
+    assert ui_verdict["if"] == f"${{{{ ({LANES}) && needs.ui-fast-lane.result != 'success' }}}}"
     assert "needs.ui-fast-lane.result" in ui_verdict["run"]
     assert "exit 1" in ui_verdict["run"]
 
-    # The UI lane is bounded the same way the fast lane is: one serial job,
+    # The UI lane is bounded the same way the fast lane is: serial jobs,
     # minimal install, its own timeout. TASK-32908 put it in its own job
-    # precisely so it cannot eat pr-fast-lane's 30-minute budget.
+    # precisely so it cannot eat pr-fast-lane's 30-minute budget; TASK-34353
+    # split it into contiguous shards so the census fits that timeout. A
+    # matrix job's `needs.<job>.result` is success only when every shard is.
     ui = workflow["jobs"]["ui-fast-lane"]
     assert ui["runs-on"] == "ubuntu-latest"
-    assert "strategy" not in ui
+    assert list(ui["strategy"]["matrix"]) == ["shard"]
     assert ui["timeout-minutes"] <= 20
     assert not ui.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in ui["steps"])
@@ -156,9 +191,7 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
     resolver = workflow["jobs"]["resolve-dev-sha"]
     assert resolver["outputs"] == {"sha": "${{ steps.resolve.outputs.sha }}"}
     resolver_checkout = next(
-        step
-        for step in resolver["steps"]
-        if step.get("uses") == "actions/checkout@v4"
+        step for step in resolver["steps"] if step.get("uses") == "actions/checkout@v4"
     )
     assert resolver_checkout["with"] == {"ref": "dev"}
     resolve = _named_step(resolver, "Resolve one dev commit for every matrix leg")
@@ -175,9 +208,7 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
         {"os": "windows-latest", "python-version": "3.12", "io-encoding": "cp1252"},
     ]
     checkout = next(
-        step
-        for step in nightly["steps"]
-        if step.get("uses") == "actions/checkout@v4"
+        step for step in nightly["steps"] if step.get("uses") == "actions/checkout@v4"
     )
     assert checkout["with"] == {
         "ref": "${{ needs.resolve-dev-sha.outputs.sha }}",
@@ -199,7 +230,7 @@ def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
     fast = _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"]
 
     assert fast["name"] == "PR Fast Lane"
-    assert fast["if"] == "github.event_name == 'pull_request'"
+    assert fast["if"] == LANES
     assert fast["runs-on"] == "ubuntu-latest"
     assert fast["timeout-minutes"] == 30
     assert "strategy" not in fast
@@ -210,9 +241,7 @@ def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
     assert len(fast["steps"]) == 5
 
     setup = next(
-        step
-        for step in fast["steps"]
-        if step.get("uses") == "actions/setup-python@v5"
+        step for step in fast["steps"] if step.get("uses") == "actions/setup-python@v5"
     )
     assert setup["with"]["python-version"] == "3.12"
 
@@ -250,6 +279,29 @@ def test_fast_lane_target_set_is_exact_and_non_overlapping() -> None:
             other_path = Path(other)
             assert target_path not in other_path.parents
             assert other_path not in target_path.parents
+
+
+def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> None:
+    """Keep the "no silent winner" and no-hold pins on every pull request.
+
+    TASK-34000 wave 1a final review (I2): on a pull request only these lists
+    and the UI census run; the rest of ``Tests/Notes`` runs on pushes to
+    ``main``. A later PR could otherwise break the released pass, the Recovery
+    negative controls or the re-save wait and merge green.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    fast = workflow["jobs"]["pr-fast-lane"]
+    targets = _pytest_targets(
+        _named_step(fast, "Run admission-sensitive suites")["run"]
+    )
+
+    missing = [name for name in NOTES_SYNC_REAL_STACK_TARGETS if name not in targets]
+    assert not missing, f"not gated on pull requests: {missing}"
+    assert len(set(targets)) == len(targets)
+    for target in targets:
+        assert (PROJECT_ROOT / target).exists(), f"gated target is gone: {target}"
+    # Their enrollment poisons sandboxed suites sharing a process (TASK-32873).
+    assert not set(targets) & set(FAST_LANE_TARGETS)
 
 
 def test_required_context_fails_closed_and_keeps_artifact_checks_install_free() -> None:
@@ -323,7 +375,12 @@ def test_required_aggregation_contract_rejects_continue_on_error(
 
 @pytest.mark.parametrize(
     "flag",
-    ["--collect-only", "-k smoke", "--ignore=Tests/CI", "--deselect=Tests/test_smoke.py"],
+    [
+        "--collect-only",
+        "-k smoke",
+        "--ignore=Tests/CI",
+        "--deselect=Tests/test_smoke.py",
+    ],
 )
 def test_fast_lane_contract_rejects_selection_suppressing_flags(flag: str) -> None:
     """Reject pytest flags that can turn the exact lane into a subset.
@@ -370,7 +427,10 @@ def test_bundle_and_backlog_checks_run_on_push_events() -> None:
     workflow = _workflow("derived-artifacts.yml")
     assert {"dev", "main"} <= set(_triggers(workflow)["push"]["branches"])
     steps = workflow["jobs"]["derived-artifacts"]["steps"]
-    for script in ("tldw_chatbook/css/check_bundle_sync.py", "scripts/check_backlog_task_ids.py"):
+    for script in (
+        "tldw_chatbook/css/check_bundle_sync.py",
+        "scripts/check_backlog_task_ids.py",
+    ):
         matching = [step for step in steps if script in str(step.get("run", ""))]
         assert matching, f"{script} is not run by the required job"
         for step in matching:

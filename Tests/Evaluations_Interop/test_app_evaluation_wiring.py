@@ -5,6 +5,7 @@ def test_app_wires_server_evaluation_scope_when_provider_backed_service_has_no_c
     monkeypatch,
 ):
     from tldw_chatbook import app as app_module
+    from tldw_chatbook import app_service_wiring
 
     class LocalUnavailable:
         def __init__(self, *args, **kwargs):
@@ -12,9 +13,9 @@ def test_app_wires_server_evaluation_scope_when_provider_backed_service_has_no_c
 
     server_service = SimpleNamespace(client=None, client_provider=object())
 
-    monkeypatch.setattr(app_module, "EvaluationOrchestrator", LocalUnavailable)
+    monkeypatch.setattr(app_service_wiring, "EvaluationOrchestrator", LocalUnavailable)
     monkeypatch.setattr(
-        app_module.ServerEvaluationsService,
+        app_service_wiring.ServerEvaluationsService,
         "from_config",
         classmethod(lambda cls, app_config, *, policy_enforcer=None: server_service),
     )

@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                    Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕        Chat 2         ✕    New tab     Temporary                                                                                         │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                                     ✕  │
+ Workspaces                    ▸    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ─────────────────────────────────▃ │   System                                                                                                                                                          │
+ Conversations                 ▾    │   Console commands:                                                                                                                                               │
+        Archive this chat           │     /prompt [name] — Insert a saved prompt into the composer                                                                                                      │
+          Archived chats            │     /system [name] — Apply a saved system prompt to this session                                                                                                  │
+        Search all chats…           │     /skills [name] [args] — List or run a skill                                                                                                                   │
+   Chat 1                           │     /fewer-permission-prompts — Reduce approval prompts for trusted tool actions                                                                                  │
+                                    │     /prefill [pin|clear] [text] — Prepare the start of the assistant's reply                                                                                      │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │     /generate-image [:backend] <prompt> — Generate an image (optionally via a chosen backend)                                                                     │
+  ▊  Filter visible     ▎           │     /generate-video [:backend] <prompt> — Generate a video (optionally via a chosen backend)                                                                      │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │     /stream-video <url> — Stream a video from a URL into the transcript                                                                                           │
+                                    │     /steer <guidance for the running agent> — Send guidance into the RUNNING turn (plain messages queue)                                                          │◂ Inspect
+  Chats                        ▾    │     /redirect <correction for the running turn> — Cut off the current response and re-run the turn with your correction                                           │
+   Chat 1                     💬    │     /emergency-stop [clear | <reason>] — Hold ALL new agent runs + scheduled dispatches (clear to resume)                                                         │
+   Chat 2                     💬    │     /rewind — Rewind the session to an earlier user prompt                                                                                                        │
+                                    │     /research <question> — Run deep research in the background; the report is delivered into this conversation                                                    │
+ ─────────────────────────────────  │     /help [command] — List the console commands, or /help <command> for one command's detail                                                                      │
+ Character · No chats          ▸    │     /doctor [network] — Run local health checks (config, deps, DB, providers, paths)                                                                              │
+ ─────────────────────────────────  │     /model [query] — Switch model: pick this chat's provider·model pair (Alt+M)                                                                                   │
+ Model                         ▾    │     /sessions — Switch to another conversation (Ctrl+K)                                                                                                           │
+  Temperature 0.60                  │     /workspace — Switch the active Console workspace (Alt+W)                                                                                                      │
+  Max tokens  4096                  │     /new — Open a new Console chat tab (Ctrl+T)                                                                                                                   │
+  Streaming   Off                   │     /temp — Open a temporary chat that is never saved locally                                                                                                     │
+  System: none ▸                    │     /settings — Open Chat settings: every setting for this chat (Ctrl+O)                                                                                          │
+   Change  Alt+M                    │     /context — Show current and next-send context (Ctrl+Shift+P)                                                                                                  │
+ ─────────────────────────────────  │     /endpoint — Create a named custom endpoint from a template                                                                                                    │
+ ▼ Details                          │   Type /help <command> for details.                                                                                                                               │
+                                    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-sonnet-5     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current $
+
+█  Composer ▾  Menu  /help ▌                                                                                                                                                        Send | $       Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

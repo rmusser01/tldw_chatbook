@@ -45,9 +45,7 @@ def _guarded_paths() -> list[Path]:
     """
     assert CHAT_SCREEN_PATH.exists(), f"{CHAT_SCREEN_PATH} not found."
     modules = sorted(
-        path
-        for path in _CONSOLE_MODULES_DIR.glob("*.py")
-        if path.name != "__init__.py"
+        path for path in _CONSOLE_MODULES_DIR.glob("*.py") if path.name != "__init__.py"
     )
     assert modules, (
         f"no modules found in {_CONSOLE_MODULES_DIR}; this guard's scope "
@@ -162,6 +160,8 @@ def test_console_run_and_sync_workers_use_disjoint_groups():
     branch fixed would silently return."""
     RUN_COROUTINES = {
         "_retry_console_message",
+        # TASK-33661: Resend re-runs a broken turn on the same group.
+        "_resend_console_turn",
         "_regenerate_console_message",
         "_continue_console_message",
         "_edit_resend_console_message",

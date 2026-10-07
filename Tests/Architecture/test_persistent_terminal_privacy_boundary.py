@@ -60,6 +60,9 @@ TERMINAL_IMPORTERS = frozenset(
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "tldw_chatbook/UI/Screens/settings_screen.py",
         "tldw_chatbook/app.py",
+        # TASK-33011: the lazy `terminal_session_manager` property moved to
+        # TldwCli's ServiceWiringMixin.
+        "tldw_chatbook/app_service_wiring.py",
     }
 )
 TERMINAL_RUNTIME_OWNERS = frozenset(
@@ -68,6 +71,12 @@ TERMINAL_RUNTIME_OWNERS = frozenset(
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "tldw_chatbook/UI/Screens/settings_screen.py",
         "tldw_chatbook/app.py",
+        # TASK-33011: the lazy `terminal_session_manager` property moved to
+        # TldwCli's ServiceWiringMixin.
+        "tldw_chatbook/app_service_wiring.py",
+        # TASK-33011: the terminal-session-manager shutdown moved to TldwCli's
+        # LifecycleMixin.
+        "tldw_chatbook/app_lifecycle.py",
     }
 )
 FORBIDDEN_SINKS = (
@@ -531,7 +540,9 @@ def test_terminal_imports_and_runtime_ownership_stay_in_local_ui_layers() -> Non
 
     assert importers == TERMINAL_IMPORTERS
     assert _files_referencing_manager_owner() == TERMINAL_RUNTIME_OWNERS
-    assert _manager_construction_sites() == {"app.py": 1}
+    # TASK-33011: the one construction site is TldwCli's lazy property, which
+    # moved from app.py into its ServiceWiringMixin.
+    assert _manager_construction_sites() == {"app_service_wiring.py": 1}
 
 
 def test_manager_constructor_scan_detects_an_extra_owner(tmp_path: Path) -> None:

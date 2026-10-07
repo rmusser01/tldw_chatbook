@@ -7,12 +7,12 @@ import time
 from collections.abc import Callable
 from html import unescape
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 import pytest
 from textual.containers import Horizontal
 from textual.widgets import Button, OptionList, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_internals_decomposition import (
     _configure_native_ready_console,
@@ -225,7 +225,7 @@ async def test_console_workbench_normal_and_compact_snapshots(density: str) -> N
     app.app_config.setdefault("appearance", {})["ui_density"] = density
     _mark_console_onboarding_complete(app)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(160, 42)) as pilot:
             await _open_console(app, pilot)
 
@@ -251,7 +251,7 @@ async def test_task_15783_console_collapsed_inspector_rail_visual_parity_sweep(
     app.console_pending_approval_count = approval_count
     _mark_console_onboarding_complete(app)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
             _configure_native_ready_console(app)
             await _open_console(app, pilot)
@@ -385,7 +385,7 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
     app = _build_test_app(configured_default="home")
     _mark_console_onboarding_complete(app)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
             _configure_native_ready_console(app)
             await _open_console(app, pilot)
@@ -521,9 +521,7 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             # rail, which is why the collapsed form mirrors the open one
             # rather than copying it.
             context_label = "Context ◂" if effective_context_open else "Context ▸"
-            inspector_label = (
-                "▸ Inspect" if effective_inspector_open else "◂ Inspect"
-            )
+            inspector_label = "▸ Inspect" if effective_inspector_open else "◂ Inspect"
             context_tooltip = (
                 "Collapse Console context rail"
                 if effective_context_open
@@ -570,7 +568,7 @@ async def test_console_workbench_standard_width_inspector_snapshot() -> None:
     app = _build_test_app()
     _mark_console_onboarding_complete(app)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(128, 40)) as pilot:
             await _open_console(app, pilot)
 
@@ -603,7 +601,7 @@ async def test_console_workbench_command_palette_snapshot() -> None:
     app = _build_test_app()
     _mark_console_onboarding_complete(app)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 42)) as pilot:
             await _open_console(app, pilot)
             await pilot.press("ctrl+p")
@@ -642,7 +640,7 @@ async def test_console_workbench_focus_state_snapshot() -> None:
     app = _build_test_app()
     _mark_console_onboarding_complete(app)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 42)) as pilot:
             await _open_console(app, pilot)
             # Let the first 0.2-second Console state-sync replace the initial

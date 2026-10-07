@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌────────────────────────────────────────────────┐  P    ‹ Back to list                                               │
+│ │ Navigation                     │  a  │ Prompts (4)                                    │  r  Name                                                           │
+│ │     Import…                    │  v  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  o  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │ ▊ Filter prompts… (Enter)                    ▎ │  m  ▊ Roleplay scene setter                                     ▎  │
+│ │ ▊ Search Library…         ▎▊x▎ │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  p  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │                                                │  t                                                                 │
+│ │                                │     │   collection: All prompts                      │  s  Description                                                    │
+│ │ ────────────────────────────── │     │    sort: Newest        Select                  │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │ Browse                     ▾   │     │      Import…          Export…                  │     ▊ Opens a scene with sensory detail.                        ▎  │
+│ │    Media (2) — your files      │     │  Code review checklist                         │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │    Conversations (6)           │     │  Local · has system and user text              │                                                                    │
+│ │    Notes (5)                   │     │                                                │          Basic           Advanced           Info                   │
+│ │  ▸ Prompts (4) — reuse         │     │  Explain like I'm five                         │        Use in Console                                              │
+│ │    Skills (1) — AI add-ons     │<--- │  Local · User only                             │                                                                    │
+│ │    Collections (0)             │     │                                                │     Instructions                                                   │
+│ │    Search / RAG — find all     │     │ █Roleplay scene setter                         │     Instructions the model always follows.                         │
+│ │ ────────────────────────────── │     │ █Local · has system and user text              │                                                                    │
+│ │ Artifacts                  ▾   │     │                                                │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │    All artifacts               │     │  Summarize meeting notes                       │<--- ▊ You are a scene-setting narrator.                         ▎  │
+│ │    Chatbooks                   │     │  Local · has system and user text              │     ▊                                                           ▎  │
+│ │    Reports                     │     │                                                │     ▊                                                           ▎  │
+│ │ ────────────────────────────── │     │                                                │     ▊                                                           ▎  │
+│ │ Create                     ▾   │     │                                                │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │    New note                    │     │ 1-4 of 4                                       │                                                                    │
+│ │    New prompt                  │<--- │                                                │     Message template                                               │
+│ │    New skill                   │     │                                                │     The message inserted into the composer.                        │
+│ │ ────────────────────────────── │     │                                                │                                                                    │
+│ │ Study                      ▾   │     │                                                │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│ │    Study decks (0)             │     │                                                │     ▊ Describe the opening of a scene in {{location}} with      ▎  │
+│ │    Flashcards due: 0           │     │                                                │     ▊ three sensory details.                                    ▎  │
+│ │    Quizzes (0)                 │     │                                                │     ▊                                                           ▎  │
+│ │ ────────────────────────────── │     │                                                │     ▊                                                           ▎  │
+│ │ Import / Export            ▾   │     │                                                │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ │    Import…                     │     │                                                │                                                                    │
+│ │    Export                      │     │                                                │     Modified 2m · v1                                             ▇ │
+│ │ ────────────────────────────── │     │                                                │                                                                    │
+│ │ Details                    ▸   │     │                                                │                                                                    │
+│ └────────────────────────────────┘     └────────────────────────────────────────────────┘                              More actions                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to list | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -282,6 +282,7 @@ def build_field_search_index() -> None:
     Clears first (review cleanup): plain ``update()`` could never remove a
     stale category's rows on a rebuild.
     """
+    from ...Chat.provider_catalog import provider_display_name
     from ...LLM_Provider_Catalog.model_catalog_settings import (
         AUTO_REFRESH_PROVIDER_LIST_KEYS,
     )
@@ -301,6 +302,16 @@ def build_field_search_index() -> None:
     FIELD_SEARCH_INDEX.clear()
     FIELD_SEARCH_INDEX.update(
         {
+            SettingsCategoryId.HOOKS: (
+                ("settings-hooks-enabled", "Enable Console hooks"),
+                ("settings-hooks-list", "Hook definitions and permissions"),
+                ("settings-hooks-row-enabled", "Enable hook"),
+                ("settings-hooks-event", "Hook lifecycle event"),
+                ("settings-hooks-command", "Hook command JSON argument array"),
+                ("settings-hooks-matcher", "Hook tool matcher glob"),
+                ("settings-hooks-timeout", "Hook timeout seconds"),
+                ("settings-hooks-review", "Review saved hook permissions"),
+            ),
             SettingsCategoryId.CONSOLE_BEHAVIOR: (
                 (
                     "settings-console-show-model-thinking",
@@ -346,6 +357,8 @@ def build_field_search_index() -> None:
                     "settings-console-sidechat-prompt-template",
                     "More Details prompt",
                 ),
+                # TASK-33002.1: the field table's label, then older names.
+                ("settings-console-context-budget-mode", "Budget strategy"),
                 (
                     "settings-console-context-budget-mode",
                     "Conversation budget strategy",
@@ -369,6 +382,7 @@ def build_field_search_index() -> None:
                     "settings-console-context-target-percent",
                     "Reduce conversation to (%)",
                 ),
+                ("settings-console-context-target-percent", "Reduce context to (%)"),
                 (
                     "settings-console-context-summary-max-tokens",
                     "Summary response max tokens",
@@ -416,6 +430,7 @@ def build_field_search_index() -> None:
                 ("settings-console-default-top-p", "Top P"),
                 ("settings-console-default-min-p", "Min P"),
                 ("settings-console-default-top-k", "Top K"),
+                ("settings-console-default-max-tokens", "Max tokens"),
                 ("settings-console-default-max-tokens", "Response max tokens"),
                 ("settings-console-default-seed", "Seed"),
                 ("settings-console-default-presence-penalty", "Presence penalty"),
@@ -423,7 +438,9 @@ def build_field_search_index() -> None:
                 ("settings-console-default-reasoning-effort", "Reasoning effort"),
                 ("settings-console-default-reasoning-summary", "Reasoning summary"),
                 ("settings-console-default-verbosity", "Verbosity"),
+                ("settings-console-default-thinking-effort", "Thinking"),
                 ("settings-console-default-thinking-effort", "Thinking effort"),
+                ("settings-console-default-thinking-budget-tokens", "Thinking budget"),
                 (
                     "settings-console-default-thinking-budget-tokens",
                     "Thinking budget tokens",
@@ -527,11 +544,11 @@ def build_field_search_index() -> None:
                     for entry in (
                         (
                             f"settings-mc-auto-{provider.lower()}",
-                            f"{provider} auto-refresh model list",
+                            f"{provider_display_name(provider)} auto-refresh model list",
                         ),
                         (
                             f"settings-mc-write-{provider.lower()}",
-                            f"{provider} save fetched models to config",
+                            f"{provider_display_name(provider)} save fetched models to config",
                         ),
                     )
                 ),
@@ -540,6 +557,7 @@ def build_field_search_index() -> None:
                 ("settings-model-profile-top-p", "Top P"),
                 ("settings-model-profile-min-p", "Min P"),
                 ("settings-model-profile-top-k", "Top K"),
+                ("settings-model-profile-max-tokens", "Max tokens"),
                 ("settings-model-profile-max-tokens", "Response max tokens"),
                 ("settings-model-profile-seed", "Seed"),
                 ("settings-model-profile-presence-penalty", "Presence penalty"),
@@ -547,7 +565,9 @@ def build_field_search_index() -> None:
                 ("settings-model-profile-reasoning-effort", "Reasoning effort"),
                 ("settings-model-profile-reasoning-summary", "Reasoning summary"),
                 ("settings-model-profile-verbosity", "Verbosity"),
+                ("settings-model-profile-thinking-effort", "Thinking"),
                 ("settings-model-profile-thinking-effort", "Thinking effort"),
+                ("settings-model-profile-thinking-budget-tokens", "Thinking budget"),
                 (
                     "settings-model-profile-thinking-budget-tokens",
                     "Thinking budget tokens",
@@ -606,6 +626,10 @@ def build_field_search_index() -> None:
                 for name, label in _labels.items()
             ),
             SettingsCategoryId.PRIVACY_SECURITY: (
+                # TASK-34100.4: the Encryption card's password-gated actions.
+                ("settings-encryption-enable", "Encrypt API keys"),
+                ("settings-encryption-change", "Change master password"),
+                ("settings-encryption-disable", "Turn off encryption"),
                 ("settings-raw-cli-permitted", "Allow raw CLI host access"),
             ),
             SettingsCategoryId.NETWORK: (
@@ -630,7 +654,7 @@ def build_field_search_index() -> None:
                 (
                     "settings-library-rag-assistant-access-default",
                     # TASK-25732: one noun for this permission everywhere --
-                    # the Console chip says "Agent blocked", and "Assistant"
+                    # the Console chip says "Agent access off", and "Assistant"
                     # already names the persona in that same status strip.
                     "Agent Library access",
                 ),

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+
 from loguru import logger
 
 from tldw_chatbook.Chat.console_context_compaction import (
@@ -91,6 +92,8 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 
 def _message(
@@ -3123,9 +3126,16 @@ class _ControllerRepository(_Repository):
 
 
 class _ControllerGateway(_Gateway):
-    def __init__(self, *, context_window_tokens: int | None = 4_000) -> None:
+    def __init__(
+        self,
+        *,
+        context_window_tokens: int | None = 4_000,
+        context_window_verified: bool = True,
+    ) -> None:
         super().__init__()
         self.context_window_tokens = context_window_tokens
+        # TASK-34350: False models an estimated (fallback) window.
+        self.context_window_verified = context_window_verified
         self._provider_gateway = ConsoleProviderGateway(environ={})
 
     async def resolve_for_send(self, _selection):
@@ -3166,6 +3176,7 @@ class _ControllerGateway(_Gateway):
             capacity=resolve_request_capacity(
                 context_window_tokens=self.context_window_tokens,
                 requested_response_tokens=resolution.max_tokens or 120,
+                context_window_verified=self.context_window_verified,
             ),
             count_fn=_count,
             apply_safety_window=apply_safety_window,
@@ -3177,6 +3188,7 @@ def _controller_preflight_fixture(
     *,
     context_window_tokens: int | None = 4_000,
     overrides: ConsoleContextPolicyOverrides | None = None,
+    context_window_verified: bool = True,
 ):
     persistence = _ControllerPersistence()
     store = ConsoleChatStore(persistence=persistence)
@@ -3218,7 +3230,10 @@ def _controller_preflight_fixture(
         content="",
         persist=True,
     )
-    gateway = _ControllerGateway(context_window_tokens=context_window_tokens)
+    gateway = _ControllerGateway(
+        context_window_tokens=context_window_tokens,
+        context_window_verified=context_window_verified,
+    )
     repository = _ControllerRepository(persistence)
     controller = ConsoleChatController(
         store=store,
@@ -3852,9 +3867,12 @@ async def test_known_overflow_still_blocks_when_compaction_is_unavailable() -> N
     )
 
     assert result is not None
-    assert "cannot fit the selected model" in result.visible_copy
-    assert "Mandatory request material" in result.visible_copy
-    assert "Summarizing older turns cannot make enough room" in result.visible_copy
+    # TASK-34350: the alert names what fills the window and what to change.
+    assert result.visible_copy.startswith("Your message was not sent:")
+    assert "system prompt, tools and attached context" in result.visible_copy
+    assert "compacting older turns cannot make room" in result.visible_copy
+    # TASK-34100.5 AC#3: no internal policy jargon reaches the user.
+    assert "Mandatory request material" not in result.visible_copy
     assert gateway.calls == 0
 
 

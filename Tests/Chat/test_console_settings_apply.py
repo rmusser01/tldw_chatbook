@@ -9,6 +9,7 @@ from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverri
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     build_console_settings_readiness,
+    build_target_default_console_session_settings,
     validate_console_session_settings,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
@@ -156,7 +157,10 @@ def test_origin_validation_rejects_closed_or_rebound_sessions(
 
 
 def test_default_profile_masks_are_exact_and_exclude_other_owners() -> None:
-    assert QUICK_MODEL_DEFAULT_FIELDS == frozenset({"temperature", "streaming"})
+    # TASK-33004.1 (ADR-095 amendment 2026-09-26, D3): max_tokens joins.
+    assert QUICK_MODEL_DEFAULT_FIELDS == frozenset(
+        {"temperature", "max_tokens", "streaming"}
+    )
     assert FULL_MODEL_DEFAULT_FIELDS == frozenset(
         {
             "temperature",
@@ -431,6 +435,60 @@ def test_rebase_quick_materializes_dirty_profile_values_and_rejects_none() -> No
     assert fields["streaming"].effective_value is False
     assert fields["streaming"].profile_override is False
     assert fields["streaming"].dirty is False
+
+
+@pytest.mark.parametrize(
+    ("chat_defaults", "expected"),
+    [({"max_tokens": 2048}, 2048), ({}, None)],
+    ids=["lower-precedence-cap", "no-cap"],
+)
+def test_rebase_quick_blank_max_tokens_skips_the_profile_like_a_quick_save(
+    chat_defaults: dict[str, object], expected: int | None
+) -> None:
+    """TASK-33004.1 review: a stale blank quick Max tokens must not take the
+    model-profile cap a quick Save would delete (ADR-095: blank profile values
+    let lower-precedence defaults apply), or the live chat and the saved
+    profile disagree."""
+    source = _state(
+        ConsoleSessionSettings(provider="openai", model="target", max_tokens=None),
+        _field("temperature", 0.7),
+        _field("max_tokens", None),
+        _field("streaming", True),
+    )
+    profile = {"max_tokens": 4096, "temperature": 0.3}
+    app_config = {
+        "chat_defaults": chat_defaults,
+        "api_settings": {"openai": {"model_defaults": {"target": profile}}},
+    }
+
+    rebased = _rebase(
+        source,
+        provider="openai",
+        model="target",
+        app_config=app_config,
+        exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
+    )
+    fields = {field.name: field for field in rebased.field_drafts}
+    saved_without_cap = {
+        **app_config,
+        "api_settings": {
+            "openai": {"model_defaults": {"target": {"temperature": 0.3}}}
+        },
+    }
+
+    assert rebased.settings.max_tokens == expected
+    assert fields["max_tokens"].effective_value == expected
+    # Qodo #2947: the blank stays "inherit", so a quick Save deletes the cap.
+    assert fields["max_tokens"].profile_override is None
+    assert (
+        build_target_default_console_session_settings(
+            saved_without_cap, "openai", "target"
+        ).max_tokens
+        == rebased.settings.max_tokens
+    )
+    # Only the blank nullable field skips the profile; the snapshot's
+    # temperature is still preserved.
+    assert rebased.settings.temperature == 0.7
 
 
 def test_rebase_full_keeps_inherited_profile_controls_blank() -> None:

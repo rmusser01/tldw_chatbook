@@ -226,7 +226,9 @@ def _selection(path, auth_source=None, *, resolve=False):
             or not value.strip()
             or value.strip()
             in {"<API_KEY_HERE>", "YOUR_KEY", "your_key", "your-api-key"}
-            or value.startswith(("ENC:", "encrypted:", "recovery:"))
+            # TASK-34100.4: the encryption engine writes a lowercase "enc:"
+            # prefix; only "ENC:" was refused, so ciphertext became a key.
+            or value.strip().lower().startswith(("enc:", "encrypted:", "recovery:"))
         ):
             raise ProviderReconnectRequired()
         secret = value.strip()

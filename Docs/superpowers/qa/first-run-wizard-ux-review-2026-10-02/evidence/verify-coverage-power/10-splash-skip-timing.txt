@@ -1,0 +1,44 @@
+# Splash timing probe (fresh profile, no keys). Columns: seconds-since-launch classification nonblank-lines. 'splash' = Textual splash visible; 'wizard' = 'Set up tldw chatbook' visible.
+
+## sp3 (no-key-run1)
+   1 0.0 blank
+  10 0.4 stderr
+   2 4.1 blank
+  20 4.9 splash
+   1 12.4 wizard
+
+## sp4 (Space-at+1.7s)
+   2 0.0 blank
+  12 0.8 stderr
+   6 5.8 blank
+   4 8.6 splash
+   1 KEY at
+  10 10.8 splash
+   1 15.3 wizard
+
+## sp6 (no-key-run2)
+   2 0.0 blank
+  14 0.8 stderr
+   3 6.7 blank
+  19 8.0 splash
+   1 15.4 wizard
+
+## sp5 (Space-at+1.2s)
+   2 0.0 blank
+  13 0.8 stderr
+   3 6.3 blank
+   4 7.6 splash
+   1 KEY at
+   2 9.3 splash
+   1 10.1 wizard
+
+## sp7 (Escape-at+1.3s)
+   1 0.0 blank
+  12 0.4 stderr
+   3 5.3 blank
+   4 6.5 splash
+   1 KEY at
+   3 8.2 splash
+   1 9.3 wizard
+
+Summary: splash on screen ~7.5s (run1) / 7.4s (run2) with no key; 6.7s (Space at +1.7s, run where wizard lagged ~5s after the key), 2.5s (Space at +1.2s), 2.8s (Escape at +1.3s).

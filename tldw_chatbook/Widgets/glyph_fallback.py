@@ -28,6 +28,7 @@ from __future__ import annotations
 #: (``CONSOLE_RUN_MARKER_GLYPHS``), and ``Widgets/destination_rail.py``;
 #: ``Tests/Chat/test_console_glyphs.py`` pins the completeness of this map.
 ASCII_GLYPH_FALLBACKS: dict[str, str] = {
+    "⚓": "H",  # hook permissions
     # Run markers (console_chat_models.CONSOLE_RUN_MARKER_GLYPHS) + the
     # shared in-progress/done vocabulary (console_glyphs). The urgency order
     # lives in Workspaces/conversation_browser_state._RUN_MARKER_URGENCY,

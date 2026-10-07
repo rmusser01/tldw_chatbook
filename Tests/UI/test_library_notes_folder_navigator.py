@@ -1125,9 +1125,7 @@ async def test_superseded_topology_receipt_reload_cannot_apply_blocked_range() -
     await task
 
     assert fake._notes_state.tree_expanded_ids == set()
-    assert all(
-        not state.loading for state in fake._notes_state.tree_branches.values()
-    )
+    assert all(not state.loading for state in fake._notes_state.tree_branches.values())
 
 
 @pytest.mark.asyncio
@@ -1661,9 +1659,7 @@ async def test_removed_locator_target_uses_deterministic_visible_fallback_and_cl
         FolderPlacementId.folder("fallback")
     )
     assert fake._notes_state.navigation_status == ""
-    assert not any(
-        state.loading for state in fake._notes_state.tree_branches.values()
-    )
+    assert not any(state.loading for state in fake._notes_state.tree_branches.values())
 
 
 def test_submitting_new_filter_clears_previous_result_state():
@@ -4182,9 +4178,7 @@ async def test_mounted_create_flow_fences_and_refreshes_every_exact_placement_pa
         assert set(service.postcommit_placement_calls) == {None, "ideas", "reading"}
         assert "unrelated" not in service.postcommit_placement_calls
         root = screen._notes_state.tree_branches[NotesBranchKey(None, "placements")]
-        ideas = screen._notes_state.tree_branches[
-            NotesBranchKey("ideas", "placements")
-        ]
+        ideas = screen._notes_state.tree_branches[NotesBranchKey("ideas", "placements")]
         reading = screen._notes_state.tree_branches[
             NotesBranchKey("reading", "placements")
         ]
@@ -4564,17 +4558,13 @@ async def test_mounted_stale_receipt_reload_cannot_steal_newer_user_focus() -> N
         await _wait_until(pilot, lambda: screen.focused is filter_input)
         focus_generation = screen._notes_state.focus_intent_generation
         receipt = LibraryNotesTreeReceipt(
-            selected_placement_id=FolderPlacementId.note(
-                "target", "n1", "m-preferred"
-            ),
+            selected_placement_id=FolderPlacementId.note("target", "n1", "m-preferred"),
             selected_note_id="n1",
             expanded_folder_ids=("target",),
             branch_ranges=(LibraryNotesBranchRange(None, "folders", 40, 41),),
             filter_query="",
             filter_range=None,
-            focus_semantic_id=FolderPlacementId.note(
-                "target", "n1", "m-preferred"
-            ),
+            focus_semantic_id=FolderPlacementId.note("target", "n1", "m-preferred"),
             focus_role="note-placement",
             scroll_offset=None,
             rail_scroll_offset=None,
@@ -4602,11 +4592,13 @@ async def test_mounted_stale_receipt_reload_cannot_steal_newer_user_focus() -> N
         service.range_release.set()
         await _wait_until(
             pilot,
-            lambda: not any(
-                worker.node is screen
-                and worker.group == "library_notes_tree:return"
-                and not worker.is_finished
-                for worker in screen.workers
+            lambda: (
+                not any(
+                    worker.node is screen
+                    and worker.group == "library_notes_tree:return"
+                    and not worker.is_finished
+                    for worker in screen.workers
+                )
             ),
         )
 

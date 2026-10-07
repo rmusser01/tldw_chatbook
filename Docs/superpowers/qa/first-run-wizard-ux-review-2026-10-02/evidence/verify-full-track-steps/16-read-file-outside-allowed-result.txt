@@ -1,0 +1,40 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control ac… Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | READTEST read ~/notes/x.md                                     │
+                  Context ◂  │     Second message     ✕  READTEST please re…  ✕  READTEST read ~/no…  ✕    ▸ │
+   Terminal                  │                                                                               │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings >    ✕  │
+ Workspaces             ▸    │                                                                               │
+ ──────────────────────────  │                                                                               │
+ Conversations          ▾    │                                                                               │
+   New conversation          │                                                                               │
+     Archive this chat       │                                                                               │
+      Archived chats         │                                                                               │
+     Search all chats…       │                                                                               │
+   READTEST read             │                                                                               │
+   ~/notes/x.md              │                                                                               │
+                             │  ───────────────────────────────────────────────────────────────────────────  │◂ Inspect
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │   User                                                                        │
+  ▊  Filter      ▎           │   READTEST read ~/notes/x.md                                                  │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ───────────────────────────────────────────────────────────────────────────  │
+                             │  ▊ Assistant                                                                  │
+  Chats                 ▾    │  ▊   ▸ load_tools                                      · Succeeded · 0.0s     │
+   READTEST read ~/n…  💬    │  ▊   loaded: read_file                                                        │
+   READTEST please r…  💬    │  ▊   ▸ read_file                                          · Failed · 0.5s     │
+   Second message      💬  ▆ │  ▊   ERROR: Failed to read file: Outside every allowed root. Need that        │
+   Reply with just: …  💬    │  ▊   folder? Add it to a named Workspace. Path:… (+295 chars)                 │
+                             │  ▊                                                                            │
+ ──────────────────────────  │  ▊  Done (scripted).                                                          │
+ Character · No chats   ▸    │  ▊                                                                            │
+ ▼ Model · Agent · Details   │  ▊                                                                            │
+                             │  ───────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: llama.cpp     Model: llama-3.1-8b-instruct-…     System Pr
+
+│  Composer ▾  Menu  Ask, command, or paste task...    Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+P · Ctrl+Q

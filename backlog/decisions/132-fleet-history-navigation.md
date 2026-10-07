@@ -1,6 +1,7 @@
 # ADR-132: Fleet history navigation
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-09-07
 Related task: TASK-15201
 Related decisions: ADR-017, ADR-043, ADR-131

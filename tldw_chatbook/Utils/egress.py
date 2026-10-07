@@ -9,6 +9,9 @@ even for trusted origins; only the config allowlist overrides them.
 Shared pipeline code must NEVER auto-trust its own input URL — trust is
 seeded only at boundaries where user intent is known and threaded down
 (see Docs/superpowers/specs/2026-07-23-web-fetch-hardening-design.md).
+``UrlProvenance``/``trusted_origins_for`` are the threaded-down spelling
+of that rule (TASK-20973): a seam that cannot establish provenance passes
+nothing and gets ``frozenset()``.
 
 Non-goals (documented residual risk): DNS-rebinding IP pinning (we
 resolve-and-check; the HTTP client re-resolves to connect), proxy-aware
@@ -33,8 +36,13 @@ import asyncio
 import ipaddress
 import json as _json
 import socket
+import threading
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Iterable, List, Mapping, MutableMapping
+from enum import Enum
+from typing import Any, Iterable, Iterator, List, Mapping, MutableMapping
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -42,6 +50,57 @@ from loguru import logger
 
 from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter
+
+
+class UrlProvenance(Enum):
+    """How this process came to hold a URL -- the fact that seeds self-trust.
+
+    This module's contract says trust is seeded ONLY at boundaries where
+    user intent is known, and threaded down; pipeline code must never
+    auto-trust its own input URL. TASK-19556's media guard computed
+    ``trusted_origins=origin_set(url)`` unconditionally, which made that
+    contract true by wiring (only the user-entered ingest form reached it)
+    rather than by invariant. TASK-20973 replaced the unconditional
+    self-trust with this explicit provenance parameter at every seam, so a
+    URL arriving from anywhere else -- config, an API payload, a feed, an
+    agent tool -- fails closed instead of vouching for itself.
+
+    Membership rule for new values: a variant may be added only when some
+    boundary can ESTABLISH that fact about the URL at the moment it
+    receives it, and only variants that justify private-IP fetches belong
+    here at all.
+    """
+
+    #: The user typed/pasted this URL at an input this app owns (the
+    #: Library ingest form, or a job created from that submission). An
+    #: explicitly entered URL is a configured URL: ``[web_security]``
+    #: permits it to be private (an intranet media server is a legitimate
+    #: source).
+    USER_ENTERED = "user_entered"
+    #: Nobody established user intent for this URL. The default at every
+    #: seam, deliberately: private/internal targets are refused and must
+    #: resolve public (or be listed in ``[web_security] allowed_hosts``).
+    UNKNOWN = "unknown"
+
+
+def trusted_origins_for(url: str, provenance: UrlProvenance) -> frozenset:
+    """The egress ``trusted_origins`` a URL's provenance actually earns.
+
+    The single spelling of the self-trust decision (TASK-20973): a URL is
+    its own trusted origin only when its provenance establishes user
+    intent; every other provenance gets the empty set, so the caller's URL
+    cannot vouch for itself.
+
+    Args:
+        url: The URL about to be handed to a fetcher.
+        provenance: How this process came to hold ``url``.
+
+    Returns:
+        ``origin_set(url)`` for ``USER_ENTERED``, else ``frozenset()``.
+    """
+    if provenance is UrlProvenance.USER_ENTERED:
+        return origin_set(url)
+    return frozenset()
 
 # Cloud metadata endpoints: blocked even for trusted origins.
 _METADATA_IPS = frozenset(
@@ -124,6 +183,41 @@ def _config_allowed_hosts() -> frozenset:
     return frozenset(str(h).strip().lower() for h in value if str(h).strip())
 
 
+#: RFC 6052 NAT64 well-known prefix: the low 32 bits ARE an IPv4 address.
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _effective_ip(ip_str: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """The address a connection to ``ip_str`` actually reaches.
+
+    IPv4-mapped (``::ffff:a.b.c.d``) and NAT64 well-known-prefix
+    (``64:ff9b::a.b.c.d``) addresses are IPv4 in an IPv6 wrapper, so every
+    verdict is computed on the embedded IPv4 address: ``64:ff9b::7f00:1``
+    IS ``127.0.0.1`` and is refused as loopback, while a public embedded
+    address stays fetchable. The second half matters as much as the first:
+    on an IPv6-only network with DNS64, EVERY IPv4-only host resolves into
+    this prefix, so refusing the prefix wholesale (ADR-206's first cut)
+    refused every guarded fetch to such a host there.
+
+    Args:
+        ip_str: One address in string form, zone suffix already removed.
+
+    Returns:
+        The embedded IPv4 address for the two wrapper forms, else the
+        parsed address itself.
+
+    Raises:
+        ValueError: If ``ip_str`` is not an IP address.
+    """
+    ip = ipaddress.ip_address(ip_str)
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return mapped
+    if ip.version == 6 and ip in _NAT64_WELL_KNOWN_PREFIX:
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip
+
+
 def _classify_ip(ip_str: str) -> str:
     """Classify one resolved IP: "metadata" | "private" | "public".
 
@@ -137,15 +231,57 @@ def _classify_ip(ip_str: str) -> str:
     it is strictly tightening for every consumer of this function -- caught
     in review of task-1356's pre-scrape SSRF guard (task-1356 CRITICAL 1).
     """
-    ip = ipaddress.ip_address(ip_str)
-    mapped = getattr(ip, "ipv4_mapped", None)
-    if mapped is not None:
-        ip = mapped
+    ip = _effective_ip(ip_str)
     if ip in _METADATA_IPS:
         return "metadata"
     if ip.is_multicast:
         return "private"
     return "public" if ip.is_global else "private"
+
+
+def address_is_fetchable(ip_str: str) -> bool:
+    """The ONE shared per-address SSRF verdict, used by every fetch layer.
+
+    Both this module's policy pipeline (``evaluate_url_policy``/
+    ``is_public_http_url``/``_post_resolution``) AND
+    ``Skills_Interop/skill_remote_fetch._assert_host_allowed`` route through
+    this predicate (task-609), so the two layers cannot drift on which
+    address categories are rejected. The layers keep their deliberately
+    different surrounding policy -- egress adds ``trusted_origins`` and the
+    ``[web_security]`` config allowlist and allows http+https; the skill
+    layer adds https-only per-hop revalidation with no bypasses -- but the
+    per-address classification is computed in exactly this one place.
+
+    Verdict: an address is fetchable iff it classifies ``"public"`` under
+    :func:`_classify_ip` (not a metadata endpoint, not multicast, globally
+    reachable) AND it is in none of the stdlib non-global categories that
+    ``is_global`` alone misses -- reserved, unspecified, loopback,
+    link-local. Both halves are computed on :func:`_effective_ip`, so an
+    IPv4-mapped or NAT64 well-known-prefix address gets the verdict of the
+    IPv4 address it embeds: ``64:ff9b::7f00:1`` IS ``127.0.0.1`` and is
+    refused, ``64:ff9b::5db8:d822`` IS ``93.184.216.34`` and is fetchable
+    (task-609 reconciled the two layers; PR #2993 review moved the verdict
+    from "refuse the prefix" to "classify what it embeds").
+
+    Args:
+        ip_str: One resolved address (string form). A trailing IPv6 zone
+            suffix must already be split off by the caller (both layers do).
+
+    Returns:
+        ``True`` iff the address may be fetched from. Fail closed:
+        unparseable input returns ``False``, never raises.
+    """
+    try:
+        ip = _effective_ip(ip_str)
+    except ValueError:
+        return False
+    return (
+        not ip.is_reserved
+        and not ip.is_unspecified
+        and not ip.is_loopback
+        and not ip.is_link_local
+        and _classify_ip(ip_str) == "public"
+    )
 
 
 def is_public_http_url(url: str) -> bool:
@@ -200,7 +336,7 @@ def is_public_http_url(url: str) -> bool:
     if not ips:
         return False
     try:
-        return all(_classify_ip(ip) == "public" for ip in ips)
+        return all(address_is_fetchable(ip) for ip in ips)
     except ValueError:
         return False
 
@@ -285,7 +421,7 @@ def _post_resolution(
         return _blocked(url, "metadata", host, f"resolves to metadata IP ({ips})")
     if host in trusted_origins:
         return EgressDecision(allowed=True, reason="ok", host=host, resolved_ips=ips)
-    if "private" in classes:
+    if not all(address_is_fetchable(ip) for ip in ips):
         return _blocked(url, "private", host, f"resolves to private IP ({ips})")
     return EgressDecision(allowed=True, reason="ok", host=host, resolved_ips=ips)
 
@@ -764,6 +900,57 @@ def _hop_headers(
     return filter_cross_origin_headers(headers)
 
 
+# Credential contract shared by every ``guarded_fetch_*`` helper (task-592):
+# pass credentials through the helper's ``headers=`` argument (or its
+# ``auth=`` parameter where one exists) -- never attached to the
+# client/session object itself. The httpx and requests helpers ENFORCE the
+# contract by stripping/suppressing transport-object-level credentials on
+# cross-origin hops; the aiohttp helper cannot (see
+# :func:`_aiohttp_session_level_credential`) and refuses the hop instead.
+# Each helper restates the contract in its own docstring as plain text: a
+# ``"""...""" + CONSTANT`` first statement is an expression, not a docstring,
+# and leaves ``__doc__`` as ``None``.
+
+
+def _aiohttp_session_level_credential(session) -> str | None:
+    """Name the session-level credential aiohttp would re-attach, if any.
+
+    aiohttp applies ``ClientSession(auth=...)`` and merges the session's
+    default headers INSIDE ``session.get()``: there is no built-request
+    object this module could strip them from, and no per-request override
+    that suppresses them -- aiohttp 3.14 even raises ``ValueError`` if an
+    explicit ``Authorization`` header is combined with an ``auth``
+    argument, so header-injection workarounds are closed off by the library
+    itself. Read through the public ``session.auth``/``session.headers``
+    properties, defensively (duck-typed test doubles without them keep
+    working) and answer which session-level credential, if any, would ride
+    a cross-origin hop.
+
+    Args:
+        session: The ``aiohttp.ClientSession`` (or stand-in) being driven.
+
+    Returns:
+        A short human-facing description of the offending credential
+        (``"auth"``, ``"default header 'X-...'"`` or ``"cookie 'name'"``),
+        or ``None`` when the session carries nothing that could not be
+        forwarded safely.
+    """
+    if getattr(session, "auth", None) is not None:
+        return "auth"
+    default_headers = getattr(session, "headers", None)
+    if default_headers is not None:
+        for name in default_headers.keys():
+            if not _may_cross_origin(str(name), has_body=False):
+                return f"default header {str(name)!r}"
+    # ``ClientSession(cookies=...)`` stores cookies with no domain, and
+    # aiohttp sends a domainless cookie to every host. A cookie a response
+    # set carries that origin's domain and is filtered per request.
+    for cookie in getattr(session, "cookie_jar", None) or ():
+        if not cookie["domain"]:
+            return f"cookie {cookie.key!r}"
+    return None
+
+
 def guarded_fetch_httpx(
     url: str,
     *,
@@ -773,7 +960,18 @@ def guarded_fetch_httpx(
     headers: dict | None = None,
     params: dict | None = None,
 ) -> GuardedResponse:
-    """Capped GET via httpx.Client with per-hop egress re-validation."""
+    """Capped GET via httpx.Client with per-hop egress re-validation.
+
+    Cross-origin hops carry :data:`CROSS_ORIGIN_SAFE_HEADERS` plus the client
+    library's own framing (:data:`_TRANSPORT_HEADERS`) and nothing else, no
+    matter where the header came from: the ``headers`` argument, the client
+    object's default headers, or a client-level ``auth=`` (suppressed on the
+    hop by passing an explicit ``auth=None`` to ``send()``).
+
+    Credential contract: credentials must be supplied via this helper's
+    ``headers=`` argument (or its ``auth=`` parameter where one exists),
+    never attached to the client/session object itself.
+    """
     current = url
     for hop in range(MAX_REDIRECT_HOPS + 1):
         check_url_or_raise(current, trusted_origins=trusted_origins)
@@ -846,13 +1044,20 @@ async def guarded_fetch_httpx_async(
     client library's own framing (:data:`_TRANSPORT_HEADERS`) and nothing
     else — no matter whether the header came from the ``headers`` argument,
     from the client object's own default headers (e.g. an
-    ``httpx.AsyncClient(headers=...)``), or from a client-level ``auth=`` (set
-    on the ``httpx.Client``/``AsyncClient`` itself, as opposed to the ``auth``
-    parameter of this function). That last one is applied by httpx inside
-    ``send()``, so it is suppressed by passing an explicit ``auth=None`` on the
-    cross-origin hop rather than by header stripping. ``Content-Type`` would
-    be the one conditional exception (:data:`_BODY_DESCRIBING_HEADERS`), but
-    this helper only ever issues a bodyless GET, so it never applies here.
+    ``httpx.AsyncClient(headers=...)``, the shape
+    ``Utils/github_api_client._build_client`` uses for its GitHub token), or
+    from a client-level ``auth=`` (set on the ``httpx.Client``/``AsyncClient``
+    itself, as opposed to the ``auth`` parameter of this function — tuple or
+    callable ``httpx.Auth`` flow alike). That last one is applied by httpx
+    inside ``send()``, so it is suppressed by passing an explicit
+    ``auth=None`` on the cross-origin hop rather than by header stripping.
+    ``Content-Type`` would be the one conditional exception
+    (:data:`_BODY_DESCRIBING_HEADERS`), but this helper only ever issues a
+    bodyless GET, so it never applies here.
+
+    Credential contract: credentials must be supplied via this helper's
+    ``headers=`` argument (or its ``auth=`` parameter where one exists),
+    never attached to the client/session object itself.
     """
     current = url
     for hop in range(MAX_REDIRECT_HOPS + 1):
@@ -1009,6 +1214,77 @@ class DefaultTimeoutSession(requests.Session):
         return super().request(method, url, *args, **kwargs)
 
 
+#: TASK-28229: the provider whose responses are being received right now. The
+#: Console gateway sets it around a provider call; while it is unset (the
+#: default) no response is recorded, so every other caller is unaffected.
+_RATE_LIMIT_PROVIDER: ContextVar[str | None] = ContextVar(
+    "rate_limit_provider", default=None
+)
+_RATE_LIMIT_HEADER_PREFIXES = ("x-ratelimit-", "anthropic-ratelimit-")
+#: provider key -> (wall-clock capture time, the rate-limit headers kept).
+_LATEST_RATE_LIMITS: dict[str, tuple[float, dict[str, str]]] = {}
+_LATEST_RATE_LIMITS_LOCK = threading.Lock()
+
+
+@contextmanager
+def capture_rate_limits_for(provider_key: str | None) -> Iterator[None]:
+    """Record rate-limit headers of responses received in this context.
+
+    Args:
+        provider_key: The provider config key the responses belong to;
+            empty or ``None`` records nothing.
+
+    Yields:
+        Nothing; the scope ends when the block exits.
+    """
+    token = _RATE_LIMIT_PROVIDER.set(provider_key or None)
+    try:
+        yield
+    finally:
+        _RATE_LIMIT_PROVIDER.reset(token)
+
+
+def latest_rate_limit_headers(
+    provider_key: str,
+) -> tuple[float, dict[str, str]] | None:
+    """Return the last rate-limit headers recorded for a provider.
+
+    Args:
+        provider_key: The provider config key.
+
+    Returns:
+        ``(captured_at, headers)`` with lower-cased header names, or ``None``
+        when that provider has sent none in this process.
+    """
+    with _LATEST_RATE_LIMITS_LOCK:
+        entry = _LATEST_RATE_LIMITS.get(provider_key)
+    return None if entry is None else (entry[0], dict(entry[1]))
+
+
+def _record_rate_limit_headers(response: Any, *_args: Any, **_kwargs: Any) -> None:
+    """``requests`` response hook: keep the rate-limit headers, nothing else.
+
+    Only header names with a rate-limit prefix are kept, and their values are
+    cut to 64 characters; they are parsed as numbers before any display. A
+    response without such headers leaves the previous entry in place.
+    """
+    provider = _RATE_LIMIT_PROVIDER.get()
+    if provider is None:
+        return None
+    try:
+        kept = {
+            str(name).lower(): str(value)[:64]
+            for name, value in response.headers.items()
+            if str(name).lower().startswith(_RATE_LIMIT_HEADER_PREFIXES)
+        }
+    except Exception:  # noqa: BLE001 - telemetry must never break a request
+        return None
+    if kept:
+        with _LATEST_RATE_LIMITS_LOCK:
+            _LATEST_RATE_LIMITS[provider] = (time.time(), dict(list(kept.items())[:32]))
+    return None
+
+
 def create_default_session(
     *, timeout: float | tuple[float, float] | None = None
 ) -> "DefaultTimeoutSession":
@@ -1037,6 +1313,7 @@ def create_default_session(
     # every default session; per-request ``verify=`` kwargs still win, which
     # is how Subscriptions' per-feed ``ssl_verify`` flag keeps precedence.
     session.verify = requests_verify()
+    session.hooks["response"].append(_record_rate_limit_headers)
     return session
 
 
@@ -1054,8 +1331,15 @@ def guarded_fetch_requests(
 
     Returns the final ``requests.Response`` with ``._content`` preloaded
     (unless ``sink`` is given, in which case bytes stream to ``sink`` and
-    ``.content`` is empty). ``session.auth`` is suppressed on cross-origin
-    hops (credential-stripping rule).
+    ``.content`` is empty). Cross-origin hops carry
+    :data:`CROSS_ORIGIN_SAFE_HEADERS` only: ``session.auth``, the session's
+    cookies, and its default headers all land on the PREPARED request, which
+    is post-filtered by :func:`strip_cross_origin_request_headers` before it
+    is sent.
+
+    Credential contract: credentials must be supplied via this helper's
+    ``headers=`` argument (or its ``auth=`` parameter where one exists),
+    never attached to the client/session object itself.
     """
     import requests
 
@@ -1122,13 +1406,22 @@ async def guarded_fetch_aiohttp(
     headers: dict | None = None,
     timeout=None,
 ) -> GuardedResponse:
-    """Capped GET via aiohttp.ClientSession with per-hop re-validation.
+    """Capped GET via aiohttp.ClientSession with per-hop egress re-validation.
 
     Cross-origin hops carry only :data:`CROSS_ORIGIN_SAFE_HEADERS` out of the
     ``headers`` argument. Unlike the httpx/requests helpers there is no built
-    request object to post-filter here, so a credential set as an
-    ``aiohttp.ClientSession(headers=...)`` DEFAULT is not suppressed — a
-    documented residual, unchanged by task-19733; no live caller does that.
+    request object to post-filter here, so a credential attached to the
+    SESSION itself (``aiohttp.ClientSession(auth=...)`` or a session-default
+    header) cannot be stripped -- aiohttp applies both inside ``get()`` with
+    no per-request suppression. The helper therefore fails closed (task-592):
+    a cross-origin hop on a session carrying such a credential raises
+    :class:`EgressFetchError` instead of forwarding it. Sessions without
+    session-level credentials (every live caller, e.g. the crawler's bare
+    ``ClientSession()``) are unaffected.
+
+    Credential contract: credentials must be supplied via this helper's
+    ``headers=`` argument (or its ``auth=`` parameter where one exists),
+    never attached to the client/session object itself.
     """
     from multidict import CIMultiDict
 
@@ -1136,6 +1429,19 @@ async def guarded_fetch_aiohttp(
     for _hop in range(MAX_REDIRECT_HOPS + 1):
         await check_url_or_raise_async(current, trusted_origins=trusted_origins)
         is_same_origin = same_origin(url, current)
+        if not is_same_origin:
+            # aiohttp re-applies session-level credentials inside get() and
+            # offers no per-request suppression (see
+            # _aiohttp_session_level_credential); refuse the hop rather than
+            # forward the credential to the redirected-to origin.
+            leak = _aiohttp_session_level_credential(session)
+            if leak is not None:
+                raise EgressFetchError(
+                    f"aiohttp session-level credential ({leak}) cannot be "
+                    "stripped on a cross-origin redirect hop; pass "
+                    "credentials via the headers= argument instead",
+                    url=current,
+                )
         kwargs = {
             "allow_redirects": False,
             "headers": _hop_headers(headers, is_same_origin),

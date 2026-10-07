@@ -121,9 +121,7 @@ async def test_queue_cell_and_detail_pane_agree_on_the_relative_form():
         # Next-Run column at index 3.
         cell = str(table.get_row_at(0)[2])
         detail = str(
-            workbench.query_one(
-                "#scheduling-task-detail-next-run", Static
-            ).render()
+            workbench.query_one("#scheduling-task-detail-next-run", Static).render()
         )
         assert "(in 13h)" in cell or "(in 14h)" in cell, cell
         # Same relative rendering in both surfaces.

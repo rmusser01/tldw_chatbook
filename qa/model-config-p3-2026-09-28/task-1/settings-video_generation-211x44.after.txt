@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Video Gen
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save/revert below | Defaults affect future Console video generations.                                      │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Video Gen                                                                                                                 │  │  │ Selected category: Video Gen            │
+│                              │  │  │                                                                                                                            │  │  │ No unsaved changes                      │
+│     Theme                    │  │  │  Backends                                                                                                                  │  │  │  Guided edits: read-only here; open     │
+│     Splash Screen            │  │  │                         ┌────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  Console.                               │
+│     Console Behavior         │  │  │ Default backend         │ SD.cpp video (local)                                                                         ▼ │ │  │  │ Local-only: saves write your config     │
+│  Data & Privacy              │  │  │                         └────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │ file.                                   │
+│     Storage                  │  │  │                                                                                                                            │  │  │ Impact and boundaries                   │
+│     Workspaces             ▃ │  │  │ MiniMax H3  Not configured▐X▌ Off                                                                                          │  │  │ Video generation backend defaults for   │
+│     Tool Profiles            │  │  │                                                                                                                            │  │  │ MiniMax H3, ComfyUI, and SD.cpp, plus   │
+│     Privacy & Security       │  │  │                                                                                                                            │  │  │ retention, cost-confirm, and playback   │
+│     Network                  │  │  │                                                                                                                            │  │  │ diagnostics.                            │
+│     My Profile               │  │  │ ComfyUI     Configured    ▐X▌ Off                                                                                          │  │  │  Runtime owner: Settings persisted      │
+│  Troubleshooting             │  │  │                                                                                                                            │  │  │  defaults; Console /generate-video      │
+│     Diagnostics (view)       │  │  │                                                                                                                            │  │  │                                         │
+│     About (view)             │  │  │                                                                                                                            │  │  │  Writes allowed: Yes                    │
+│     Agents                   │  │  │ SD.cpp videoNot configured▐X▌ Off ★ Default                                                                                │  │  │                                         │
+│  Expert                      │  │  │                                                                                                                            │  │  │  Owns: video_generation.                │
+│     Internal Prompts         │  │  │                                                                                                                            │  │  │    default_backend                      │
+│     Advanced Config          │  │  │  Backend settings                                                                                                          │  │  │  video_generation.                      │
+│   Domain Defaults ▾ (11)     │  │  │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │  │  │    enabled_backends                     │
+│     RAG                      │  │  │                                                                                                                            │  │  │  video_generation.                      │
+│     Artifacts (view)         │  │  │  Generation defaults                                                                                                       │  │  │    <backend>.*                          │
+│     Roleplay (view)          │  │  │                         ┌────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  video_generation.retention             │
+│     Skills (view)            │  │  │ Retention               │ session (wipe on app start)                                                                  ▼ │ │  │  │  video_generation.                    ▄ │
+│     Schedules                │  │  │                         └────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │    retention_ttl_hours                  │
+│     Watchlists (view)        │  │  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                           │  │  │  video_generation.                      │
+│     Workflows (view)         │  │  │ ▊ ▐X▌ Confirm cost before paid generation: on  ▎                                                                           │  │  │    max_store_mb                         │
+│     MCP Defaults (view)      │  │  │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                           │  │  │  video_generation.                      │
+│     ACP Defaults (view)      │  │  │ Retention TTL (hours)   │ 24                                                                                               │  │  │    confirm_cost_estimate                │
+│     Image Gen                │  │  │ Store cap (MB)          │ 2048                                                                                             │  │  │                                         │
+│   > Video Gen                │  │  │                                                                                                                            │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

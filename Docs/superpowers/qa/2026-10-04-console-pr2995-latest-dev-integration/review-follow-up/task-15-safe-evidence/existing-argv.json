@@ -1,0 +1,38 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--basetemp=/private/tmp/pr2995-task15/existing",
+    "Tests/Chat/test_console_chat_start.py::test_unconfirmed_preaccept_settlement_requires_review",
+    "Tests/Chat/test_console_chat_start.py::test_initial_preparation_keeps_owner_until_uncertain_refund",
+    "Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits",
+    "Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits",
+    "Tests/Chat/test_console_chat_start.py::test_native_commit_keeps_exact_worker_and_capacity_until_repeated_cancel_drains",
+    "Tests/Chat/test_console_chat_start.py::test_unexpected_start_failure_is_type_only_and_accepted_cleanup_is_review",
+    "Tests/Chat/test_console_chat_start.py::test_failed_review_settlement_blocks_siblings_across_ledger_handles",
+    "Tests/DB/test_automatic_chat_starts.py::test_preparation_identity_abort_and_completion_are_exact",
+    "Tests/DB/test_automatic_chat_starts.py::test_failed_native_write_rolls_back_member_and_reserved_generation",
+    "Tests/DB/test_automatic_chat_starts.py::test_acceptance_and_abort_race_has_one_winner",
+    "Tests/DB/test_automatic_chat_starts.py::test_native_abort_never_refunds_a_separately_committed_reservation",
+    "Tests/DB/test_automatic_chat_starts.py::test_same_owner_uncertain_start_pauses_root_without_refund_or_replay",
+    "Tests/DB/test_automatic_chat_starts.py::test_review_settlement_never_rewrites_nonaccepted_work",
+    "Tests/DB/test_automatic_chat_starts.py::test_stale_review_settlement_cannot_pause_healthy_replacement",
+    "Tests/DB/test_automatic_chat_starts.py::test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_replacement",
+    "Tests/DB/test_automatic_chat_starts.py::test_late_recovery_cleanup_preserves_new_owner_uncertainty",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-15-safe-evidence/existing.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "PYTHONPATH": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "head": "100fa9d8191620645e003b2e9ec5e076b7763ad2",
+  "source_hashes": {
+    "tldw_chatbook/Chat/console_chat_start.py": "8bb38ae2cc2793fa32e031fb24ff03839eb2f86b41ea28dbdadef6e3e01def3c",
+    "tldw_chatbook/DB/automatic_work.py": "224760c0962d92362fde9095cc603eb798d590dac03e30fd11fcedf77045395b",
+    "tldw_chatbook/Chat/console_chat_fork.py": "b20e19d779fde162ebcec9c4b0bc7a03ddc6d9b80115c58ee32123feaac98770",
+    "Tests/Chat/test_console_chat_start.py": "7e23571cb994f735dc34d3d8b42390e4f5a0cf9881f2dbd3a286324065b7a2d9",
+    "Tests/DB/test_automatic_chat_starts.py": "a7891297a1a3b27c4b9dcddb827a040c3e0bbee01e9714442356243356468957"
+  }
+}

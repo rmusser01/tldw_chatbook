@@ -242,9 +242,7 @@ class ConsoleCitationSourcesModal(
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-citation-sources-modal"):
-            yield Static(
-                "Cited sources", classes="console-modal-header", markup=False
-            )
+            yield Static("Cited sources", classes="console-modal-header", markup=False)
             yield Static(
                 "Loading sources…",
                 id="console-citation-sources-state",

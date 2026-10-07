@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                                          │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │ │ │                                                                                                               │ │ │  │  │  │                                         │
+│  category search             │  │  │ │ │ │  Permission summaries                                                                                         │ │ │  │  │  │ Selected category: Console Behavior     │
+│                              │  │  │ │ │ │  applies immediately - no Save needed                                                                         │ │ │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ │ │  When enabled, a fast LLM you designate receives a bounded excerpt of this conversation (your messages and    │ │ │  │  │  │  Guided edits: change a field first.    │
+│     Overview (view)          │  │  │ │ │ │  the assistant's, only) to write the approval summary.                                                        │ │ │  │  │  │  Save (s) — no changes                  │
+│     Providers & Models       │  │  │ │ │ │                         ┌───────────────────────────────────────────────────────────────────────────────────┐ │ │ │  │  │  │  Revert (r) — no changes                │
+│     Web Search               │  │  │ │ │ │ Summary mode            │ Off                                                                             ▼ │ │ │ │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │ │ │                         └───────────────────────────────────────────────────────────────────────────────────┘ │ │ │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ │ │ Provider                │ e.g. OpenAI                                                                         │ │ │  │  │  │                                         │
+│     Appearance               │  │  │ │ │ │ Model                   │ empty = the provider's default model                                                │ │ │  │  │  │ Focused field guide                     │
+│     Theme                    │  │  │ │ │ │                                                                                                               │ │ │  │  │  │  Purpose: Focus a Console Behavior      │
+│     Splash Screen            │  │  │ │ │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  field for setting-specific guidance.   │
+│   > Console Behavior         │  │  │ │ │                                                                                                                   │ │  │  │  │                                         │
+│  Data & Privacy              │  │  │ │ │  Selection side chat                                                                                              │ │  │  │  │  Consequences: No field-specific        │
+│     Storage                  │  │  │ │ │  Ephemeral chat about selected transcript text (More Details / Ask in Side Chat). Nothing is persisted.           │ │  │  │  │  guidance is active right now.          │
+│     Workspaces               │  │  │ │ │ Side chat model         │ empty = current session model                                                           │ │▃ │  │  │                                         │
+│     Tool Profiles            │  │  │ │ │ Prompt template         │ Give me more details about: {selection}                                                 │ │  │  │  │  Saved as: varies by field              │
+│     Privacy & Security       │  │  │ │ │ Template used by More Details: {selection} inserts the selected text; without it the selection is appended. An    │ │  │  │  │                                         │
+│     Network                  │  │  │ │ │ empty template uses the built-in default.                                                                         │ │  │  │  │  Applies: varies by field               │
+│     My Profile               │  │  │ │ │                                                                                                                   │ │  │  │  │                                         │
+│  Troubleshooting             │  │  │ │ │  Conversation context and memory                                                                                  │ │▄ │  │  │ Override rules                        ▅ │
+│     Diagnostics (view)       │  │  │ │ │  Global defaults for new and inherited conversations. Current-conversation overrides remain in the Console's      │ │  │  │  │  Priority: active Console session,      │
+│     About (view)             │  │  │ │ │  Context & memory view.                                                                                           │ │  │  │  │  then provider+model profile, then      │
+│     Agents                   │  │  │ │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │  these global fallbacks                 │
+│  Expert                      │  │  │ │ │ Budget strategy         │ Automatic                                                                           ▼ │ │ │  │  │  │                                         │
+│     Internal Prompts         │  │  │ │ │                         └───────────────────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  Scope:  response fallbacks and         │
+│     Advanced Config          │  │  │ │ │ Conversation max tokens │ tokens (used in Custom mode)                                                            │ │  │  │  │  paste display settings                 │
+│   Domain Defaults ▸ (11)     │  │  │ │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │                                         │
+│                              │  │  │ │ │ When limit nears        │ Ask                                                                                 ▼ │ │ │  │  │  │  Save: staged - press s to save, r to   │
+│                              │  │  │ │ │                         └───────────────────────────────────────────────────────────────────────────────────────┘ │ │  │  │  │  revert                                 │
+│                              │  │  │ │ │                         ┌───────────────────────────────────────────────────────────────────────────────────────┐ │ │  │  │  │                                         │
+│                              │  │  │ │ │ Representation          │ Text summary                                                                        ▼ │ │ │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

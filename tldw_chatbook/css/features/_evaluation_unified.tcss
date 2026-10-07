@@ -55,20 +55,11 @@ EvalsWindow {
     height: $ds-height-full;
 }
 
-/* --- Collapsible Sections --- */
-Collapsible {
-    margin-bottom: $ds-space-1;
-    border: tall $surface;
-    background: $panel;
-}
-
-Collapsible > Container {
-    padding: $ds-space-1;
-}
-
-Collapsible.-collapsed {
-    margin-bottom: $ds-space-1;
-}
+/* --- Collapsible Sections -- RETIRED (TASK-33003.1) ---
+   Bare `Collapsible` (tall border, $panel), `Collapsible > Container` and
+   `Collapsible.-collapsed` rules lived here for the card dashboard. No
+   `EvalsWindow` class exists any more and the live EvalsScreen composes no
+   Collapsible, so they only restyled every OTHER screen's disclosures. */
 
 /* Note: Textual doesn't support @media queries
    Use reactive attributes or resize events for responsive design */

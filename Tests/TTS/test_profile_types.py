@@ -409,8 +409,7 @@ def test_profile_options_fingerprint_uses_canonical_bounded_json() -> None:
 
     assert first == second
     assert first == (
-        "sha256:"
-        + hashlib.sha256(b'{"a":true,"z":[1,{"name":"Cafe"}]}').hexdigest()
+        "sha256:" + hashlib.sha256(b'{"a":true,"z":[1,{"name":"Cafe"}]}').hexdigest()
     )
     assert len(first) == 71
     with pytest.raises(ProfileValidationError, match="options"):

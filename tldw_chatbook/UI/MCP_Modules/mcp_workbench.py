@@ -3632,7 +3632,11 @@ class MCPWorkbench(Container):
                 # generic sentence -- bounded so a verbose exception can't
                 # turn the toast into a stack dump. `_toast()` escapes the
                 # text (service messages embed store-derived ids).
-                reason = str(exc).strip().splitlines()[0][:140] if str(exc).strip() else type(exc).__name__
+                reason = (
+                    str(exc).strip().splitlines()[0][:140]
+                    if str(exc).strip()
+                    else type(exc).__name__
+                )
                 self.app.notify(
                     _toast(f"Permission update failed: {reason}"),
                     severity="error",
@@ -4710,9 +4714,7 @@ class MCPWorkbench(Container):
         if not callable(list_rules):
             return ()
         try:
-            return tuple(
-                list_rules(tool.server_key, tool.name, profile_id=profile_id)
-            )
+            return tuple(list_rules(tool.server_key, tool.name, profile_id=profile_id))
         except Exception as exc:
             logger.warning(
                 "{}",
@@ -4753,9 +4755,7 @@ class MCPWorkbench(Container):
         except Exception as exc:
             logger.warning(
                 "{}",
-                _safe_diagnostic_message(
-                    "MCP session-approval list failed", exc
-                ),
+                _safe_diagnostic_message("MCP session-approval list failed", exc),
             )
             return ()
 
@@ -4829,9 +4829,7 @@ class MCPWorkbench(Container):
                 cascade=None,
                 profile_context=context,
                 arg_rules=self._arg_rules_for_row(builtin_tool, context.profile_id),
-                session_approvals=self._session_approvals_for_row(
-                    context.profile_id
-                ),
+                session_approvals=self._session_approvals_for_row(context.profile_id),
             )
             return
         tool = (
@@ -5219,7 +5217,9 @@ class MCPWorkbench(Container):
             tool.description, tool.input_schema
         ):
             self.app.notify(
-                _toast("Tool definition changed. Select the tool again before re-allowing."),
+                _toast(
+                    "Tool definition changed. Select the tool again before re-allowing."
+                ),
                 severity="warning",
             )
             return
@@ -5308,9 +5308,7 @@ class MCPWorkbench(Container):
                     exc,
                 ),
             )
-            self.app.notify(
-                _toast("Removing the rule failed."), severity="error"
-            )
+            self.app.notify(_toast("Removing the rule failed."), severity="error")
             await self.query_one(MCPInspector).retry_permission_action(
                 event.permission_view
             )
@@ -5336,7 +5334,8 @@ class MCPWorkbench(Container):
             profile_context=successor,
             arg_rules=(
                 self._arg_rules_for_row(tool, successor.profile_id)
-                if tool is not None else ()
+                if tool is not None
+                else ()
             ),
             session_approvals=self._session_approvals_for_row(successor.profile_id),
             expected_view=event.permission_view,
@@ -6398,9 +6397,7 @@ class MCPWorkbench(Container):
             await self._sync_children()
             if connect_after and payload.get("profile_id"):
                 profile_id = str(payload["profile_id"])
-                self._start_lifecycle(
-                    f"local:{profile_id}", profile_id, "connect"
-                )
+                self._start_lifecycle(f"local:{profile_id}", profile_id, "connect")
         finally:
             self._profile_save_in_flight = False
 
@@ -6666,9 +6663,7 @@ class MCPWorkbench(Container):
             return
         worker.cancel()
         self.app.notify("Cancelling…")
-        self.run_worker(
-            self._sync_children, group="mcp-lifecycle-sync", exclusive=True
-        )
+        self.run_worker(self._sync_children, group="mcp-lifecycle-sync", exclusive=True)
 
     # -- lifecycle actions (T5: connect/test/refresh/disconnect) --------------
 
@@ -6717,9 +6712,7 @@ class MCPWorkbench(Container):
         # decoupled from the lifecycle worker above, which may be sitting on
         # a slow (or, in tests, gated) network/subprocess call and must not
         # block this optimistic UI update.
-        self.run_worker(
-            self._sync_children, group="mcp-lifecycle-sync", exclusive=True
-        )
+        self.run_worker(self._sync_children, group="mcp-lifecycle-sync", exclusive=True)
 
     async def _lifecycle_wrapper(
         self, profile_id: str, action: str, method: Any

@@ -44,6 +44,8 @@ from .Chat_Deps import (  # noqa: E402
     ChatProviderError,
     ChatRateLimitError,
     ChatAuthenticationError,
+    ChatModelUnavailableError,
+    model_unavailable_error,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import (  # noqa: E402
     CharactersRAGDB,
@@ -80,17 +82,39 @@ from tldw_chatbook.LLM_Calls.LLM_API_Calls_Local import (  # noqa: E402
 from tldw_chatbook.LLM_Calls.qwencloud import chat_with_qwencloud  # noqa: E402
 from tldw_chatbook.provider_registry import (  # noqa: E402
     AUDITED_ENDPOINT_KEYS,
+    ARCEE,
+    AZURE,
+    BASETEN,
+    BYTEPLUS,
     CEREBRAS,
+    CLOUDFLARE,
+    COMMANDCODE,
     CUSTOM_HOSTED,
     DATABRICKS,
     DEEPINFRA,
     FIREWORKS,
+    GMI,
+    KILO,
+    META,
+    MIMO,
     MINIMAX,
     NEBIUS,
+    NOUS,
     NOVITA,
     NVIDIA,
+    OLLAMA_CLOUD,
+    OPENCODE_ZEN,
+    QIANFAN,
     SAMBANOVA,
+    SILICONFLOW,
+    STEPFUN,
     TOGETHER,
+    TOKENHUB,
+    UPSTAGE,
+    VENICE,
+    VERCEL,
+    WANDB,
+    ZENMUX,
 )
 from tldw_chatbook.Utils.Utils import generate_unique_filename  # noqa: E402
 from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
@@ -99,7 +123,10 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
     safe_llm_exception_message,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
-from tldw_chatbook.config import load_settings  # noqa: E402
+from tldw_chatbook.config import (  # noqa: E402
+    is_encrypted_config_value,
+    load_settings,
+)
 from .console_project_instructions import EPHEMERAL_ORIGIN_KEY  # noqa: E402
 from .provider_continuation import (  # noqa: E402
     ProviderContinuationCheckpoint,
@@ -191,6 +218,31 @@ API_CALL_HANDLERS = {
     "nebius": _LazyHostedChatHandler(NEBIUS),
     "novita": _LazyHostedChatHandler(NOVITA),
     "minimax": _LazyHostedChatHandler(MINIMAX),
+    # Top-15 OpenRouter model makers (TASK-33350).
+    "mimo": _LazyHostedChatHandler(MIMO),
+    "tokenhub": _LazyHostedChatHandler(TOKENHUB),
+    "byteplus": _LazyHostedChatHandler(BYTEPLUS),
+    "stepfun": _LazyHostedChatHandler(STEPFUN),
+    # Gateway/host presets from the Hermes / oh-my-pi comparison (TASK-33351).
+    "vercel": _LazyHostedChatHandler(VERCEL),
+    "zenmux": _LazyHostedChatHandler(ZENMUX),
+    "kilo": _LazyHostedChatHandler(KILO),
+    "siliconflow": _LazyHostedChatHandler(SILICONFLOW),
+    "baseten": _LazyHostedChatHandler(BASETEN),
+    "gmi": _LazyHostedChatHandler(GMI),
+    "ollama_cloud": _LazyHostedChatHandler(OLLAMA_CLOUD),
+    "upstage": _LazyHostedChatHandler(UPSTAGE),
+    "arcee": _LazyHostedChatHandler(ARCEE),
+    "qianfan": _LazyHostedChatHandler(QIANFAN),
+    "nous": _LazyHostedChatHandler(NOUS),
+    "venice": _LazyHostedChatHandler(VENICE),
+    "meta": _LazyHostedChatHandler(META),
+    # TASK-33505..33509 follow-up presets.
+    "azure": _LazyHostedChatHandler(AZURE),
+    "wandb": _LazyHostedChatHandler(WANDB),
+    "cloudflare": _LazyHostedChatHandler(CLOUDFLARE),
+    "opencode_zen": _LazyHostedChatHandler(OPENCODE_ZEN),
+    "commandcode": _LazyHostedChatHandler(COMMANDCODE),
     # Custom-endpoint engine execution key (ADR-179 Phase 2 Task 6): the
     # gateway identity site swaps ``openai_compatible`` custom-ep entries to
     # this key when ``[console] custom_endpoints_use_engine`` is on. The
@@ -888,6 +940,28 @@ PROVIDER_PARAM_MAP = {
     "nebius": ENGINE_PROVIDER_PARAM_MAP,
     "novita": ENGINE_PROVIDER_PARAM_MAP,
     "minimax": ENGINE_PROVIDER_PARAM_MAP,
+    "mimo": ENGINE_PROVIDER_PARAM_MAP,
+    "tokenhub": ENGINE_PROVIDER_PARAM_MAP,
+    "byteplus": ENGINE_PROVIDER_PARAM_MAP,
+    "stepfun": ENGINE_PROVIDER_PARAM_MAP,
+    "vercel": ENGINE_PROVIDER_PARAM_MAP,
+    "zenmux": ENGINE_PROVIDER_PARAM_MAP,
+    "kilo": ENGINE_PROVIDER_PARAM_MAP,
+    "siliconflow": ENGINE_PROVIDER_PARAM_MAP,
+    "baseten": ENGINE_PROVIDER_PARAM_MAP,
+    "gmi": ENGINE_PROVIDER_PARAM_MAP,
+    "ollama_cloud": ENGINE_PROVIDER_PARAM_MAP,
+    "upstage": ENGINE_PROVIDER_PARAM_MAP,
+    "arcee": ENGINE_PROVIDER_PARAM_MAP,
+    "qianfan": ENGINE_PROVIDER_PARAM_MAP,
+    "nous": ENGINE_PROVIDER_PARAM_MAP,
+    "venice": ENGINE_PROVIDER_PARAM_MAP,
+    "meta": ENGINE_PROVIDER_PARAM_MAP,
+    "azure": ENGINE_PROVIDER_PARAM_MAP,
+    "wandb": ENGINE_PROVIDER_PARAM_MAP,
+    "cloudflare": ENGINE_PROVIDER_PARAM_MAP,
+    "opencode_zen": ENGINE_PROVIDER_PARAM_MAP,
+    "commandcode": ENGINE_PROVIDER_PARAM_MAP,
     # Add other providers here
 }
 
@@ -1163,6 +1237,16 @@ def chat_api_call(
         endpoint_lower, messages_payload
     )
 
+    # TASK-34100.4: still-encrypted `enc:` ciphertext (a locked or undecrypted
+    # config) is never a credential. Dropping it lets the handler report the
+    # key as missing instead of sending ciphertext as a bearer token.
+    if is_encrypted_config_value(api_key):
+        logger.warning(
+            "Chat API Call - ignoring an API key that is still encrypted; "
+            "unlock or re-enter the key."
+        )
+        api_key = None
+
     # Generic parameters available from chat_api_call, derived from the
     # function's own signature so the dispatcher can never drift from it —
     # a hand-maintained dict here previously allowed map keys that existed
@@ -1277,6 +1361,14 @@ def chat_api_call(
     # --- Exception Mapping (copied from your original, ensure it's still relevant) ---
     except requests.exceptions.HTTPError as e:
         status_code = getattr(e.response, "status_code", 500)
+        if status_code in {400, 404}:
+            try:
+                payload = e.response.json()
+            except (ValueError, AttributeError):
+                payload = None
+            unavailable = model_unavailable_error(endpoint_lower, status_code, payload)
+            if unavailable is not None:
+                raise unavailable from None
         raw_error_text = getattr(e.response, "text", None)
         if raw_error_text is None:
             raw_error_text = safe_llm_exception_message(e)
@@ -1375,11 +1467,16 @@ def chat_api_call(
                 # task-32342: keep the carried status. Dropping it here
                 # restored the 500 default under the sensitive policy, and a
                 # client-side request-preparation failure carries none.
+                # TASK-32369 (Qodo #2974): keep the failed field too, or a
+                # sensitive run's local refusal loses the field Console names.
                 raise ChatConfigurationError(
                     provider=endpoint_lower,
                     message=safe_message,
                     status_code=status_code,
+                    field=getattr(e_chat_direct, "field", None),
                 ) from None
+            if isinstance(e_chat_direct, ChatModelUnavailableError):
+                raise ChatModelUnavailableError(provider=endpoint_lower, status_code=status_code) from None
             if isinstance(e_chat_direct, ChatProviderError):
                 raise ChatProviderError(
                     provider=endpoint_lower,

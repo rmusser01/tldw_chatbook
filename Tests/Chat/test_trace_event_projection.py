@@ -395,7 +395,10 @@ def test_message_causality_and_owner_sequence_apply_without_external_events() ->
         Sidecar("parent", "conv-1", "turn-1", 1, "assistant"),
     ]
 
-    ids = [record.event_id for record in _records(_snapshot(messages=messages, traj_rows=rows))]
+    ids = [
+        record.event_id
+        for record in _records(_snapshot(messages=messages, traj_rows=rows))
+    ]
 
     assert ids == ["message:parent", "message:child"]
 
@@ -438,7 +441,9 @@ def test_colliding_legacy_compactions_and_external_event_all_survive() -> None:
         agent_runs=[{"id": "run-1", "conversation_id": "conv-1"}],
     )
     records = _records(snapshot)
-    compaction_ids = [record.event_id for record in records if record.kind == "compaction"]
+    compaction_ids = [
+        record.event_id for record in records if record.kind == "compaction"
+    ]
 
     assert len(records) == 4
     assert len(compaction_ids) == 2
@@ -476,10 +481,34 @@ def test_repeated_no_sequence_sidecars_keep_distinct_stable_ids() -> None:
 
 def test_delayed_external_event_does_not_fragment_an_existing_turn() -> None:
     messages = [
-        {"id": "u1", "sender": "user", "content": "q1", "timestamp": 1, "deleted": False},
-        {"id": "a1", "sender": "assistant", "content": "a1", "timestamp": 2, "deleted": False},
-        {"id": "u2", "sender": "user", "content": "q2", "timestamp": 3, "deleted": False},
-        {"id": "a2", "sender": "assistant", "content": "a2", "timestamp": 4, "deleted": False},
+        {
+            "id": "u1",
+            "sender": "user",
+            "content": "q1",
+            "timestamp": 1,
+            "deleted": False,
+        },
+        {
+            "id": "a1",
+            "sender": "assistant",
+            "content": "a1",
+            "timestamp": 2,
+            "deleted": False,
+        },
+        {
+            "id": "u2",
+            "sender": "user",
+            "content": "q2",
+            "timestamp": 3,
+            "deleted": False,
+        },
+        {
+            "id": "a2",
+            "sender": "assistant",
+            "content": "a2",
+            "timestamp": 4,
+            "deleted": False,
+        },
     ]
     rows = [
         Sidecar("u1", "conv-1", "t1", 1, "user"),
@@ -503,13 +532,27 @@ def test_delayed_external_event_does_not_fragment_an_existing_turn() -> None:
 
     assert [turn.turn_id for turn in snapshot.turns] == ["t1", "t2"]
     assert snapshot.turns[0].records[0].event_id == "message:u1"
-    assert any(record.event_id == "agent-run:late" for record in snapshot.turns[0].records)
+    assert any(
+        record.event_id == "agent-run:late" for record in snapshot.turns[0].records
+    )
 
 
 def test_cross_turn_parent_orders_coherent_turn_blocks() -> None:
     messages = [
-        {"id": "u1", "sender": "user", "content": "q1", "timestamp": 1, "deleted": False},
-        {"id": "u2", "sender": "user", "content": "q2", "timestamp": 2, "deleted": False},
+        {
+            "id": "u1",
+            "sender": "user",
+            "content": "q1",
+            "timestamp": 1,
+            "deleted": False,
+        },
+        {
+            "id": "u2",
+            "sender": "user",
+            "content": "q2",
+            "timestamp": 2,
+            "deleted": False,
+        },
     ]
     rows = [
         Sidecar("u1", "conv-1", "t1", None, "user"),
@@ -591,9 +634,19 @@ def test_agent_step_payload_does_not_copy_sensitive_tool_content() -> None:
 def test_turn_contraction_cycle_preserves_event_causality_with_segments() -> None:
     runs = [
         {"id": "a1", "turn_id": "t1", "created_at": 1},
-        {"id": "b1", "turn_id": "t2", "created_at": 2, "parent_event_id": "agent-run:a1"},
+        {
+            "id": "b1",
+            "turn_id": "t2",
+            "created_at": 2,
+            "parent_event_id": "agent-run:a1",
+        },
         {"id": "b2", "turn_id": "t2", "created_at": 3},
-        {"id": "a2", "turn_id": "t1", "created_at": 4, "parent_event_id": "agent-run:b2"},
+        {
+            "id": "a2",
+            "turn_id": "t1",
+            "created_at": 4,
+            "parent_event_id": "agent-run:b2",
+        },
     ]
 
     snapshot = _snapshot(agent_runs=runs)
@@ -640,11 +693,21 @@ def test_collided_identity_is_never_an_arbitrary_lineage_target() -> None:
 
 
 def test_equal_owner_sequences_remain_concurrent() -> None:
-    message = {"id": "a1", "sender": "assistant", "content": "x", "timestamp": 0, "deleted": False}
+    message = {
+        "id": "a1",
+        "sender": "assistant",
+        "content": "x",
+        "timestamp": 0,
+        "deleted": False,
+    }
     rows = [
         Sidecar("a1", "c", "t", 1, "assistant"),
-        Sidecar("a1", "c", "t", 2, "event", step_started_at=1, event_id="trajectory:c:z"),
-        Sidecar("a1", "c", "t", 2, "event", step_started_at=2, event_id="trajectory:c:a"),
+        Sidecar(
+            "a1", "c", "t", 2, "event", step_started_at=1, event_id="trajectory:c:z"
+        ),
+        Sidecar(
+            "a1", "c", "t", 2, "event", step_started_at=2, event_id="trajectory:c:a"
+        ),
     ]
 
     ids = [r.event_id for r in _records(_snapshot(messages=[message], traj_rows=rows))]
@@ -662,7 +725,9 @@ def test_agent_privacy_and_terminal_completion_are_honest() -> None:
         {"run_id": "running", "index": 1, "kind": "model", "summary": secret},
     ]
 
-    by_id = {r.event_id: r for r in _records(_snapshot(agent_runs=runs, agent_steps=steps))}
+    by_id = {
+        r.event_id: r for r in _records(_snapshot(agent_runs=runs, agent_steps=steps))
+    }
 
     running = by_id["agent-run:running"]
     assert secret not in repr(running.payload)

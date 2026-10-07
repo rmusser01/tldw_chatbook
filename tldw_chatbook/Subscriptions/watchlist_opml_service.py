@@ -92,12 +92,16 @@ class WatchlistOpmlService:
                     source_type = child.get("type", "rss").lower()
                     if source_type not in {"rss", "site", "forum"}:
                         source_type = "rss"
-                    items.append({
-                        "name": child.get("text") or child.get("title") or "Untitled",
-                        "url": url,
-                        "source_type": source_type,
-                        "folder": folder,
-                    })
+                    items.append(
+                        {
+                            "name": child.get("text")
+                            or child.get("title")
+                            or "Untitled",
+                            "url": url,
+                            "source_type": source_type,
+                            "folder": folder,
+                        }
+                    )
                     # A feed's children inherit ITS context -- a feed is
                     # never a folder (ADR-043 rule 3).
                     walk(child, folder)
@@ -140,12 +144,16 @@ class WatchlistOpmlService:
         body = ET.SubElement(root, "body")
 
         def feed(parent: ET.Element, source: dict[str, Any]) -> None:
-            ET.SubElement(parent, "outline", {
-                "text": str(source.get("name") or "Untitled"),
-                "title": str(source.get("name") or "Untitled"),
-                "type": str(source.get("source_type") or "rss"),
-                "xmlUrl": str(source.get("url") or ""),
-            })
+            ET.SubElement(
+                parent,
+                "outline",
+                {
+                    "text": str(source.get("name") or "Untitled"),
+                    "title": str(source.get("name") or "Untitled"),
+                    "type": str(source.get("source_type") or "rss"),
+                    "xmlUrl": str(source.get("url") or ""),
+                },
+            )
 
         def by_name(row: dict[str, Any]) -> str:
             return str(row.get("name") or "").lower()

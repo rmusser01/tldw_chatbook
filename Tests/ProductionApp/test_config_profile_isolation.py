@@ -118,6 +118,7 @@ phase = "import"
 try:
     import tldw_chatbook.config as config_module
     import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_lifecycle as lifecycle_module
 
     real_persist = config_module.persist_cli_config_for_shutdown
 
@@ -131,7 +132,7 @@ try:
         state["persistence_succeeded"] = result is True
         return result
 
-    app_module.persist_cli_config_for_shutdown = observed_persist
+    lifecycle_module.persist_cli_config_for_shutdown = observed_persist
 
     async def main():
         app = app_module.TldwCli()

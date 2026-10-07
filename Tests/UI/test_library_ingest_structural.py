@@ -136,9 +136,7 @@ def _audio_state(
 def _panel_texts(app: App, group: str) -> list[str]:
     """All rendered text carriers inside one options panel."""
     panel = app.query_one(f"#type-group-{group}")
-    texts = [
-        str(getattr(widget, "renderable", "")) for widget in panel.query(Static)
-    ]
+    texts = [str(getattr(widget, "renderable", "")) for widget in panel.query(Static)]
     texts.extend(str(widget.label) for widget in panel.query(Checkbox))
     texts.extend(str(widget.label) for widget in panel.query(Button))
     return texts
@@ -151,7 +149,8 @@ async def test_invalid_saved_stt_provider_is_visible_and_can_be_reset_to_auto(
 ):
     monkeypatch.setattr(_INSTALLED_PATCH, lambda _: True)
     monkeypatch.setattr(
-        "tldw_chatbook.Library.library_ingest_state._dependency_installed", lambda _: True
+        "tldw_chatbook.Library.library_ingest_state._dependency_installed",
+        lambda _: True,
     )
     changes = []
 
@@ -205,9 +204,7 @@ async def test_value_gated_audio_fields_state_their_reason_when_disabled():
             model_dir = pilot.app.query_one(
                 "#opt-audio_video-transcription_model_dir", Input
             )
-            model = pilot.app.query_one(
-                "#opt-audio_video-transcription_model", Select
-            )
+            model = pilot.app.query_one("#opt-audio_video-transcription_model", Select)
             assert model_dir.disabled is True, "precondition: gate closed"
             assert model.disabled is True, "precondition: gate closed"
             texts = _panel_texts(pilot.app, "audio_video")
@@ -235,9 +232,9 @@ async def test_web_limits_state_single_page_reason_when_disabled():
     )
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
-        assert (
-            pilot.app.query_one("#opt-web-max_pages", Input).disabled is True
-        ), "precondition: single-page method gates the limits"
+        assert pilot.app.query_one("#opt-web-max_pages", Input).disabled is True, (
+            "precondition: single-page method gates the limits"
+        )
         texts = _panel_texts(pilot.app, "web")
         assert any(
             "Maximum pages — single-page fetch selected" in text for text in texts
@@ -255,9 +252,7 @@ async def test_enabled_fields_carry_no_disabled_reason():
     app = _CanvasHost(_audio_state(provider="faster-whisper"))
     with patch(_INSTALLED_PATCH, return_value=True):
         async with app.run_test() as pilot:
-            model = pilot.app.query_one(
-                "#opt-audio_video-transcription_model", Select
-            )
+            model = pilot.app.query_one("#opt-audio_video-transcription_model", Select)
             assert model.disabled is False
             texts = _panel_texts(pilot.app, "audio_video")
             assert any(text == "Transcription model" for text in texts), (
@@ -300,18 +295,14 @@ async def test_install_button_states_reason_only_while_gated():
     app = _CanvasHost(_audio_state(provider="default"))
     with patch(_INSTALLED_PATCH, return_value=True):
         async with app.run_test() as pilot:
-            button = pilot.app.query_one(
-                "#opt-audio_video-install-parakeet-v2", Button
-            )
+            button = pilot.app.query_one("#opt-audio_video-install-parakeet-v2", Button)
             assert button.disabled is True
             assert str(button.label).endswith("— needs the parakeet-onnx provider")
 
     app = _CanvasHost(_audio_state(provider="parakeet-onnx"))
     with patch(_INSTALLED_PATCH, return_value=True):
         async with app.run_test() as pilot:
-            button = pilot.app.query_one(
-                "#opt-audio_video-install-parakeet-v2", Button
-            )
+            button = pilot.app.query_one("#opt-audio_video-install-parakeet-v2", Button)
             assert button.disabled is False
             assert "needs the parakeet-onnx provider" not in str(button.label)
 
@@ -403,9 +394,7 @@ async def test_schema_disabled_fields_paint_legibly_inert():
             )
             language.scroll_visible(animate=False)
             await pilot.pause()
-            enabled_style = _painted_style_of_text(
-                pilot.app, language.region, "en"
-            )
+            enabled_style = _painted_style_of_text(pilot.app, language.region, "en")
             assert disabled_style is not None and disabled_style.color is not None
             assert enabled_style is not None and enabled_style.color is not None
 
@@ -424,9 +413,7 @@ async def test_schema_disabled_fields_paint_legibly_inert():
             ), "disabled and enabled values paint in the same ink"
 
             # The select under the same gate gets the same treatment.
-            model = pilot.app.query_one(
-                "#opt-audio_video-transcription_model", Select
-            )
+            model = pilot.app.query_one("#opt-audio_video-transcription_model", Select)
             # (task-3305) The select renders its display label now, not
             # the raw "base" token.
             select_style = _painted_style_of_text(
@@ -460,9 +447,7 @@ async def test_fold_hint_shows_only_while_canvas_overflows():
             assert "▼ more" in str(hint.renderable)
 
     # Tall terminal with a minimal form: no overflow, no hint row.
-    minimal = build_library_ingest_state(
-        (), form=LibraryIngestFormState(path="")
-    )
+    minimal = build_library_ingest_state((), form=LibraryIngestFormState(path=""))
     app = _CssTrueCanvasHost(minimal)
     async with app.run_test(size=(120, 46)) as pilot:
         await pilot.pause()
@@ -553,11 +538,7 @@ async def test_submit_brings_the_queue_heading_into_view(request, monkeypatch):
         canvas = screen.query_one(LibraryIngestCanvas)
         heading = screen.query_one("#library-ingest-queue-heading", Static)
         top = canvas.scroll_offset.y
-        assert (
-            top
-            <= heading.virtual_region.y
-            < top + canvas.container_size.height
-        ), (
+        assert top <= heading.virtual_region.y < top + canvas.container_size.height, (
             f"queue heading (virtual y={heading.virtual_region.y}) still out of "
             f"view after submit (scroll y={top}, "
             f"viewport={canvas.container_size.height})"
@@ -614,9 +595,7 @@ async def test_warning_command_paints_unclipped_in_the_summary():
         strips = list(pilot.app.screen._compositor.render_strips())
         painted = "".join(
             "".join(segment.text for segment in strips[y]._segments).strip() + " "
-            for y in range(
-                warning.region.y, warning.region.y + warning.region.height
-            )
+            for y in range(warning.region.y, warning.region.y + warning.region.height)
             if y < len(strips)
         )
         # The command's tail must survive paint; pre-fix it clipped at the
@@ -724,8 +703,7 @@ async def test_breakdown_and_start_are_in_view_behind_eleven_warnings():
         breakdown = pilot.app.query_one("#ingest-type-breakdown")
         start = pilot.app.query_one("#library-ingest-start")
         assert 0 < breakdown.region.y < viewport, (
-            f"type breakdown below the fold: y={breakdown.region.y} "
-            f"viewport={viewport}"
+            f"type breakdown below the fold: y={breakdown.region.y} viewport={viewport}"
         )
         assert 0 < start.region.y < viewport, (
             f"Start below the fold: y={start.region.y} viewport={viewport}"
@@ -742,9 +720,7 @@ async def test_outcome_lines_paint_heavier_than_the_tooling_summary():
         await pilot.pause()
         tooling = pilot.app.query_one("#ingest-preflight-tooling-summary", Static)
         empty = pilot.app.query_one("#ingest-empty-summary", Static)
-        tooling_style = _painted_style_of_text(
-            pilot.app, tooling.region, "optional"
-        )
+        tooling_style = _painted_style_of_text(pilot.app, tooling.region, "optional")
         empty_style = _painted_style_of_text(pilot.app, empty.region, "empty")
         assert tooling_style is not None and empty_style is not None
         assert bool(empty_style.bold) and not bool(tooling_style.bold), (
@@ -811,9 +787,9 @@ async def test_option_select_focus_is_glyph_level_and_dimensionally_stable():
         assert not select.has_focus
         region_before = select.virtual_region
         unfocused = _composited_rows(pilot.app, select)
-        assert not any(
-            glyph in row for row in unfocused for glyph in HEAVY_GLYPHS
-        ), f"unfocused select already paints heavy glyphs: {unfocused!r}"
+        assert not any(glyph in row for row in unfocused for glyph in HEAVY_GLYPHS), (
+            f"unfocused select already paints heavy glyphs: {unfocused!r}"
+        )
 
         select.focus()
         await pilot.pause()
@@ -823,9 +799,9 @@ async def test_option_select_focus_is_glyph_level_and_dimensionally_stable():
             "focus produced a byte-identical composited capture -- the "
             "colour-only regression this task pinned"
         )
-        assert any(
-            glyph in row for row in focused for glyph in HEAVY_GLYPHS
-        ), f"focused select shows no structural cue: {focused!r}"
+        assert any(glyph in row for row in focused for glyph in HEAVY_GLYPHS), (
+            f"focused select shows no structural cue: {focused!r}"
+        )
         # The cue must not eat the value (the task-3302 one-row trap) and
         # must not change the control's layout. Its screen position may
         # scroll to reveal focus above the docked import bar.
@@ -1007,13 +983,10 @@ async def test_the_fold_pays_for_itself_in_the_shipped_screen(request):
         # 0). The fold's cost is the COLLAPSIBLE's own rendered height
         # delta, which no re-nesting can distort; the breakdown check
         # switches to screen-space visibility for the same reason.
-        detail = screen.query_one(
-            "#ingest-preflight-tooling-detail", Collapsible
-        )
+        detail = screen.query_one("#ingest-preflight-tooling-detail", Collapsible)
         folded_height = detail.region.height
         breakdown_visible = (
-            breakdown.region.height > 0
-            and breakdown.region.y < canvas.region.bottom
+            breakdown.region.height > 0 and breakdown.region.y < canvas.region.bottom
         )
 
         detail.collapsed = False
@@ -1023,9 +996,7 @@ async def test_the_fold_pays_for_itself_in_the_shipped_screen(request):
             "#ingest-preflight-tooling-detail", Collapsible
         ).region.height
 
-    assert breakdown_visible, (
-        "type breakdown below the fold in the shipped screen"
-    )
+    assert breakdown_visible, "type breakdown below the fold in the shipped screen"
     saving = unfolded_height - folded_height
     assert saving >= 25, (
         "the fold no longer pays for itself in the shipped screen: "
@@ -1057,9 +1028,7 @@ async def test_the_open_fold_survives_a_registry_tick_in_the_shipped_screen(requ
         await pilot.pause()
         await pilot.pause()
 
-        reborn = screen.query_one(
-            "#ingest-preflight-tooling-detail", Collapsible
-        )
+        reborn = screen.query_one("#ingest-preflight-tooling-detail", Collapsible)
         assert reborn.collapsed is False, (
             "the fold snapped shut on a registry tick in the shipped screen"
         )
@@ -1123,6 +1092,4 @@ async def test_every_canvas_focusable_changes_at_the_glyph_level_on_focus():
             after = _composited_rows(pilot.app, widget)
             if before == after:
                 colour_only.append(f"{type(widget).__name__}#{widget.id}")
-        assert not colour_only, (
-            f"focus is colour-only on: {colour_only}"
-        )
+        assert not colour_only, f"focus is colour-only on: {colour_only}"

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
+
 
 def live_inputs() -> dict[str, Path]:
     if os.environ.get("TLDW_LLAMA_SNAPSHOT_LIVE") != "1":
@@ -95,7 +97,7 @@ async def test_models_live_persistence_and_media_reuse(
     # explicitly scratch-owned too. No service/client/store/lifecycle is replaced.
     data_root = tmp_path.resolve() / "live-data"
     data_root.mkdir(mode=0o700)
-    monkeypatch.setattr("tldw_chatbook.app.get_user_data_dir", lambda: data_root)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: data_root)
     await configure_live_profile()
     # The real Models view probes Ollama on mount; that unrelated external
     # discovery is not part of this isolated llama.cpp verification.

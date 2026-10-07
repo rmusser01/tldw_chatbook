@@ -16,15 +16,24 @@ def test_defaults_when_section_missing():
 
 
 def test_consent_defaults_false_and_requires_explicit_true():
-    assert load_model_catalog_settings(
-        {"model_catalog": {"refresh_consent_recorded": True}}
-    ).refresh_consent_recorded is True
-    assert load_model_catalog_settings(
-        {"model_catalog": {"refresh_consent_recorded": "yes"}}
-    ).refresh_consent_recorded is False
-    assert load_model_catalog_settings(
-        {"model_catalog": {"refresh_consent_recorded": 1}}
-    ).refresh_consent_recorded is False
+    assert (
+        load_model_catalog_settings(
+            {"model_catalog": {"refresh_consent_recorded": True}}
+        ).refresh_consent_recorded
+        is True
+    )
+    assert (
+        load_model_catalog_settings(
+            {"model_catalog": {"refresh_consent_recorded": "yes"}}
+        ).refresh_consent_recorded
+        is False
+    )
+    assert (
+        load_model_catalog_settings(
+            {"model_catalog": {"refresh_consent_recorded": 1}}
+        ).refresh_consent_recorded
+        is False
+    )
 
 
 def test_full_section_parsed_and_normalized():
@@ -46,7 +55,12 @@ def test_full_section_parsed_and_normalized():
 
 def test_garbage_values_fall_back_safely():
     settings = load_model_catalog_settings(
-        {"model_catalog": {"stale_after_hours": "banana", "auto_refresh_disabled": "ZAI"}}
+        {
+            "model_catalog": {
+                "stale_after_hours": "banana",
+                "auto_refresh_disabled": "ZAI",
+            }
+        }
     )
     assert settings.stale_after_hours == 24.0
     assert settings.auto_refresh_disabled == frozenset()
@@ -78,6 +92,25 @@ def test_auto_refresh_cloud_provider_list_is_pinned():
         "DeepInfra",
         "Nebius",
         "Novita",
+        # TASK-33350: model-maker presets with a documented /models route
+        # (MiMo and BytePlus are seeded-only).
+        "TokenHub",
+        "StepFun",
+        # TASK-33351 gateway/host presets with a models route (Upstage and
+        # Qianfan are seeded-only).
+        "Vercel",
+        "ZenMux",
+        "Kilo",
+        "SiliconFlow",
+        "Baseten",
+        "GMI",
+        "OllamaCloud",
+        "Arcee",
+        "Nous",
+        "Venice",
+        "Meta",
+        # TASK-33506 (the other four follow-up presets are seeded-only).
+        "WandB",
     }
-    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 16
+    assert len(AUTO_REFRESH_PROVIDER_LIST_KEYS) == 30
     assert SELECTOR_MERGE_CAP == 50

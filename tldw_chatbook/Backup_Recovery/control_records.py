@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from tldw_chatbook.Utils.platform_files import os
 
 from .admission import Admission, AdmissionTimeout, fcntl
+from . import bootstrap
 from .bootstrap import (
     MAX_RECORDS,
     RecoveryRequired,
@@ -154,7 +155,8 @@ def _existing_admission_authority(bootstrap_root):
                     or entry.roots != [str(marker)]
                     or entry.pending is not None
                     or entry.proposed
-                    or not authority._tokens((marker,)) <= set(entry.historical)
+                    or not authority._tokens((marker,))
+                    <= bootstrap.identity_view(entry.historical)
                 ):
                     raise RecoveryRequired("recovery_scope_uncertain")
         return authority
@@ -324,6 +326,7 @@ def _activation_record_identity(parent, name, expected):
     return identity
 
 
+@bootstrap.advances_admission_epoch
 def _publish_activation_record(root, parent, name, before, after, temporary, identity):
     """Replace only the checked captured record, retaining failed-write evidence."""
     if _activation_record_identity(parent, name, before) != identity:
@@ -1033,6 +1036,7 @@ def _recover_activation_pairs(journal, prepared, session):
     _control_records(root)
 
 
+@bootstrap.advances_admission_epoch
 def _resume_activation_record(root, parent, name, temporary, before, after):
     """Reconcile an actual paired write using only its durable exact JSON states."""
     try:

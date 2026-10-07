@@ -11,6 +11,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.widgets import Button, Collapsible, Input, Label, Select, Static, TextArea
 
+from Tests.app_module_patches import set_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.consolidated_css import ConsolidatedCSSApp as App
@@ -77,7 +78,7 @@ def _no_splash(monkeypatch):
             return False
         return _real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
+    set_app_global(monkeypatch, "get_cli_setting", fake_get_cli_setting)
 
 
 class _VllmHost(App[None]):

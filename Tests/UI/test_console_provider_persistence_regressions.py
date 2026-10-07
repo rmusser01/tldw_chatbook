@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -278,7 +279,9 @@ async def test_compact_bar_selects_no_arbitrary_first_provider(monkeypatch):
         )
 
 
-def test_stale_default_refresh_swap_is_visible(monkeypatch):
+@pytest.mark.asyncio
+@private_profile_test
+def test_stale_default_refresh_swap_is_visible(monkeypatch, request):
     """TASK-16475: a stale-default refresh that changes provider must notify.
 
     Setup mirrors ``test_console_stale_default_refresh_respects_user_marked_
@@ -318,8 +321,11 @@ def test_stale_default_refresh_swap_is_visible(monkeypatch):
         f"(openai -> llama_cpp) without any user-visible notice; "
         f"notifies seen: {notifies}"
     )
-    notice = swap_notices[0].lower()
-    assert "openai" in notice and "llama_cpp" in notice
+    # TASK-33002.5 rewrote this pin on purpose: the notice names both
+    # providers by their catalog display names, never by config key.
+    notice = swap_notices[0]
+    assert "OpenAI" in notice and "llama.cpp" in notice
+    assert "openai" not in notice and "llama_cpp" not in notice
 
 
 def test_detected_server_adoption_keeps_configured_endpoint(monkeypatch):
@@ -347,9 +353,7 @@ def test_detected_server_adoption_keeps_configured_endpoint(monkeypatch):
         captured_sections.update(section_values)
         return True
 
-    monkeypatch.setattr(
-        chat_screen_module, "save_settings_to_cli_config", fake_save
-    )
+    monkeypatch.setattr(chat_screen_module, "save_settings_to_cli_config", fake_save)
     monkeypatch.setattr(console, "_sync_console_transcript_guidance", lambda: None)
     monkeypatch.setattr(console, "run_worker", _discard_worker)
     console._session._sync_chat_core_state_fn = lambda: None
@@ -400,9 +404,7 @@ def test_detected_server_adoption_treats_trailing_slash_as_same_endpoint(
         captured_sections.update(section_values)
         return True
 
-    monkeypatch.setattr(
-        chat_screen_module, "save_settings_to_cli_config", fake_save
-    )
+    monkeypatch.setattr(chat_screen_module, "save_settings_to_cli_config", fake_save)
     monkeypatch.setattr(console, "_sync_console_transcript_guidance", lambda: None)
     monkeypatch.setattr(console, "run_worker", _discard_worker)
     console._session._sync_chat_core_state_fn = lambda: None

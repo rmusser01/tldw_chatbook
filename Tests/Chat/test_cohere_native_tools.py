@@ -21,6 +21,8 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.session_todo_store import SessionTodoStore
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call
@@ -411,6 +413,7 @@ def test_openai_tools_passthrough_into_v2_payload(mock_post):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_strict_todo_schemas_project_supported_subset_without_aliasing():
     tools = [_todo_tool("todo_create"), _todo_tool("todo_update")]
     original = deepcopy(tools)
@@ -450,11 +453,9 @@ def test_strict_todo_schemas_project_supported_subset_without_aliasing():
     assert update["properties"]["activeForm"] == {
         "anyOf": [{"type": "string"}, {"type": "null"}]
     }
-    assert update["anyOf"] == [
-        {"required": ["content"]},
-        {"required": ["status"]},
-        {"required": ["activeForm"]},
-    ]
+    # TASK-33621.1: todo_update no longer carries a top-level anyOf (OpenAI
+    # and Anthropic refuse one); its change rule is enforced by the handler.
+    assert "anyOf" not in update
 
     update["properties"]["status"]["enum"].append("changed")
     assert tools == original

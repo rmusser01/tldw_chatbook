@@ -450,7 +450,15 @@ def test_count_read_it_later_matches_list_and_filters():
                 "INSERT INTO Media "
                 "(id,title,type,content_hash,uuid,client_id,last_modified,version) "
                 "VALUES (?,?,?,?,?,?,?,1)",
-                (media_id, title, "article", f"h{media_id}", f"u{media_id}", "c", "2026-01-01"),
+                (
+                    media_id,
+                    title,
+                    "article",
+                    f"h{media_id}",
+                    f"u{media_id}",
+                    "c",
+                    "2026-01-01",
+                ),
             )
         db.execute_query(
             "UPDATE Media SET deleted = 1, version = version + 1 WHERE id = 2", ()
@@ -466,11 +474,9 @@ def test_count_read_it_later_matches_list_and_filters():
                 (media_id,),
             )
         assert db.count_read_it_later_media() == 1
-        assert db.count_read_it_later_media() == len(
-            db.list_read_it_later_media_ids()
+        assert db.count_read_it_later_media() == len(db.list_read_it_later_media_ids())
+        assert (
+            db.count_read_it_later_media(include_deleted=True, include_trash=True) == 3
         )
-        assert db.count_read_it_later_media(
-            include_deleted=True, include_trash=True
-        ) == 3
     finally:
         db.close()

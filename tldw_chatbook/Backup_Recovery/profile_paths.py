@@ -36,6 +36,10 @@ def default_base_data_dir() -> Path:
 
 
 DEFAULT_DATA_FALLBACK_DIRECTORY = ".tldw_cli-data"
+#: Lock file serializing default data-root selection, beside the conventional
+#: root's home-level parent. One name for the selector, the admission check and
+#: the PERF-07 memo stamp.
+DATA_ROOT_LOCK_NAME = ".tldw_cli-data-root.lock"
 
 
 def selected_default_base_data_dir() -> Path:

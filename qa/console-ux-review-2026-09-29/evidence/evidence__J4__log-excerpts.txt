@@ -1,0 +1,90 @@
+== manual Library search (Enter ~12:23:06; staged result visible only by 12:24:17 capture) ==
+2026-09-29 12:23:06 [INFO    ] tldw_chatbook.diagnostics.ui:256 - event=event_loop_stall active_timers=console-credential-poll,console-environment-poll,footer-db-size-periodic,ui-heartbeat active_workers=- component=ui lag_ms=364 leaf_function=_remove leaf_lin
+2026-09-29 12:23:10 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_factory:496 - Creating RAG service with profile: hybrid_basic
+2026-09-29 12:23:10 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - RAG Service Configuration
+2026-09-29 12:23:10 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - Initializing embeddings service with model: all-MiniLM-L6-v2
+2026-09-29 12:23:10 [INFO    ] tldw_chatbook.RAG_Search.simplified.embeddings_wrapper:496 - Embeddings service configured with model: all-MiniLM-L6-v2
+2026-09-29 12:23:10 [INFO    ] tldw_chatbook.RAG_Search.simplified.circuit_breaker:496 - Circuit breaker 'embeddings_all-MiniLM-L6-v2' initialized with threshold=3, exponential_backoff=True
+2026-09-29 12:23:10 [INFO    ] tldw_chatbook.RAG_Search.simplified.embeddings_wrapper:496 - Circuit breaker configured: failure_threshold=3, recovery_timeout=30.0s
+2026-09-29 12:23:10 [INFO    ] tldw_chatbook.RAG_Search.simplified.embeddings_wrapper:496 - Successfully imported embeddings components
+2026-09-29 12:23:10 [INFO    ] tldw_chatbook.RAG_Search.simplified.embeddings_wrapper:496 - Using cache directory for HuggingFace models: /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/c28a6a75-4221-4434-989d-fbf24a73c96b/scratchpad/
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.Utils.optional_deps:496 - ✅ All embeddings/RAG dependencies found. Features are enabled.
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.RAG_Search.simplified.embeddings_wrapper:496 - Initialized embeddings factory with model: all-MiniLM-L6-v2, device: mps
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - Initializing chroma vector store
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.RAG_Search.simplified.vector_store:496 - Initializing ChromaVectorStore: collection=default__bf912f0fe11b, metric=cosine, persist_dir=/private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/c28a6a7
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.RAG_Search.chunking_service:126 - Initialized ChunkingService wrapper
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - Initialized chunking service
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.RAG_Search.simplified.simple_cache:496 - Cache initialized: max_size=100, ttl=3600s, enabled=True
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - Initialized cache: size=100, ttl=3600s, enabled=True, search_type_ttls={'semantic': None, 'keyword': None, 'hybrid': None}
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.Embeddings.Embeddings_Lib:496 - embed: Model default not in cache, will build it
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.Embeddings.Embeddings_Lib:496 - _build: Initializing HuggingFace model default (path: sentence-transformers/all-MiniLM-L6-v2)
+2026-09-29 12:23:15 [INFO    ] tldw_chatbook.Embeddings.Embeddings_Lib:496 - Using custom cache directory: /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/c28a6a75-4221-4434-989d-fbf24a73c96b/scratchpad/uxrev/profiles/j4/data/uxrev_j4
+2026-09-29 12:23:15 [WARNING ] huggingface_hub.utils._http:904 - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-09-29 12:23:33 [INFO    ] tldw_chatbook.Embeddings.Embeddings_Lib:496 - _build: Loaded model default in 18.28s
+2026-09-29 12:23:33 [INFO    ] tldw_chatbook.Embeddings.Embeddings_Lib:496 - embed: Successfully built and cached model default
+2026-09-29 12:23:33 [INFO    ] tldw_chatbook.RAG_Search.simplified.embeddings_wrapper:496 - Detected and cached embedding dimension: 384
+2026-09-29 12:23:33 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - Detected embedding dimension: 384
+2026-09-29 12:23:33 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - Initialized thread pool with 8 workers
+2026-09-29 12:23:33 [INFO    ] tldw_chatbook.RAG_Search.chunking_service:126 - Initialized ChunkingService wrapper
+2026-09-29 12:23:33 [INFO    ] tldw_chatbook.RAG_Search.simplified.enhanced_rag_service:496 - Initialized EnhancedRAGService with parent_retrieval=False
+2026-09-29 12:23:33 [INFO    ] tldw_chatbook.RAG_Search.ingestion_indexing:496 - Created shared RAG service (profile=hybrid_basic)
+2026-09-29 12:23:33 [INFO    ] tldw_chatbook.Metrics.metrics_logger:496 - Function 'search' finished in 0.0000s with status 'success'.
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.Metrics.metrics_logger:496 - Function 'search' finished in 0.0000s with status 'success'.
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - [8516552f-3ed0-4f4a-8492-1281839d13fd] Performing hybrid search with top_k=15, threshold=0.0
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.RAG_Search.simplified.embeddings_wrapper:496 - Creating embeddings asynchronously for batch of 1 texts
+2026-09-29 12:23:34 [INFO    ] root:1008 - Initializing Database object for path: /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/c28a6a75-4221-4434-989d-fbf24a73c96b/scratchpad/uxrev/profiles/j4/data/uxrev_j4/tldw_chatbook_media_v2.d
+2026-09-29 12:23:34 [INFO    ] root:2147 - Checking DB schema. Current version: 9. Code supports: 9
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.RAG_Search.simplified.embeddings_wrapper:496 - Created embeddings asynchronously for 1 texts in 0.118s
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - Keyword search found 1 results across 1 sub-leg(s)
+2026-09-29 12:23:34 [ERROR   ] tldw_chatbook.RAG_Search.simplified.vector_store:489 - Search failed: rag_activation_required
+Traceback (most recent call last):
+tldw_chatbook.RAG_Search.activation.RAGActivationRequired: rag_activation_required
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.Metrics.metrics_logger:496 - Function 'search' finished in 0.0789s with status 'success'.
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - [8516552f-3ed0-4f4a-8492-1281839d13fd] Search completed in 0.36s, found 1 results
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.diagnostics.ui:256 - event=event_loop_stall active_timers=console-credential-poll,console-environment-poll,footer-db-size-periodic,ui-heartbeat active_workers=- component=ui lag_ms=334 leaf_function=select leaf_line
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.RAG_Search.simplified.vector_store:496 - Initialized ChromaDB PersistentClient at /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/c28a6a75-4221-4434-989d-fbf24a73c96b/scratchpad/uxrev/profi
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.RAG_Search.simplified.vector_store:496 - Using collection: default__bf912f0fe11b
+2026-09-29 12:23:34 [INFO    ] tldw_chatbook.RAG_Search.simplified.vector_store:496 - Collection stats: 0 documents, 0 metadata fields
+
+== auto-retrieval on send 12:30:35: 0 results + capture failure, no UI signal ==
+2026-09-29 12:30:35 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=0d1f44891a4d49d68893033bac512055 component=console duration_ms=325 phase=ui_action status=dispatched
+2026-09-29 12:30:35 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=0d1f44891a4d49d68893033bac512055 component=console duration_ms=404 phase=controller_submit status=entered
+2026-09-29 12:30:35 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=0d1f44891a4d49d68893033bac512055 component=console duration_ms=405 phase=provider_resolution status=entered
+2026-09-29 12:30:35 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=0d1f44891a4d49d68893033bac512055 capture_enabled=true component=console duration_ms=414 phase=capture_policy status=entered
+2026-09-29 12:30:35 [INFO    ] tldw_chatbook.Metrics.metrics_logger:496 - Function 'search' finished in 0.0000s with status 'success'.
+2026-09-29 12:30:35 [INFO    ] tldw_chatbook.Metrics.metrics_logger:496 - Function 'search' finished in 0.0000s with status 'success'.
+2026-09-29 12:30:35 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - [9bc2e8ef-a3c6-468d-acf0-aee216acba79] Performing hybrid search with top_k=15, threshold=0.0
+2026-09-29 12:30:35 [INFO    ] tldw_chatbook.RAG_Search.simplified.embeddings_wrapper:496 - Creating embeddings asynchronously for batch of 1 texts
+2026-09-29 12:30:36 [INFO    ] tldw_chatbook.RAG_Search.simplified.embeddings_wrapper:496 - Created embeddings asynchronously for 1 texts in 0.257s
+2026-09-29 12:30:36 [INFO    ] tldw_chatbook.RAG_Search.simplified.vector_store:496 - Search completed in 0.001s, found 0 results
+2026-09-29 12:30:36 [INFO    ] tldw_chatbook.Metrics.metrics_logger:496 - Function 'search' finished in 0.1217s with status 'success'.
+2026-09-29 12:30:36 [INFO    ] tldw_chatbook.RAG_Search.simplified.rag_service:496 - [9bc2e8ef-a3c6-468d-acf0-aee216acba79] Search completed in 0.59s, found 0 results
+2026-09-29 12:30:36 [INFO    ] tldw_chatbook.RAG_Search.simplified.vector_store:496 - Collection stats: 0 documents, 0 metadata fields
+2026-09-29 12:30:36 [INFO    ] tldw_chatbook.Metrics.metrics_logger:496 - Function 'get_collection_stats' finished in 0.0009s with status 'success'.
+2026-09-29 12:30:36 [ERROR   ] tldw_chatbook.Chat.console_chat_controller:496 - Console RAG capture unavailable; reason=capture_provider_failure; draft_length=24
+2026-09-29 12:30:36 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=0d1f44891a4d49d68893033bac512055 component=console duration_ms=1257 phase=durable_commit status=entered
+2026-09-29 12:30:37 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=0d1f44891a4d49d68893033bac512055 component=console duration_ms=1981 phase=durable_commit status=succeeded
+
+== character-swapped chat: blocked then refused sends ==
+2026-09-29 12:34:27 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage app_version=0.2.2 attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=0 phase=ui_action python_version=3.12.11 sqlite_version=3.49.1 status=en
+2026-09-29 12:34:27 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=2 phase=ui_dispatch status=entered
+2026-09-29 12:34:27 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=38 phase=ui_submit status=entered
+2026-09-29 12:34:27 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=289 phase=ui_submit status=accepted
+2026-09-29 12:34:27 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=301 phase=ui_dispatch status=sent
+2026-09-29 12:34:27 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=301 phase=ui_action status=dispatched
+2026-09-29 12:34:28 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=489 phase=controller_submit status=entered
+2026-09-29 12:34:28 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=554 phase=provider_resolution status=entered
+2026-09-29 12:34:28 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 capture_enabled=true component=console duration_ms=568 phase=capture_policy status=entered
+2026-09-29 12:34:29 [ERROR   ] tldw_chatbook.Chat.console_chat_controller:496 - Console RAG capture unavailable; reason=capture_provider_failure; draft_length=35
+2026-09-29 12:34:29 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=1470 phase=durable_commit status=entered
+2026-09-29 12:34:29 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=1737 phase=durable_commit status=succeeded
+2026-09-29 12:34:29 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=175d4ed6b97e4a099963e94e2d5c1713 component=console duration_ms=1744 phase=controller_submit status=blocked
+2026-09-29 12:36:44 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage app_version=0.2.2 attempt_id=b79a472e61c7496ea2afb234d9dbf2ac component=console duration_ms=0 phase=ui_action python_version=3.12.11 sqlite_version=3.49.1 status=en
+2026-09-29 12:36:44 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=b79a472e61c7496ea2afb234d9dbf2ac component=console duration_ms=2 phase=ui_dispatch status=entered
+2026-09-29 12:36:44 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=b79a472e61c7496ea2afb234d9dbf2ac component=console duration_ms=40 phase=ui_submit status=entered
+2026-09-29 12:36:44 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=b79a472e61c7496ea2afb234d9dbf2ac component=console duration_ms=380 phase=ui_submit status=accepted
+2026-09-29 12:36:44 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=b79a472e61c7496ea2afb234d9dbf2ac component=console duration_ms=394 phase=ui_dispatch status=sent
+2026-09-29 12:36:44 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=b79a472e61c7496ea2afb234d9dbf2ac component=console duration_ms=394 phase=ui_action status=dispatched
+2026-09-29 12:36:44 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=b79a472e61c7496ea2afb234d9dbf2ac component=console duration_ms=417 phase=controller_submit status=entered
+2026-09-29 12:36:44 [INFO    ] tldw_chatbook.diagnostics.console:256 - event=console_send_stage attempt_id=b79a472e61c7496ea2afb234d9dbf2ac component=console duration_ms=418 phase=controller_submit status=refused
+2026-09-29 12:36:44 [WARNING ] tldw_chatbook.Chat.console_runtime:496 - Console runtime turn ended with exception_type=RuntimeError

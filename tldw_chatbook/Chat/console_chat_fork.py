@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import warnings
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 from typing import TYPE_CHECKING, Literal
@@ -12,12 +14,13 @@ from typing import TYPE_CHECKING, Literal
 from PIL import Image as PILImage
 
 from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
     ConsoleMessageRole,
     ConsoleMessageStatus,
     GenerationVariantMeta,
     MessageAttachment,
 )
-from tldw_chatbook.Chat.attachment_core import MAX_IMAGE_BYTES
+from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES, MAX_IMAGE_BYTES
 from tldw_chatbook.Chat.console_context_policy import (
     CompactionFailureBehavior,
     ConsoleContextPolicyOverrides,
@@ -51,11 +54,13 @@ from tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (
 )
 from tldw_chatbook.Utils.input_validation import (
     CONSOLE_FORK_TITLE_MAX_LENGTH as CONSOLE_FORK_TITLE_MAX_LENGTH,
+    escape_markup,
     validate_console_fork_title,
 )
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
+    from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
 CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES = 64 * 1024
@@ -380,6 +385,280 @@ def default_fork_title(source_title: str) -> str:
     return normalize_fork_title(candidate)
 
 
+_CONSOLE_FORK_ROW_KINDS = {
+    ConsoleMessageRole.USER: "User message",
+    ConsoleMessageRole.ASSISTANT: "Assistant reply",
+    ConsoleMessageRole.SYSTEM: "System note",
+}
+_CONSOLE_FORK_ROW_EXCERPT_CHARS = 40
+# Only these states hold real text; any other row's content is a placeholder
+# ("Response discarded.") or still changing, so it is never quoted.
+_CONSOLE_FORK_QUOTABLE_STATUSES = frozenset({"complete", "stopped", "failed"})
+# An unfinished boundary is waited on, not refused: no fallback is offered.
+_CONSOLE_FORK_UNFINISHED_STATUSES = frozenset({"pending", "streaming"})
+_CONSOLE_FORK_UNLINKED = "isn't linked to the message before it in the saved chat"
+CONSOLE_FORK_SAVED_HISTORY_UNAVAILABLE = (
+    "This chat's saved history is unavailable, so it can't be forked."
+)
+CONSOLE_FORK_SAVED_HISTORY_MISMATCH = (
+    "This chat's saved history doesn't match what's on screen, so this message "
+    "can't be forked."
+)
+
+
+def console_fork_skips(message: ConsoleChatMessage) -> bool:
+    """Return whether a native node is left out of a fork (ADR-092 §2).
+
+    The fork source is the USER/ASSISTANT parent chain. SYSTEM rows -- /help,
+    /doctor, unknown-command hints and other command feedback, saved or not --
+    are excluded instead of refusing the fork (TASK-33621.10). A copied row's
+    live parent link is still checked against its nearest saved ancestor (which
+    may be a saved SYSTEM row); the durable commit's source re-check walks past
+    saved SYSTEM rows.
+
+    Args:
+        message: A native node on the fork source's active path.
+
+    Returns:
+        True when the node is left out of the copied lineage.
+    """
+
+    return message.role is ConsoleMessageRole.SYSTEM
+
+
+def console_fork_source_ids(
+    active_ids: Sequence[str],
+    boundary_id: str,
+    nodes: Mapping[str, ConsoleChatMessage],
+) -> list[str]:
+    """Return the active path through ``boundary_id`` minus skipped notes.
+
+    Args:
+        active_ids: The session's active path, root first.
+        boundary_id: The selected fork boundary; always kept.
+        nodes: The session's native nodes by id. An id missing here is kept,
+            so the caller's eligibility check refuses it.
+
+    Returns:
+        The ids a fork through ``boundary_id`` copies, root first.
+
+    Raises:
+        ValueError: If ``boundary_id`` is not on ``active_ids``.
+    """
+
+    boundary_index = list(active_ids).index(boundary_id)
+    return [
+        native_id
+        for native_id in active_ids[:boundary_index]
+        if native_id not in nodes or not console_fork_skips(nodes[native_id])
+    ] + [boundary_id]
+
+
+def describe_console_fork_row(message: ConsoleChatMessage) -> str:
+    """Name one transcript row the way the user sees it.
+
+    A row that is not complete leads with its state ("failed Assistant
+    reply"), and only real text is quoted as a short excerpt -- never a
+    discarded row's placeholder or a reply that is still streaming. The
+    excerpt is markup-escaped: every surface showing a fork refusal (the
+    action guide ``Static``, the Fork tooltip, ``notify`` toasts) parses
+    Textual content markup, and a quoted ``[/]`` raised ``MarkupError``.
+
+    Args:
+        message: The row to name.
+
+    Returns:
+        The row's kind, led by its state unless complete, plus a quoted
+        excerpt when it holds real text, e.g. ``User message "first q"``.
+    """
+
+    kind = _CONSOLE_FORK_ROW_KINDS.get(message.role, "message")
+    label = kind if message.status == "complete" else f"{message.status} {kind}"
+    text = (
+        " ".join(str(message.content or "").split())
+        if message.status in _CONSOLE_FORK_QUOTABLE_STATUSES
+        else ""
+    )
+    if len(text) > _CONSOLE_FORK_ROW_EXCERPT_CHARS:
+        text = text[: _CONSOLE_FORK_ROW_EXCERPT_CHARS - 1].rstrip() + "…"
+    # Escaped after the cut, so a ``[`` the cut leaves is still escaped.
+    return f'{label} "{escape_markup(text)}"' if text else label
+
+
+def _console_fork_row_problem(
+    message: ConsoleChatMessage | None,
+    *,
+    durable: bool,
+    persisted_parent: Callable[[ConsoleChatMessage], str | None],
+    state_is_eligible: Callable[[object, object], bool],
+    visible_content: Callable[[ConsoleChatMessage], str],
+) -> tuple[str, str] | None:
+    """Return ``(boundary_reason, earlier_row_clause)`` or ``None`` if copyable."""
+
+    if message is None:
+        return "Message is not forkable.", "can't be copied into a fork"
+    if message.generation_projection_quarantined:
+        return (
+            "Canonical generation is unavailable; reload before forking.",
+            "has an unavailable canonical generation; reload before forking",
+        )
+    if message.status in _CONSOLE_FORK_UNFINISHED_STATUSES:
+        return "Wait for this message to finish before forking.", "isn't finished yet"
+    if message.status == "discarded":
+        return "Discarded messages cannot be forked.", "can't be copied into a fork"
+    if not state_is_eligible(message.role, message.status):
+        return (
+            "Only complete user messages can be forked."
+            if message.role is ConsoleMessageRole.USER
+            else "Only user and assistant messages can be forked.",
+            "can't be copied into a fork",
+        )
+    try:
+        content = visible_content(message)
+    except ValueError as exc:
+        return str(exc), "can't be copied into a fork"
+    if not content.strip():
+        return (
+            "This partial response has no content to fork."
+            if message.status in {"stopped", "failed"}
+            else "Message must contain stable completed text before forking.",
+            "has no text to copy",
+        )
+    if durable and not message.persisted_message_id:
+        return (
+            "This message has not been saved yet. Try Fork again after it is saved.",
+            "isn't saved yet",
+        )
+    if durable and message.parent_message_id != persisted_parent(message):
+        # No "reopen the chat" advice: a legacy flat-parent chat reloads with
+        # the same missing link, so that promise could not be kept.
+        return (
+            f"This message {_CONSOLE_FORK_UNLINKED}, so it can't be forked.",
+            _CONSOLE_FORK_UNLINKED,
+        )
+    return None
+
+
+def console_fork_prefix_refusal(
+    prefix: Sequence[str],
+    nodes: Mapping[str, ConsoleChatMessage],
+    *,
+    durable: bool,
+    persisted_parent: Callable[[ConsoleChatMessage], str | None],
+    state_is_eligible: Callable[[object, object], bool],
+    visible_content: Callable[[ConsoleChatMessage], str],
+    can_fork: Callable[[str], bool],
+) -> str | None:
+    """Refuse on the first uncopyable lineage row, or return ``None``.
+
+    Every row the fence copies is checked -- including the saved parent link
+    the fence re-checks -- so Fork is never offered for a boundary whose fence
+    would then be refused. A refusal names the blocking row (the selected one,
+    or an EARLIER row it names) and the nearest boundary before that row which
+    ``can_fork`` accepts (TASK-33621.10). An unfinished selected row is waited
+    on, not refused, so it only says to wait.
+
+    Args:
+        prefix: Copied lineage through the boundary (``console_fork_source_ids``).
+        nodes: The session's native nodes by id.
+        durable: Whether the source is a saved conversation.
+        persisted_parent: The saved parent a row's live link must mirror.
+        state_is_eligible: ``(role, status)`` fork-state predicate.
+        visible_content: Returns a row's visible text; ``ValueError`` refuses.
+        can_fork: Full eligibility of an earlier boundary. Every row before the
+            blocking one already passed here, so it cannot recurse further.
+
+    Returns:
+        The user-facing refusal, or ``None`` when every copied row passes.
+    """
+
+    for index, native_id in enumerate(prefix):
+        blocker = nodes.get(native_id)
+        problem = _console_fork_row_problem(
+            blocker,
+            durable=durable,
+            persisted_parent=persisted_parent,
+            state_is_eligible=state_is_eligible,
+            visible_content=visible_content,
+        )
+        if problem is None:
+            continue
+        is_boundary = index == len(prefix) - 1
+        if (
+            is_boundary
+            and blocker is not None
+            and blocker.status in _CONSOLE_FORK_UNFINISHED_STATUSES
+        ):
+            return problem[0]
+        parent_id = prefix[index - 1] if index else None
+        fallback = (
+            f" Fork from the {describe_console_fork_row(nodes[parent_id])} instead."
+            if parent_id and can_fork(parent_id)
+            else " No earlier message can be forked."
+        )
+        if is_boundary:
+            return problem[0] + fallback
+        row = f"The {describe_console_fork_row(blocker)}" if blocker else "A message"
+        return f"{row} above this message {problem[1]}.{fallback}"
+    return None
+
+
+def check_console_fork_saved_tail(
+    active_path: Sequence[str],
+    nodes: Mapping[str, ConsoleChatMessage],
+    boundary_id: str,
+    active_leaf_id: str,
+) -> None:
+    """Refuse unless the live rows after ``boundary_id`` reach the saved leaf.
+
+    The durable fork commit re-reads the saved chain from the conversation's
+    active leaf back to the boundary, so every live row between them must be
+    saved and linked to the row before it. Unsaved command notes were never
+    written and are skipped. A refusal names the first row that breaks the
+    chain (TASK-33621.10); no boundary up to that row can be forked.
+
+    Args:
+        active_path: The session's active path, root first.
+        nodes: The session's native nodes by id.
+        boundary_id: The selected fork boundary on ``active_path``.
+        active_leaf_id: The conversation's saved active leaf id.
+
+    Raises:
+        ValueError: User-facing wording when the saved chain is broken.
+    """
+
+    boundary_index = list(active_path).index(boundary_id)
+    leaf_index = next(
+        (
+            index
+            for index, native_id in enumerate(active_path)
+            if nodes[native_id].persisted_message_id == active_leaf_id
+        ),
+        None,
+    )
+    if leaf_index is None or leaf_index < boundary_index:
+        raise ValueError(CONSOLE_FORK_SAVED_HISTORY_MISMATCH)
+    previous_id = nodes[boundary_id].persisted_message_id
+    for native_id in active_path[boundary_index + 1 : leaf_index + 1]:
+        message = nodes[native_id]
+        if console_fork_skips(message) and message.persisted_message_id is None:
+            continue
+        if (
+            type(message.persisted_message_id) is not str
+            or not message.persisted_message_id
+        ):
+            problem = "isn't saved yet"
+        elif message.parent_message_id != previous_id:
+            problem = _CONSOLE_FORK_UNLINKED
+        else:
+            previous_id = message.persisted_message_id
+            continue
+        raise ValueError(
+            f"The {describe_console_fork_row(message)} further down {problem}, "
+            "so no message up to it can be forked."
+        )
+
+
 def _validate_console_fork_configuration_identity(
     configuration: ConsoleForkConfigurationSnapshot,
 ) -> None:
@@ -492,8 +771,9 @@ def fingerprint_console_fork_configuration(
             "provider": (str,),
             "model": (str, type(None)),
             "base_url": (str, type(None)),
-            "temperature": (int, float),
-            "top_p": (int, float),
+            # Blank when the provider drops it (Custom OpenAI 2 has no Top P).
+            "temperature": (int, float, type(None)),
+            "top_p": (int, float, type(None)),
             "min_p": (int, float, type(None)),
             "top_k": (int, type(None)),
             "max_tokens": (int, type(None)),
@@ -855,3 +1135,463 @@ def _validate_canonical_json(value: object) -> None:
             _validate_canonical_json(item)
         return
     raise TypeError("Fork fingerprint payload must be canonical JSON.")
+
+
+def console_fork_message_state_is_eligible(role: object, status: object) -> bool:
+    """Check canonical role and settled status without changing the source."""
+
+    if type(role) is not ConsoleMessageRole or type(status) is not str:
+        return False
+    if role is ConsoleMessageRole.USER:
+        return status == "complete"
+    return role is ConsoleMessageRole.ASSISTANT and status in {
+        "complete",
+        "stopped",
+        "failed",
+    }
+
+
+def console_fork_visible_selection(
+    message: ConsoleChatMessage,
+) -> tuple[str, str | None]:
+    """Read the canonical visible text and selected variant identity.
+
+    Args:
+        message: Console message whose visible content and variant are selected.
+
+    Returns:
+        The visible text and selected variant ID, or None for the ID when the
+        message has no variants.
+
+    Raises:
+        ValueError: Content is not a string, the current variant is unavailable,
+            or the variant has an empty or non-string ID, non-string content,
+            or content that differs from the visible message.
+    """
+
+    if type(message.content) is not str:
+        raise ValueError("Console fork message content is unavailable.")
+    variants = message.variants
+    if variants is None:
+        return message.content, None
+    try:
+        current = variants.current
+    except (AttributeError, IndexError):
+        raise ValueError("Console fork text selection is unavailable.") from None
+    if (
+        type(current.id) is not str
+        or not current.id
+        or type(current.content) is not str
+        or current.content != message.content
+    ):
+        raise ValueError("Console fork text selection is unavailable.")
+    return current.content, current.id
+
+
+def fingerprint_console_fork_attachments(
+    attachments: Sequence[MessageAttachment | ConsoleForkProjectedAttachment],
+    generation: Sequence[GenerationVariantMeta | ConsoleForkProjectedGeneration],
+) -> str:
+    """Validate and fingerprint ordered borrowed attachments and generation metadata."""
+
+    payload: list[dict[str, object]] = []
+    if generation and len(generation) != len(attachments):
+        raise ValueError("Console fork generation metadata is unavailable.")
+    for index, attachment in enumerate(attachments):
+        if (
+            type(attachment) not in {MessageAttachment, ConsoleForkProjectedAttachment}
+            or type(attachment.data) is not bytes
+            or not attachment.data
+            or len(attachment.data) > MAX_ATTACHMENT_BYTES
+            or type(attachment.mime_type) is not str
+            or not attachment.mime_type
+            or type(attachment.display_name) is not str
+            or attachment.position != index
+        ):
+            raise ValueError("Console fork attachment is unavailable.")
+        if attachment.mime_type.startswith("image/") or generation:
+            validate_console_fork_image_payload(
+                attachment.data,
+                attachment.mime_type,
+            )
+        metadata = generation[index] if index < len(generation) else None
+        metadata_payload: dict[str, object] | None = None
+        if metadata is not None:
+            if (
+                type(metadata)
+                not in {GenerationVariantMeta, ConsoleForkProjectedGeneration}
+                or type(metadata.prompt) is not str
+                or type(metadata.negative_prompt) is not str
+                or type(metadata.backend) is not str
+                or type(metadata.model) not in {str, type(None)}
+                or type(metadata.seed) not in {int, type(None)}
+                or type(metadata.style) not in {str, type(None)}
+            ):
+                raise ValueError("Console fork generation metadata is unavailable.")
+            if type(metadata) is GenerationVariantMeta:
+                if type(metadata.params) is not dict:
+                    raise ValueError("Console fork generation metadata is unavailable.")
+                try:
+                    params_json = json.dumps(
+                        metadata.params,
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        "Console fork generation metadata is unavailable."
+                    ) from None
+            elif (
+                type(metadata) is ConsoleForkProjectedGeneration
+                and metadata.position == index
+                and type(metadata.params_json) is str
+            ):
+                params_json = metadata.params_json
+            else:
+                raise ValueError("Console fork generation metadata is unavailable.")
+            metadata_payload = {
+                "prompt": metadata.prompt,
+                "negative_prompt": metadata.negative_prompt,
+                "backend": metadata.backend,
+                "model": metadata.model,
+                "seed": metadata.seed,
+                "style": metadata.style,
+                "params_json": params_json,
+            }
+        payload.append(
+            {
+                "position": attachment.position,
+                "data_sha256": hashlib.sha256(attachment.data).hexdigest(),
+                "mime_type": attachment.mime_type,
+                "display_name": attachment.display_name,
+                "generation": metadata_payload,
+            }
+        )
+    canonical = json.dumps(
+        payload,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(b"console-fork-attachments-v1\0" + canonical).hexdigest()
+
+
+def validate_console_fork_image_selections(
+    nodes: Mapping[str, ConsoleChatMessage],
+    prefix: Sequence[str],
+    selections: Sequence[ConsoleForkImageSelectionFence],
+) -> bool:
+    """Compare borrowed image selections with their canonical source fingerprints."""
+
+    generated_ids = {
+        native_id for native_id in prefix if nodes[native_id].generation_metadata
+    }
+    if (
+        any(
+            nodes[native_id].role is not ConsoleMessageRole.ASSISTANT
+            for native_id in generated_ids
+        )
+        or len(selections) != len(generated_ids)
+        or any(type(item) is not ConsoleForkImageSelectionFence for item in selections)
+        or len(selections) != len({item.native_message_id for item in selections})
+        or {item.native_message_id for item in selections} != generated_ids
+    ):
+        return False
+    try:
+        for item in selections:
+            message = nodes[item.native_message_id]
+            if (
+                type(item.selected_position) is not int
+                or item.selected_position < 0
+                or type(item.browse_revision) is not int
+                or item.browse_revision < 0
+                or item.selected_position >= len(message.attachments)
+                or item.selected_position >= len(message.generation_metadata)
+                or fingerprint_console_fork_selected_image(
+                    message.attachments[item.selected_position],
+                    message.generation_metadata[item.selected_position],
+                )
+                != item.attachment_meta_fingerprint
+            ):
+                return False
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def fingerprint_console_fork_video(video: VideoGenerationMetadata) -> str:
+    """Validate and fingerprint canonical video regeneration metadata."""
+
+    from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
+
+    if type(video) is not VideoGenerationMetadata:
+        raise ValueError("Console fork video metadata is unavailable.")
+    text_fields = (
+        video.name,
+        video.prompt,
+        video.negative_prompt,
+        video.backend,
+        video.container,
+    )
+    optional_text = (video.model, video.ratio, video.source_image_message_id)
+    numeric = (video.duration_seconds, video.fps)
+    integer = (video.seed, video.width, video.height)
+    if (
+        any(type(value) is not str for value in text_fields)
+        or not video.name
+        or not video.backend
+        or any(type(value) not in {str, type(None)} for value in optional_text)
+        or any(type(value) not in {int, float, type(None)} for value in numeric)
+        or any(type(value) not in {int, type(None)} for value in integer)
+        or any(value is not None and not math.isfinite(value) for value in numeric)
+        or type(video.is_unavailable_tombstone) is not bool
+    ):
+        raise ValueError("Console fork video metadata is unavailable.")
+    payload = video.to_json().encode("utf-8")
+    if len(payload) > CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES:
+        raise ValueError("Console fork video metadata is unavailable.")
+    return hashlib.sha256(b"console-fork-video-v1\0" + payload).hexdigest()
+
+
+def project_console_fork_message(
+    source: ConsoleChatMessage,
+    entry: ConsoleForkLineageFence,
+    *,
+    target_native: str,
+    target_persisted: str | None,
+    target_turn: str | None,
+    target_variant: str | None,
+    previous_native: str | None,
+    previous_persisted: str | None,
+    durable: bool,
+    selection: ConsoleForkImageSelectionFence | None,
+    projected_image_ids: Mapping[str, str],
+    fingerprint_video: Callable[[VideoGenerationMetadata], str],
+) -> tuple[ConsoleForkProjectedMessage, bool]:
+    """Project one borrowed source into immutable values with allocated identities.
+
+    The caller owns identity allocation, append order and image-alias updates.
+    This function only reads the source, lineage and aliases; fingerprint_video
+    resolves through the caller at invocation time."""
+
+    attachments: list[ConsoleForkProjectedAttachment] = []
+    generation_rows: list[ConsoleForkProjectedGeneration] = []
+    message_has_image = False
+    source_positions = (
+        (selection.selected_position,)
+        if selection is not None
+        else tuple(range(len(source.attachments)))
+    )
+    for target_position, source_position in enumerate(source_positions):
+        attachment = source.attachments[source_position]
+        if (
+            type(attachment.data) is not bytes
+            or not attachment.data
+            or len(attachment.data) > MAX_ATTACHMENT_BYTES
+            or type(attachment.mime_type) is not str
+            or not attachment.mime_type
+            or type(attachment.display_name) is not str
+        ):
+            raise ValueError("Fork attachment bytes are unavailable.")
+        if attachment.mime_type.startswith("image/"):
+            validate_console_fork_image_payload(
+                attachment.data,
+                attachment.mime_type,
+            )
+            message_has_image = True
+        attachments.append(
+            ConsoleForkProjectedAttachment(
+                owner_native_message_id=target_native,
+                owner_persisted_message_id=target_persisted,
+                position=target_position,
+                data=bytes(attachment.data),
+                mime_type=attachment.mime_type,
+                display_name=attachment.display_name,
+            )
+        )
+        if source_position < len(source.generation_metadata):
+            metadata = source.generation_metadata[source_position]
+            generation_rows.append(
+                ConsoleForkProjectedGeneration(
+                    owner_native_message_id=target_native,
+                    owner_persisted_message_id=target_persisted,
+                    position=target_position,
+                    prompt=metadata.prompt,
+                    negative_prompt=metadata.negative_prompt,
+                    backend=metadata.backend,
+                    model=metadata.model,
+                    seed=metadata.seed,
+                    style=metadata.style,
+                    params_json=json.dumps(
+                        metadata.params,
+                        allow_nan=False,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                )
+            )
+    video_tombstone: ConsoleForkProjectedVideoTombstone | None = None
+    if source.video_metadata is not None:
+        video = source.video_metadata
+        source_image_target = projected_image_ids.get(
+            video.source_image_message_id or ""
+        )
+        video_tombstone = ConsoleForkProjectedVideoTombstone(
+            owner_native_message_id=target_native,
+            owner_persisted_message_id=target_persisted,
+            source_fingerprint=fingerprint_video(video),
+            prompt=video.prompt,
+            negative_prompt=video.negative_prompt,
+            backend=video.backend,
+            model=video.model,
+            seed=video.seed,
+            duration_seconds=video.duration_seconds,
+            fps=video.fps,
+            width=video.width,
+            height=video.height,
+            ratio=video.ratio,
+            source_image_message_id=source_image_target,
+            container=video.container,
+        )
+    projected_message = ConsoleForkProjectedMessage(
+        source_native_message_id=entry.native_message_id,
+        source_persisted_message_id=(entry.persisted_message_id if durable else None),
+        source_persisted_revision=(entry.persisted_revision if durable else None),
+        source_persisted_content=(entry.persisted_content if durable else None),
+        native_message_id=target_native,
+        persisted_message_id=target_persisted,
+        native_parent_id=previous_native,
+        persisted_parent_id=previous_persisted,
+        turn_id=target_turn,
+        trace_turn_id=entry.trace_turn_id,
+        visible_variant_id=target_variant,
+        role=entry.role,
+        status=entry.status,
+        content=(
+            CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+            if video_tombstone is not None
+            else entry.visible_content
+        ),
+        attachments=tuple(attachments),
+        generation_metadata=tuple(generation_rows),
+        video_tombstone=video_tombstone,
+    )
+    return projected_message, message_has_image
+
+
+def console_fork_candidate_matches_fence(
+    messages: Sequence[ConsoleForkProjectedMessage],
+    lineage: Sequence[ConsoleForkLineageFence],
+    *,
+    native_ids: Mapping[str, str],
+    persisted_ids: Mapping[str, str | None],
+    turn_ids: Mapping[str, str],
+    selection_by_message: Mapping[str, ConsoleForkImageSelectionFence],
+    durable: bool,
+    fingerprint_attachments: Callable[
+        [
+            Sequence[MessageAttachment | ConsoleForkProjectedAttachment],
+            Sequence[GenerationVariantMeta | ConsoleForkProjectedGeneration],
+        ],
+        str,
+    ],
+) -> bool:
+    """Compare immutable candidate messages with borrowed lineage and identity maps.
+
+    The caller retains both mutable source fences and final refusal authority.
+    Attachment fingerprint callbacks are invoked only when their row is reached."""
+
+    candidate_matches_fence = len(messages) == len(lineage)
+    for entry, message in zip(
+        lineage,
+        messages,
+    ):
+        candidate_matches_fence = candidate_matches_fence and (
+            message.source_native_message_id == entry.native_message_id
+            and message.source_persisted_message_id
+            == (entry.persisted_message_id if durable else None)
+            and message.source_persisted_revision
+            == (entry.persisted_revision if durable else None)
+            and message.source_persisted_content
+            == (entry.persisted_content if durable else None)
+            and message.native_message_id == native_ids[entry.native_message_id]
+            and message.persisted_message_id == persisted_ids[entry.native_message_id]
+            and message.native_parent_id == native_ids.get(entry.native_parent_id)
+            and message.persisted_parent_id == persisted_ids.get(entry.native_parent_id)
+            and message.turn_id == turn_ids.get(entry.turn_id)
+            and message.trace_turn_id == entry.trace_turn_id
+            and (message.visible_variant_id is None)
+            == (entry.visible_variant_id is None)
+            and message.role is entry.role
+            and message.status == entry.status
+            and message.content
+            == (
+                CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+                if message.video_tombstone is not None
+                else entry.visible_content
+            )
+        )
+        if not candidate_matches_fence:
+            break
+        selection = selection_by_message.get(entry.native_message_id)
+        if message.video_tombstone is not None:
+            candidate_matches_fence = (
+                message.video_tombstone.source_fingerprint
+                == entry.attachment_fingerprint
+            )
+        elif selection is not None:
+            candidate_matches_fence = (
+                len(message.attachments) == 1
+                and len(message.generation_metadata) == 1
+                and fingerprint_console_fork_selected_image(
+                    message.attachments[0],
+                    message.generation_metadata[0],
+                )
+                == selection.attachment_meta_fingerprint
+            )
+        else:
+            candidate_matches_fence = (
+                fingerprint_attachments(
+                    message.attachments,
+                    message.generation_metadata,
+                )
+                == entry.attachment_fingerprint
+            )
+        if not candidate_matches_fence:
+            break
+    return candidate_matches_fence
+
+
+def validate_console_fork_video_projection(
+    message: ConsoleChatMessage,
+    *,
+    fingerprint_video: Callable[[VideoGenerationMetadata], str],
+) -> None:
+    """Validate the all-or-nothing canonical video owner projection."""
+
+    from tldw_chatbook.Video_Generation.video_store import (
+        parse_video_marker,
+        video_content_marker,
+    )
+
+    if message.video_metadata is None:
+        if type(message.content) is str and (
+            parse_video_marker(message.content) is not None
+            or message.content == CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+        ):
+            raise ValueError("Console fork video metadata is unavailable.")
+        return
+    if message.attachments or message.generation_metadata:
+        raise ValueError("Console fork video payload is unavailable.")
+    fingerprint_video(message.video_metadata)
+    expected_content = (
+        CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
+        if message.video_metadata.is_unavailable_tombstone
+        else video_content_marker(message.video_metadata.name)
+    )
+    if message.content != expected_content:
+        raise ValueError("Console fork video marker is unavailable.")

@@ -90,11 +90,7 @@ async def test_buttons_carry_shared_flat_button_classes():
         # prompt, no auto-send), so it takes the pair's secondary label
         # verbatim - identical to the inspector's secondary CTA.
         assert (
-            str(
-                pilot.app.query_one(
-                    "#personas-preview-open-console", Button
-                ).label
-            )
+            str(pilot.app.query_one("#personas-preview-open-console", Button).label)
             == "Send to Console draft"
         )
         assert pilot.app.query_one("#personas-preview-toggle", Button).has_class(
@@ -210,7 +206,9 @@ async def test_transcript_lines_carry_role_classes():
         user_lines = pilot.app.query(".personas-preview-line-you")
         character_lines = pilot.app.query(".personas-preview-line-character")
         assert [str(line.renderable) for line in user_lines] == ["User: Hi"]
-        assert [str(line.renderable) for line in character_lines] == ["character: Hello."]
+        assert [str(line.renderable) for line in character_lines] == [
+            "character: Hello."
+        ]
 
 
 async def test_test_reply_posts_message_and_clears_input():
@@ -696,9 +694,7 @@ async def test_runtime_modes_share_neutral_user_substitution(
     async with app.run_test() as pilot:
         pane = app.query_one(PersonasPreviewPane)
         local_service = _ProfileService(["Sam"])
-        server_service = _ServerScopeService(
-            [{"name": "Sam"}]
-        )
+        server_service = _ServerScopeService([{"name": "Sam"}])
         screen = _ControllerScreen(app, local_service)
         screen.app_instance.character_persona_scope_service = server_service
         screen.persona_handler = SimpleNamespace(current_mode=lambda: mode)
@@ -812,3 +808,35 @@ def test_build_preview_system_prompt_persona_profile_record_is_unaffected():
     profile_record = {"id": "p-1", "name": "Ada", "system_prompt": "Be helpful."}
 
     assert build_preview_system_prompt(profile_record) == "Be helpful."
+
+
+def test_provider_readout_names_custom_endpoints_for_primary_and_fallback():
+    """Qodo #2878 finding 3: a ``custom-ep:`` provider shows its registry
+    entry's name, not the raw id, in both the primary and Console-fallback
+    labels of the pre-send readout."""
+    from tldw_chatbook.UI.Persona_Modules.personas_preview_controller import (
+        PersonasPreviewController,
+    )
+
+    app_config = {
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU box",
+                "base_url": "http://127.0.0.1:9999/v1",
+                "family": "openai_compatible",
+            },
+            "lab-rig": {
+                "display_name": "Lab rig",
+                "base_url": "http://127.0.0.1:9998/v1",
+                "family": "openai_compatible",
+            },
+        },
+        "character_defaults": {"provider": "custom-ep:gpu-box", "model": "m1"},
+        "chat_defaults": {"provider": "custom-ep:lab-rig", "model": "m2"},
+    }
+    screen = SimpleNamespace(app_instance=SimpleNamespace(app_config=app_config))
+
+    text, nav_provider = PersonasPreviewController(screen).provider_readout()
+
+    assert text == "Provider: GPU box / m1 - Console default if unavailable: Lab rig"
+    assert nav_provider == "custom-ep:gpu-box"

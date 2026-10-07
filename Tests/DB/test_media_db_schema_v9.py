@@ -145,9 +145,12 @@ def _indexes_on_media(conn: sqlite3.Connection) -> dict[str, str]:
 
 
 def _assert_no_stats(conn: sqlite3.Connection) -> None:
-    assert conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
-    ).fetchone() is None, (
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
+        ).fetchone()
+        is None
+    ), (
         "this fixture must reproduce the no-stats production state; "
         "Client_Media_DB_v2.py runs no ANALYZE, so no user's media DB has "
         "sqlite_stat1 and a plan captured with one is not the plan they run"
@@ -163,8 +166,14 @@ def _plan(conn: sqlite3.Connection, sql: str, params=()) -> str:
     return detail
 
 
-def _seed(conn: sqlite3.Connection, *, live: int = 400, trashed: int = 30,
-          deleted: int = 30, keywords: int = 40) -> None:
+def _seed(
+    conn: sqlite3.Connection,
+    *,
+    live: int = 400,
+    trashed: int = 30,
+    deleted: int = 30,
+    keywords: int = 40,
+) -> None:
     """Insert Media/Keywords/MediaKeywords rows directly (fast, shape-exact).
 
     Goes around ``add_media_with_keywords`` deliberately: this file cares
@@ -225,9 +234,11 @@ def _seed(conn: sqlite3.Connection, *, live: int = 400, trashed: int = 30,
 
 
 def test_fresh_db_is_at_the_current_version(fresh_db):
-    version = fresh_db.get_connection().execute(
-        "SELECT version FROM schema_version LIMIT 1"
-    ).fetchone()["version"]
+    version = (
+        fresh_db.get_connection()
+        .execute("SELECT version FROM schema_version LIMIT 1")
+        .fetchone()["version"]
+    )
     assert version == MediaDatabase._CURRENT_SCHEMA_VERSION == 9
 
 
@@ -254,18 +265,20 @@ def test_genuine_v8_db_upgrades_and_gains_the_indexes(tmp_path):
     path = tmp_path / "v8.db"
     with media_db_at_version(path, 8) as old:
         conn = old.get_connection()
-        assert conn.execute(
-            "SELECT version FROM schema_version"
-        ).fetchone()["version"] == 8
+        assert (
+            conn.execute("SELECT version FROM schema_version").fetchone()["version"]
+            == 8
+        )
         assert not set(V9_INDEXES) & set(_indexes_on_media(conn))
         _seed(conn, live=20, trashed=2, deleted=2, keywords=5)
 
     upgraded = MediaDatabase(str(path), client_id="upgrade")
     try:
         conn = upgraded.get_connection()
-        assert conn.execute(
-            "SELECT version FROM schema_version"
-        ).fetchone()["version"] == MediaDatabase._CURRENT_SCHEMA_VERSION
+        assert (
+            conn.execute("SELECT version FROM schema_version").fetchone()["version"]
+            == MediaDatabase._CURRENT_SCHEMA_VERSION
+        )
         assert set(V9_INDEXES) <= set(_indexes_on_media(conn))
         # The rows the v8 DB already held are untouched by an index add.
         assert conn.execute("SELECT COUNT(*) AS n FROM Media").fetchone()["n"] == 24
@@ -343,9 +356,7 @@ def test_failed_v8_to_v9_rolls_back_and_leaves_a_working_v8_db(tmp_path):
 
     from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError
 
-    with patch.object(
-        MediaDatabase, "_ACTIVE_MEDIA_INDEX_MIGRATION_SQL", broken
-    ):
+    with patch.object(MediaDatabase, "_ACTIVE_MEDIA_INDEX_MIGRATION_SQL", broken):
         with pytest.raises(DatabaseError):
             MediaDatabase(str(path), client_id="fail")
 
@@ -353,15 +364,19 @@ def test_failed_v8_to_v9_rolls_back_and_leaves_a_working_v8_db(tmp_path):
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     try:
-        assert conn.execute(
-            "SELECT version FROM schema_version"
-        ).fetchone()["version"] == 8
+        assert (
+            conn.execute("SELECT version FROM schema_version").fetchone()["version"]
+            == 8
+        )
         # No half-applied index survived the rollback...
         assert not set(V9_INDEXES) & set(_indexes_on_media(conn))
         # ...and the database still answers on the old plan.
-        assert conn.execute(
-            "SELECT COUNT(*) AS n FROM Media WHERE deleted = 0 AND is_trash = 0"
-        ).fetchone()["n"] == 8
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM Media WHERE deleted = 0 AND is_trash = 0"
+            ).fetchone()["n"]
+            == 8
+        )
     finally:
         conn.close()
         del survivor
@@ -453,9 +468,12 @@ def test_trashed_and_soft_deleted_rows_are_outside_the_partial_indexes(fresh_db)
     rows, total = fresh_db.search_media_db(search_query=None, results_per_page=100)
     assert total == 50 and len(rows) == 50
     # The trash and deleted views still work -- they never used these indexes.
-    assert conn.execute(
-        "SELECT COUNT(*) AS n FROM Media WHERE is_trash = 1 AND deleted = 0"
-    ).fetchone()["n"] == 7
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM Media WHERE is_trash = 1 AND deleted = 0"
+        ).fetchone()["n"]
+        == 7
+    )
 
 
 def test_empty_library_still_plans_through_the_indexes(fresh_db):
@@ -644,9 +662,7 @@ def _count_sql_for(db: MediaDatabase, _unused: list, **kwargs) -> str:
 def test_fts_count_pins_media_fts_as_the_outer_loop(fresh_db):
     conn = fresh_db.get_connection()
     _seed(conn)
-    count_sql = _count_sql_for(
-        fresh_db, [], search_query="dragon", results_per_page=10
-    )
+    count_sql = _count_sql_for(fresh_db, [], search_query="dragon", results_per_page=10)
     assert "FROM media_fts fts CROSS JOIN Media m" in count_sql, count_sql
     # The traced text already carries its bound values inline, so it plans
     # with no parameters -- and it is the engine's own copy, not a paraphrase.
@@ -677,9 +693,7 @@ def test_fts_count_keeps_media_first_when_an_id_allowlist_is_given(fresh_db):
 def test_fts_search_returns_the_same_rows_and_total_either_way(fresh_db):
     conn = fresh_db.get_connection()
     _seed(conn)
-    rows, total = fresh_db.search_media_db(
-        search_query="dragon", results_per_page=25
-    )
+    rows, total = fresh_db.search_media_db(search_query="dragon", results_per_page=25)
     reference = conn.execute(
         "SELECT COUNT(DISTINCT m.id) FROM Media m "
         "JOIN media_fts fts ON fts.rowid = m.id "

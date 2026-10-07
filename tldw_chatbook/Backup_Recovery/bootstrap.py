@@ -6,17 +6,77 @@ There is no cleanup, catalog fallback, config parsing, or native qualification h
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
+import re
 import stat
+import threading
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
+from typing import ParamSpec, TypeVar
 
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
 from ..Utils.private_paths import _native_close, _open_verified_parent
 from .profile_paths import default_config_path, effective_config_path, lexical_path
+
+
+def inode_token(info: os.stat_result) -> str:
+    """Return the physical-identity token for a file: its inode, not its device.
+
+    TASK-34200: macOS can renumber a volume's ``st_dev`` across a reboot. A
+    token that pinned the device made the app treat its own unchanged files as
+    replaced and refuse every start ("Recovery required:
+    recovery_scope_uncertain"). A replaced or copied file still gets a new
+    inode, so the replacement fence holds; the path tokens still pin where.
+
+    Args:
+        info: ``os.stat`` result of the file.
+
+    Returns:
+        ``"inode:<st_ino>"``.
+    """
+    return inode_token_for(info.st_ino)
+
+
+def inode_token_for(st_ino: int) -> str:
+    """Return the physical-identity token for an inode number (TASK-34200).
+
+    Args:
+        st_ino: The file's inode number.
+
+    Returns:
+        ``"inode:<st_ino>"``.
+    """
+    return f"inode:{st_ino}"
+
+
+#: A token recorded before TASK-34200: ``inode:<st_dev>:<st_ino>``, both numeric.
+_LEGACY_INODE_TOKEN = re.compile(r"inode:(\d+):(\d+)")
+
+
+def identity_view(tokens: Iterable[str]) -> set[str]:
+    """Return tokens as identity compares them, whatever format recorded them.
+
+    Registries written before TASK-34200 hold ``"inode:<dev>:<ino>"``; this
+    reads them as ``"inode:<ino>"`` so an existing registry keeps matching
+    after a device renumbering. Every other token is unchanged.
+
+    Args:
+        tokens: Recorded or freshly observed identity tokens.
+
+    Returns:
+        The device-free set used for every membership/overlap comparison.
+    """
+    view = set()
+    for token in tokens:
+        legacy = _LEGACY_INODE_TOKEN.fullmatch(token)
+        # Only a well-formed legacy token is normalized; a malformed one stays
+        # as recorded, so it can never match a current identity (Qodo #2994).
+        view.add(inode_token_for(int(legacy.group(2))) if legacy else token)
+    return view
 
 MAX_RECORD = 1048576
 MAX_RECORDS = 4096
@@ -24,6 +84,45 @@ MAX_RECORDS = 4096
 
 class RecoveryRequired(RuntimeError):
     """A bounded reason code, never a local locator or original exception."""
+
+
+#: PERF-07/08 (ADR-126 amendment, 2026-09-29). Advanced by in-process writers
+#: of admission state so reused admission evidence is dropped at once. This is
+#: hardening: per-call stamps are what detect every writer, other processes too.
+_admission_epoch = 0
+_admission_epoch_lock = threading.Lock()
+
+
+def advance_admission_epoch() -> None:
+    """Invalidate every piece of reused admission evidence in this process."""
+    global _admission_epoch
+    with _admission_epoch_lock:
+        _admission_epoch += 1
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def advances_admission_epoch(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Advance the admission epoch before and after a writer of admission state.
+
+    Args:
+        function: A writer of admission records, the registry, or the profile.
+
+    Returns:
+        The writer, wrapped; its arguments, result and exceptions pass through.
+    """
+
+    @functools.wraps(function)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        advance_admission_epoch()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            advance_admission_epoch()
+
+    return wrapper
 
 
 def default_bootstrap_root() -> Path:
@@ -156,6 +255,16 @@ def _activation_witness(record: object) -> None:
         or not _paths([record["store_root"]])
     ):
         raise ValueError("invalid_activation_witness")
+
+
+def _same_activation_generation(
+    left: Mapping[str, object], right: Mapping[str, object]
+) -> bool:
+    """Compare validated generation identity across per-profile namespace scopes."""
+    return all(
+        left[key] == right[key]
+        for key in ("operation_id", "generation", "owners", "store_root")
+    )
 
 
 def _control_records(
@@ -391,12 +500,12 @@ def startup_permission(config_selector: Path, bootstrap_root: Path) -> tuple[boo
                 return False, "recovery_pending"
             if registry is None or any(n not in registry for n in record["namespaces"]):
                 return False, "recovery_scope_uncertain"
-            own_tokens = {
+            own_tokens = identity_view(
                 t for n in binding["namespaces"] for t in registry[n]["historical"]
-            }
-            affected_tokens = {
+            )
+            affected_tokens = identity_view(
                 t for n in record["namespaces"] for t in registry[n]["historical"]
-            }
+            )
             if own_tokens & affected_tokens:
                 return False, "recovery_pending"
             affected = record["selectors"] + [

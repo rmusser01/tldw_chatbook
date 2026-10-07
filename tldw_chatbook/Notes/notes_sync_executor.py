@@ -36,7 +36,9 @@ from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFilesystemPartialError,
     NotesSyncFileSnapshot,
     NotesSyncPrivateCleanupHandle,
+    PosixNotesSyncFilesystem,
     WindowsNotesSyncObservation,
+    represented_digest,
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import linked_undo_operation_id
 from tldw_chatbook.Notes.notes_sync_models import (
@@ -528,16 +530,94 @@ def _logical_text(payload: bytes, profile: NotesSyncSerializationProfile) -> str
 
 
 def _represented_bytes(text: str, profile: NotesSyncSerializationProfile) -> bytes:
-    logical = text.replace("\r\n", "\n").replace("\r", "\n")
-    if profile.final_newline and not logical.endswith("\n"):
-        logical += "\n"
+    return PosixNotesSyncFilesystem.serialize(text, profile)
+
+
+#: TASK-34000.2: the automatic journal kinds ``settle_attention`` can close.
+#: Resolution journals (``resolve_keep_*``) and creates/moves keep their own
+#: undo/restore machinery and are never settled this way.
+NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS = frozenset(
+    {NotesSyncActionKind.UPDATE_FILE.value, NotesSyncActionKind.UPDATE_NOTE.value}
+)
+#: How many trailing newlines a no-final-newline profile may have stripped
+#: from a note before a settle stops trying to prove the write (each try is
+#: one incremental hash step). Past this, the reviewed baseline is kept and
+#: the planner asks -- never a wrong guess.
+_TRAILING_NEWLINE_PROOF_LIMIT = 64
+
+
+def _proven_written_note_text(
+    file: NotesSyncFileSnapshot,
+    desired_digest: object,
+    note: NotesSyncNoteSnapshot | None,
+) -> str | None:
+    """Return the note text whose write ``file`` is, if the journal proves one.
+
+    TASK-34000.2: an ``update_file`` journal keeps the digest of the note text
+    it wrote, not the text. ``serialize`` only adds or strips trailing
+    newlines, so the written text is the file's own text with its final
+    newline removed, or with newlines added back -- or the current note, when
+    it has not moved on. A candidate counts only if BOTH its digest matches
+    the journal and it serializes to exactly the bytes on disk.
+    """
+
+    if type(desired_digest) is not str:
+        return None
+    profile = file.observation.serialization
+    text = file.text
+    candidates = [] if note is None else [note.content]
+    candidates.append(text)
+    if profile.final_newline and text.endswith("\n"):
+        candidates.append(text[:-1])
     elif not profile.final_newline:
-        logical = logical.rstrip("\n")
-    represented = (
-        logical.replace("\n", "\r\n") if profile.newline == "crlf" else logical
+        running = hashlib.sha256(text.encode("utf-8"))
+        for count in range(1, _TRAILING_NEWLINE_PROOF_LIMIT + 1):
+            running.update(b"\n")
+            if running.hexdigest() == desired_digest:
+                candidates.append(text + "\n" * count)
+                break
+    for candidate in candidates:
+        if (
+            hashlib.sha256(candidate.encode("utf-8")).hexdigest() == desired_digest
+            and _represented_bytes(candidate, profile) == file.raw_bytes
+        ):
+            return candidate
+    return None
+
+
+def _note_baseline_digest(
+    note: NotesSyncNoteSnapshot,
+    profile: NotesSyncSerializationProfile,
+) -> str:
+    """Return a note's digest in the form a binding baseline keeps.
+
+    TASK-34000.2: a binding stores ONE content digest, the baseline for both
+    the note and the file. The file side is the digest of its logical text;
+    the note side must be the digest of the text the note WRITES under the
+    binding's profile, or a note without a trailing newline never matches
+    the file it was just written to. For a note that equals its file's text
+    this is the note's own digest, so nothing else moves.
+    """
+
+    return represented_digest(note.content, profile)
+
+
+def _note_matches_baseline(
+    note: NotesSyncNoteSnapshot,
+    baseline_digest: str,
+    profile: NotesSyncSerializationProfile,
+) -> bool:
+    """Whether ``note`` still holds a binding's baseline, in either form.
+
+    TASK-34000.2: baselines committed since this task keep the note's
+    REPRESENTED digest (:func:`_note_baseline_digest`); every earlier baseline
+    -- including a migrated binding's placeholder profile -- kept the RAW one.
+    A note matching either has not changed since the baseline was taken.
+    """
+
+    return note.content_digest == baseline_digest or (
+        _note_baseline_digest(note, profile) == baseline_digest
     )
-    encoded = represented.encode("utf-8")
-    return (b"\xef\xbb\xbf" + encoded) if profile.utf8_bom else encoded
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1281,7 +1361,16 @@ class NotesSyncExecutor:
                 (
                     resolution_action is None
                     and (
-                        payload_digest != reviewed_binding.get("content_digest")
+                        # TASK-34000.2: the payload is the RAW note; a
+                        # baseline may keep it raw or in represented form.
+                        reviewed_binding.get("content_digest")
+                        not in {
+                            payload_digest,
+                            represented_digest(
+                                original_content,
+                                self._decoded_binding_serialization(reviewed_binding),
+                            ),
+                        }
                         or operation.expected_note_version
                         != reviewed_binding.get("note_version")
                     )
@@ -1632,7 +1721,9 @@ class NotesSyncExecutor:
             or binding.note_scope_id != note.note_scope_id
             or binding.normalized_relative_path != relative_path
             or binding.note_version != note.version
-            or binding.content_digest != note.content_digest
+            or not _note_matches_baseline(
+                note, binding.content_digest, binding.serialization
+            )
             or binding.serialization != file.observation.serialization
             or binding.stable_identity_digest != self.stable_identity_digest(file)
         ):
@@ -2547,6 +2638,167 @@ class NotesSyncExecutor:
             reason,
         )
 
+    def cleanup_pending(self, operation_id: str) -> bool:
+        """Whether this operation still holds a private filesystem cleanup."""
+
+        return self._cleanup_pending(operation_id)
+
+    async def settle_attention(self, operation_id: str) -> NotesSyncExecutionResult:
+        """Close one fenced automatic update at the baseline its authorities prove.
+
+        TASK-34000.2: an ``update_file``/``update_note`` that reached attention
+        held its root forever -- the runtime refuses every Check while an
+        operation is incomplete, startup never resumes an attention entry,
+        and Recovery only knew how to clear a private temp file. A folder
+        wedged by the old final-newline postcondition could not get out.
+
+        This mutates neither the note nor the file. It records the most
+        precise baseline that is PROVEN and completes the entry:
+
+        * the binding still holds the reviewed baseline and the operation's
+          own write is exactly what is on the target side now (proved by the
+          journal's desired digest) -> the post-write baseline;
+        * the binding still holds the reviewed baseline and that cannot be
+          proved -> the reviewed baseline, unchanged;
+        * the binding already moved past review -> it was this operation's
+          verified commit; it is kept as it is.
+
+        Whatever changed since is then the planner's to classify against
+        that baseline: a one-sided change syncs, a change on both sides
+        becomes an ordinary conflict review. Nothing here picks a winner.
+
+        Args:
+            operation_id: An automatic update in ``needs_attention``.
+
+        Returns:
+            A completed result (also for an entry already completed).
+
+        Raises:
+            RuntimeError: ``recovery_authority_changed`` for an entry this
+                cannot settle, ``operation_needs_attention`` while a private
+                cleanup is still pending, ``binding_authority_changed`` when
+                the root or binding no longer owns the pair.
+            NotesSyncFilesystemError: When the file cannot be read for a
+                reason other than being gone (the folder is offline).
+            NotesSyncAuthorityError: Likewise for the note.
+        """
+
+        return await self._serialized(
+            operation_id,
+            lambda: self._settle_attention(operation_id),
+        )
+
+    async def _settle_attention(self, operation_id: str) -> NotesSyncExecutionResult:
+        operation = self._store.get_operation(operation_id)
+        if operation.state is NotesSyncOperationState.COMPLETED:
+            return self._result(operation_id, NotesSyncOperationState.COMPLETED)
+        if (
+            operation.state is not NotesSyncOperationState.NEEDS_ATTENTION
+            or operation.kind not in NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS
+            or operation.binding_id is None
+        ):
+            raise RuntimeError("recovery_authority_changed")
+        if self._cleanup_pending(operation_id):
+            raise RuntimeError("operation_needs_attention")
+        metadata = self._recovery_metadata(
+            self._store.load_operation_recovery(operation_id)
+        )
+        if (
+            metadata.get("action") != operation.kind
+            or metadata.get("underlying_action_kind") is not None
+        ):
+            raise RuntimeError("recovery_authority_changed")
+        note_id = self._required_metadata_text(metadata, "note_id")
+        relative_path = self._required_metadata_text(metadata, "file_relative_path")
+        root = self._store.get_root(operation.root_id)
+        binding = self._store.get_binding(operation.binding_id)
+        if (
+            root.state is not NotesSyncRootState.ACTIVE
+            or binding.state is not NotesSyncBindingState.ACTIVE
+            or binding.root_id != operation.root_id
+            or binding.note_id != note_id
+            or binding.note_scope_id != metadata.get("note_scope_id")
+        ):
+            raise RuntimeError("binding_authority_changed")
+        replacement = binding
+        if self._binding_matches_reviewed(binding, metadata):
+            proven = await self._proven_post_write_baseline(
+                operation, metadata, binding, note_id, relative_path
+            )
+            replacement = binding if proven is None else proven
+        try:
+            self._store.settle_operation_attention(
+                operation_id,
+                expected=binding,
+                replacement=replacement,
+            )
+        except NotesDeviceStateError:
+            # The binding or the entry moved between the read and the
+            # compare-and-set; nothing was written. Recovery can look again.
+            raise RuntimeError("stale_observation") from None
+        return self._result(operation_id, NotesSyncOperationState.COMPLETED)
+
+    async def _proven_post_write_baseline(
+        self,
+        operation: NotesSyncOperationRecord,
+        metadata: dict[str, object],
+        binding: NotesSyncBindingRecord,
+        note_id: str,
+        relative_path: str,
+    ) -> NotesSyncBindingRecord | None:
+        """Return the post-write baseline when the write is provably on disk.
+
+        ``update_file``: the file holds ``serialize(c, profile)`` for the one
+        note text ``c`` whose digest the journal recorded at admission. The
+        note may have moved on since (the user kept typing) -- that is a
+        later note change, not part of this write.
+        ``update_note``: the note holds the file text the journal recorded,
+        one version past admission, and the file is still the source the
+        operation read.
+        """
+
+        try:
+            note: NotesSyncNoteSnapshot | None = await self._observe_note(note_id)
+        except NotesSyncAuthorityError as error:
+            if error.reason_code != "note_missing":
+                raise
+            note = None
+        try:
+            file = await self._observe_file_path(relative_path)
+        except NotesSyncFilesystemError as error:
+            if error.reason_code != "missing_target":
+                raise
+            return None
+        if type(file) is not NotesSyncFileSnapshot:
+            return None
+        desired = metadata.get("desired_digest")
+        if operation.kind == NotesSyncActionKind.UPDATE_FILE.value:
+            if file.observation.serialization != binding.serialization:
+                return None
+            if _proven_written_note_text(file, desired, note) is None:
+                return None
+            note_version = operation.expected_note_version
+        else:
+            if (
+                note is None
+                or note.content_digest != desired
+                or operation.expected_note_version is None
+                or note.version != operation.expected_note_version + 1
+                or file.representation_digest != operation.expected_file_digest
+            ):
+                return None
+            note_version = note.version
+        if note_version is None:
+            return None
+        return replace(
+            binding,
+            normalized_relative_path=file.observation.relative_path,
+            stable_identity_digest=self.stable_identity_digest(file),
+            serialization=file.observation.serialization,
+            content_digest=file.observation.content_digest,
+            note_version=note_version,
+        )
+
     async def restore(
         self,
         request: NotesSyncExecutionRequest,
@@ -2946,7 +3198,7 @@ class NotesSyncExecutor:
                 state=NotesSyncBindingState.DISCONNECTED,
                 stable_identity_digest=self.stable_identity_digest(file),
                 serialization=_file_serialization(file),
-                content_digest=note.content_digest,
+                content_digest=_note_baseline_digest(note, _file_serialization(file)),
                 note_version=note.version,
             ),
         )
@@ -3016,7 +3268,9 @@ class NotesSyncExecutor:
         elif not (
             binding.stable_identity_digest == self.stable_identity_digest(file)
             and binding.serialization == _file_serialization(file)
-            and binding.content_digest == note.content_digest
+            and _note_matches_baseline(
+                note, binding.content_digest, binding.serialization
+            )
             and binding.note_version == note.version
         ):
             raise RuntimeError("binding_authority_changed")
@@ -3404,7 +3658,9 @@ class NotesSyncExecutor:
                     stable_identity_digest=self.stable_identity_digest(file),
                     state=NotesSyncBindingState.ACTIVE,
                     serialization=_file_serialization(file),
-                    content_digest=note.content_digest,
+                    content_digest=_note_baseline_digest(
+                        note, _file_serialization(file)
+                    ),
                     note_version=note.version,
                 )
                 if request.action_kind is NotesSyncActionKind.MOVE_FILE:
@@ -3516,10 +3772,12 @@ class NotesSyncExecutor:
                 request.note.content,
                 request.candidate_serialization,
             )
+            # TASK-34000.2: the bytes ARE the comparison. The raw note text is
+            # not what a final-newline profile writes, so the old extra
+            # ``file.text == note.content`` refused correct creates too.
             valid = (
                 type(file) is NotesSyncFileSnapshot
                 and note == request.note
-                and file.text == request.note.content
                 and file.raw_bytes == expected_bytes
                 and file.representation_digest
                 == hashlib.sha256(expected_bytes).hexdigest()
@@ -3758,7 +4016,9 @@ class NotesSyncExecutor:
         elif request.action_kind is NotesSyncActionKind.UPDATE_NOTE:
             if (
                 binding.note_version != request.note.version
-                or binding.content_digest != request.note.content_digest
+                or not _note_matches_baseline(
+                    request.note, binding.content_digest, binding.serialization
+                )
             ):
                 raise RuntimeError("stale_observation")
         elif (
@@ -4076,7 +4336,9 @@ class NotesSyncExecutor:
                         normalized_relative_path=_file_relative_path(file),
                         stable_identity_digest=self.stable_identity_digest(file),
                         serialization=_file_serialization(file),
-                        content_digest=note.content_digest,
+                        content_digest=_note_baseline_digest(
+                            note, _file_serialization(file)
+                        ),
                         note_version=note.version,
                     ),
                 )
@@ -4156,7 +4418,9 @@ class NotesSyncExecutor:
                 )
             elif stage == "file_reverified":
                 _, cancelled = await self._joined_thread_call(
-                    lambda: run_worker_coroutine(self._commit_keep_both_binding(request))
+                    lambda: run_worker_coroutine(
+                        self._commit_keep_both_binding(request)
+                    )
                 )
             elif stage == "binding_updated":
                 _, cancelled = await self._joined_thread_call(
@@ -4392,7 +4656,9 @@ class NotesSyncExecutor:
                     normalized_relative_path=_file_relative_path(file),
                     stable_identity_digest=self.stable_identity_digest(file),
                     serialization=_file_serialization(file),
-                    content_digest=note.content_digest,
+                    content_digest=_note_baseline_digest(
+                        note, _file_serialization(file)
+                    ),
                     note_version=note.version,
                 ),
             )
@@ -5068,7 +5334,7 @@ class NotesSyncExecutor:
                 normalized_relative_path=_file_relative_path(file),
                 stable_identity_digest=self.stable_identity_digest(file),
                 serialization=_file_serialization(file),
-                content_digest=note.content_digest,
+                content_digest=_note_baseline_digest(note, _file_serialization(file)),
                 note_version=note.version,
             ),
         )
@@ -5115,7 +5381,9 @@ class NotesSyncExecutor:
             binding.state is NotesSyncBindingState.DISCONNECTED
             and binding.stable_identity_digest == self.stable_identity_digest(file)
             and binding.serialization == _file_serialization(file)
-            and binding.content_digest == note.content_digest
+            and _note_matches_baseline(
+                note, binding.content_digest, binding.serialization
+            )
             and binding.note_version == note.version
         )
         if not (
@@ -5162,12 +5430,7 @@ class NotesSyncExecutor:
                 and file.observation.serialization
                 == request.file.observation.serialization
             )
-            desired = (
-                file.observation.relative_path == request.file.observation.relative_path
-                and file.text == request.note.content
-                and file.observation.serialization
-                == request.file.observation.serialization
-            )
+            desired = self._file_holds_note(file, request.note, request.file)
         return "restored" if restored else "desired" if desired else "stale"
 
     async def _require_restored(
@@ -5282,15 +5545,15 @@ class NotesSyncExecutor:
         note: NotesSyncNoteSnapshot,
         file: _FileSnapshot,
     ) -> bool:
-        expected_digest = (
-            note.content_digest
+        digest_matches = (
+            _note_matches_baseline(note, binding.content_digest, binding.serialization)
             if request.action_kind is NotesSyncActionKind.UPDATE_NOTE
-            else _file_content_digest(file)
+            else binding.content_digest == _file_content_digest(file)
         )
         return not (
             binding.stable_identity_digest != self.stable_identity_digest(file)
             or binding.serialization != _file_serialization(file)
-            or binding.content_digest != expected_digest
+            or not digest_matches
             or binding.note_version != note.version
         )
 
@@ -5379,15 +5642,32 @@ class NotesSyncExecutor:
                 return "stale", False
             source_unchanged = note == request.note
             original = file == request.file
-            desired = (
-                file.observation.relative_path == request.file.observation.relative_path
-                and file.text == request.note.content
-                and file.observation.content_digest == request.note.content_digest
-                and file.observation.serialization
-                == request.file.observation.serialization
-            )
+            desired = self._file_holds_note(file, request.note, request.file)
         return ("original" if original else "desired" if desired else "stale"), (
             source_unchanged
+        )
+
+    @staticmethod
+    def _file_holds_note(
+        file: NotesSyncFileSnapshot,
+        note: NotesSyncNoteSnapshot,
+        reviewed: NotesSyncFileSnapshot,
+    ) -> bool:
+        """Whether ``file`` is exactly what writing ``note`` over ``reviewed`` leaves.
+
+        TASK-34000.2: like is compared with like -- the bytes on disk against
+        ``serialize(note, profile)`` under the reviewed file's own profile.
+        The old check compared the file's decoded text with the RAW note, so
+        a note without a trailing newline never matched its own correctly
+        written file (the profile re-adds the newline) and every such write
+        was fenced at ``postcondition_failed``.
+        """
+
+        profile = reviewed.observation.serialization
+        return (
+            file.observation.relative_path == reviewed.observation.relative_path
+            and file.observation.serialization == profile
+            and file.raw_bytes == _represented_bytes(note.content, profile)
         )
 
     async def _require_desired(
@@ -5457,6 +5737,7 @@ class NotesSyncExecutor:
 
 
 __all__ = [
+    "NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS",
     "NotesSyncDirectionOverride",
     "NotesSyncExecutionPartialError",
     "NotesSyncExecutionRequest",

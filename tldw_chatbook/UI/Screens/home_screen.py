@@ -411,8 +411,11 @@ class HomeScreen(BaseAppScreen):
         self.app.call_from_thread(self._refresh_after_chatbook_artifact_snapshot)
 
     def _refresh_after_chatbook_artifact_snapshot(self) -> None:
+        # TASK-33264: sync in place. A whole-screen recompose here ran once
+        # per visit of this reused screen (~68 ms vs ~3 ms) and left each
+        # discarded tree pinned in the screen's query_one cache.
         if self.is_mounted:
-            self.refresh(recompose=True)
+            self._sync_home_triage()
 
     @work(exclusive=True, group="home-content-snapshot")
     async def _refresh_home_content_snapshot(self) -> None:
@@ -515,9 +518,7 @@ class HomeScreen(BaseAppScreen):
             include_keywords=False,
         )
 
-        merged = _home_content_records(
-            notes_result, conversations_result, media_result
-        )
+        merged = _home_content_records(notes_result, conversations_result, media_result)
         resume_kind, resume_id, resume_title, resume_updated_at = (
             _home_content_resume_fields(merged)
         )
@@ -563,8 +564,12 @@ class HomeScreen(BaseAppScreen):
                     return await result
                 return result
 
-            from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
-            from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+            from tldw_chatbook.Media.media_reading_scope_service import (
+                MediaReadingScopeService,
+            )
+            from tldw_chatbook.Media.local_media_reading_service import (
+                LocalMediaReadingService,
+            )
             from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
             scope_service = getattr(callable_obj, "__self__", None)
@@ -906,9 +911,7 @@ class HomeScreen(BaseAppScreen):
 
         if button_id.startswith(f"{RAIL_SECTION_TOGGLE_PREFIX}home-"):
             event.stop()
-            section_id = button_id.removeprefix(
-                f"{RAIL_SECTION_TOGGLE_PREFIX}home-"
-            )
+            section_id = button_id.removeprefix(f"{RAIL_SECTION_TOGGLE_PREFIX}home-")
             currently_open = bool(
                 getattr(self._home_rail_preferences(), f"{section_id}_open", True)
             )
@@ -998,11 +1001,9 @@ class HomeScreen(BaseAppScreen):
         Notes deep-link into the Library notes editor via the existing
         ``LIBRARY_NAV_CONTEXT_NOTE_ID`` navigation-context contract; media
         into the Library item view via the open-source pair; conversations
-        into Console carrying the resume-local-conversation nav-context id
-        so the freshly mounted screen resumes THAT conversation through
-        the ordered resume-navigation startup.
-        Navigation always composes a fresh screen, so the deep link lands
-        on a cleanly mounted surface.
+        into Console carrying the resume-local-conversation nav-context id.
+        The Console consumes that exact target through ordered navigation
+        on its first mount and on return to a reused screen.
         """
         control = next(
             (

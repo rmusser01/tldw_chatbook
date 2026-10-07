@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────╭──────────────────────────────────────────────────────────────────────────╮────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavi│                                                                          │
+ Mode: Providers & Models                                          │  Settings: Providers & Models                                            │
+┌──────────────────────────────┐  │  ┌─────────────────────────────│  How this category works:                                                │───────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                             │  - Save contract: Draft — save with s.                                   │                   │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s │  - Scope: Applies to new and unused open chats · used chats keep theirs  │t+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │ │  Convert to named endpoi│  (Console: Alt+M)                                                        │              │ │  │  │  │                                         │
+│  category search             │  │  │ │ │                         │  - Runtime owner: Settings persisted defaults; Console runtime           │              │ │  │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ │ └─────────────────────────│  selection.                                                              │──────────────┘ │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔│  - Writes here: yes.                                                     │▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │  Guided edits: change a field first.    │
+│     Overview (view)          │  │  │ │ ▊  ▼ Generation defaults  │  - Boundary: Provider, default model, endpoint, local config API key,    │              ▎ │  │  │  │  Save (s) — no changes                  │
+│   > Providers & Models       │  │  │ │ ▊                         │  credential source, and selected provider+model profile defaults are     │              ▎ │  │  │  │  Revert (r) — no changes                │
+│     Web Search               │  │  │ │ ▊ ─────────────────────── │  shared with Console.                                                    │              ▎ │  │  │  │ Local-only: saves write your config     │
+│     Speech & TTS             │  │  │ │ ▊                         │  - Recovery: Test provider readiness, then use Console Behavior for      │              ▎ │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ ▊                         │  sampling and transport settings.                                        │              ▎ │  │  │  │  Focused setting: None — Tab to a       │
+│     Appearance               │  │  │ │ ▊   Selected model default│  Shortcuts:                                                              │              ▎ │  │  │  │  setting                                │
+│     Theme                    │  │  │ │ ▊   Global fallbacks live │  - s: save category                                                      │              ▎ │  │  │  │                                       ▅ │
+│     Splash Screen            │  │  │ │ ▊  Temperature            │  - r: revert category                                                    │              ▎ │  │  │  │  Purpose: Configure the default         │
+│     Console Behavior         │  │  │ │ ▊  Top P                  │  - t: test provider                                                      │              ▎ │  │  │  │  provider, model, endpoint, and         │
+│  Data & Privacy              │  │  │ │ ▊  Min P                  │  │                                                                    │  │              ▎ │  │  │  │  credential source.                     │
+│     Storage                  │  │  │ │ ▊  Top K                  │  │                                                                    │  │              ▎ │  │  │  │                                         │
+│     Workspaces               │  │  │ │ ▊  Max tokens             │  │                                                                    │  │              ▎ │  │  │  │  Saved as: chat_defaults plus           │
+│     Tool Profiles            │  │  │ │ ▊  Seed                   │  │                                                                    │  │              ▎ │  │  │  │  provider-specific api_settings         │
+│     Privacy & Security       │  │  │ │ ▊  Presence penalty       │  │                                                                    │  │              ▎ │  │  │  │                                         │
+│     Network                  │  │  │ │ ▊  Frequency penalty      │  │                                                                    │  │              ▎ │  │  │  │  Save: staged - press s to save, r to   │
+│     My Profile               │  │  │ │ ▊   Hidden for llama.cpp: │  │                                                                    │  │              ▎ │  │  │  │  revert                               ▂ │
+│  Troubleshooting             │  │  │ │ ▊                         │  │                                                                    │  │────────────┐ ▎ │  │  │  │                                         │
+│     Diagnostics (view)       │  │  │ │ ▊  Reasoning effort       │  │                                                                    │  │          ▼ │ ▎ │▆ │  │  │  Validation: test provider readiness    │
+│     About (view)             │  │  │ │ ▊                         │  │                                                                    │  │────────────┘ ▎ │  │  │  │  before saving these defaults           │
+│     Agents                   │  │  │ │ ▊  Thinking budget        │  │                                                                    │  │              ▎ │  │  │  │                                         │
+│  Expert                      │  │  │ │ ▊                         │  │                                                                    │  │────────────┐ ▎ │  │  │  │  Runtime owner: Settings persisted      │
+│     Internal Prompts         │  │  │ │ ▊  Streaming              │  │                                                                    │  │          ▼ │ ▎ │  │  │  │  defaults; Console runtime selection    │
+│     Advanced Config          │  │  │ │ ▊                         │  │                                                                    │  │────────────┘ ▎ │  │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │ │ ▊                         │  │                                                                    │  │              ▎ │  │  │  │  Writes allowed: Yes                    │
+│                              │  │  │ │ ▊                         │  └────────────────────────────────────────────────────────────────────┘  │              ▎ │  │  │  │                                         │
+│                              │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁│                                                                          │▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │▆ │  │  │  Owns: chat_defaults.provider           │
+│                              │  │  │ │                           │       Close                                                              │                │  │  │  │  chat_defaults.model                    │
+│                              │  │  │ │  Provider catalog | Cloud:│                                                                          │, Groq,         │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                             ╰──────────────────────────────────────────────────────────────────────────╯                   │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

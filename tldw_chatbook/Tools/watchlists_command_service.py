@@ -18,21 +18,13 @@ from tldw_chatbook.Scheduling.services.briefing_projection import (
 
 _SOURCE_ID = re.compile(r"^local:subscription:([1-9][0-9]*)$")
 _WATCHLIST_ID = re.compile(r"^local:watchlist:([1-9][0-9]*)$")
-_SOURCE_KEYS = frozenset(
-    {"url", "name", "type", "tags", "active", "check_frequency"}
-)
+_SOURCE_KEYS = frozenset({"url", "name", "type", "tags", "active", "check_frequency"})
 _TOP_SOURCE_KEYS = frozenset({"sources"})
-_COLLECTION_KEYS = frozenset(
-    {"name", "description", "tags", "source_ids", "if_exists"}
-)
-_UPDATE_KEYS = frozenset(
-    {"collection_id", "add_source_ids", "remove_source_ids"}
-)
+_COLLECTION_KEYS = frozenset({"name", "description", "tags", "source_ids", "if_exists"})
+_UPDATE_KEYS = frozenset({"collection_id", "add_source_ids", "remove_source_ids"})
 _CHECK_KEYS = frozenset({"source_ids", "collection_id"})
 _GENERATE_KEYS = frozenset({"collection_id", "preset_id"})
-_SCHEDULE_KEYS = frozenset(
-    {"collection_id", "cadence", "preset_id", "selection_mode"}
-)
+_SCHEDULE_KEYS = frozenset({"collection_id", "cadence", "preset_id", "selection_mode"})
 _SCHEDULE_INTERVALS = {
     "every_12_hours": 43_200,
     "every_24_hours": 86_400,
@@ -221,9 +213,7 @@ class WatchlistsCommandService:
         return number if number <= 2**63 - 1 else None
 
     @classmethod
-    def _canonical_ids(
-        cls, value: object, *, maximum: int
-    ) -> list[int] | None:
+    def _canonical_ids(cls, value: object, *, maximum: int) -> list[int] | None:
         if type(value) is not list or len(value) > maximum:
             return None
         ids: list[int] = []
@@ -235,7 +225,9 @@ class WatchlistsCommandService:
         return ids
 
     @classmethod
-    def approval_source_destinations(cls, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    def approval_source_destinations(
+        cls, arguments: Mapping[str, Any]
+    ) -> dict[str, Any]:
         """Return content-free source-creation approval scope."""
         sources = arguments.get("sources")
         if type(sources) is not list:
@@ -300,8 +292,7 @@ class WatchlistsCommandService:
                     elif type(active) is not bool:
                         message = "Source active must be a boolean."
                     elif frequency is not None and (
-                        type(frequency) is not int
-                        or not 60 <= frequency <= 2_678_400
+                        type(frequency) is not int or not 60 <= frequency <= 2_678_400
                     ):
                         message = "Source check_frequency must be an integer from 60 to 2678400."
                     else:
@@ -390,9 +381,10 @@ class WatchlistsCommandService:
         policy = values.get("if_exists", "conflict")
         if name is None:
             return self._invalid("Collection name is invalid.")
-        if description is not None and self._string(
-            description, maximum=2_048, allow_empty=True
-        ) is None:
+        if (
+            description is not None
+            and self._string(description, maximum=2_048, allow_empty=True) is None
+        ):
             return self._invalid("Collection description is invalid.")
         if tags is not None and self._tags(tags) is None:
             return self._invalid("Collection tags are invalid.")
@@ -473,7 +465,10 @@ class WatchlistsCommandService:
         if watchlist_id is None or add_ids is None or remove_ids is None:
             return self._invalid("Use unique canonical collection and source IDs.")
         if not add_ids and not remove_ids:
-            return self._invalid("Provide at least one source to add or remove.")
+            return self._invalid(
+                "Rule: provide at least one of add_source_ids or "
+                "remove_source_ids, non-empty."
+            )
         if len(add_ids) + len(remove_ids) > 100:
             return self._invalid("Provide at most 100 membership changes.")
         if set(add_ids) & set(remove_ids):
@@ -540,8 +535,12 @@ class WatchlistsCommandService:
             allowed=_CHECK_KEYS,
             required=frozenset(),
         )
-        if values is None or set(values) not in ({"source_ids"}, {"collection_id"}):
-            return self._invalid("Provide source_ids or one collection_id, not both.")
+        if values is None:
+            return self._invalid("Source check arguments are invalid.")
+        if set(values) not in ({"source_ids"}, {"collection_id"}):
+            return self._invalid(
+                "Rule: provide exactly one of source_ids or collection_id, never both."
+            )
 
         try:
             if "source_ids" in values:
@@ -549,14 +548,17 @@ class WatchlistsCommandService:
                 if not source_ids:
                     return self._invalid("Provide between 1 and 50 unique source IDs.")
             else:
-                watchlist_id = self._canonical_id(values["collection_id"], _WATCHLIST_ID)
+                watchlist_id = self._canonical_id(
+                    values["collection_id"], _WATCHLIST_ID
+                )
                 if watchlist_id is None:
                     return self._invalid("Use one canonical collection ID.")
                 if self._resolve_collection_sources is None:
                     return self._unavailable()
                 resolved = self._resolve_collection_sources(watchlist_id)
                 if type(resolved) is not list or any(
-                    type(source_id) is not int or source_id < 1 for source_id in resolved
+                    type(source_id) is not int or source_id < 1
+                    for source_id in resolved
                 ):
                     return self._unavailable()
                 source_ids = list(dict.fromkeys(resolved))
@@ -574,14 +576,17 @@ class WatchlistsCommandService:
             operations: list[dict[str, Any]] = []
             for receipt in receipts:
                 run_id = receipt.get("run_id") if isinstance(receipt, Mapping) else None
-                source_id = receipt.get("source_id") if isinstance(receipt, Mapping) else None
+                source_id = (
+                    receipt.get("source_id") if isinstance(receipt, Mapping) else None
+                )
                 status = receipt.get("status") if isinstance(receipt, Mapping) else None
                 if (
                     type(run_id) is not int
                     or run_id < 1
                     or type(source_id) is not int
                     or source_id < 1
-                    or status not in {"queued", "running", "completed", "failed", "cancelled"}
+                    or status
+                    not in {"queued", "running", "completed", "failed", "cancelled"}
                 ):
                     return self._unavailable()
                 operation_id = f"local:watchlist_run:{run_id}"
@@ -635,7 +640,11 @@ class WatchlistsCommandService:
             receipt = self._accept_briefing(watchlist_id, preset_id)
             briefing_id = receipt.get("id") if isinstance(receipt, Mapping) else None
             status = receipt.get("status") if isinstance(receipt, Mapping) else None
-            if type(briefing_id) is not int or briefing_id < 1 or status != "generating":
+            if (
+                type(briefing_id) is not int
+                or briefing_id < 1
+                or status != "generating"
+            ):
                 return self._unavailable()
             operation_id = f"local:briefing:{briefing_id}"
             return self._json(
@@ -702,9 +711,7 @@ class WatchlistsCommandService:
                 "Use a canonical collection ID and supported briefing cadence."
             )
 
-        write_arguments: dict[str, Any] = {
-            "briefing_cadence_seconds": cadence[0]
-        }
+        write_arguments: dict[str, Any] = {"briefing_cadence_seconds": cadence[0]}
         if "preset_id" in values:
             preset_id = values["preset_id"]
             if preset_id is not None and (
@@ -714,7 +721,10 @@ class WatchlistsCommandService:
             write_arguments["default_preset_id"] = preset_id
         if "selection_mode" in values:
             selection_mode = values["selection_mode"]
-            if type(selection_mode) is not str or selection_mode not in _SELECTION_MODES:
+            if (
+                type(selection_mode) is not str
+                or selection_mode not in _SELECTION_MODES
+            ):
                 return self._invalid("Briefing selection mode is invalid.")
             write_arguments["selection_mode"] = selection_mode
 
@@ -732,7 +742,10 @@ class WatchlistsCommandService:
             )
         except Exception:  # noqa: BLE001 - fixed protocol-safe failure
             return self._unavailable()
-        if not isinstance(stored, Mapping) or stored.get("watchlist_id") != watchlist_id:
+        if (
+            not isinstance(stored, Mapping)
+            or stored.get("watchlist_id") != watchlist_id
+        ):
             return self._unavailable()
 
         cadence_seconds = stored.get("briefing_cadence_seconds")
@@ -753,8 +766,7 @@ class WatchlistsCommandService:
 
         try:
             gate_enabled = bool(
-                self._briefing_schedules_enabled
-                and self._briefing_schedules_enabled()
+                self._briefing_schedules_enabled and self._briefing_schedules_enabled()
             )
         except Exception:  # noqa: BLE001 - durable stored state remains truthful
             gate_enabled = False

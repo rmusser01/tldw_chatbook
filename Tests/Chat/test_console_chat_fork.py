@@ -402,6 +402,19 @@ def test_fork_configuration_fingerprint_includes_normalized_thinking_policy() ->
         )
 
 
+def test_fork_configuration_accepts_a_sampler_the_provider_drops() -> None:
+    """Qodo #2992: Custom OpenAI 2 has no Top P, so Apply commits it blank;
+    forking that chat must keep the blank, not refuse it as a malformed type."""
+    configuration = _configuration_snapshot()
+    settings = replace(
+        configuration.settings, provider="custom-openai-api-2", top_p=None
+    )
+
+    assert console_chat_fork.fingerprint_console_fork_configuration(
+        replace(configuration, settings=settings)
+    )
+
+
 def _image_selection(
     message,
     *,
@@ -1368,7 +1381,7 @@ def test_durable_fork_rejects_boundary_outside_database_active_lineage() -> None
         later_answer.id
     ).persisted_message_id
 
-    with pytest.raises(ValueError, match="active leaf"):
+    with pytest.raises(ValueError, match="saved history doesn't match"):
         store.issue_fork_fence(selected.id)
 
 
@@ -1826,10 +1839,12 @@ def test_configuration_and_leaf_writers_block_fork_through_live_publication(
     failures: list[BaseException] = []
 
     if route == "active_leaf":
+        persist_leaf = store._persist_active_leaf
 
-        def blocking_leaf(_session_id, _message_id):
+        def blocking_leaf(session_id, message_id):
             entered.set()
             assert release.wait(2)
+            return persist_leaf(session_id, message_id)
 
         monkeypatch.setattr(store, "_persist_active_leaf", blocking_leaf)
 
@@ -4097,3 +4112,168 @@ def test_fork_registration_rolls_back_all_indices_if_activation_raises(
         for message in snapshot.messages
     )
     assert store.active_session_id == session.id
+
+
+@pytest.mark.parametrize("route", ("project", "candidate"))
+def test_fork_helpers_resolve_store_fingerprints_at_invocation(monkeypatch, route):
+    from tldw_chatbook.Chat import console_chat_store
+
+    store = ConsoleChatStore()
+    session = _new_fork_session(store, title="Source")
+    if route == "project":
+        source = store.append_video_message(
+            session.id,
+            video_metadata=VideoGenerationMetadata(
+                name="source-video",
+                prompt="animate",
+                negative_prompt="",
+                backend="minimax",
+            ),
+        )
+        helper_name = "project_console_fork_message"
+        method_name = "_fork_video_fingerprint"
+    else:
+        source = store.append_message(
+            session.id,
+            role=ConsoleMessageRole.USER,
+            content="Question",
+            attachments=(MessageAttachment(b"alpha", "text/plain", "alpha.txt", 0),),
+        )
+        helper_name = "console_fork_candidate_matches_fence"
+        method_name = "_fork_attachment_fingerprint"
+    fence = store.issue_fork_fence(source.id)
+    helper = getattr(console_chat_store, helper_name)
+    original = getattr(store, method_name)
+    calls = []
+
+    def replacement(*args):
+        calls.append(args)
+        return original(*args)
+
+    def replace_after_callback_creation(*args, **kwargs):
+        monkeypatch.setattr(store, method_name, replacement)
+        return helper(*args, **kwargs)
+
+    monkeypatch.setattr(
+        console_chat_store, helper_name, replace_after_callback_creation
+    )
+    snapshot = store.stage_fork_snapshot(
+        fence,
+        title="Independent fork",
+        fork_session_id="fork-session",
+        fork_conversation_id="fork-conversation",
+    )
+    assert len(snapshot.messages) == 1
+    assert calls
+    if route == "project":
+        assert calls[0][0] is source.video_metadata
+    else:
+        assert calls[0][0] is snapshot.messages[0].attachments
+        assert calls[0][1] is snapshot.messages[0].generation_metadata
+
+
+def test_video_projection_wrapper_resolves_class_fingerprint_at_invocation(monkeypatch):
+    from tldw_chatbook.Chat import console_chat_store
+
+    store = ConsoleChatStore()
+    session = _new_fork_session(store, title="Source")
+    source = store.append_video_message(
+        session.id,
+        video_metadata=VideoGenerationMetadata(
+            name="source-video", prompt="animate", negative_prompt="", backend="minimax"
+        ),
+    )
+    helper = console_chat_store.validate_console_fork_video_projection
+    original = ConsoleChatStore._fork_video_fingerprint
+    calls = []
+
+    def replacement(video):
+        calls.append(video)
+        return original(video)
+
+    def replace_after_callback_creation(*args, **kwargs):
+        monkeypatch.setattr(
+            ConsoleChatStore, "_fork_video_fingerprint", staticmethod(replacement)
+        )
+        return helper(*args, **kwargs)
+
+    monkeypatch.setattr(
+        console_chat_store,
+        "validate_console_fork_video_projection",
+        replace_after_callback_creation,
+    )
+    ConsoleChatStore._validate_video_projection_tuple(source)
+    assert calls == [source.video_metadata]
+    assert calls[0] is source.video_metadata
+
+
+def test_pure_fork_helpers_borrow_source_and_alias_maps_without_mutation():
+    from types import MappingProxyType
+
+    store, _, session, _, _, _, selected, _ = _fork_store(generated_image=True)
+    source = store._nodes_by_session[session.id][selected.id]
+    selection = _image_selection(source, position=0)
+    fence = store.issue_fork_fence(source.id, image_selections=(selection,))
+    entry = fence.lineage[-1]
+    source_before = _source_store_bytes(store, session.id)
+    attachments = source.attachments
+    generation = source.generation_metadata
+    params = generation[0].params
+    attachment_bytes = attachments[0].data
+    nodes = MappingProxyType(store._nodes_by_session[session.id])
+    prefix = tuple(item.native_message_id for item in fence.lineage)
+    aliases = {"borrowed-alias": "target-alias"}
+    aliases_before = aliases.copy()
+    assert console_chat_fork.console_fork_message_state_is_eligible(
+        source.role, source.status
+    )
+    assert console_chat_fork.console_fork_visible_selection(source) == (
+        entry.visible_content,
+        entry.visible_variant_id,
+    )
+    assert console_chat_fork.validate_console_fork_image_selections(
+        nodes, prefix, (selection,)
+    )
+    assert console_chat_fork.fingerprint_console_fork_attachments(
+        attachments, generation
+    )
+    projected, has_image = console_chat_fork.project_console_fork_message(
+        source,
+        entry,
+        target_native="target-native",
+        target_persisted="target-persisted",
+        target_turn="target-turn",
+        target_variant="target-variant",
+        previous_native=None,
+        previous_persisted=None,
+        durable=True,
+        selection=selection,
+        projected_image_ids=MappingProxyType(aliases),
+        fingerprint_video=console_chat_fork.fingerprint_console_fork_video,
+    )
+    assert has_image
+    assert projected.attachments[0].data is attachment_bytes
+    assert projected.generation_metadata[0].params_json == json.dumps(
+        params,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert console_chat_fork.console_fork_candidate_matches_fence(
+        (projected,),
+        (replace(entry, native_parent_id=None),),
+        native_ids=MappingProxyType({entry.native_message_id: "target-native"}),
+        persisted_ids=MappingProxyType({entry.native_message_id: "target-persisted"}),
+        turn_ids=MappingProxyType({entry.turn_id: "target-turn"}),
+        selection_by_message=MappingProxyType({entry.native_message_id: selection}),
+        durable=True,
+        fingerprint_attachments=console_chat_fork.fingerprint_console_fork_attachments,
+    )
+    assert source.attachments is attachments
+    assert source.generation_metadata is generation
+    assert source.generation_metadata[0].params is params
+    assert aliases == aliases_before
+    assert _source_store_bytes(store, session.id) == source_before
+    with pytest.raises(FrozenInstanceError):
+        projected.content = "changed"

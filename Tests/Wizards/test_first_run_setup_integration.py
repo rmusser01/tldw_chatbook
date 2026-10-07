@@ -663,6 +663,7 @@ class TestWizardAtomicProviderHandoff:
         self, monkeypatch
     ):
         container = SetupWizardContainer(SimpleNamespace(app_config={}))
+
         def writer(
             section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
@@ -836,9 +837,7 @@ class TestWizardAtomicProviderHandoff:
                 }
             }
         )
-        replacement = SetupWizardContainer(
-            SimpleNamespace(app_config=_reload())
-        )
+        replacement = SetupWizardContainer(SimpleNamespace(app_config=_reload()))
         replacement.stage_provider_setup(
             _typed_provider_draft(
                 source="draft",
@@ -905,9 +904,7 @@ def _console_on_template_defaults(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "exit_route", ["chat", "home", "library", "library_notes"]
-)
+@pytest.mark.parametrize("exit_route", ["chat", "home", "library", "library_notes"])
 @private_profile_test
 async def test_saving_setup_exit_moves_an_untouched_console_chat_to_setup_choice(
     exit_route, monkeypatch, request
@@ -974,9 +971,10 @@ async def test_start_chatting_lands_setup_choice_when_a_config_write_beats_the_h
     Start chatting stages the first-chat handoff at the config generation its
     commit published. Console's first mount then writes the missing rail
     scope to the config file (``_ensure_console_rail_scope_seed``) before
-    ``on_mount`` consumes the handoff, so the generation fence releases it
-    and the handoff's own target is never created (tmux capture, 2026-09-26,
-    on BASE and HEAD alike). The untouched chat must still show setup's pair.
+    ``on_mount`` consumes the handoff (tmux capture, 2026-09-26). That write
+    leaves the saved provider and model alone, and the handoff is fenced on
+    those values (TASK-34100.5), so it applies: its own target is created
+    and shows setup's pair, with nothing left pending.
     """
     from unittest.mock import MagicMock
 
@@ -1009,11 +1007,14 @@ async def test_start_chatting_lands_setup_choice_when_a_config_write_beats_the_h
         {"left_open": True},
     )
 
-    assert not console._session.consume_pending_console_first_chat_intent(
+    assert console._session.consume_pending_console_first_chat_intent(
         defer_presentation=True
     )
     store = console._session._ensure_console_chat_store()
-    assert all(session.id != intent.session_id for session in store.sessions())
+    assert store.active_session_id == intent.session_id
+    assert not app_instance.pending_handoffs.has_pending(
+        HandoffChannel.CONSOLE_FIRST_CHAT
+    )
     shown = console._session._ensure_active_console_session_settings()
     assert (provider_config_key(shown.provider), shown.model) == (
         "llama_cpp",

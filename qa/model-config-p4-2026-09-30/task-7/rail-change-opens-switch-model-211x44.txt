@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                    Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     ⚓      Context r╭─ Switch model · now: Anthropic · claude-sonnet-5 ────────────────────────────────────────────────────────────────────╮
+─────────────────────────────────────────────│ Find type to search 39 models in 9 providers · Enter applies                                                         │──────────────────────────────────────────────
+                                    │ Convers│ PREVIOUS · Alt+M, Enter swaps back                                                                                   │                                   │
+                         Context ◂  │        │ ▶ qwen3:32b                    llama.cpp             ~32k  Ready · not tested           used just now in this chat   │                                   │
+   Terminal                         │        │ RECENT · your last 50 chats                                                                                          │                                   │
+ Conversations                 ▾    │        │   claude-sonnet-5              Anthropic            ~200k  Ready · not tested           ● CURRENT                    │                                   │
+        Archive this chat           │        │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                              │                                   │
+          Archived chats          ▃ │        │   claude-opus-5                Anthropic            ~200k  Ready · not tested                                        │                                   │
+        Search all chats…           │        │   claude-fable-5               Anthropic            ~200k  Ready · not tested                                        │                                   │
+   Chat 1                           │        │   claude-haiku-4-5             Anthropic            ~200k  Ready · not tested                                        │                                   │
+                                    │        │     … 11 more Anthropic models                                                                                       │                                   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │        │   aphrodite-engine             Aphrodite Engine      ~32k  Ready · not tested                                        │                                   │
+  ▊  Filter visible     ▎           │        │   aphrodite-engine-2           Aphrodite Engine      ~32k  Ready · not tested                                        │                                   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │        │     llama.cpp · no models reported · type its name and an id                                                         │                                   │
+                                    │        │     MLX-LM (Apple silicon) · no models reported · type its name and an id                                            │                                   │
+   New conversation                 │        │   gemma3:12b                   Ollama                ~32k  Ready · not tested                                        │                                   │
+  Chats                        ▾    │        │   gemma3:4b                    Ollama                ~32k  Ready · not tested                                        │                                   │
+   Chat 1                     💬    │        │   gemma3:27b                   Ollama                ~32k  Ready · not tested                                        │                                   │◂ Inspect
+                                    │        │     … 8 more Ollama models                                                                                           │                                   │
+ ─────────────────────────────────  │        │   tabby-model                  TabbyAPI              ~32k  Ready · not tested                                        │                                   │
+ Character · No chats          ▸    │        │   tabby-model-2                TabbyAPI              ~32k  Ready · not tested                                        │                                   │
+ ─────────────────────────────────  │        │   tabby-model-3                TabbyAPI              ~32k  Ready · not tested                                        │                                   │
+ Model                         ▾    │        │   vllm-model-z                 vLLM                  ~32k  Ready · not tested                                     ▂▂ │                                   │
+  Temperature 0.60                  │        │   vllm-model-x                 vLLM                  ~32k  Ready · not tested                                        │                                   │
+  Max tokens  4096                  │        │   vllm-model-y                 vLLM                  ~32k  Ready · not tested                                        │                                   │
+  Streaming   Off                   │        │     … 1 more vLLM models                                                                                             │                                   │
+  System: none ▸                    │        │   custom-model-alpha           Custom OpenAI-co…ble  ~32k  Ready · not tested                                        │                                   │
+   Change  Alt+M                    │        │   custom-model-beta            Custom OpenAI-co…ble  ~32k  Ready · not tested                                        │                                   │
+ ─────────────────────────────────  │        │   custom-model-gamma           Custom OpenAI-co… #2  ~32k  Ready · not tested                                        │                                   │
+ Agent                         ▸    │        │   custom-model-delta           Custom OpenAI-co… #2  ~32k  Ready · not tested                                        │                                   │
+ ─────────────────────────────────  │        │ Values for qwen3:32b · llama.cpp                                                                                     │                                   │
+ Details                       ▸    │        │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming On    ▼  provider             │                                   │
+                                    │        │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel  │                                   │
+                                    │        │  Save as model default  saves Temperature, Max tokens, Streaming                         Applies to: this chat only  │                                   │
+─────────────────────────────────────────────╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯──────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-sonnet-5     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current $
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                                               Send disabled: type a message       Send         Dictate
+
+  Esc composer · F6 panes | Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Enter send / queue | Y trace | Ctrl+P · Ctrl+Q

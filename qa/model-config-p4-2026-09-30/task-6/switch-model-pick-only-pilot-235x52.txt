@@ -1,0 +1,39 @@
+
+
+
+
+
+
+
+
+
+
+
+
+                                                         ╭─ Switch model · now: llama.cpp · model-a ────────────────────────────────────────────────────────────────────────────╮
+                                                         │ Find type to search 8 models in 4 providers · Enter picks                                                            │
+                                                         │ PREVIOUS                                                                                                             │
+                                                         │ ▶ claude-sonnet-4-5            Anthropic            ~200k  Ready · not tested           used 2h ago in this chat     │
+                                                         │ RECENT · your last 50 chats                                                                                          │
+                                                         │   gpt-5.1                      OpenAI                 ~4k  Not ready · no key           used 72h ago                 │
+                                                         │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                              │
+                                                         │   model-a                      llama.cpp             ~32k  Ready · not tested           ● CURRENT                    │
+                                                         │   model-b                      llama.cpp             ~32k  Ready · not tested                                        │
+                                                         │   claude-haiku-4-5             Anthropic            ~200k  Ready · not tested                                        │
+                                                         │   claude-opus-4-1              Anthropic            ~200k  Ready · not tested                                        │
+                                                         │   claude-3-7-sonnet            Anthropic            ~200k  Ready · not tested                                        │
+                                                         │     … 1 more Anthropic models                                                                                        │
+                                                         │   openai/gpt-y                 OpenRouter             ~4k  Ready · not tested                                        │
+                                                         │     Ollama · no models reported · type its name and an id                                                            │
+                                                         │ NEEDS SETUP · set up in Settings first                                                                               │
+                                                         │   (any model)                  Arcee AI                    Not ready · no key                                        │
+                                                         │   (any model)                  Azure OpenAI                Not ready · no key                                        │
+                                                         │   (any model)                  Baidu Qianfan               Not ready · no key                                        │
+                                                         │   (any model)                  Baseten                     Not ready · no key                                        │
+                                                         │   (any model)                  ByteDance Seed (…us)        Not ready · no key                                        │
+                                                         │   (any model)                  Cerebras                    Not ready · no key                                        │
+                                                         │   (any model)                  Cloudflare Worke… AI        Not ready · no key                                        │
+                                                         │   (any model)                  Cohere                      Not ready · no key                                        │
+                                                         │     … 43 more providers need setup · type a name to find one                                                         │
+                                                         │ Enter picks · Esc cancel                                                                                             │
+                                                         ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

@@ -72,9 +72,7 @@ def _ingest(
     return media_id
 
 
-def _chunk_column_rows(
-    db: MediaDatabase, media_id: int, column: str
-) -> list[Any]:
+def _chunk_column_rows(db: MediaDatabase, media_id: int, column: str) -> list[Any]:
     cursor = db.execute_query(
         f"SELECT {column} FROM UnvectorizedMediaChunks "
         "WHERE media_id = ? AND deleted = 0 ORDER BY chunk_index",
@@ -220,9 +218,7 @@ def test_rechunk_resolution_reads_back_stored_choice(
     get_chunking_service(media_db).create_template(
         name="tiny-words",
         description="persistence round-trip template",
-        template_json={
-            k: v for k, v in TEMPLATE_TINY.items() if k != "name"
-        },
+        template_json={k: v for k, v in TEMPLATE_TINY.items() if k != "name"},
     )
     source = tmp_path / "fixture.txt"
     source.write_text(_FIXTURE_TEXT, encoding="utf-8")
@@ -230,7 +226,9 @@ def test_rechunk_resolution_reads_back_stored_choice(
 
     stored = _media_chunking_config(media_db, media_id)
     assert stored is not None
-    resolved = resolve_ingest_template(media_db, per_media=json.loads(stored)["template"])
+    resolved = resolve_ingest_template(
+        media_db, per_media=json.loads(stored)["template"]
+    )
     assert resolved is not None
     assert resolved["name"] == "tiny-words"
 

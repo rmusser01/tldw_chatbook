@@ -12,6 +12,8 @@ from tldw_chatbook.Utils.sensitive_paths import (
     sensitive_exclusions_under,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.parametrize(
     "path",
@@ -360,15 +362,15 @@ def test_skill_trust_store_paths_are_refused_via_the_actually_used_accessors():
     )
 
     assert is_sensitive_path(store.manifest_path), "skill_trust_manifest.json"
-    assert is_sensitive_path(
-        store.store_dir / _SCRIPT_GRANTS_FILENAME
-    ), "skill_script_grants.json (the plain, unauthenticated script-execution grant file)"
-    assert is_sensitive_path(
-        store.store_dir / MARKER_FILENAME
-    ), "generation_marker.json"
-    assert is_sensitive_path(
-        store.snapshots_dir / "some-snapshot-id.json"
-    ), "a file nested inside snapshots/"
+    assert is_sensitive_path(store.store_dir / _SCRIPT_GRANTS_FILENAME), (
+        "skill_script_grants.json (the plain, unauthenticated script-execution grant file)"
+    )
+    assert is_sensitive_path(store.store_dir / MARKER_FILENAME), (
+        "generation_marker.json"
+    )
+    assert is_sensitive_path(store.snapshots_dir / "some-snapshot-id.json"), (
+        "a file nested inside snapshots/"
+    )
 
 
 def test_skills_directory_itself_stays_reachable_outside_the_trust_carve_out():
@@ -530,7 +532,10 @@ def test_an_already_existing_directory_still_reads_as_an_ordinary_container():
     shadow_dir = user_data_dir / "search_history.db"
     shadow_dir.mkdir(parents=True, exist_ok=True)
 
-    assert not is_sensitive_path(shadow_dir)
+    try:
+        assert not is_sensitive_path(shadow_dir)
+    finally:
+        shadow_dir.rmdir()
 
 
 def test_refuses_new_directory_chain_blocks_the_collision():
@@ -667,7 +672,9 @@ def test_merged_dir_refuses_path_and_children(tmp_path: Path):
 
 def test_merged_file_refuses_exact_path_only(tmp_path: Path):
     excluded = tmp_path / "notes.txt"
-    merged = merge_sensitive_context(resolve_sensitive_context(), extra_files=(excluded,))
+    merged = merge_sensitive_context(
+        resolve_sensitive_context(), extra_files=(excluded,)
+    )
     assert is_sensitive_path(excluded, context=merged)
     assert not is_sensitive_path(tmp_path / "other.txt", context=merged)
 
@@ -699,3 +706,24 @@ def test_merge_preserves_base_entries():
     base = resolve_sensitive_context()
     merged = merge_sensitive_context(base)
     assert merged == base
+
+
+def test_plugin_authority_artifacts_use_protected_production_accessor():
+    from tldw_chatbook import config as app_config
+    from tldw_chatbook.Plugins.authority_store import default_plugin_authority_dir
+    from tldw_chatbook.Skills_Interop.local_skills_service import (
+        default_local_skills_store_dir,
+    )
+
+    root = default_plugin_authority_dir(
+        default_local_skills_store_dir(app_config.get_user_data_dir())
+    )
+    for relative in (
+        "metadata.json",
+        "generation_marker.json",
+        "snapshots/digest.json",
+        "intents/op.json",
+        "certificates/op.json",
+    ):
+        assert is_sensitive_path(root / relative), relative
+    assert is_sensitive_path(root.parent / "plugins-reset-archive" / "metadata.json")

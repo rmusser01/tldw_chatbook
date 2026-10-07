@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 from textual.worker import WorkerState
 
+from Tests.app_module_patches import set_app_global
+
 pytestmark = pytest.mark.unit
 
 
@@ -17,8 +19,9 @@ async def test_worker_error_records_worker_failed(monkeypatch):
     from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.app.persist_event",
+    set_app_global(
+        monkeypatch,
+        "persist_event",
         lambda component, event, **fields: recorded.append(
             {"component": component, "event": event, **fields}
         ),
@@ -40,11 +43,16 @@ async def test_worker_error_records_worker_failed(monkeypatch):
     # also route through this hook during pilot.pause() and could append their
     # own worker_failed entries after this one.
     failure = next(
-        (f for f in recorded
-         if f["event"] == "worker_failed" and f["operation"] == "scheduler_worker"),
+        (
+            f
+            for f in recorded
+            if f["event"] == "worker_failed" and f["operation"] == "scheduler_worker"
+        ),
         None,
     )
-    assert failure is not None, f"no worker_failed for the injected worker, got {recorded}"
+    assert failure is not None, (
+        f"no worker_failed for the injected worker, got {recorded}"
+    )
     assert failure["exception_type"] == "ValueError"
     # The message must not travel: "boom" is caller-supplied text.
     assert "boom" not in str(failure)
@@ -59,8 +67,9 @@ async def test_successful_worker_records_nothing(monkeypatch):
     from Tests.UI.app_factory import _build_test_app
 
     recorded: list[dict] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.app.persist_event",
+    set_app_global(
+        monkeypatch,
+        "persist_event",
         lambda component, event, **fields: recorded.append(
             {"component": component, "event": event, **fields}
         ),
@@ -187,16 +196,14 @@ async def test_fresh_boot_fire_and_forget_worker_does_not_warn_unhandled(
                 worker.group = worker_group
                 worker.error = None
                 worker.description = f"{worker_name}=<probe>"
-                await app.on_worker_state_changed(
-                    Worker.StateChanged(worker, state)
-                )
+                await app.on_worker_state_changed(Worker.StateChanged(worker, state))
             await pilot.pause()
     finally:
         loguru_root_logger.remove(sink_id)
 
-    assert not [
-        w for w in warnings if "No handler found" in w and worker_name in w
-    ], f"fresh-boot worker {worker_group!r} warned unhandled: {warnings}"
+    assert not [w for w in warnings if "No handler found" in w and worker_name in w], (
+        f"fresh-boot worker {worker_group!r} warned unhandled: {warnings}"
+    )
 
 
 def test_every_boot_policy_group_is_acknowledged():
@@ -208,8 +215,7 @@ def test_every_boot_policy_group_is_acknowledged():
     from tldw_chatbook.Utils.boot_worker_policy import BOOT_WORKER_POLICY
 
     unacknowledged = sorted(
-        {spec.group for spec in BOOT_WORKER_POLICY}
-        - MiscWorkerHandler.HANDLED_GROUPS
+        {spec.group for spec in BOOT_WORKER_POLICY} - MiscWorkerHandler.HANDLED_GROUPS
     )
     assert not unacknowledged, (
         "boot-policy worker groups missing from MiscWorkerHandler.HANDLED_GROUPS "
@@ -220,7 +226,11 @@ def test_every_boot_policy_group_is_acknowledged():
 @pytest.mark.asyncio
 async def test_unknown_worker_group_still_warns_unhandled():
     """Guard for task-2726: acknowledging known fire-and-forget groups must not
-    swallow the unhandled-worker warning for genuinely unknown workers."""
+    swallow the unhandled-worker warning for genuinely unknown workers.
+
+    PERF-03 (TASK-33262): the warning is for a *failure* nobody handles; the
+    routine PENDING/RUNNING/SUCCESS transitions of an unregistered app-owned
+    worker log at DEBUG (see WorkerHandlerRegistry.handle_event)."""
     from loguru import logger as loguru_root_logger
     from textual.worker import Worker
 
@@ -238,14 +248,12 @@ async def test_unknown_worker_group_still_warns_unhandled():
             worker.group = "task-2726-unknown-group"
             worker.error = None
             await app.on_worker_state_changed(
-                Worker.StateChanged(worker, WorkerState.SUCCESS)
+                Worker.StateChanged(worker, WorkerState.ERROR)
             )
             await pilot.pause()
     finally:
         loguru_root_logger.remove(sink_id)
 
-    assert [
-        w
-        for w in warnings
-        if "No handler found" in w and "mystery_worker" in w
-    ], f"unknown worker did not warn: {warnings}"
+    assert [w for w in warnings if "No handler found" in w and "mystery_worker" in w], (
+        f"unknown worker did not warn: {warnings}"
+    )

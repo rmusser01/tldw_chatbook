@@ -8,13 +8,16 @@ import time
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from weakref import ReferenceType, ref
 
+from loguru import logger
 from textual import events
 from textual.app import App
+from textual.await_complete import AwaitComplete
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Footer
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Widgets.recompose_capture_guard import FocusAnchor
 
     class _SafeModalHost(Protocol):
         """Textual surface required by ``SafeModalDismissMixin``."""
@@ -30,6 +33,8 @@ if TYPE_CHECKING:
         def query(self, selector: type[Widget]) -> Any: ...
 
         def dismiss(self, result: object) -> object: ...
+
+        def call_next(self, callback: Callable[..., object], *args: Any) -> None: ...
 
 
 _safe_request_generation: ContextVar[tuple[int, int] | None] = ContextVar(
@@ -85,11 +90,30 @@ def _is_safe_focus_target(widget: Widget | None) -> bool:
     )
 
 
+def _keyed_opener_anchor(opener: Widget) -> FocusAnchor | None:
+    """The opener's anchor when its DOM id is not its identity, else None.
+
+    A list row's id is positional (``console-conversation-actions-3``): a
+    rebuild while the modal is up can hand it to another item, so such an
+    opener is found again by its ``focus_identity`` instead (Qodo #2932).
+    Every other opener keeps the id restore below, unchanged.
+    """
+    from tldw_chatbook.Widgets.recompose_capture_guard import (
+        capture_focus_anchor,
+        focus_identity,
+    )
+
+    if focus_identity(opener) == (opener.id or None):
+        return None
+    return capture_focus_anchor(opener)
+
+
 def _restore_focus_after_dismissal(
     app: App[Any],
     revealed_screen: Screen[Any],
     opener_ref: ReferenceType[Widget] | None,
     opener_id: str | None,
+    opener_anchor: FocusAnchor | None = None,
 ) -> None:
     if app.screen is not revealed_screen:
         return
@@ -100,6 +124,21 @@ def _restore_focus_after_dismissal(
         if opener.screen is revealed_screen:
             opener.focus()
             return
+
+    if opener_anchor is not None:
+        from tldw_chatbook.Widgets.recompose_capture_guard import (
+            resolve_focus_anchor,
+        )
+
+        # The opener was rebuilt away: its own item's control, or the
+        # stand-in for an item that left the list -- never its old slot's id.
+        stand_in = resolve_focus_anchor(
+            opener_anchor, revealed_screen, eligible=_is_safe_focus_target
+        )
+        if stand_in is not None and stand_in.screen is revealed_screen:
+            stand_in.focus()
+            return
+        opener_id = None
 
     if opener_id is not None:
         eligible_matches = [
@@ -205,16 +244,22 @@ class SafeModalDismissMixin:
     _safe_dismiss_committed = False
     _safe_opener_focus_ref: ReferenceType[Widget] | None = None
     _safe_opener_focus_id: str | None = None
+    _safe_opener_focus_anchor: FocusAnchor | None = None
     _safe_backdrop_event_in_attempt: tuple[float, int, int] | None = None
     _safe_mount_generation = 0
+    #: A close refused only because another screen covered this modal, kept
+    #: with the mount generation it was asked in (TASK-33622.15).
+    _safe_pending_close: tuple[int, object] | None = None
 
     def on_mount(self) -> None:
         """Remember the opener's focused widget for post-dismiss restoration."""
         self._safe_cancel_pending = False
         self._safe_cancel_effect_committed = False
         self._safe_dismiss_committed = False
+        self._safe_pending_close = None
         self._safe_opener_focus_ref = None
         self._safe_opener_focus_id = None
+        self._safe_opener_focus_anchor = None
         self._safe_backdrop_event_in_attempt = None
         self._safe_mount_generation += 1
 
@@ -226,11 +271,14 @@ class SafeModalDismissMixin:
         if opener is not None:
             self._safe_opener_focus_ref = ref(opener)
             self._safe_opener_focus_id = opener.id or None
+            self._safe_opener_focus_anchor = _keyed_opener_anchor(opener)
 
     def on_unmount(self) -> None:
         """Release the opener reference when the modal leaves the DOM."""
         self._safe_opener_focus_ref = None
         self._safe_opener_focus_id = None
+        self._safe_opener_focus_anchor = None
+        self._safe_pending_close = None
 
     async def action_request_safe_cancel(self) -> None:
         """Route Escape to the modal's safe cancellation request."""
@@ -267,6 +315,41 @@ class SafeModalDismissMixin:
         self._safe_cancel_effect_committed = True
         await effect()
 
+    def dismiss(self, result: Any = None) -> AwaitComplete:
+        """Dismiss this modal -- but only while it is the app's top screen.
+
+        TASK-33622.10 (ADR-031: async cancellation may dismiss only the
+        active top screen). Textual 8.2.8's ``Screen.dismiss`` delivers THIS
+        screen's result and then pops whatever is on TOP. Called while another
+        screen covers this one -- a timer, poll or worker deciding the modal
+        is done -- it popped that other screen instead (the quit prompt, under
+        the priority Ctrl+Q) and left this one on the stack with its result
+        already spent, so its next close raised ``InvalidStateError`` and
+        exited the app. Covered, or already popped, it is now refused before
+        anything is delivered: the screen above stays, and a periodic caller
+        (the video player's time box) simply closes on its next tick on top;
+        a one-shot caller must keep its close for ``ScreenResume`` -- itself
+        (the video player's failure close does) or through
+        ``dismiss_safe_once_when_on_top``. With no running app, Textual's own
+        path decides, as before.
+
+        Args:
+            result: The result for the opener's callback.
+
+        Returns:
+            Textual's pop awaitable, or an already-complete one when refused.
+        """
+        try:
+            covered = cast("_SafeModalHost", self).app.screen is not self
+        except Exception:  # no active app or an empty stack: Textual decides
+            covered = False
+        if covered:
+            logger.debug(
+                "{} refused a dismiss while not the top screen", type(self).__name__
+            )
+            return AwaitComplete.nothing()
+        return super().dismiss(result)  # type: ignore[misc]
+
     def dismiss_safe_once(self, result: object) -> bool:
         """Dismiss only this mounted, topmost modal and restore opener focus."""
         request_identity = _safe_request_generation.get()
@@ -283,6 +366,7 @@ class SafeModalDismissMixin:
         app = host.app
         opener_ref = self._safe_opener_focus_ref
         opener_id = self._safe_opener_focus_id
+        opener_anchor = self._safe_opener_focus_anchor
         backdrop_event = self._safe_backdrop_event_in_attempt
         host.dismiss(result)
         revealed_screen = app.screen
@@ -295,8 +379,65 @@ class SafeModalDismissMixin:
                 revealed_screen,
                 opener_ref,
                 opener_id,
+                opener_anchor,
             )
         return True
+
+    def dismiss_safe_once_when_on_top(self, result: object) -> bool:
+        """Dismiss now, or as soon as nothing covers this modal (TASK-33622.15).
+
+        For a one-shot close made when an operation finishes -- a fork
+        opened, an export written, a review saved. ``dismiss_safe_once``
+        refuses while another screen covers this modal (ADR-031), and such a
+        caller has no later turn to try again. Ctrl+Q's "Quit while still
+        working?" covers exactly these modals, so an operation finishing
+        under it left the modal open after Wait over finished work, often
+        with Escape still refused. A close refused only because the modal is
+        covered is kept and finished once it is on top again
+        (``on_screen_resume``), so it ends as it would have uncovered. Every
+        other refusal -- already closed, unmounted, a stale request -- stays
+        final.
+
+        Args:
+            result: The result for the opener's callback.
+
+        Returns:
+            True when dismissed now; False when refused or kept for later.
+        """
+        if self.dismiss_safe_once(result):
+            self._safe_pending_close = None
+            return True
+        request_identity = _safe_request_generation.get()
+        if request_identity is not None and request_identity != (
+            id(self),
+            self._safe_mount_generation,
+        ):
+            return False
+        host = cast("_SafeModalHost", self)
+        if (
+            not self._safe_dismiss_committed
+            and host.is_mounted
+            and host.app.screen is not self
+        ):
+            self._safe_pending_close = (self._safe_mount_generation, result)
+        return False
+
+    def on_screen_resume(self) -> None:
+        """Finish a close kept while another screen covered this modal."""
+        if self._safe_pending_close is not None:
+            cast("_SafeModalHost", self).call_next(self._finish_pending_close)
+
+    def _finish_pending_close(self) -> None:
+        pending = self._safe_pending_close
+        if pending is None:
+            return
+        generation, result = pending
+        if generation != self._safe_mount_generation or self._safe_dismiss_committed:
+            self._safe_pending_close = None
+            return
+        if self.dismiss_safe_once(result):
+            self._safe_pending_close = None
+        # Covered again before this ran: keep it for the next resume.
 
     async def on_click(self, event: events.Click) -> None:
         """Request cancellation for a known primary click on the backdrop."""

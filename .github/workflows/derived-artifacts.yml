@@ -22,6 +22,19 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [dev, main]
+  # Merge queue (Docs/superpowers/specs/2026-10-03-merge-queue-design.md): the queue
+  # dispatches this workflow on a rebased PR head with `pr` set, so the required check
+  # runs on exactly the head that merges. A dispatch without `pr` on dev is a manual
+  # queue kick: the lanes skip and only queue-tick runs. A dispatch without `pr` on any
+  # other branch runs the full gate, so the required check can never go green without
+  # tests actually running.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number (set by the merge queue)
+        required: false
+        type: string
+        default: ''
 
 # Deliberately NOT path-filtered.
 #
@@ -63,7 +76,7 @@ permissions:
 jobs:
   pr-fast-lane:
     name: PR Fast Lane
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
     # TASK-32831: the main and admission-sensitive invocations measured 14m45s
     # and 4m59s, plus setup; keep both required steps within one bounded job.
@@ -85,6 +98,9 @@ jobs:
           pytest \
             Tests/CI \
             Tests/test_smoke.py \
+            Tests/MCP/test_approval_timeout_policy.py \
+            Tests/MCP/test_control_plane_bridge.py \
+            Tests/MCP/test_live_server_request_wiring.py \
             Tests/Agents/test_execution_capacity.py \
             Tests/Agents/test_fleet_messages.py \
             Tests/Agents/test_session_todo_store.py \
@@ -98,6 +114,17 @@ jobs:
             Tests/UI/test_mcp_workbench.py \
             Tests/UI/test_mcp_tools_mode.py \
             Tests/Widgets/test_detach_safe_text_area.py \
+            Tests/Architecture/test_console_controllers_define_their_self_attributes.py \
+            Tests/Architecture/test_flush_screens_have_quit_hooks.py \
+            Tests/Architecture/test_quit_flow_prompt_choke_point.py \
+            Tests/Library/test_library_note_autosave_max_wait.py \
+            Tests/Library/test_library_file_export.py \
+            Tests/Architecture/test_notes_sync_snapshot_construction.py \
+            Tests/Agents/test_mcp_unavailable_builtin_tools.py \
+            Tests/Chat/test_console_arrival_vocabulary.py \
+            Tests/Chat/test_console_trace_missing_revision_diagnostic.py \
+            Tests/Chat/test_first_reply_failure_copy.py \
+            Tests/Chat/test_first_token_window.py \
             --timeout=180 \
             --tb=short
 
@@ -111,10 +138,20 @@ jobs:
         if: always()
         run: |
           pytest \
+            Tests/Chat/test_console_run_log_connection_ownership.py \
+            Tests/Chat/test_console_chat_create_connection_ownership.py \
+            Tests/DB/test_chachanotes_connection_quiescence.py \
+            Tests/DB/test_operation_owned_connection_retirement.py \
             Tests/UI/test_console_runtime_ownership.py \
             Tests/Chat/test_console_viewless_hooks.py \
             Tests/Agents/test_install_skill_runtime_tool.py \
             Tests/Chat/test_console_chat_create_integration.py \
+            Tests/Notes/test_notes_sync_tail_edit.py \
+            Tests/Notes/test_notes_sync_delete_restore_signal.py \
+            Tests/Notes/test_notes_sync_resave_window.py \
+            Tests/Notes/test_notes_sync_attention_fence.py \
+            Tests/Agents/test_first_request_window_honest_plan.py \
+            Tests/Chat/test_console_capacity_refusal_copy.py \
             --timeout=300 \
             --tb=short
 
@@ -146,10 +183,24 @@ jobs:
     # Its own job rather than another step on pr-fast-lane: that lane measured
     # ~20 min against a 30-min cap, and spending its last headroom here would
     # make the required check fail on a timeout the first time either half grew.
+    #
+    # TASK-34353: the serial census itself then reached 14-19 min against this
+    # job's 20-min cap, and PRs adding census files timed out with zero failing
+    # tests (#2992 three times). So the census runs as round-robin shards
+    # (`check_ui_pr_gate_census.py --shard`): each shard is a subsequence of
+    # the census, in census order, on the same minimal dependency set. What
+    # changes is only which files run before a given file -- a file that needed
+    # a particular predecessor was relying on leaked state, which is a bug the
+    # split surfaces, not hides. Add a shard (not minutes) when one nears the cap.
     name: UI Fast Lane
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      # Report every shard, so one red shard does not hide another.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
 
     steps:
       - uses: actions/checkout@v4
@@ -168,10 +219,16 @@ jobs:
       - name: Run the gated Tests/UI slice
         run: |
           # Census order is the run order; see the checker for why it may not
-          # silently shrink.
-          mapfile -t UI_FILES < <(grep -vE '^\s*(#|$)' scripts/ui_pr_gate_census.txt)
-          echo "Gating ${#UI_FILES[@]} Tests/UI files."
-          pytest "${UI_FILES[@]}" \
+          # silently shrink. Written to a file first so a failing checker fails
+          # the step (bash -e) instead of yielding an empty list.
+          python scripts/check_ui_pr_gate_census.py --shard \
+            "${{ strategy.job-index }}" "${{ strategy.job-total }}" \
+            > "$RUNNER_TEMP/ui-shard.txt"
+          mapfile -t SHARD < "$RUNNER_TEMP/ui-shard.txt"
+          # An empty shard would make bare `pytest` collect the whole tree.
+          test "${#SHARD[@]}" -gt 0
+          echo "Gating shard $(( ${{ strategy.job-index }} + 1 ))/${{ strategy.job-total }}: ${#SHARD[@]} Tests/UI files."
+          pytest "${SHARD[@]}" \
             --timeout=180 \
             --tb=short
 
@@ -195,7 +252,7 @@ jobs:
           python-version: '3.12.11'
 
       - name: Require successful PR fast lane
-        if: ${{ github.event_name == 'pull_request' && needs.pr-fast-lane.result != 'success' }}
+        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane.result != 'success' }}
         run: |
           echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
           echo "::error::The required PR fast lane did not succeed."
@@ -206,7 +263,7 @@ jobs:
       # which is the "guard nobody is gated on" failure this workflow exists to
       # avoid.
       - name: Require successful UI fast lane
-        if: ${{ github.event_name == 'pull_request' && needs.ui-fast-lane.result != 'success' }}
+        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.ui-fast-lane.result != 'success' }}
         run: |
           echo "UI Fast Lane result: ${{ needs.ui-fast-lane.result }}"
           echo "::error::The required UI fast lane did not succeed."
@@ -326,4 +383,41 @@ jobs:
           # being the cheapest way to make the gate green. Pure path check;
           # milliseconds.
           python scripts/check_ui_pr_gate_census.py
+
+  queue-tick:
+    # Wakes the merge queue after CI finishes, for the queue's own dispatched runs and for any
+    # same-repo PR run. Deliberately no auto_merge check: the event payload is a trigger-time
+    # snapshot, and the documented disarm-push-rearm flow leaves it null, so a red author run
+    # would never wake the queue. The script itself only acts on the armed line. NOT a required
+    # check and NOT in the aggregate's needs: a queue failure can never turn `Derived artifacts
+    # reproduce from their sources` red. Pushes to dev are merge-queue.yml's job.
+    # Security (spec section 9): a queue dispatch runs the PR branch's copy of this file, so the
+    # branch controls these write permissions, exactly as a same-repo pull_request run already
+    # does. The difference is the actor (github-actions[bot] skips GitHub's Dependabot and
+    # agent-push gates), which is why the queue only queues PRs opened by a user.
+    # Spec: Docs/superpowers/specs/2026-10-03-merge-queue-design.md
+    name: Merge queue tick
+    needs: [derived-artifacts]
+    if: >-
+      !cancelled() &&
+      (vars.MERGE_QUEUE == 'dry' || vars.MERGE_QUEUE == 'on') &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          persist-credentials: false
+      - name: Advance the queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_QUEUE: ${{ vars.MERGE_QUEUE }}
+        run: python3 scripts/merge_queue.py
 

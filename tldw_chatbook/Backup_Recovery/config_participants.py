@@ -61,7 +61,7 @@ def selection(source, route, target):
         return selected, installed, False
     if route == "config_data_lock":
         lock_path = profile_paths.lexical_path(
-            profile_paths.default_base_data_dir().parents[2] / ".tldw_cli-data-root.lock"
+            profile_paths.default_base_data_dir().parents[2] / profile_paths.DATA_ROOT_LOCK_NAME
         )
         if target is not None and profile_paths.lexical_path(target) != lock_path:
             raise bootstrap.RecoveryRequired("config_directory_selection_changed")
@@ -198,9 +198,9 @@ def companion_guard(operation, attempt):
             else:
                 if not stat.S_ISREG(member_info.st_mode) or member_info.st_nlink != 1:
                     raise bootstrap.RecoveryRequired("config_companion_scope_changed")
-                tokens.add(f"inode:{member_info.st_dev}:{member_info.st_ino}")
+                tokens.add(bootstrap.inode_token(member_info))
             if any(
-                tokens.intersection(entry["historical"])
+                tokens.intersection(bootstrap.identity_view(entry["historical"]))
                 or any(bootstrap._overlap(member, Path(path)) for path in entry["roots"])
                 or any(
                     bootstrap._overlap(member, Path(token[5:]))
@@ -377,7 +377,9 @@ def operation(source, *, route="config", target=None):
 def guarded(function):
     """Enclose the actual config reader/cache bodies, including direct helpers."""
     allowed = {
-        "load_settings",
+        # PERF-06: the public load_settings / get_runtime_config_snapshot
+        # serve warm hits unguarded; their bodies below stay guarded.
+        "_load_settings_guarded",
         "_load_settings_uncached",
         "_load_cli_config_bootstrap",
         "_load_cli_config_bootstrap_unlocked",
@@ -389,7 +391,7 @@ def guarded(function):
         "read_cli_config_backup_serialized",
         "_publish_runtime_config_unlocked",
         "_prepare_config_parent",
-        "get_runtime_config_snapshot",
+        "_get_runtime_config_snapshot_guarded",
         "get_user_data_dir",
         "get_model_cache_dir",
         "replace_cli_config_serialized",

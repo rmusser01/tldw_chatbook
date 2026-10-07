@@ -1136,7 +1136,7 @@ async def test_queued_submit_observes_destination_only_after_dequeue_dispatch() 
     )
     await gateway.starts[0].wait()
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
-    queued = controller.queue_prompt(
+    queued = await controller.queue_prompt(
         session.id,
         text="queued",
         expected_revision=snapshot.revision,
@@ -1205,7 +1205,7 @@ async def test_queued_configuration_and_policy_capture_only_after_dequeue():
     await gateway.starts[0].wait()
     before_queue = len(captures)
     snapshot = controller.prompt_queue_registry.snapshot(session.id)
-    queued = controller.queue_prompt(
+    queued = await controller.queue_prompt(
         session.id,
         text="queued",
         expected_revision=snapshot.revision,
@@ -1288,7 +1288,7 @@ async def test_queued_turn_reads_second_process_policy_only_after_claim(
             ConsoleAssistantLibraryAccess.ALLOWED
         )
         queue_snapshot = controller.prompt_queue_registry.snapshot(session.id)
-        queued = controller.queue_prompt(
+        queued = await controller.queue_prompt(
             session.id,
             text="queued",
             expected_revision=queue_snapshot.revision,
@@ -1667,7 +1667,7 @@ async def test_queued_retry_captures_complete_context_only_after_recovery_claim(
     before_enqueue_config = len(capture_reservations)
     before_enqueue_policy = len(coordinator.calls)
     queue_snapshot = controller.prompt_queue_registry.snapshot(session.id)
-    queued = controller.queue_prompt(
+    queued = await controller.queue_prompt(
         session.id,
         text="after retry",
         expected_revision=queue_snapshot.revision,

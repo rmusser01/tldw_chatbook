@@ -1,6 +1,7 @@
 # ADR-043: Console rail compact-collapse yields to explicit toggles
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-05
 Related Tasks:
 - [TASK-2154.2 - Make Inspector reachable below 150 columns](../tasks/task-2154.2%20-%20Console-make-Inspector-reachable-below-150-cols-LY-11-DS-06.md)

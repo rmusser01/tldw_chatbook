@@ -1,0 +1,16 @@
+{
+  "sha": "e7cc5337617781e9a4b08b9e324297b537fcad07",
+  "parent": "c0b251a71422536a3da2be421dd60f79e2cb230a",
+  "owned_files": [
+    "Tests/UI/test_console_runtime_ownership.py"
+  ],
+  "sha256": "91c7698d342e412bf8796575c7a72b4a2fe42985bc8ff1169a98018694619521",
+  "batch_fingerprints_stable": true,
+  "committed_blob_equals_qualified_bytes": true,
+  "index_empty": true,
+  "dirty_files": [
+    " M Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md",
+    " M backlog/docs/lessons-testing-evidence.md",
+    " M \"backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md\""
+  ]
+}

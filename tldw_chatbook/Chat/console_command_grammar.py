@@ -86,6 +86,13 @@ EMERGENCY_STOP_COMMAND_NAME = "emergency-stop"
 EMERGENCY_STOP_COMMAND_ARGUMENT_HINT = "[clear | <reason>]"
 EMERGENCY_STOP_COMMAND_HANDLER_ID = "emergency-stop"
 
+#: TASK-33625.1: stop THIS tab's running turn -- the typed twin of the Stop
+#: button and the Ctrl+G key. Unlike /emergency-stop it touches in-flight
+#: work only, and only the viewed tab's.
+STOP_COMMAND_NAME = "stop"
+STOP_COMMAND_ARGUMENT_HINT = ""
+STOP_COMMAND_HANDLER_ID = "stop"
+
 REWIND_COMMAND_NAME = "rewind"
 REWIND_COMMAND_ARGUMENT_HINT = ""
 REWIND_COMMAND_HANDLER_ID = "rewind"
@@ -105,9 +112,11 @@ DOCTOR_COMMAND_HANDLER_ID = "doctor"
 # one handler_id; the screen maps each name to the action method that already
 # implements it (see ChatScreen._CONSOLE_ACTION_COMMAND_TARGETS). No new
 # capability -- every one maps to a palette entry / key binding that works today.
+# A command with an argument hint receives its arguments (TASK-33004.7:
+# `/model son` opens Switch model with `son` in Find); the rest take none.
 CONSOLE_ACTION_COMMAND_HANDLER_ID = "console-action"
 CONSOLE_ACTION_COMMANDS: tuple[tuple[str, str], ...] = (
-    ("model", ""),
+    ("model", "[query]"),
     ("sessions", ""),
     ("workspace", ""),
     ("new", ""),
@@ -315,6 +324,13 @@ def default_console_registry() -> ConsoleCommandRegistry:
             name=REDIRECT_COMMAND_NAME,
             argument_hint=REDIRECT_COMMAND_ARGUMENT_HINT,
             handler_id=REDIRECT_COMMAND_HANDLER_ID,
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name=STOP_COMMAND_NAME,
+            argument_hint=STOP_COMMAND_ARGUMENT_HINT,
+            handler_id=STOP_COMMAND_HANDLER_ID,
         )
     )
     registry.register(

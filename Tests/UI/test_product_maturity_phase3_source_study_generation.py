@@ -6,11 +6,12 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
     StaticLibraryMediaScopeService,
@@ -162,8 +163,8 @@ async def _run_library_app(app: TldwCli):
     app._initial_tab_value = "library"
     real_get_cli_setting = app_module.get_cli_setting
     try:
-        with patch(
-            "tldw_chatbook.app.get_cli_setting",
+        with patch_app_global(
+            "get_cli_setting",
             side_effect=_splash_disabled_setting(real_get_cli_setting),
         ):
             async with app.run_test(size=(180, 50)) as pilot:
@@ -189,8 +190,8 @@ async def _run_study_app(app: TldwCli, scope_context: StudyScopeContext):
     app._initial_tab_value = "home"
     real_get_cli_setting = app_module.get_cli_setting
     try:
-        with patch(
-            "tldw_chatbook.app.get_cli_setting",
+        with patch_app_global(
+            "get_cli_setting",
             side_effect=_splash_disabled_setting(real_get_cli_setting),
         ):
             async with app.run_test() as pilot:

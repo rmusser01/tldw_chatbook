@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
+
 pytestmark = pytest.mark.unit
 
 
@@ -17,8 +19,7 @@ async def test_mounting_the_app_records_app_started(monkeypatch):
     from Tests.UI.app_factory import _build_test_app
 
     recorded: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        "tldw_chatbook.app.persist_event",
+    set_app_global(monkeypatch, "persist_event",
         lambda component, event, **fields: recorded.append((component, event)),
     )
 

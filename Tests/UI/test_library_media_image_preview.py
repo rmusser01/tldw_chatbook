@@ -216,9 +216,9 @@ class PreviewMediaService(StaticLibraryMediaScopeService):
         self.download_calls.append({"media_id": media_id, **kwargs})
         if media_id in self.blocked_downloads:
             self.download_entered.setdefault(media_id, threading.Event()).set()
-            if not self.download_release.setdefault(
-                media_id, threading.Event()
-            ).wait(5):
+            if not self.download_release.setdefault(media_id, threading.Event()).wait(
+                5
+            ):
                 raise RuntimeError("preview download gate timed out")
         outcome = self.download_outcomes.get(media_id, _image_bytes(width=media_id + 3))
         if isinstance(outcome, BaseException):

@@ -67,6 +67,7 @@ from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
     ConsoleSpeechPresentationState,
     action_row_guide,
+    resend_target_id,
     resolve_console_header_speech,
 )
 from tldw_chatbook.Chat.console_onboarding_state import (
@@ -143,6 +144,7 @@ from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Chat.console_message_delete import ConsoleDeleteScope
     from tldw_chatbook.Widgets.Console.console_voice_preview import (
         ConsoleVoicePreview,
         VoicePreviewProjection,
@@ -399,6 +401,8 @@ def derive_console_memory_banner_presentation(
         render_index=next_user_index,
         end_message_id=memory.boundary_message_id,
     )
+
+
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "speak": "Speak this message aloud using text-to-speech.",
@@ -412,11 +416,12 @@ _ACTION_TOOLTIPS = {
     "tool-output": "Show or hide this tool call's full result (o).",
     "review-changes": "Open the Change Review screen for this turn (v).",
     "retry": "Retry the failed response.",
+    "resend": "Re-run this turn in place: clear the broken reply, send again (r).",
     "regenerate": "Generate another assistant variant for this turn.",
     "continue": "Continue and extend the selected message.",
     "feedback-up": "Mark this response as helpful.",
     "feedback-down": "Mark this response as not helpful.",
-    "delete": "Delete this message from the Console transcript.",
+    "delete": "Delete this message and every later message under it (asks first).",
     "variant-previous": "Show the previous regenerated variant.",
     "variant-next": "Show the next regenerated variant.",
     "keep": "Keep the browsed variant as this message's canonical image.",
@@ -503,11 +508,6 @@ def get_console_transcript_window_lines(
         DEFAULT_SCROLLBACK_CHUNK_LINES,
     )
     return initial_lines, max(1, chunk_lines)
-
-
-def _message_role_label(message: ConsoleChatMessage) -> str:
-    role = message.role.value if hasattr(message.role, "value") else str(message.role)
-    return role.title()
 
 
 #: Statuses an assistant row holds while its turn is still in flight. The
@@ -1357,7 +1357,11 @@ def _assistant_markdown_header(
             )
     elif message.status in {"stopped", "failed"}:
         suffix = f"  {_MESSAGE_STATUS_LINES[message.status]}"
-    if suffix and message.live_activity_action and suffix.endswith(message.live_activity):
+    if (
+        suffix
+        and message.live_activity_action
+        and suffix.endswith(message.live_activity)
+    ):
         # task-31386: a click on the affordance runs the screen action that
         # abandons the primary's current tool call; the turn continues.
         # A Style carries the action (not markup), so the line's text --
@@ -2997,7 +3001,7 @@ class ConsoleTranscript(VerticalScroll):
         ("c", "invoke_selected_action('copy')", "Copy"),
         ("e", "invoke_selected_action('edit')", "Edit"),
         ("f", "invoke_selected_action('fork')", "Fork"),
-        ("r", "invoke_selected_action('regenerate')", "Regenerate"),
+        ("r", "invoke_selected_action('regenerate')", "Regenerate/Retry/Resend"),
         ("o", "invoke_selected_action('tool-output')", "Full output"),
         ("v", "invoke_selected_action('review-changes')", "Review changes"),
         ("n", "open_review_notes", "Notes"),
@@ -3063,9 +3067,7 @@ class ConsoleTranscript(VerticalScroll):
         #: TASK-575: one immutable, content-free banner projection. It is
         #: replaced wholesale by the screen sync path and never mutates the
         #: message list, active tree, selection, or persistence state.
-        self.memory_banner_presentation: ConsoleMemoryBannerPresentation | None = (
-            None
-        )
+        self.memory_banner_presentation: ConsoleMemoryBannerPresentation | None = None
         self._follow_intent_time = 0.0
         self._user_scroll_time = 0.0
         #: TASK-16851: when the last ``scroll_end`` (the End key) was issued.
@@ -3091,6 +3093,7 @@ class ConsoleTranscript(VerticalScroll):
         self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
         self._video_card_specs: dict[str, ConsoleVideoCardSpec] = {}
         self._fork_eligibility_by_message_id: dict[str, ConsoleForkEligibility] = {}
+        self._delete_scope: ConsoleDeleteScope | None = None
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
         self._library_activity_counts: dict[str, int] = {}
@@ -3275,7 +3278,9 @@ class ConsoleTranscript(VerticalScroll):
             yield widget
         self._voice_preview_widget = None
         if self._voice_preview_projection is not None:
-            from tldw_chatbook.Widgets.Console.console_voice_preview import ConsoleVoicePreview
+            from tldw_chatbook.Widgets.Console.console_voice_preview import (
+                ConsoleVoicePreview,
+            )
 
             self._voice_preview_widget = ConsoleVoicePreview(
                 self._voice_preview_projection,
@@ -3332,7 +3337,9 @@ class ConsoleTranscript(VerticalScroll):
             self._voice_preview_widget = ConsoleVoicePreview(
                 projection, id="console-voice-preview"
             )
-            self.mount(self._voice_preview_widget, before="#console-transcript-jump-pill")
+            self.mount(
+                self._voice_preview_widget, before="#console-transcript-jump-pill"
+            )
         else:
             self._voice_preview_widget.set_projection(projection)
 
@@ -4689,9 +4696,7 @@ class ConsoleTranscript(VerticalScroll):
             and count > 0
         }
 
-    def set_annotation_previews(
-        self, previews: Mapping[str, tuple[str, ...]]
-    ) -> None:
+    def set_annotation_previews(self, previews: Mapping[str, tuple[str, ...]]) -> None:
         """Replace screen-owned review-note previews keyed by native message ID.
 
         task-17169 slice 2: the screen's sync loop pushes this every tick
@@ -4800,7 +4805,10 @@ class ConsoleTranscript(VerticalScroll):
                     continue
                 if child.parent is not turn.adjunct_stack or not child.is_attached:
                     continue
-                if getattr(getattr(child, "spec", None), "message_id", None) != message_id:
+                if (
+                    getattr(getattr(child, "spec", None), "message_id", None)
+                    != message_id
+                ):
                     continue
                 if child.children and all(
                     nested.parent is child and nested.is_attached
@@ -5370,19 +5378,6 @@ class ConsoleTranscript(VerticalScroll):
         if self.is_mounted:
             self.call_later(self.refresh_messages)
 
-    def select_previous_variant(self, message_id: str) -> None:
-        """Select the previous rendered variant for a message when available."""
-        message = self._message_by_id(message_id)
-        if (
-            message is None
-            or message.variants is None
-            or not message.variants.can_go_previous
-        ):
-            return
-        message.variants.selected_index -= 1
-        if self.is_mounted:
-            self.call_later(self.refresh_messages)
-
     def to_plain_text(self, width: int = 80) -> str:
         """Return an answer-oriented transcript without model thinking."""
         rule = "─" * max(1, width)
@@ -5428,8 +5423,7 @@ class ConsoleTranscript(VerticalScroll):
             body = _message_body(message, presentation)
             lines.append(body)
             lines.extend(
-                f"Canvas · {card.label}"
-                for card in canvas_card_presentations(message)
+                f"Canvas · {card.label}" for card in canvas_card_presentations(message)
             )
             _append_status_and_actions(message, body)
         if self._messages:
@@ -5756,6 +5750,11 @@ class ConsoleTranscript(VerticalScroll):
         try:
             button = self.query_one(selector, Button)
         except NoMatches:
+            if action_id == "regenerate":  # `r` also presses a Retry/Resend swap.
+                return any(
+                    self._press_selected_action_button(message_id, swap)
+                    for swap in ("retry", "resend")
+                )
             if action_id not in {"speak", "speak-stop"}:
                 return False
             try:
@@ -6653,6 +6652,11 @@ class ConsoleTranscript(VerticalScroll):
 
     def _flat_transcript_rows(self) -> list[_TranscriptRow]:
         """Plan the legacy per-message rows reused by standalone and nested UI."""
+        if (
+            self._delete_scope
+            and self._delete_scope.message_id != self.selected_message_id
+        ):
+            self._delete_scope = None  # moving the selection away cancels it
         rows: list[_TranscriptRow] = []
         banner = self.memory_banner_presentation
         banner_anchor = None
@@ -6853,10 +6857,16 @@ class ConsoleTranscript(VerticalScroll):
                         _TranscriptRow(
                             key=f"image:{message.id}",
                             kind="image",
-                            signature=("image", message.id, image_spec.mode) + (
-                                (image_spec.recovered_status, image_spec.recovered_key,
-                                 image_spec.pil is not None or image_spec.pixels is not None)
-                                if image_spec.recovered_status is not None else ()
+                            signature=("image", message.id, image_spec.mode)
+                            + (
+                                (
+                                    image_spec.recovered_status,
+                                    image_spec.recovered_key,
+                                    image_spec.pil is not None
+                                    or image_spec.pixels is not None,
+                                )
+                                if image_spec.recovered_status is not None
+                                else ()
                             ),
                             message=message,
                             image_spec=image_spec,
@@ -7128,7 +7138,9 @@ class ConsoleTranscript(VerticalScroll):
                 await self._sync_assistant_turn_widget(widget, row)
                 self._row_signatures[row.key] = row.signature
                 continue
-            updated_widget = self._update_row_widget(widget, row, turn_file_cards=turn_file_cards)
+            updated_widget = self._update_row_widget(
+                widget, row, turn_file_cards=turn_file_cards
+            )
             if updated_widget is widget:
                 self._row_signatures[row.key] = row.signature
                 continue
@@ -7476,7 +7488,12 @@ class ConsoleTranscript(VerticalScroll):
             detail = (
                 f"Arguments\n{presentation.arguments or 'Not retained'}\n\n"
                 + metadata
-                + "Result\n"
+                + (
+                    "Live output\n"
+                    if presentation.status == "running"
+                    and presentation.result_preview is not None
+                    else "Result\n"
+                )
                 + (
                     activity.tool_output_full
                     or (
@@ -7733,8 +7750,15 @@ class ConsoleTranscript(VerticalScroll):
     def _image_row_widget(self, spec: ConsoleImageRowSpec) -> Widget:
         """Build the mounted widget for one inline-image row."""
         if spec.recovered_status in {"missing", "deleted", "failed"}:
-            return Static(spec.recovered_status.capitalize() + " recovered media", classes="console-transcript-image")
-        if spec.recovered_status == "ready" and spec.pil is None and spec.pixels is None:
+            return Static(
+                spec.recovered_status.capitalize() + " recovered media",
+                classes="console-transcript-image",
+            )
+        if (
+            spec.recovered_status == "ready"
+            and spec.pil is None
+            and spec.pixels is None
+        ):
             return Static("Loading recovered media", classes="console-transcript-image")
         widget: Widget | None = None
         if spec.mode == "graphics" and spec.pil is not None:
@@ -7752,10 +7776,14 @@ class ConsoleTranscript(VerticalScroll):
                 w_cells, h_cells = fit_image_cell_size(
                     spec.pil.width, spec.pil.height, PIXELS_MAX_COLS, PIXELS_MAX_LINES
                 )
-                widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+                widget.remove_class(
+                    *(name for name in widget.classes if name.startswith("w-"))
+                )
                 # ds-runtime: Decoded image aspect ratio determines the fitted terminal-cell size.
                 widget.set_styles(width=w_cells)
-                widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+                widget.remove_class(
+                    *(name for name in widget.classes if name.startswith("h-"))
+                )
                 # ds-runtime: Decoded image aspect ratio determines the fitted terminal-cell size.
                 widget.set_styles(height=h_cells)
             except Exception:
@@ -7825,7 +7853,9 @@ class ConsoleTranscript(VerticalScroll):
             ):
                 widget.update_selected(row.selected)
                 return widget
-            return self._build_row_widget(row, track=True, turn_file_cards=turn_file_cards)
+            return self._build_row_widget(
+                row, track=True, turn_file_cards=turn_file_cards
+            )
         if (
             row.kind == "message"
             and row.message is not None
@@ -8274,6 +8304,9 @@ class ConsoleTranscript(VerticalScroll):
             fork_eligibility=self._fork_eligibility_by_message_id.get(
                 message.id, ConsoleForkEligibility(True)
             ),
+            pending_delete=self._delete_scope,
+            resend_available=resend_target_id(self._messages) == message.id
+            and not self._selection_run_active(),
             **self._generation_action_kwargs(message),
         )
 
@@ -8358,7 +8391,9 @@ class ConsoleTranscript(VerticalScroll):
         button = ConsoleTranscriptActionButton(
             action.label,
             id=f"console-message-action-{action.action_id}-{message.id}",
-            classes="console-transcript-action-button",
+            # A pending delete's confirm reads as danger (bundle utility class).
+            classes="console-transcript-action-button"
+            + (" ds-text-error" if action.action_id == "delete-confirm" else ""),
             disabled=not action.enabled,
         )
         if action.disabled_reason:

@@ -11,6 +11,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Button
 from tldw_chatbook.UI.MCP_Modules.mcp_workbench import MCPWorkbench
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.css.Themes.themes import ThemeVariableDefaultsMixin
 service=plane(); host=SimpleNamespace(unified_mcp_service=service)
 route, theme = sys.argv[1:]
 effects=[]
@@ -21,7 +22,7 @@ for name in ('connect_to_server','list_tools','execute_tool'):
  setattr(service.local_service.client,name,forbidden)
 class Bench(MCPWorkbench):
  def _start_initial_load(self): self.is_loading=False; self._reloading=False
-class Host(App):
+class Host(ThemeVariableDefaultsMixin, App):  # the guard names the tcss needs (TASK-33003.6)
  CSS_PATH=str(Path(sys.modules[MCPWorkbench.__module__].__file__).parents[2]/'css/tldw_cli_modular.tcss')
  def compose(self): yield Bench(host,id='bench')
 app=Host();app.theme=theme

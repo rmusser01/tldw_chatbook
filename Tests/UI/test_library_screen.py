@@ -298,8 +298,7 @@ def test_task_3303_options_round_trip_persisted_config(monkeypatch) -> None:
     # module-level config function it wraps.
     saved_sections: dict[str, dict] = {}
     screen._save_library_ingest_options = lambda section_values: (
-        saved_sections.update({s: dict(v) for s, v in section_values.items()})
-        or True
+        saved_sections.update({s: dict(v) for s, v in section_values.items()}) or True
     )
 
     screen._do_submit_ingest("/tmp/report.docx")
@@ -359,8 +358,7 @@ def test_task_3306_av_options_round_trip_persisted_config(monkeypatch) -> None:
     # module-level config function it wraps.
     saved_sections: dict[str, dict] = {}
     screen._save_library_ingest_options = lambda section_values: (
-        saved_sections.update({s: dict(v) for s, v in section_values.items()})
-        or True
+        saved_sections.update({s: dict(v) for s, v in section_values.items()}) or True
     )
 
     screen._do_submit_ingest("/tmp/talk.mp3")
@@ -401,9 +399,7 @@ def test_transcribe_cpp_config_worker_reports_path_free_success(
     selected = tmp_path / "private-model.gguf"
     configured: list[Path] = []
     fake_app = MagicMock()
-    monkeypatch.setattr(
-        LibraryScreen, "app", property(lambda _self: fake_app)
-    )
+    monkeypatch.setattr(LibraryScreen, "app", property(lambda _self: fake_app))
     monkeypatch.setattr(
         library_screen_module,
         "configure_transcribe_cpp_model_path",
@@ -431,9 +427,7 @@ def test_transcribe_cpp_config_success_requeues_failed_job_without_path() -> Non
 
     screen._apply_transcribe_cpp_gguf_result(True, "ingest-job-1")
 
-    screen.app_instance.retry_library_ingest_job.assert_called_once_with(
-        "ingest-job-1"
-    )
+    screen.app_instance.retry_library_ingest_job.assert_called_once_with("ingest-job-1")
     assert screen._transcribe_cpp_configured is True
     assert "GGUF configured" in screen.app_instance.notify.call_args.args[0]
 
@@ -627,7 +621,9 @@ async def test_handle_library_ingest_open_wires_to_open_job_in_library() -> None
     screen._open_job_in_library.assert_called_once_with(job)
 
 
-def test_ingest_browse_location_prefers_last_used_then_home(tmp_path, monkeypatch) -> None:
+def test_ingest_browse_location_prefers_last_used_then_home(
+    tmp_path, monkeypatch
+) -> None:
     """The file browser opens somewhere the user actually keeps files.
 
     It defaulted to ``"."`` -- whichever directory the process was started
@@ -672,12 +668,14 @@ def test_ingest_browse_remembers_the_directory_of_the_picked_file(
     # exactly one section -- which is what this pin reads back.
     monkeypatch.setattr(
         "tldw_chatbook.Library.library_browse_location.save_settings_to_cli_config",
-        lambda settings: [
-            saved.append((section, key, value))
-            for section, values in settings.items()
-            for key, value in values.items()
-        ]
-        is not None,
+        lambda settings: (
+            [
+                saved.append((section, key, value))
+                for section, values in settings.items()
+                for key, value in values.items()
+            ]
+            is not None
+        ),
     )
 
     screen._remember_library_ingest_location(picked)
@@ -837,8 +835,7 @@ def test_task_3307_image_options_round_trip_persisted_config(monkeypatch) -> Non
     # module-level config function it wraps.
     saved_sections: dict[str, dict] = {}
     screen._save_library_ingest_options = lambda section_values: (
-        saved_sections.update({s: dict(v) for s, v in section_values.items()})
-        or True
+        saved_sections.update({s: dict(v) for s, v in section_values.items()}) or True
     )
 
     screen._do_submit_ingest("/tmp/scan.png")

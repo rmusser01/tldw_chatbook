@@ -8,6 +8,7 @@ from textual.css.query import QueryError
 from textual.widget import Widget
 from textual.widgets import Static
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.config import get_cli_setting as _real_get_cli_setting
 from tldw_chatbook.UI.Lab_Modules.lab_rail_layout import (
     LAB_RAIL_INSPECTOR,
@@ -50,7 +51,7 @@ def _disable_splash_race(monkeypatch) -> None:
             return False
         return _real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", fake_get_cli_setting)
+    set_app_global(monkeypatch, "get_cli_setting", fake_get_cli_setting)
 
 
 class _ProbeBody(Static):
@@ -334,9 +335,9 @@ async def test_toggling_a_rail_preserves_the_mounted_mode_content(fake_rail_stor
         await pilot.pause()
 
         assert screen.query_one(_ProbeBody) is not None, "body lost after toggle"
-        assert (
-            screen.query_one("#probe-rail-row") is not None
-        ), "rail content lost after toggle"
+        assert screen.query_one("#probe-rail-row") is not None, (
+            "rail content lost after toggle"
+        )
         assert screen.query_one("#lab-rail").display is False
         assert screen.query_one("#lab-rail-handle").display is True
 
@@ -392,15 +393,15 @@ async def test_screen_level_recompose_repopulates_rail_inspector_and_body(
         await pilot.pause()
         await pilot.pause()
 
-        assert (
-            screen.query_one("#probe-rail-row") is not None
-        ), "rail content missing after screen-level recompose"
-        assert (
-            screen.query_one("#probe-inspector-row") is not None
-        ), "inspector content missing after screen-level recompose"
-        assert (
-            screen.query_one(_ProbeBody) is not None
-        ), "body missing after screen-level recompose"
+        assert screen.query_one("#probe-rail-row") is not None, (
+            "rail content missing after screen-level recompose"
+        )
+        assert screen.query_one("#probe-inspector-row") is not None, (
+            "inspector content missing after screen-level recompose"
+        )
+        assert screen.query_one(_ProbeBody) is not None, (
+            "body missing after screen-level recompose"
+        )
         assert screen.body_ready_calls == body_ready_before + 1
 
 
@@ -408,7 +409,11 @@ class _CountingLabScreen(_ProbeLabScreen):
     """Counts widget writes so an idle refresh can be proven to write nothing."""
 
     def __init__(self, app_instance, **kwargs):
-        super().__init__(app_instance, chips=(LabStatusChip("servers", "Servers: none running"),), **kwargs)
+        super().__init__(
+            app_instance,
+            chips=(LabStatusChip("servers", "Servers: none running"),),
+            **kwargs,
+        )
         self.header_syncs = 0
         self.chip_text = "Servers: none running"
 
@@ -424,7 +429,9 @@ class _CountingLabScreen(_ProbeLabScreen):
 
 
 @pytest.mark.asyncio
-async def test_an_idle_refresh_writes_nothing_but_a_changed_value_still_lands(monkeypatch):
+async def test_an_idle_refresh_writes_nothing_but_a_changed_value_still_lands(
+    monkeypatch,
+):
     """`refresh_lab_status` runs on a 2s timer; unchanged values must not repaint.
 
     Both `Static.update()` and `DestinationHeader.sync_state()` refresh
@@ -450,15 +457,18 @@ async def test_an_idle_refresh_writes_nothing_but_a_changed_value_still_lands(mo
 
         monkeypatch.setattr(chip, "update", counting_update)
 
-        screen.refresh_lab_status()   # seeds the cache
-        screen.refresh_lab_status()   # idle tick
-        screen.refresh_lab_status()   # idle tick
+        screen.refresh_lab_status()  # seeds the cache
+        screen.refresh_lab_status()  # idle tick
+        screen.refresh_lab_status()  # idle tick
         idle_writes = writes["n"]
 
         screen.chip_text = "Servers: 1 running"
         screen.refresh_lab_status()
         assert writes["n"] > idle_writes, "a changed chip value was not written"
-        assert chip.renderable == "Servers: 1 running" or str(chip.renderable) == "Servers: 1 running"
+        assert (
+            chip.renderable == "Servers: 1 running"
+            or str(chip.renderable) == "Servers: 1 running"
+        )
 
         before = writes["n"]
         screen.refresh_lab_status()

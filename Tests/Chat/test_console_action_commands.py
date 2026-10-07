@@ -50,3 +50,75 @@ def test_each_action_command_maps_to_a_real_screen_method():
     # no target points at a nonexistent command
     action_names = {n for n, _ in CONSOLE_ACTION_COMMANDS}
     assert set(targets) == action_names
+
+
+def test_model_takes_a_query_and_help_lists_it():
+    """TASK-33004.7 AC#1: /help lists `/model [query]`; the other action
+    commands still take nothing."""
+    reg = default_console_registry()
+    hints = {c.name: c.argument_hint for c in reg.commands()}
+    assert hints["model"] == "[query]"
+    assert {name: hints[name] for name, _ in CONSOLE_ACTION_COMMANDS} == {
+        name: ("[query]" if name == "model" else "") for name, _ in CONSOLE_ACTION_COMMANDS
+    }
+    out = build_help_listing(reg.commands(), _COMMAND_DESCRIPTIONS)
+    assert "/model [query]" in out
+    parse = reg.parse("/model son")
+    assert (parse.kind, parse.name, parse.args) == (KIND_COMMAND, "model", "son")
+
+
+def test_model_and_settings_descriptions_name_their_surfaces_and_keys():
+    """TASK-33004.7 AC#6: the slash popup teaches the same two surfaces."""
+    assert "Switch model" in _COMMAND_DESCRIPTIONS["model"]
+    assert "Alt+M" in _COMMAND_DESCRIPTIONS["model"]
+    assert "Chat settings" in _COMMAND_DESCRIPTIONS["settings"]
+    assert "Ctrl+O" in _COMMAND_DESCRIPTIONS["settings"]
+
+
+async def _run(command: str, screen) -> None:
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    await ChatScreen._console_command_run_action(
+        screen, default_console_registry().parse(command)
+    )
+
+
+def test_the_runner_passes_arguments_only_to_commands_that_take_them():
+    """TASK-33004.7 AC#1/AC#7: `/model son` reaches the opener with `son`;
+    `/new son` still opens a tab and ignores the stray text, as before."""
+    import asyncio
+    from typing import ClassVar
+
+    calls: list[tuple[str, tuple]] = []
+
+    class _Screen:
+        _CONSOLE_ACTION_COMMAND_TARGETS: ClassVar[dict[str, str]] = {
+            "model": "action_open_console_model_popover",
+            "new": "action_new_console_tab",
+        }
+
+        async def action_open_console_model_popover(self, query: str = "") -> None:
+            calls.append(("model", (query,)))
+
+        def action_new_console_tab(self) -> None:
+            calls.append(("new", ()))
+
+        async def _append_native_console_system_message(self, text: str) -> None:
+            calls.append(("message", (text,)))
+
+        def _clear_console_composer_draft(self) -> None:
+            calls.append(("clear", ()))
+
+    screen = _Screen()
+    asyncio.run(_run("/model son", screen))
+    asyncio.run(_run("/model", screen))
+    asyncio.run(_run("/new son", screen))
+    # A command that ran leaves no "/model son" behind in the composer.
+    assert calls == [
+        ("clear", ()),
+        ("model", ("son",)),
+        ("clear", ()),
+        ("model", ("",)),
+        ("clear", ()),
+        ("new", ()),
+    ]

@@ -169,6 +169,8 @@ _FLEET = (
 import threading, sqlite3, time
 from Tests.Agents.test_agent_service import FleetChat, fence
 from tldw_chatbook.Agents.fleet_coordinator import FleetCoordinator
+# Initialize the module startup owner before isolating the child lease.
+from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
 from tldw_chatbook.Tools import workspace_file_roots
 entered=threading.Event()

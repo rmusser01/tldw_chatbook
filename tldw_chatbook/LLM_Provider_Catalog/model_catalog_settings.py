@@ -32,6 +32,26 @@ AUTO_REFRESH_PROVIDER_LIST_KEYS: tuple[str, ...] = (
     "DeepInfra",
     "Nebius",
     "Novita",
+    # TASK-33350: presets with a documented OpenAI-shaped /models route
+    # (MiMo and BytePlus are seeded-only).
+    "TokenHub",
+    "StepFun",
+    # TASK-33351 gateway/host presets with a models route (Upstage and
+    # Qianfan document none and ship seeded).
+    "Vercel",
+    "ZenMux",
+    "Kilo",
+    "SiliconFlow",
+    "Baseten",
+    "GMI",
+    "OllamaCloud",
+    "Arcee",
+    "Nous",
+    "Venice",
+    "Meta",
+    # TASK-33506: W&B lists models; Azure (deployments), Cloudflare (no
+    # route), OpenCode Zen and Command Code (mixed protocols) ship seeded.
+    "WandB",
 )
 
 SELECTOR_MERGE_CAP = 50
@@ -99,7 +119,9 @@ class _ModelCatalogSection(BaseModel):
         return _normalized_key_set(value)
 
 
-def load_model_catalog_settings(settings: Mapping[str, Any] | None) -> ModelCatalogSettings:
+def load_model_catalog_settings(
+    settings: Mapping[str, Any] | None,
+) -> ModelCatalogSettings:
     """Parse the ``[model_catalog]`` section of the loaded settings.
 
     Args:

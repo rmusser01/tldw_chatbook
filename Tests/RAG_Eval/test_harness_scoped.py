@@ -32,6 +32,7 @@ it stays a statement about routing that a fixture edit cannot move.
 Skipped unless `RAG_EVAL=1` plus the embeddings extras plus a warm model
 cache — see `harness/environment.py`.
 """
+
 from __future__ import annotations
 
 from Tests.RAG_Eval.harness.environment import harness_gate
@@ -53,9 +54,7 @@ TARGET_SLUG = "media-obsidian-lathe"
 SCOPE_SLUGS = (TARGET_SLUG, "note-zephyr-flywheel")
 
 
-def test_a_scoped_query_under_a_hybrid_profile_runs_fused_hybrid(
-    tmp_path, capsys
-):
+def test_a_scoped_query_under_a_hybrid_profile_runs_fused_hybrid(tmp_path, capsys):
     """THE AFTER-PIN of this arc's routing change (flipped 2026-08-11).
 
     On the hybrid profile, through `LibraryLocalRagSearchService`:
@@ -83,7 +82,11 @@ def test_a_scoped_query_under_a_hybrid_profile_runs_fused_hybrid(
     writers, real embeddings) is the expensive part, and running the control
     in a second one would compare across two indexes.
     """
-    from Tests.RAG_Eval.harness.goldenset import SCOPED_CATEGORY, GoldenQuery, load_fixtures
+    from Tests.RAG_Eval.harness.goldenset import (
+        SCOPED_CATEGORY,
+        GoldenQuery,
+        load_fixtures,
+    )
     from Tests.RAG_Eval.harness.ingest import build_eval_runtime
     from Tests.RAG_Eval.harness.runner import run_eval
 

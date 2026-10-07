@@ -47,7 +47,9 @@ Payload-layer (Task 5) divergences from the zai template:
   field with a caller-supplied value is a bad request (never silently
   dropped -- hidden caller intent is the failure the strict engine exists
   to surface), and ``reasoning_effort`` is gated by ``record.reasoning_effort``
-  with the key from ``record.reasoning_effort_key``.
+  with the key from ``record.reasoning_effort_key`` -- or, for a model in
+  ``record.thinking_toggle_models``, sent as a boolean
+  ``chat_template_kwargs`` thinking switch.
 - ``record.extra_body_fields`` merge into the payload last, each validated
   bounded (preset authoring data, not caller input).
 - No provider-invented fields: zai's ``thinking``/``request_id``/``user_id``
@@ -113,11 +115,19 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from urllib.parse import urlsplit
 
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Strict,
+    StringConstraints,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
 
 from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError, ChatProviderError
 from tldw_chatbook.Chat.provider_continuation import (
@@ -130,6 +140,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     validate_continuation_restore,
 )
 from tldw_chatbook.Chat.provider_readiness import configured_workspace_base_url
+from tldw_chatbook.Chat.sampling_params import REASONING_EFFORT_VALUES
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatProtocolError,
     HostedChatStream,
@@ -149,7 +160,7 @@ from tldw_chatbook.config import (
     provider_settings_for_key,
     resolve_provider_api_key,
 )
-from tldw_chatbook.provider_registry import ProviderRecord
+from tldw_chatbook.provider_registry import ProviderRecord, thinking_toggle_key
 
 
 @dataclass(frozen=True)
@@ -176,6 +187,9 @@ class HostedProviderResolution:
     seed: int | None = None
     stop: object = None
     response_format: object = None
+    # Headers from ``record.config_headers`` whose settings are set
+    # (TASK-33506/33507); empty for every other record.
+    extra_headers: Mapping[str, str] = field(default_factory=dict)
 
 
 class HostedProviderSettings(BaseModel):
@@ -455,6 +469,7 @@ def resolve_hosted_request(
         if record.defaults_settings_section is not None
         else None
     )
+    extra_headers = _resolve_config_headers(record, settings)
     return HostedProviderResolution(
         provider=record.key,
         model=_resolve_string(
@@ -482,8 +497,54 @@ def resolve_hosted_request(
             settings=settings,
             default=_settings_default(defaults, "streaming", True),
         ),
+        extra_headers=extra_headers,
         **(section_sampling or {}),
     )
+
+
+#: A config-sourced header value goes on the wire: a strict, single-line
+#: string of at most 256 characters (surrounding whitespace dropped).
+_HEADER_VALUE = TypeAdapter(
+    Annotated[
+        str,
+        Strict(),
+        StringConstraints(strip_whitespace=True, max_length=256, pattern=r"^[^\r\n\x00]*$"),
+    ]
+)
+
+
+def _resolve_config_headers(
+    record: ProviderRecord, settings: Mapping[str, object]
+) -> dict[str, str]:
+    """Resolve ``record.config_headers`` from the preset's settings table.
+
+    An unset or blank setting sends no header. A set one must be a
+    single-line string of at most 256 characters, since it goes on the wire.
+
+    Args:
+        record: Preset whose optional headers are resolved.
+        settings: The preset's ``api_settings`` table.
+
+    Returns:
+        Header name -> value for every configured header.
+
+    Raises:
+        ChatConfigurationError: When a set value is not a usable header value.
+    """
+    headers: dict[str, str] = {}
+    for header, setting in record.config_headers.items():
+        value = settings.get(setting)
+        if value is None:
+            continue
+        try:
+            checked = _HEADER_VALUE.validate_python(value)
+        except ValidationError:
+            raise _validators_for(record).configuration_error(
+                f"{record.display_name} api_settings.{record.key}.{setting} is invalid."
+            ) from None
+        if checked:
+            headers[header] = checked
+    return headers
 
 
 def _validators_for(record: ProviderRecord) -> ProviderPayloadValidators:
@@ -868,7 +929,7 @@ def build_hosted_chat_payload(
         tools: OpenAI function-tool descriptors.
         tool_choice: Only ``"auto"`` (with tools) is supported.
         reasoning_effort: Reasoning-effort request; requires
-            ``record.reasoning_effort``.
+            ``record.reasoning_effort`` or a thinking-toggle model.
         provider_continuations: Durable continuation checkpoints to restore
             onto the message history.
         temperature: Sampler in [0, 1]; requires the ``temperature`` flag.
@@ -968,7 +1029,9 @@ def build_hosted_chat_payload(
         payload["top_k"] = top_k
     if max_tokens is not None:
         _require_payload_flag(record, "max_tokens")
-        payload["max_tokens"] = validators.positive_integer("max_tokens", max_tokens)
+        payload[record.max_tokens_key or "max_tokens"] = validators.positive_integer(
+            "max_tokens", max_tokens
+        )
     if stop is not None:
         _require_payload_flag(record, "stop")
         payload["stop"] = validators.normalize_stop(stop)
@@ -1032,13 +1095,28 @@ def build_hosted_chat_payload(
     if validated_choice is not None:
         payload["tool_choice"] = validated_choice
     if reasoning_effort is not None:
-        if not record.reasoning_effort:
+        toggle_key = thinking_toggle_key(record, resolution.model)
+        if record.reasoning_effort:
+            level = _bounded_identifier(record, "reasoning effort", reasoning_effort)
+            level = record.reasoning_effort_map.get(level, level)
+            if (
+                record.reasoning_effort_values is not None
+                and level not in record.reasoning_effort_values
+            ):
+                raise bad_request(
+                    f"{record.display_name} does not accept that reasoning effort level."
+                )
+            payload[record.reasoning_effort_key or "reasoning_effort"] = level
+        elif toggle_key is not None:
+            # A boolean switch cannot pass an unknown level through for the
+            # provider to reject, so validate against the shared set (Qodo).
+            if reasoning_effort not in REASONING_EFFORT_VALUES:
+                raise bad_request(f"{record.display_name} reasoning effort is invalid.")
+            payload["chat_template_kwargs"] = {toggle_key: reasoning_effort != "none"}
+        else:
             raise bad_request(
                 f"{record.display_name} reasoning effort is unsupported."
             )
-        payload[record.reasoning_effort_key or "reasoning_effort"] = (
-            _bounded_identifier(record, "reasoning effort", reasoning_effort)
-        )
     for key, value in record.extra_body_fields.items():
         if not validators.json_shape_is_bounded(value):
             raise bad_request(f"{record.display_name} extra body field {key} is invalid.")
@@ -1169,6 +1247,7 @@ def _normalize_tool_choice(
 ) -> str | None:
     if value is None:
         return None
+    _require_payload_flag(record, "tool_choice")
     if value == "auto" and tools is not None:
         return "auto"
     raise _validators_for(record).bad_request(
@@ -1355,7 +1434,8 @@ class HostedPresetFinishPolicy:
         Raises:
             ChatProviderError: When the reason is one of the preset's
                 provider-terminal errors (record identity, 502, reason
-                text never included in the message).
+                text never included in the message), or a ``length`` stop
+                produced no text and no calls (400, token limit named).
             HostedChatProtocolError: When the reason is outside the
                 preset's terminal set, or the reason/state pairing is
                 inconsistent (``tool_calls`` without calls; ``stop``/
@@ -1381,6 +1461,24 @@ class HostedPresetFinishPolicy:
                 raise HostedChatProtocolError(
                     f"{record.display_name} finish state is inconsistent."
                 )
+        elif (
+            finish_reason == "length"
+            and not has_text
+            and not has_calls
+            and not record.tolerant_response_extras
+        ):
+            # A reasoning model can spend the whole token budget thinking and
+            # stop on the limit with no reply. Say so, as a 400: the agent
+            # runtime retries 5xx, and this request cannot succeed unchanged
+            # (TASK-33504).
+            raise ChatProviderError(
+                provider=record.key,
+                message=(
+                    f"{record.display_name} reached the max-tokens limit "
+                    "before writing a reply. Raise Max tokens and try again."
+                ),
+                status_code=400,
+            )
         elif has_calls or (
             not has_text and not record.tolerant_response_extras
         ):
@@ -1418,6 +1516,52 @@ class HostedPresetFinishPolicy:
                 f"{self._record.display_name} reasoning content is malformed."
             )
         return value
+
+
+def raise_on_error_frame(record: ProviderRecord, event: object) -> None:
+    """Fail on a gateway's mid-stream error frame (TASK-33350).
+
+    Tencent TokenHub documents that a failure after the 200 header is sent
+    arrives as a bare ``{"error": {...}}`` SSE event followed by ``[DONE]``.
+    The provider-authored error text is never copied into the message.
+
+    Args:
+        record: Preset naming the error-frame key (``error_frame_key``).
+        event: One decoded response body or stream event.
+
+    Raises:
+        ChatProviderError: When the event carries the error-frame key.
+    """
+    key = record.error_frame_key
+    if key is None or not isinstance(event, Mapping) or key not in event:
+        return
+    raise ChatProviderError(
+        provider=record.key,
+        message=f"{record.display_name} reported an error during the response.",
+        status_code=502,
+    )
+
+
+def provider_event_check(
+    record: ProviderRecord,
+) -> Callable[[Mapping[str, Any]], None] | None:
+    """Return the record's per-event provider checks, or ``None`` when it has none.
+
+    Args:
+        record: Preset whose ``error_frame_key``/``status_envelope_key`` apply.
+
+    Returns:
+        A callable run on every decoded stream event before parsing, or
+        ``None`` so records without either key keep the unchecked stream.
+    """
+    if record.error_frame_key is None and record.status_envelope_key is None:
+        return None
+
+    def check(event: Mapping[str, Any]) -> None:
+        raise_on_error_frame(record, event)
+        raise_on_status_envelope(record, event)
+
+    return check
 
 
 def raise_on_status_envelope(record: ProviderRecord, event: object) -> None:
@@ -1480,6 +1624,7 @@ def normalize_hosted_provider_response(
     validators = _validators_for(record)
     safe = deepcopy(response)
     try:
+        raise_on_error_frame(record, safe)
         raise_on_status_envelope(record, safe)
         if isinstance(safe, Mapping):
             choices = safe.get("choices")
@@ -1528,6 +1673,7 @@ def normalize_hosted_provider_response(
             allowed_choice_keys=record.choice_allowances,
             allowed_message_keys=record.message_allowances,
             tolerant_top_level_extras=record.tolerant_response_extras,
+            allowed_tool_call_keys=record.tool_call_allowances,
         )
     except ChatProviderError:
         raise
@@ -1943,6 +2089,18 @@ def build_hosted_chat_handler(
     return chat_with_hosted_provider
 
 
+def _engine_read_timeout(record: ProviderRecord, configured: float) -> float:
+    """A self-hosted record's read timeout outlasts the first-token window.
+
+    TASK-34100.5 review (B-F1): see ``self_hosted_read_timeout``.
+    """
+    if record.classification != "local":
+        return configured
+    from tldw_chatbook.Chat.stream_stall_watchdog import self_hosted_read_timeout
+
+    return self_hosted_read_timeout(configured)
+
+
 def _send_hosted_chat_request(
     record: ProviderRecord,
     *,
@@ -2021,10 +2179,12 @@ def _send_hosted_chat_request(
                 provider=record.key,
                 base_url=resolution.base_url,
                 api_key=resolution.api_key,
-                timeout=resolution.timeout,
+                timeout=_engine_read_timeout(record, resolution.timeout),
                 retries=resolution.retries,
                 retry_delay=resolution.retry_delay,
                 auth_scheme=record.auth_scheme,
+                extra_headers=resolution.extra_headers,
+                display_name=record.display_name,
             ),
             route="chat/completions",
             payload=payload,
@@ -2040,11 +2200,8 @@ def _send_hosted_chat_request(
                     allowed_message_keys=record.message_allowances,
                     tolerant_top_level_extras=record.tolerant_response_extras,
                     usage_optional=record.stream_usage_optional,
-                    event_check=(
-                        (lambda event: raise_on_status_envelope(record, event))
-                        if record.status_envelope_key is not None
-                        else None
-                    ),
+                    event_check=provider_event_check(record),
+                    annotation_key=record.stream_annotation_key,
                 ),
                 record=record,
                 resolution=resolution,

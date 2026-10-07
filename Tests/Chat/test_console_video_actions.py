@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.UI.Console_Modules import video as video_controller_module
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
+from tldw_chatbook.UI.Screens import chat_screen
 from Tests.UI.console_controller_stubs import (
     stub_fleet_controller,
     stub_library_activity_controller,
@@ -65,13 +66,13 @@ def _video_action_screen(tmp_path, *, container="mp4"):
         extension=container,
     )
     resolve_calls = []
-    real_resolve = video_store.resolve
+    real_resolve = video_store.resolve_state
 
     def _resolve(message_id, slug, **kwargs):
         resolve_calls.append((message_id, slug, kwargs.get("extension")))
         return real_resolve(message_id, slug, **kwargs)
 
-    video_store.resolve = _resolve
+    video_store.resolve_state = _resolve
 
     screen = ChatScreen.__new__(ChatScreen)
     notifications = []
@@ -86,18 +87,28 @@ def _video_action_screen(tmp_path, *, container="mp4"):
     # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
     # `self._library_activity.build_provider` (TASK-23144) unguarded. The
     # `build_console_controllers` call below replaces both with the real
-    # thing; it runs too late for the store assignment.
+    # owners and initializes Session before the store attachment.
     stub_fleet_controller(screen, context="video actions bare screen")
     stub_library_activity_controller(screen, context="video actions bare screen")
+    build_console_controllers(
+        screen,
+        resume_screen_is_torn_down=lambda: chat_screen._console_screen_is_torn_down(
+            screen
+        ),
+        read_resume_asyncio=lambda: chat_screen.asyncio,
+        resume_isawaitable=lambda result: chat_screen.inspect.isawaitable(result),
+        read_resume_logger=lambda: chat_screen.logger,
+        rag_source_types_accessor=lambda: (),
+        rag_top_k_accessor=lambda: 8,
+        read_trace_recovery_dispatch=lambda: (
+            chat_screen.dispatch_trace_call_recovery_action
+        ),
+        read_trace_recovery_state=lambda: chat_screen.trace_call_recovery_state,
+    )
     screen._console_chat_store = store
     screen._ensure_console_chat_store = lambda: store
     screen._sync_native_console_chat_ui = AsyncMock()
     screen.run_worker = lambda awaitable, **_kwargs: pending_workers.append(awaitable)
-    build_console_controllers(
-        screen,
-        rag_source_types_accessor=lambda: (),
-        rag_top_k_accessor=lambda: 8,
-    )
     screen._console_video_store = video_store
     return (
         screen,
@@ -178,6 +189,7 @@ def test_video_action_dispatch_returns_screen_targets():
         assert result.target_message_id == message.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_handle_console_message_action_routes_video_play_with_persisted_storage_id(
     tmp_path, monkeypatch
@@ -209,6 +221,7 @@ async def test_handle_console_message_action_routes_video_play_with_persisted_st
     assert pushed[0].path == str(stored_path)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_handle_console_message_action_routes_video_save_with_persisted_storage_id(
     tmp_path, monkeypatch
@@ -236,6 +249,7 @@ async def test_handle_console_message_action_routes_video_save_with_persisted_st
     assert (export_root / "dusk-over-neon-tokyo.mp4").read_bytes() == b"video"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_video_play_resolves_webm_from_metadata(tmp_path, monkeypatch):
     screen, message, stored_path, resolve_calls, pushed, _pending = (
@@ -267,6 +281,7 @@ async def test_video_play_resolves_webm_from_metadata(tmp_path, monkeypatch):
     assert pushed[0].path == str(stored_path)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_video_save_copy_preserves_webm_extension_and_collision_names(
     tmp_path, monkeypatch

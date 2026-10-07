@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -640,6 +641,156 @@ def test_close_all_tolerates_exit_failures(
     )
 
     manager.close_all()  # must not raise
+
+
+def test_no_master_is_spawned_after_close_all(fake_ssh: FakeSsh) -> None:
+    """TASK-33406: a straggler call after app exit starts no detached master."""
+    manager = _manager(fake_ssh)
+    manager.close_all()
+    manager.ensure_master(_LOC)
+    assert fake_ssh.count("-MNf") == 0
+    assert manager.restart_if_dead(_LOC) is False
+    assert not any("check" in argv for argv in fake_ssh.invocations())
+
+
+def test_close_all_waits_for_an_in_flight_spawn_and_exits_it(
+    fake_ssh: FakeSsh, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR #2899 review: a spawn already past its closed-check is not orphaned.
+
+    close_all must wait for it (host-lock barrier) and ``-O exit`` the master
+    it produced — no master outlives close_all.
+    """
+    manager = _manager(fake_ssh)
+    real_spawn = manager._spawn_master
+    spawning, release = threading.Event(), threading.Event()
+
+    def held_spawn(*args: Any) -> None:
+        spawning.set()
+        release.wait(timeout=10)
+        real_spawn(*args)
+
+    monkeypatch.setattr(manager, "_spawn_master", held_spawn)
+    ensure = threading.Thread(target=manager.ensure_master, args=(_LOC,))
+    ensure.start()
+    closer = threading.Thread(target=manager.close_all)
+    try:
+        assert spawning.wait(timeout=10)
+        closer.start()
+        closer.join(timeout=0.5)
+        assert closer.is_alive(), "close_all returned while a master spawn was in flight"
+    finally:
+        release.set()
+        ensure.join(timeout=10)
+        if closer.ident is not None:
+            closer.join(timeout=10)
+    assert not ensure.is_alive() and not closer.is_alive()
+
+    argvs = fake_ssh.invocations()
+    spawn_at = next(i for i, argv in enumerate(argvs) if "-MNf" in argv)
+    exits = [i for i, argv in enumerate(argvs) if "exit" in argv]
+    assert exits and exits[-1] > spawn_at, argvs
+    assert not fake_ssh.socket_path(manager, _LOC).exists()
+
+
+def test_restart_waiting_on_the_host_lock_runs_no_check_after_close_all(
+    fake_ssh: FakeSsh, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR #2899 review: a restart queued on the host lock re-checks _closed."""
+    manager = _manager(fake_ssh)
+    host_lock = manager._lock_for(transport._host_key(_LOC))
+    real_control_path_for = manager.control_path_for
+    past_entry = threading.Event()
+
+    def spy_control_path_for(loc: Any) -> Any:
+        past_entry.set()  # restart_if_dead's entry _closed check is behind it
+        return real_control_path_for(loc)
+
+    monkeypatch.setattr(manager, "control_path_for", spy_control_path_for)
+    result: dict[str, bool] = {}
+
+    def restart() -> None:
+        result["restarted"] = manager.restart_if_dead(_LOC)
+
+    restarter = threading.Thread(target=restart)
+    closer = threading.Thread(target=manager.close_all)
+    host_lock.acquire()
+    try:
+        restarter.start()
+        assert past_entry.wait(timeout=10)
+        closer.start()
+        deadline = time.monotonic() + 10
+        while not manager._closed and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert manager._closed
+    finally:
+        host_lock.release()
+        restarter.join(timeout=10)
+        if closer.ident is not None:
+            closer.join(timeout=10)
+    assert not restarter.is_alive() and not closer.is_alive()
+
+    assert result == {"restarted": False}
+    assert not any("check" in argv for argv in fake_ssh.invocations()), (
+        fake_ssh.invocations()
+    )
+
+
+def test_client_options_after_close_all_connect_directly(fake_ssh: FakeSsh) -> None:
+    """PR #2899 review: a straggler call after app exit skips the mux path."""
+    manager = _manager(fake_ssh)
+    manager.ensure_master(_LOC)
+    manager.close_all()
+
+    assert manager.client_options(_LOC) == [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=3",
+    ]
+
+
+def test_closed_singleton_part_1_app_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Tools import remote_workspace_transport as transport
+
+    # Stub the config accessor to avoid full config load; the singleton
+    # shutdown behavior under test is independent of config details.
+    monkeypatch.setattr(
+        config_module,
+        "get_console_ssh_settings",
+        lambda: config_module.ConsoleSshSettings(
+            control_persist="10m",
+            enable_multiplexing=True,
+            connect_timeout_s=3,
+        ),
+    )
+
+    transport.get_master_manager().close_all()
+    assert transport.get_master_manager()._closed
+
+
+def test_closed_singleton_part_2_next_test_gets_a_working_manager(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tldw_chatbook import config as config_module
+    from tldw_chatbook.Tools import remote_workspace_transport as transport
+
+    # Stub the config accessor so part 2 can construct a fresh manager.
+    monkeypatch.setattr(
+        config_module,
+        "get_console_ssh_settings",
+        lambda: config_module.ConsoleSshSettings(
+            control_persist="10m",
+            enable_multiplexing=True,
+            connect_timeout_s=3,
+        ),
+    )
+
+    mgr = transport.get_master_manager()
+    assert not mgr._closed
 
 
 # ---------------------------------------------------------------------------

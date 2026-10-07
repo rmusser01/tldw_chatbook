@@ -954,7 +954,7 @@ async def test_live_local_capture_commit_failure_retry_modes_archive_delete_and_
             assert len(exported["collections"]) == 45
             assert len(exported["memberships"]) == 45
             assert screen._collections_state.action_status == (
-                "Legacy recovery export complete."
+                f"Legacy recovery export complete: {destination}"
             )
     finally:
         extraction_release.set()

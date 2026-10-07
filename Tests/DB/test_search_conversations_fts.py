@@ -154,6 +154,68 @@ class TestSqlShapePin:
         assert "MATCH" in source
 
 
+def _count_query_plan(db: CharactersRAGDB, query=None, **filters) -> list[str]:
+    """EXPLAIN QUERY PLAN details for the page count statement.
+
+    Captured with ``sqlite_stat1`` absent -- no DB module here runs
+    ``ANALYZE``, so this is the plan every real user gets (CLAUDE.md index
+    rule).
+    """
+    where_clause, params = db._conversation_search_filter(query, **filters)
+    with db.transaction() as conn:
+        has_stats = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'sqlite_stat1'"
+        ).fetchone()[0]
+        assert has_stats == 0
+        rows = conn.execute(
+            "EXPLAIN QUERY PLAN SELECT COUNT(*) AS total FROM conversations "
+            f"WHERE {where_clause}",
+            tuple(params),
+        ).fetchall()
+    return [row[3] for row in rows]
+
+
+class TestContentMatchRunsOncePerQuery:
+    """PERF-02 (TASK-33261): the FTS match must not re-run per conversation.
+
+    TASK-278 moved content matching onto ``messages_fts`` but as a
+    correlated ``EXISTS(... WHERE m.conversation_id = conversations.id AND
+    messages_fts MATCH ?)``, so SQLite re-evaluates the full-text query once
+    per candidate conversation: ~1.1 s against ~7 ms uncorrelated in the
+    2026-09-27 audit's DB bench, ~70 s for a common term at 150k messages.
+    An uncorrelated ``id IN (SELECT conversation_id ...)`` evaluates the
+    MATCH once. Pinned on the plan, not on timing.
+    """
+
+    def test_single_query_content_match_is_not_correlated(self, db):
+        """A plain query's content match plans as an uncorrelated subquery."""
+        _conversation_with_message(db, title="Title", content="alpha beta")
+        plan = _count_query_plan(db, "alpha")
+        assert any("VIRTUAL TABLE" in detail for detail in plan), plan
+        assert not [d for d in plan if "CORRELATED" in d], plan
+
+    def test_per_term_content_match_is_not_correlated(self, db):
+        """Each ``query_terms`` content match plans as an uncorrelated subquery."""
+        _conversation_with_message(db, title="Title", content="alpha beta")
+        plan = _count_query_plan(
+            db, None, scope_type="all", query_terms=["alpha", "beta"]
+        )
+        assert any("VIRTUAL TABLE" in detail for detail in plan), plan
+        assert not [d for d in plan if "CORRELATED" in d], plan
+
+    def test_per_term_content_match_requires_every_term(self, db):
+        """``query_terms`` stay AND-ed: a conversation must match every term."""
+        both = _conversation_with_message(
+            db, title="Unrelated", content="alpha beta gamma"
+        )
+        _conversation_with_message(db, title="Other", content="alpha only here")
+        rows, total, _ = db.search_conversations_page(
+            None, scope_type="all", query_terms=["alpha", "beta"]
+        )
+        assert _ids(rows) == {both}
+        assert total == 1
+
+
 def _seed_coherent_conversation_population(db: CharactersRAGDB) -> list[str]:
     conversation_ids = []
     for index in range(45):
@@ -425,7 +487,9 @@ class TestCoherentConversationPages:
         reader.close_connection()
         writer.close_connection()
 
-    @pytest.mark.parametrize("method_name", ["search_conversations_page", "locate_conversation_page"])
+    @pytest.mark.parametrize(
+        "method_name", ["search_conversations_page", "locate_conversation_page"]
+    )
     def test_direct_cursor_page_reads_wrap_sqlite_errors(
         self, db, monkeypatch, method_name
     ):
@@ -448,25 +512,22 @@ class TestLocateConversationPage:
         expected_ids = _seed_coherent_conversation_population(db)
         target_id = expected_ids[24]
 
-        located = db.locate_conversation_page(
-            target_id, scope_type="all", limit=20
-        )
+        located = db.locate_conversation_page(target_id, scope_type="all", limit=20)
 
         assert located["offset"] == 20
         assert located["target_index"] == 24
         assert located["total"] == 45
         assert target_id in {row["id"] for row in located["rows"]}
-        assert located["rows"][located["target_index"] - located["offset"]][
-            "id"
-        ] == target_id
+        assert (
+            located["rows"][located["target_index"] - located["offset"]]["id"]
+            == target_id
+        )
         assert len(located["rows"]) == 20
 
     def test_handles_first_final_and_exactly_aligned_pages(self, db):
         expected_ids = _seed_coherent_conversation_population(db)
 
-        first = db.locate_conversation_page(
-            expected_ids[0], scope_type="all", limit=20
-        )
+        first = db.locate_conversation_page(expected_ids[0], scope_type="all", limit=20)
         aligned = db.locate_conversation_page(
             expected_ids[20], scope_type="all", limit=20
         )
@@ -517,9 +578,7 @@ class TestLocateConversationPage:
         target_id = db.add_conversation({"title": "Target"})
 
         with pytest.raises(InputError, match="limit"):
-            db.locate_conversation_page(
-                target_id, scope_type="all", limit=limit
-            )
+            db.locate_conversation_page(target_id, scope_type="all", limit=limit)
 
 
 # ---------------------------------------------------------------------------
@@ -604,7 +663,9 @@ class TestListLibraryConversationsPage:
 
     def test_keywords_are_capped_with_exact_total(self, db):
         conv_id = _library_conversation(
-            db, title="Keyword heavy", keywords=[f"kw-{index:02d}" for index in range(25)]
+            db,
+            title="Keyword heavy",
+            keywords=[f"kw-{index:02d}" for index in range(25)],
         )
 
         page = db.list_library_conversations_page(limit=10, offset=0)
@@ -665,13 +726,9 @@ class TestSearchLibraryConversationsPage:
         assert other not in ids
 
     def test_fts_operator_input_is_inert(self, db):
-        _library_conversation(
-            db, title="alpha", messages=[("user", "hello world")]
-        )
+        _library_conversation(db, title="alpha", messages=[("user", "hello world")])
         for query in ('foo"bar', "foo*", "OR AND NOT", "(unclosed"):
-            page = db.search_library_conversations_page(
-                query=query, limit=10, offset=0
-            )
+            page = db.search_library_conversations_page(query=query, limit=10, offset=0)
             assert isinstance(page["total"], int)
             assert isinstance(page["items"], list)
 
@@ -761,9 +818,7 @@ class TestGetLibraryConversationMessages:
         assert not any(isinstance(value, bytes) for value in message.values())
 
     def test_page_windows_each_message_to_max_chars(self, db):
-        conv_id = _library_conversation(
-            db, title="win", messages=[("user", "y" * 100)]
-        )
+        conv_id = _library_conversation(db, title="win", messages=[("user", "y" * 100)])
 
         detail = db.get_library_conversation_messages(conv_id, max_chars=10)
         message = detail["messages"][0]
@@ -816,15 +871,11 @@ class TestGetLibraryConversationMessages:
         ]
 
         assert db.update_message(msg_id, {"content": "after"}, expected_version=1)
-        after = db.get_library_conversation_messages(conv_id)["messages"][0][
-            "revision"
-        ]
+        after = db.get_library_conversation_messages(conv_id)["messages"][0]["revision"]
         assert before != after
 
     def test_include_rag_context_is_always_false(self, db):
-        conv_id = _library_conversation(
-            db, title="ctx", messages=[("user", "hello")]
-        )
+        conv_id = _library_conversation(db, title="ctx", messages=[("user", "hello")])
 
         detail = db.get_library_conversation_messages(conv_id)
         assert detail["include_rag_context"] is False

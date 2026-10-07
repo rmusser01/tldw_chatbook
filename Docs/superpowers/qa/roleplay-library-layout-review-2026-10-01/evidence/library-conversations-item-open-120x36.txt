@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  Conversations (6)                                         I   Conversation reader                               │
+│   a       ✓ Active        Archived          All                t      Read    Info                                   │
+│   v      Export…                                               e      Resume conversation                            │
+│           Select                                               m      Use as source                                  │
+│      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  s     This conversation is not in this workspace.     │
+│      ▊ Filter conversations… (Enter)                        ▎        Pressing this adds it to the active             │
+│      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎        workspace first, and you can undo that.         │
+│                                                                       Archive conversation                           │
+│       ▸ Sourdough troubleshooting                                     Link to workspace                              │
+│           2 messages · 25m · Default · Active                                                                        │
+│ --->                                                               Loaded Sourdough troubleshooting · 2 of 2         │
+│         Refactor the ingest pipeline                               messages · complete.                              │
+│           2 messages · 25m · Default · Active                                                                        │
+│                                                                    ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│         Trip planning: Lisbon in October                     <---  ▊ Find in complete transcript…                 ▎  │
+│           2 messages · 25m · Default · Active                      ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│                                                                                                                      │
+│         The La Brea matchbook                                        Find previous     Find next                     │
+│ --->      3 messages · 25m · Default · Active                                                                        │
+│                                                                    │ user · 25m                                      │
+│         Shore leave on Kepler-9                                    │ My loaf is flat.                                │
+│           2 messages · 25m · Default · Active                                                                        │
+│                                                                    │ assistant · 25m                                 │
+│         Debris field salvage                                       │ Likely under-proofed; check the poke test.      │
+│           6 messages · 25m · Default · Active                                                                        │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+│                              1-6 of 6                                                                                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

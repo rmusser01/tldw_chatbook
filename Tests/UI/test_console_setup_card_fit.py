@@ -56,6 +56,22 @@ def _card_state_with_step_three() -> ConsoleSetupCardState:
     )
 
 
+def test_the_active_steps_readiness_word_gets_its_own_line():
+    """TASK-33005.3: a wrap must not split "Not ready · refused :9199" (live at
+    211x44 the port wrapped alone onto the next row), so the active step's
+    word sits on its own line under the label, which the card fits whole."""
+    step = ConsoleSetupStep(
+        state="active",
+        label="Reconnect the provider server",
+        detail="Not ready · refused :9199",
+    )
+    line = ConsoleSetupModal._step_text(1, step)
+
+    assert line == "1. ● Reconnect the provider server\n     Not ready · refused :9199"
+    # The card is $ds-size-66 wide: 60 content cells after border and padding.
+    assert max(cell_len(row) for row in line.split("\n")) <= 60
+
+
 def test_setup_card_is_wide_enough_for_the_step_three_line():
     """AC#1: the full step-3 sentence fits inside the card's content width."""
     step_three = ConsoleSetupStep(
@@ -203,9 +219,7 @@ async def test_step_three_wraps_onto_a_second_row_on_a_narrow_terminal():
         # how much text wraps -- the second row growing in is the geometry
         # proof that overflow is now handled by wrapping, not by clipping.
         assert step3.size.height >= 2
-        rendered_rows = [
-            step3.render_line(y).text for y in range(step3.size.height)
-        ]
+        rendered_rows = [step3.render_line(y).text for y in range(step3.size.height)]
         combined = " ".join(row.strip() for row in rendered_rows if row.strip())
         for word in (
             "Send",

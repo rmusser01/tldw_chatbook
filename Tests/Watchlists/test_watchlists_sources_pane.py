@@ -51,9 +51,7 @@ def test_id_selection_model_extends_and_contracts_range_in_visible_order():
     assert selection.shift("source-2", 1) == "source-9"
     assert selection.selected_ids == frozenset({"source-2", "source-9"})
     assert selection.shift("source-9", 1) == "source-1"
-    assert selection.selected_ids == frozenset(
-        {"source-2", "source-9", "source-1"}
-    )
+    assert selection.selected_ids == frozenset({"source-2", "source-9", "source-1"})
     assert selection.shift("source-1", -1) == "source-9"
     assert selection.selected_ids == frozenset({"source-2", "source-9"})
 
@@ -66,9 +64,7 @@ def test_id_selection_model_visible_toggle_preserves_hidden_and_clear_removes_al
     selection.set_visible_ids(("source-1", "source-2"))
 
     selection.toggle_visible()
-    assert selection.selected_ids == frozenset(
-        {"source-1", "source-2", "source-3"}
-    )
+    assert selection.selected_ids == frozenset({"source-1", "source-2", "source-3"})
     selection.toggle_visible()
     assert selection.selected_ids == frozenset({"source-3"})
     selection.clear()
@@ -152,9 +148,7 @@ class SourcesPaneHarness(App):
     def on_export_opml_requested(self, message: ExportOpmlRequested) -> None:
         self.captured_messages.append(("export_opml_requested", None))
 
-    def on_open_bulk_sources_requested(
-        self, message: OpenBulkSourcesRequested
-    ) -> None:
+    def on_open_bulk_sources_requested(self, message: OpenBulkSourcesRequested) -> None:
         self.captured_messages.append(("open_bulk_sources_requested", None))
 
     def on_create_watchlist_from_selected_requested(
@@ -534,7 +528,9 @@ async def test_sources_pane_add_several_posts_one_bulk_open_request():
 
 
 @pytest.mark.asyncio
-async def test_sources_table_keyboard_selection_is_focus_scoped_and_id_based(sample_sources):
+async def test_sources_table_keyboard_selection_is_focus_scoped_and_id_based(
+    sample_sources,
+):
     """Catches global key interception or selection stored by cursor row."""
     app = SourcesPaneHarness()
     async with app.run_test(size=(160, 42)) as pilot:
@@ -555,9 +551,7 @@ async def test_sources_table_keyboard_selection_is_focus_scoped_and_id_based(sam
         )
         assert str(table.get_row("source-1")[0]).startswith("[x] ")
         assert str(table.get_row("source-2")[0]).startswith("[x] ")
-        assert not pane.query_one(
-            "#sources-create-watchlist-selected", Button
-        ).disabled
+        assert not pane.query_one("#sources-create-watchlist-selected", Button).disabled
 
         pane.query_one("#sources-search-input", Input).focus()
         await pilot.press("x")
@@ -566,7 +560,9 @@ async def test_sources_table_keyboard_selection_is_focus_scoped_and_id_based(sam
 
 
 @pytest.mark.asyncio
-async def test_sources_visible_toggle_keeps_hidden_selection_and_clear_removes_it(sample_sources):
+async def test_sources_visible_toggle_keeps_hidden_selection_and_clear_removes_it(
+    sample_sources,
+):
     """Catches v applying globally or x clearing visible rows only."""
     app = SourcesPaneHarness()
     async with app.run_test(size=(160, 42)) as pilot:
@@ -633,9 +629,7 @@ async def test_create_watchlist_from_selected_disables_above_domain_limit():
             tuple(f"local:subscription:{index}" for index in range(1, 102))
         )
 
-        assert pane.query_one(
-            "#sources-create-watchlist-selected", Button
-        ).disabled
+        assert pane.query_one("#sources-create-watchlist-selected", Button).disabled
         assert "100" in str(
             pane.query_one("#sources-selection-status", Static).render()
         )
@@ -859,9 +853,9 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
         pane.query_one("#sources-create-watchlist", Select).value = 7
         pane.query_one("#sources-create-tags", Input).value = "alpha, beta"
         pane.query_one("#sources-create-frequency", Select).value = 86_400
-        pane.query_one("#sources-create-ignore-selectors", TextArea).text = (
-            ".advert\n.promo"
-        )
+        pane.query_one(
+            "#sources-create-ignore-selectors", TextArea
+        ).text = ".advert\n.promo"
         destination = pane.query_one("#sources-create-watchlist", Select)
         await pilot.pause()
 
@@ -870,7 +864,9 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
 
         assert pane.show_create_form
         assert pane.query_one("#sources-create-name", Input).value == "Draft source"
-        assert pane.query_one("#sources-create-url", Input).value == "https://example.com"
+        assert (
+            pane.query_one("#sources-create-url", Input).value == "https://example.com"
+        )
         assert pane.query_one("#sources-create-active", Switch).value is False
         assert pane.query_one("#sources-create-watchlist", Select) is destination
         assert destination.disabled is True
@@ -886,7 +882,9 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
 
         assert pane.show_create_form
         assert pane.query_one("#sources-create-name", Input).value == "Draft source"
-        assert pane.query_one("#sources-create-url", Input).value == "https://example.com"
+        assert (
+            pane.query_one("#sources-create-url", Input).value == "https://example.com"
+        )
         assert pane.query_one("#sources-create-active", Switch).value is False
         assert pane.query_one("#sources-create-watchlist", Select) is destination
         assert destination.disabled is False
@@ -899,9 +897,7 @@ async def test_backend_switch_preserves_complete_draft_and_open_form():
         assert pane.query_one("#sources-create-ignore-selectors").display is False
         pane.query_one("#sources-create-type", Select).value = "url"
         await pilot.pause()
-        ignore_selectors = pane.query_one(
-            "#sources-create-ignore-selectors", TextArea
-        )
+        ignore_selectors = pane.query_one("#sources-create-ignore-selectors", TextArea)
         assert ignore_selectors.display is True
         assert ignore_selectors.text == ".advert\n.promo"
 
@@ -1127,7 +1123,9 @@ async def test_sources_pane_preview_and_check_now_disabled_without_selection():
 
 
 @pytest.mark.asyncio
-async def test_sources_pane_preview_and_check_now_enabled_with_selection(sample_sources):
+async def test_sources_pane_preview_and_check_now_enabled_with_selection(
+    sample_sources,
+):
     app = SourcesPaneHarness()
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(SourcesPane)
@@ -1196,8 +1194,20 @@ async def test_sources_pane_filters_by_status():
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(SourcesPane)
         pane.sources = [
-            {"id": "s1", "name": "A", "source_type": "rss", "status": "ok", "active": True},
-            {"id": "s2", "name": "B", "source_type": "rss", "status": "error", "active": True},
+            {
+                "id": "s1",
+                "name": "A",
+                "source_type": "rss",
+                "status": "ok",
+                "active": True,
+            },
+            {
+                "id": "s2",
+                "name": "B",
+                "source_type": "rss",
+                "status": "error",
+                "active": True,
+            },
         ]
         pane.status_filter = "error"
         await pilot.pause()
@@ -1221,9 +1231,27 @@ async def test_paused_sources_stay_in_the_error_bucket_and_get_their_own():
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(SourcesPane)
         pane.sources = [
-            {"id": "s1", "name": "Healthy", "source_type": "rss", "status_summary": "active", "active": True},
-            {"id": "s2", "name": "Erroring", "source_type": "rss", "status_summary": "error (3)", "active": True},
-            {"id": "s3", "name": "AutoPaused", "source_type": "rss", "status_summary": "paused", "active": False},
+            {
+                "id": "s1",
+                "name": "Healthy",
+                "source_type": "rss",
+                "status_summary": "active",
+                "active": True,
+            },
+            {
+                "id": "s2",
+                "name": "Erroring",
+                "source_type": "rss",
+                "status_summary": "error (3)",
+                "active": True,
+            },
+            {
+                "id": "s3",
+                "name": "AutoPaused",
+                "source_type": "rss",
+                "status_summary": "paused",
+                "active": False,
+            },
         ]
 
         pane.status_filter = "error"
@@ -1253,8 +1281,20 @@ async def test_sources_pane_filters_by_active_state():
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(SourcesPane)
         pane.sources = [
-            {"id": "s1", "name": "A", "source_type": "rss", "status": "ok", "active": True},
-            {"id": "s2", "name": "B", "source_type": "rss", "status": "ok", "active": False},
+            {
+                "id": "s1",
+                "name": "A",
+                "source_type": "rss",
+                "status": "ok",
+                "active": True,
+            },
+            {
+                "id": "s2",
+                "name": "B",
+                "source_type": "rss",
+                "status": "ok",
+                "active": False,
+            },
         ]
         pane.active_filter = "active"
         await pilot.pause()
@@ -1270,8 +1310,22 @@ async def test_sources_pane_filters_by_tags():
     async with app.run_test(size=(120, 40)) as pilot:
         pane = app.query_one(SourcesPane)
         pane.sources = [
-            {"id": "s1", "name": "A", "source_type": "rss", "status": "ok", "active": True, "tags": ["ai"]},
-            {"id": "s2", "name": "B", "source_type": "rss", "status": "ok", "active": True, "tags": ["tech"]},
+            {
+                "id": "s1",
+                "name": "A",
+                "source_type": "rss",
+                "status": "ok",
+                "active": True,
+                "tags": ["ai"],
+            },
+            {
+                "id": "s2",
+                "name": "B",
+                "source_type": "rss",
+                "status": "ok",
+                "active": True,
+                "tags": ["tech"],
+            },
         ]
         pane.tags_filter = "tech"
         await pilot.pause()
@@ -1388,8 +1442,7 @@ async def test_every_select_in_the_pane_is_prune_safe():
         selects = list(pane.query(Select))
         assert selects, "the pane should compose Selects to check"
         offenders = [
-            select.id for select in selects
-            if not isinstance(select, PruneSafeSelect)
+            select.id for select in selects if not isinstance(select, PruneSafeSelect)
         ]
         assert not offenders, f"stock Select still used for: {offenders}"
 
@@ -1456,9 +1509,12 @@ def test_source_next_check_text_is_dash_without_check_frequency():
     """A server-backed watchlist source's normalizer never publishes a
     check_frequency equivalent -- honest "-", the same as the removed
     Queue projection (WatchlistProjection is local-Subscriptions_DB-only)."""
-    assert SourcesPane.source_next_check_text(
-        {"last_checked_or_scraped_at": "2020-01-01T00:00:00+00:00"}
-    ) == "-"
+    assert (
+        SourcesPane.source_next_check_text(
+            {"last_checked_or_scraped_at": "2020-01-01T00:00:00+00:00"}
+        )
+        == "-"
+    )
     assert SourcesPane.source_next_check_text({}) == "-"
 
 
@@ -1488,8 +1544,13 @@ async def test_sources_table_paints_a_next_check_column():
         await pilot.pause()
 
         table = pane.query_one("#sources-table", DataTable)
-        assert [
-            str(column.label) for column in table.columns.values()
-        ] == ["Name", "Type", "Status", "Last checked", "Next check", "Active"]
+        assert [str(column.label) for column in table.columns.values()] == [
+            "Name",
+            "Type",
+            "Status",
+            "Last checked",
+            "Next check",
+            "Active",
+        ]
         row = table.get_row_at(0)
         assert str(row[4]) == expected

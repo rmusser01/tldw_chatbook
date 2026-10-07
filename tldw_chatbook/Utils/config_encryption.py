@@ -91,13 +91,19 @@ class ConfigEncryption:
         # Return with prefix
         return f"{self.ENCRYPTION_PREFIX}{encrypted_b64}"
 
-    def decrypt_value(self, encrypted_value: str, password: str) -> str:
+    def decrypt_value(
+        self, encrypted_value: str, password: str, *, log_failure: bool = True
+    ) -> str:
         """
         Decrypt an encrypted string value with authentication.
 
         Args:
             encrypted_value: The encrypted string (with or without prefix)
             password: The password to use for decryption
+            log_failure: Log a failed decrypt at ERROR. ``verify_password``
+                passes False: a wrong password is an expected answer there,
+                and the startup prompt must not print an error between tries
+                (TASK-34100.4).
 
         Returns:
             The decrypted string
@@ -143,7 +149,8 @@ class ConfigEncryption:
             return plaintext.decode("utf-8")
 
         except Exception as e:
-            logger.error(f"Decryption failed: {type(e).__name__}")
+            if log_failure:
+                logger.error(f"Decryption failed: {type(e).__name__}")
             raise ValueError(
                 "Failed to decrypt value. Invalid password or corrupted data."
             )
@@ -203,13 +210,17 @@ class ConfigEncryption:
         return self._decrypt_config(config, password, strict=False)
 
     def decrypt_config_strict(
-        self, config: Dict[str, Any], password: str
+        self, config: Dict[str, Any], password: str, *, log_failure: bool = True
     ) -> Dict[str, Any]:
         """Decrypt a configuration dictionary, failing on any invalid value.
 
         Args:
             config: Dictionary with potentially encrypted values.
             password: Password to use for decryption.
+            log_failure: Log a failed decrypt at ERROR. The startup unlock
+                passes False: a value that does not decrypt is an answer it
+                reports to the user, not an error to print between prompts
+                (TASK-34100.4).
 
         Returns:
             Dictionary with decrypted values.
@@ -217,7 +228,9 @@ class ConfigEncryption:
         Raises:
             ValueError: If any encrypted value cannot be decrypted.
         """
-        return self._decrypt_config(config, password, strict=True)
+        return self._decrypt_config(
+            config, password, strict=True, log_failure=log_failure
+        )
 
     def _decrypt_config(
         self,
@@ -225,13 +238,16 @@ class ConfigEncryption:
         password: str,
         *,
         strict: bool,
+        log_failure: bool = True,
     ) -> Dict[str, Any]:
         decrypted_config: Dict[str, Any] = {}
 
         for key, value in config.items():
             if self.is_encrypted(value):
                 try:
-                    decrypted_config[key] = self.decrypt_value(value, password)
+                    decrypted_config[key] = self.decrypt_value(
+                        value, password, log_failure=log_failure
+                    )
                 except ValueError:
                     if strict:
                         raise
@@ -243,6 +259,7 @@ class ConfigEncryption:
                     value,
                     password,
                     strict=strict,
+                    log_failure=log_failure,
                 )
             else:
                 # Keep non-encrypted values as-is
@@ -276,7 +293,7 @@ class ConfigEncryption:
             True if password is correct, False otherwise
         """
         try:
-            decrypted = self.decrypt_value(verifier, password)
+            decrypted = self.decrypt_value(verifier, password, log_failure=False)
             # Check if it's a valid verification token
             return decrypted.startswith("PASSWORD_VERIFICATION_TOKEN_")
         except ValueError:

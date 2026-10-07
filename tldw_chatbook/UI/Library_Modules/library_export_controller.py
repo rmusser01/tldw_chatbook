@@ -260,7 +260,6 @@ from ...Library.library_shell_state import (
 )
 from ...Third_Party.textual_fspicker import FileSave
 from ...Utils.path_validation import validate_path_simple
-from ...Widgets.Library import LibraryExportCanvas
 from .library_export_state import LibraryExportState
 
 if TYPE_CHECKING:
@@ -768,21 +767,22 @@ class LibraryExportController:
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         # task-4023 AC#7: remember which canvas opened Export so Escape
-        # (action_library_export_back) can return there -- "Export… from
-        # within Media navigates away with no return path". Recorded
-        # AFTER the flush admits the switch, BEFORE the row id moves.
-        self._library_export_origin_row_id = self._library_selected_row_id
+        # (action_library_export_back) can return there. Recorded AFTER the
+        # flush admits the switch, BEFORE the row id moves; a repeat press
+        # (Export already selected) keeps the first press's origin.
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            self._library_export_origin_row_id = self._library_selected_row_id
         self._set_library_destination_with_conversation_fence(LIBRARY_ROW_INGEST_EXPORT)
         self._reset_library_export_transient_state(scope)
-        # task-21116: rail selection + canvas-child swap only, never a
-        # whole-screen rebuild for a per-click section "Export…" action.
-        await self._apply_library_open_item_surface(
-            lambda: LibraryExportCanvas(
-                self._build_library_export_state(),
-                id="library-export-canvas",
-            )
-        )
-        self._start_library_export_counts_worker()
+        # task-31249: schedule the projection after the press dispatch;
+        # inline, the structural recompose deadlocks (see the screen helper
+        # ``LibraryScreen._project_library_export_canvas``). The counts
+        # worker starts there too, once the surface has landed.
+        self.call_after_refresh(self._project_library_export_canvas)
+
+    async def _project_library_export_canvas(self) -> None:
+        """Forward to the screen's out-of-band projection (task-31249)."""
+        await self._screen._project_library_export_canvas()
 
     def _library_export_is_server_mode(self) -> bool:
         """True when the Library is in server runtime mode.

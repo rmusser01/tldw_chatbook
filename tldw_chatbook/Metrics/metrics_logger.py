@@ -1,7 +1,9 @@
 # metrics_logger.py
 #
 # Imports
+import asyncio
 import functools
+import inspect
 import os
 import time
 from datetime import datetime, timezone
@@ -82,44 +84,68 @@ def timeit(
     Args:
         metric_name (str, optional): Custom name for the metric. Defaults to function name.
         labels (dict, optional): Extra labels to add to the metric.
-        log_summary (bool): If True, logs a human-readable summary at INFO level.
+        log_summary (bool): If True, logs a human-readable summary at DEBUG level.
         log_call_count (bool): If True, also logs a counter metric for each call.
     """
 
     def decorator(func: Callable) -> Callable:
+        def record(start_time: float, status: str) -> None:
+            # 4. Robust timing and status tracking
+            elapsed_time = time.perf_counter() - start_time
+            m_name = metric_name or f"{func.__name__}_duration_seconds"
+            final_labels = {"function": func.__name__, **(labels or {}), "status": status}
+
+            # Log the primary histogram metric
+            _log_metric(m_name, "histogram", elapsed_time, final_labels)
+
+            # Optionally log a separate counter metric
+            if log_call_count:
+                counter_name = f"{func.__name__}_calls_total"
+                _log_metric(counter_name, "counter", 1, final_labels)
+
+            if log_summary:
+                # DEBUG, lazily formatted: this ran per call on hot RAG paths
+                # (PERF-03).
+                logger.debug(
+                    "Function '{}' finished in {:.4f}s with status '{}'.",
+                    func.__name__,
+                    elapsed_time,
+                    status,
+                )
+
+        if inspect.iscoroutinefunction(func):
+            # PERF-03: the plain wrapper timed coroutine *creation* (~0 s) and
+            # reported success before the body had even run.
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                start_time = time.perf_counter()
+                status = "success"
+                try:
+                    return await func(*args, **kwargs)
+                except asyncio.CancelledError:
+                    # Not an Exception: without this a cancelled task was
+                    # labelled a success (Qodo, #2904).
+                    status = "cancelled"
+                    raise
+                except Exception:
+                    status = "failure"
+                    raise
+                finally:
+                    record(start_time, status)
+
+            return async_wrapper
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            # 4. Robust timing and status tracking
-            m_name = metric_name or f"{func.__name__}_duration_seconds"
-            all_labels = {"function": func.__name__}
-            if labels:
-                all_labels.update(labels)
-
             start_time = time.perf_counter()
             status = "success"
             try:
-                result = func(*args, **kwargs)
-                return result
+                return func(*args, **kwargs)
             except Exception:
                 status = "failure"
                 raise  # Re-raise the exception after marking status
             finally:
-                elapsed_time = time.perf_counter() - start_time
-                final_labels = {**all_labels, "status": status}
-
-                # Log the primary histogram metric
-                _log_metric(m_name, "histogram", elapsed_time, final_labels)
-
-                # Optionally log a separate counter metric
-                if log_call_count:
-                    counter_name = f"{func.__name__}_calls_total"
-                    _log_metric(counter_name, "counter", 1, final_labels)
-
-                if log_summary:
-                    logger.info(
-                        f"Function '{func.__name__}' finished in {elapsed_time:.4f}s "
-                        f"with status '{status}'."
-                    )
+                record(start_time, status)
 
         return wrapper
 

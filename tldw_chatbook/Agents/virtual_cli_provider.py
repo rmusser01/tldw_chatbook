@@ -45,6 +45,7 @@ from .local_tool_provider import (
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LOCAL_USER_DENY_REFUSAL,
+    LOCAL_WORKER_FAILED_REFUSAL,
     RunAdmittedWorkspaceRoot,
 )
 from .mcp_tool_provider import MCPPendingCall, approval_effects_for_tool
@@ -232,6 +233,21 @@ class VirtualCliProvider:
         )
         self._stamps: dict[tuple[str, str], ApprovalStamp] = {}
         self._stamps_lock = threading.Lock()
+
+    def path_root_aliases(self) -> tuple[str, ...] | None:
+        """Return the ``root_alias`` values ``virtual_cli`` accepts this run.
+
+        Mirrors ``LocalToolProvider.path_root_aliases`` (TASK-33940.1): the
+        workspace-context note offers exactly these aliases.
+
+        Returns:
+            The sorted aliases of the usable admitted roots (``()`` when none
+            survived construction), or ``None`` for a legacy provider rooted at
+            ``workspace_root`` with no alias routing.
+        """
+        if self._admitted_roots is None:
+            return None
+        return tuple(sorted(self._admitted_roots))
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         return [
@@ -430,6 +446,10 @@ class VirtualCliProvider:
                         ),
                     )
 
+    def record_user_denial(self, command: str) -> None:
+        """Record an explicit card denial settled before provider dispatch."""
+        self._record(self.hub_tool_for(command), "denied")
+
     def _pop_stamp(self, run_id: str, command: str) -> str | None:
         stamp = self._pop_stamp_detail(run_id, command)
         return stamp.decision if stamp is not None else None
@@ -491,6 +511,7 @@ class VirtualCliProvider:
             self._record(hub, POLICY_DENIED_DECISION)
             return ToolResult.blocked(LOCAL_DENY_REFUSAL, approval_decision="denied")
         fact = None
+        denial_refusal = ""
         if state.state == "allow":
             verdict = "allow"
         elif self._arg_rule_allows_safe(hub, args):
@@ -502,6 +523,7 @@ class VirtualCliProvider:
             detail = self._ask_verdict_detail(hub, command, args)
             verdict = detail.decision
             fact = detail.approval_decision
+            denial_refusal = detail.denial_refusal
         if verdict != "allow":
             self._record(hub, "denied-timeout" if verdict == "timeout" else "denied")
             # Qodo #7: same split as `LocalToolProvider._invoke_detailed` --
@@ -512,7 +534,7 @@ class VirtualCliProvider:
             refusal = (
                 LOCAL_TIMEOUT_REFUSAL
                 if verdict == "timeout"
-                else LOCAL_USER_DENY_REFUSAL
+                else (denial_refusal or LOCAL_USER_DENY_REFUSAL)
             )
             return ToolResult.blocked(refusal, approval_decision=fact)
 
@@ -552,7 +574,7 @@ class VirtualCliProvider:
                 if exc.code == "root_pin_failed":
                     return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
                 if exc.code not in {"invalid_request", "tool_failure"}:
-                    return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
+                    return ToolResult.blocked(LOCAL_WORKER_FAILED_REFUSAL)
                 error = redact_root_locator(
                     str(exc),
                     self._error_redaction_root(authority),
@@ -637,12 +659,19 @@ class VirtualCliProvider:
                 "allow_matching",
             ),
         ).approval_decision
+        from .approval_provenance import append_denial_reason
+
         return ApprovalStamp(
             "allow"
             if decision
             in ("approve_once", "approve_session", "always_allow", "allow_matching")
             else decision,
             fact,
+            append_denial_reason(
+                LOCAL_USER_DENY_REFUSAL, decisions, pending.call_id or pending.llm_name
+            )
+            if decision == "deny"
+            else "",
         )
 
     def _root_is_valid(self) -> bool:

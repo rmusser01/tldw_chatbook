@@ -1,0 +1,10 @@
+base-textual-dark-211x44-screen-Library.ansi.txt
+   1050 cells  line (62, 62, 62) on (36, 47, 56): 1.28:1
+head-textual-dark-211x44-screen-Library.ansi.txt
+   1050 cells  line (62, 62, 62) on (36, 47, 56): 1.28:1
+base-textual-dark-211x44-screen-MCP.ansi.txt
+    446 cells  line (45, 45, 45) on (36, 47, 56): 1.01:1
+    186 cells  line (45, 45, 45) on (30, 30, 30): 1.21:1
+head-textual-dark-211x44-screen-MCP.ansi.txt
+    446 cells  line (119, 119, 119) on (36, 47, 56): 3.05:1
+    186 cells  line (119, 119, 119) on (30, 30, 30): 3.72:1

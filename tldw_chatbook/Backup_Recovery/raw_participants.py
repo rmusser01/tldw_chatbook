@@ -155,6 +155,11 @@ def _participant_state(participant):
             or user_data_dir(data) / "prompt_history.jsonl" != state.selected
         ):
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+    if (
+        state.owner == "hooks.permissions"
+        and _hook_permissions_selection(source) != state.selected
+    ):
+        raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     if state.owner == "ui.state":
         selected, installed = _async_source_selection(source, "sidebar_state")
         if not installed or selected != state.selected:
@@ -162,6 +167,20 @@ def _participant_state(participant):
     if state.owner == "notes.file_notes_replica" and source.db_path != state.selected:
         raise bootstrap.RecoveryRequired("raw_source_selection_changed")
     return state
+
+
+def _hook_permissions_selection(source):
+    module = sys.modules.get("tldw_chatbook.Agents.hook_permissions")
+    if module is None or type(source) is not module.HookPermissions:
+        raise bootstrap.RecoveryRequired("raw_source_not_supported")
+    config = sys.modules.get("tldw_chatbook.config")
+    data = getattr(config, "_CONFIG_CACHE", None)
+    if (
+        data is None
+        or config._CONFIG_CACHE_SOURCE != config._get_effective_config_path()
+    ):
+        raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+    return lexical_path(user_data_dir(data) / "hook_permissions.json")
 
 
 def _types():
@@ -257,6 +276,9 @@ def _raw_participant(source):
             owner, selected = "notes.file_notes_replica", source.db_path
         elif source is emoji_picker:
             owner, selected = "ui.emoji_recents", emoji_picker._recent_emojis_path()
+        elif type(source).__module__ == "tldw_chatbook.Agents.hook_permissions":
+            owner = "hooks.permissions"
+            selected = _hook_permissions_selection(source)
         elif type(source) in types:
             owner = types[type(source)]
             selected = source.store_path
@@ -415,6 +437,11 @@ def _retire(state):
 
 
 def _selection(source, route, template, user_template, selected_read):
+    if route == "hook_permissions":
+        selected = _hook_permissions_selection(source)
+        if selected_read is not None and lexical_path(selected_read) != selected:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        return selected, True, False
     if route == mcp_sources.ROUTE:
         return mcp_sources.selection(source)
     if route == dictionary_files.ROUTE:
@@ -556,8 +583,10 @@ def _scope(
             )
         if route == mcp_sources.ROUTE:
             paths, temporaries = mcp_sources.members(source, selected)
+        if route == "hook_permissions":
+            paths += (selected.with_name(selected.name + ".lock"),)
         temporary = None
-        if route == "runtime_state" and writing:
+        if route in {"runtime_state", "hook_permissions"} and writing:
             temporary = selected.parent / f".{selected.name}.{secrets.token_hex(8)}.tmp"
             paths += (temporary,)
         if route == "pet" and writing:
@@ -599,6 +628,8 @@ def _scope(
             directories += (parent,) if parent not in directories else ()
         if route == "runtime_read":
             directories = ()
+        if route == "hook_permissions":
+            directories += (parent,) if writing and parent not in directories else ()
         if route == "runtime_state":
             owned = source.application_owned_directory
             if owned is not None and lexical_path(owned) != parent:
@@ -1196,6 +1227,9 @@ def _runtime_operation(path=None):
     if state is None:
         return None
     if mcp_sources.history_operation(state) and state.participant is not None:
+        _check(operation, path, writing=True)
+        return operation
+    if state.route == "hook_permissions":
         _check(operation, path, writing=True)
         return operation
     if config_files.binding(state.source) is None and (

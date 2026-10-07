@@ -374,10 +374,9 @@ async def test_real_runtime_resume_after_pause_returns_the_root_to_service(
                 "Review changes",
             )
         else:
-            assert (resumed.status_label, resumed.next_action_label) == (
-                "✓ Up to date",
-                "Check changes",
-            )
+            # TASK-32633 slice (N-03): the healthy label is dated.
+            assert resumed.status_label.startswith("✓ Up to date as of ")
+            assert resumed.next_action_label == "Check changes"
 
         await controller.check_root("root-1")
 
@@ -429,10 +428,11 @@ async def test_real_runtime_resumes_a_root_the_old_resume_left_paused_on_disk(
         await controller.resume_root("root-1")
 
         resumed = controller.snapshot.roots[0]
-        assert (resumed.status_label, resumed.next_action_label) == (
-            "✓ Up to date",
-            "Check changes",
-        ), controller.snapshot.status_line
+        # TASK-32633 slice (N-03): the healthy label is dated.
+        assert resumed.status_label.startswith("✓ Up to date as of "), (
+            controller.snapshot.status_line
+        )
+        assert resumed.next_action_label == "Check changes"
         assert store.get_root("root-1").state is NotesSyncRootState.ACTIVE
         assert {binding.state for binding in store.list_bindings("root-1")} == {
             NotesSyncBindingState.ACTIVE
@@ -1505,7 +1505,7 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
         )
         await _wait_for_condition(
             pilot,
-            lambda: "Recovery reviewed" in _painted_text(restarted),
+            lambda: "Recovery finished" in _painted_text(restarted),
             message="recovery status did not reach the compositor",
         )
         assert runtime.roots[0].status == "up_to_date"

@@ -77,7 +77,9 @@ class _ActivityHarness(App):
         )
 
 
-async def test_selected_turn_orders_citations_before_activity_and_renders_facts() -> None:
+async def test_selected_turn_orders_citations_before_activity_and_renders_facts() -> (
+    None
+):
     app = _ActivityHarness(_view(), citation_count=3)
 
     async with app.run_test(size=(42, 20)):
@@ -97,7 +99,9 @@ async def test_selected_turn_orders_citations_before_activity_and_renders_facts(
         )
         assert any("note · [red] literal title · note-1" in line for line in copy)
         assert any("media · 研究 🧪 · media-2" in line for line in copy)
-        literal = next(item for item in statics if "[red] literal title" in str(item.renderable))
+        literal = next(
+            item for item in statics if "[red] literal title" in str(item.renderable)
+        )
         assert literal._render_markup is False
 
 
@@ -108,12 +112,16 @@ async def test_selected_turn_has_explicit_empty_activity_state() -> None:
     )
 
     async with app.run_test():
-        assert str(
-            app.query_one("#console-library-activity-empty", Static).renderable
-        ) == "No Library activity for this turn."
-        assert str(
-            app.query_one("#console-selected-turn-cited-sources", Static).renderable
-        ) == "Cited sources (0)"
+        assert (
+            str(app.query_one("#console-library-activity-empty", Static).renderable)
+            == "No Library activity for this turn."
+        )
+        assert (
+            str(
+                app.query_one("#console-selected-turn-cited-sources", Static).renderable
+            )
+            == "Cited sources (0)"
+        )
 
 
 async def test_selected_turn_becomes_visible_when_selection_arrives() -> None:
@@ -129,7 +137,9 @@ async def test_selected_turn_becomes_visible_when_selection_arrives() -> None:
         assert selected_turn.styles.display == "block"
 
 
-async def test_unsaved_activity_state_exposes_retry_without_owning_persistence() -> None:
+async def test_unsaved_activity_state_exposes_retry_without_owning_persistence() -> (
+    None
+):
     app = _ActivityHarness(
         _view(),
         flush_result=LibraryActivityFlushResult(
@@ -204,7 +214,9 @@ async def test_error_copy_is_literal_and_invalid_time_degrades_safely() -> None:
         assert "time unavailable" in str(action.renderable)
 
 
-async def test_message_affordance_selects_turn_opens_inspector_and_focuses_activity() -> None:
+async def test_message_affordance_selects_turn_opens_inspector_and_focuses_activity() -> (
+    None
+):
     from Tests.UI.test_console_right_rail import make_console_pilot
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
@@ -233,18 +245,13 @@ async def test_message_affordance_selects_turn_opens_inspector_and_focuses_activ
         await pilot.pause(0.05)
         await pilot.pause()
 
-        transcript = screen.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = screen.query_one("#console-native-transcript", ConsoleTranscript)
         selected_turn = screen.query_one("#console-selected-turn")
         assert transcript.selected_message_id == assistant.id
         assert selected_turn.styles.display == "block"
         assert screen.query_one("#console-right-rail").display
         assert pilot.app.focused is not None
-        assert (
-            pilot.app.focused.id
-            == "console-selected-turn-library-activity-heading"
-        )
+        assert pilot.app.focused.id == "console-selected-turn-library-activity-heading"
 
 
 async def test_inspector_retry_delegates_to_store_owned_callback() -> None:

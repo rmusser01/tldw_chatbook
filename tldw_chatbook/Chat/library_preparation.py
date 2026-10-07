@@ -167,9 +167,7 @@ def decode_library_preparation_event(value: object) -> LibraryPreparationEvent:
         raise LibraryPreparationValidationError("Invalid Library preparation payload.")
 
     def reject_constant(_value: str) -> None:
-        raise LibraryPreparationValidationError(
-            "Invalid Library preparation payload."
-        )
+        raise LibraryPreparationValidationError("Invalid Library preparation payload.")
 
     def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
         decoded: dict[str, object] = {}
@@ -272,7 +270,10 @@ def _validate_event(event: LibraryPreparationEvent) -> None:
         raise LibraryPreparationValidationError("Invalid Library preparation event.")
     if type(event.outcome) is not str or event.outcome not in _DISCLOSURE_OUTCOMES:
         raise LibraryPreparationValidationError("Invalid Library preparation event.")
-    if type(event.attempt_id) is not str or _IDENTIFIER_RE.fullmatch(event.attempt_id) is None:
+    if (
+        type(event.attempt_id) is not str
+        or _IDENTIFIER_RE.fullmatch(event.attempt_id) is None
+    ):
         raise LibraryPreparationValidationError("Invalid Library preparation event.")
     if (
         type(event.result_count) is not int

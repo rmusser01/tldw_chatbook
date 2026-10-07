@@ -181,7 +181,8 @@ class LoadingManager:
 
         # Also use Textual's notify for important operations
         if notify and hasattr(self.window, "notify"):
-            self.window.notify(f"⏳ {text}", timeout=2)
+            # TASK-34400: literal; callers may quote names or paths.
+            self.window.notify(f"⏳ {text}", timeout=2, markup=False)
 
         logger.debug(f"Started loading operation: {operation_id} - {text}")
         return operation_id
@@ -267,7 +268,10 @@ def with_loading(
                 # Show success notification
                 if notify and hasattr(self.window, "notify"):
                     self.window.notify(
-                        f"✅ {success_text}", severity="information", timeout=2
+                        f"✅ {success_text}",
+                        severity="information",
+                        timeout=2,
+                        markup=False,
                     )
 
                 return result
@@ -275,8 +279,12 @@ def with_loading(
             except Exception as e:
                 # Show error notification
                 if notify and hasattr(self.window, "notify"):
+                    # TASK-34400: exception text is untrusted; never markup.
                     self.window.notify(
-                        f"❌ {error_text}: {str(e)}", severity="error", timeout=4
+                        f"❌ {error_text}: {str(e)}",
+                        severity="error",
+                        timeout=4,
+                        markup=False,
                     )
                 logger.opt(exception=True).error(f"Error in {func.__name__}: {e}")
                 raise

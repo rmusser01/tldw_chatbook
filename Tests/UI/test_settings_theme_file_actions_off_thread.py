@@ -509,12 +509,13 @@ async def test_quit_waits_for_a_file_action_between_its_steps(request, monkeypat
     and removing the old one lets it finish before the exit (which cancels
     every worker) -- no two files for one theme."""
     import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_lifecycle as app_lifecycle_module
 
     host = _host()
     _saved_theme(host, "quitter")
     order = []
     monkeypatch.setattr(
-        app_module,
+        app_lifecycle_module,
         "persist_cli_config_for_shutdown",
         lambda: order.append(("config", (_themes_dir() / "quitter.toml").exists())) or True,
     )
@@ -635,10 +636,11 @@ async def test_quit_waits_for_a_pending_launch_default_write(monkeypatch):
     """AC#3: the quit path's off-loop persistence waits for queued writes
     before the app exits."""
     import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_lifecycle as app_lifecycle_module
 
     written = _slow_config(monkeypatch, delay=0.3)
     order: list[str] = []
-    monkeypatch.setattr(app_module, "persist_cli_config_for_shutdown", lambda: order.append("config") or True)
+    monkeypatch.setattr(app_lifecycle_module, "persist_cli_config_for_shutdown", lambda: order.append("config") or True)
     pending = asyncio.ensure_future(tc.persist_launch_default_async(SimpleNamespace(), "chosen"))
     await asyncio.sleep(0)
     quitting = SimpleNamespace(_save_shutdown_caches_with_timeout=lambda: None)
@@ -723,6 +725,7 @@ async def test_quit_waits_for_a_confirmed_delete_and_starts_no_new_action(reques
     from textual.widgets import Button
 
     import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_lifecycle as app_lifecycle_module
     from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
     host = _host()
@@ -730,7 +733,7 @@ async def test_quit_waits_for_a_confirmed_delete_and_starts_no_new_action(reques
     _saved_theme(host, "spared")
     order = []
     monkeypatch.setattr(
-        app_module,
+        app_lifecycle_module,
         "persist_cli_config_for_shutdown",
         lambda: order.append((_themes_dir() / "confirmed.toml").exists()) or True,
     )
@@ -1186,13 +1189,14 @@ async def test_quit_waits_for_a_pending_palette_write(monkeypatch):
     path (``wait_for_theme_quit_work``) waits for -- the same mechanism a
     picker Use's write already relies on."""
     import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_lifecycle as app_lifecycle_module
     from tldw_chatbook.app import ThemeProvider
 
     written = _slow_config(monkeypatch, delay=0.3)
     monkeypatch.setattr(tc, "current_launch_default", lambda: "textual-dark")
     order: list[str] = []
     monkeypatch.setattr(
-        app_module, "persist_cli_config_for_shutdown", lambda: order.append("config") or True
+        app_lifecycle_module, "persist_cli_config_for_shutdown", lambda: order.append("config") or True
     )
     mock_app = SimpleNamespace(
         theme="textual-dark",

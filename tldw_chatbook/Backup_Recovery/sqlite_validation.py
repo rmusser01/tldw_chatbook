@@ -83,6 +83,12 @@ def _installed_owner(owner_id):
     raise ValueError("unsupported_sqlite_owner")
 
 
+#: The five Evals tables whose inert ``version`` column the v5 -> v6 step drops.
+_EVALS_VERSION_COLUMN_TABLES = frozenset(
+    {"eval_tasks", "eval_datasets", "eval_models", "eval_runs", "ab_tests"}
+)
+
+
 class _Restrictions:
     def __init__(self, connection, cancel=None):
         self.cancel = cancel
@@ -90,8 +96,12 @@ class _Restrictions:
         self.steps = 0
         self.migrating = False
         self.migration_owner = None
+        self.shipped_checkpoint_migration = False
+        self.shipped_checkpoint_rename = False
+        self.fleet_progress_migration = False
         self.canvas_schema = False
         self.changing_schema_trust = False
+        self.reading_fts_metadata = False
         connection.set_authorizer(self.authorize)
         connection.set_progress_handler(self.progress, _PROGRESS_INTERVAL)
 
@@ -106,7 +116,113 @@ class _Restrictions:
             or monotonic() >= self.deadline
         )
 
+    def _evals_drop_column_step(self, action, first, second, database):
+        """Whether this is part of the Evals v5 -> v6 ``DROP COLUMN version`` step.
+
+        TASK-19566 F8 declares that step so a v5 Evals backup can be restored.
+        ``ALTER TABLE ... DROP COLUMN`` reports the dropped COLUMN in the
+        authorizer's database slot and rewrites the stored CREATE text in the
+        temp schema as well as the main one, so every one of these fails the
+        main-database-only rule. Only the five declared tables, only the
+        ``version`` column, and only while this owner's migration gate is open.
+
+        Args:
+            action: The SQLite authorizer action code.
+            first: The action's first argument.
+            second: The action's second argument.
+            database: The authorizer's database slot.
+
+        Returns:
+            ``True`` for exactly the operations that step performs.
+        """
+        if not (self.migrating and self.migration_owner == "db.evals"):
+            return False
+        if action == sqlite3.SQLITE_ALTER_TABLE:
+            return (
+                first == "main"
+                and second in _EVALS_VERSION_COLUMN_TABLES
+                and database == "version"
+            )
+        if database != "temp" or first != "sqlite_temp_master":
+            return False
+        if action == sqlite3.SQLITE_READ:
+            return second in {"type", "name", "sql"}
+        return action == sqlite3.SQLITE_UPDATE and second == "sql"
+
+    def _shipped_checkpoint_step(self, action, first, second, database, source):
+        """Admit only the measured installed v76 checkpoint rebuild callbacks."""
+        if not (
+            self.shipped_checkpoint_migration
+            and self.migrating
+            and self.migration_owner == "db.chachanotes.primary"
+            and source is None
+        ):
+            return False
+        if action == sqlite3.SQLITE_ALTER_TABLE:
+            return self.shipped_checkpoint_rename and (first, second, database) == (
+                "main",
+                "console_dispatch_checkpoints_v77",
+                None,
+            )
+        if action == sqlite3.SQLITE_FUNCTION:
+            return self.shipped_checkpoint_rename and (first, second, database) == (
+                None,
+                "sqlite_rename_table",
+                None,
+            )
+        # RENAME compiles these internal updates even with no temporary tables
+        # or AUTOINCREMENT on the renamed table (observed on SQLite 3.49.1).
+        if database == "temp" and first == "sqlite_temp_master":
+            return self.shipped_checkpoint_rename and (
+                action == sqlite3.SQLITE_READ
+                and second in {"type", "name", "sql", "tbl_name"}
+                or action == sqlite3.SQLITE_UPDATE
+                and second in {"sql", "tbl_name"}
+            )
+        if database != "main":
+            return False
+        indexes = {
+            "idx_console_dispatch_checkpoint_conversation",
+            "idx_console_dispatch_checkpoints_user_message",
+        }
+        return (
+            action == sqlite3.SQLITE_CREATE_TABLE
+            and first == "console_dispatch_checkpoints_v77"
+            or action == sqlite3.SQLITE_INSERT
+            and first in {"sqlite_master", "console_dispatch_checkpoints_v77"}
+            or action == sqlite3.SQLITE_DROP_TABLE
+            and first == "console_dispatch_checkpoints"
+            or action == sqlite3.SQLITE_DELETE
+            and first in {"sqlite_master", "console_dispatch_checkpoints"}
+            or action == sqlite3.SQLITE_CREATE_INDEX
+            and (
+                first in indexes
+                and second == "console_dispatch_checkpoints"
+                or first
+                in {
+                    "sqlite_autoindex_console_dispatch_checkpoints_v77_1",
+                    "sqlite_autoindex_console_dispatch_checkpoints_v77_2",
+                    "sqlite_autoindex_console_dispatch_checkpoints_v77_3",
+                }
+                and second == "console_dispatch_checkpoints_v77"
+            )
+            or action == sqlite3.SQLITE_REINDEX
+            and first in indexes
+            or action == sqlite3.SQLITE_UPDATE
+            and (
+                self.shipped_checkpoint_rename
+                and first == "sqlite_sequence"
+                and second == "name"
+                or first == "sqlite_master"
+                and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+            )
+        )
+
     def authorize(self, action, first, second, database, source):
+        if self._shipped_checkpoint_step(action, first, second, database, source):
+            return sqlite3.SQLITE_OK
+        if self._evals_drop_column_step(action, first, second, database):
+            return sqlite3.SQLITE_OK
         if database not in (None, "main"):
             return sqlite3.SQLITE_DENY
         if action in (
@@ -142,6 +258,10 @@ class _Restrictions:
                 allowed.add("canvas_revision_payload_valid")
             if self.migrating:
                 allowed |= {"printf", "sqlite_rename_test", "sqlite_rename_quotefix"}
+                if self.migration_owner == "db.prompts.primary":
+                    allowed.add("trim")
+                if self.migration_owner == "db.evals":
+                    allowed.add("sqlite_drop_column")
             return sqlite3.SQLITE_OK if second in allowed else sqlite3.SQLITE_DENY
         if action == sqlite3.SQLITE_PRAGMA:
             reads = {
@@ -160,10 +280,57 @@ class _Restrictions:
                 and second in ("ON", "1")
             )
             permitted |= self.migrating and first == "user_version"
+            # SQLite validates existing rows when ADD COLUMN adds a CHECK.
+            permitted |= (
+                self.migrating and self.migration_owner == "db.agent_runs"
+                and first == "quick_check" and second == "automatic_wake_attempts"
+            )
             return sqlite3.SQLITE_OK if permitted else sqlite3.SQLITE_DENY
+        if (
+            self.reading_fts_metadata
+            and action == sqlite3.SQLITE_UPDATE
+            and first == "sqlite_master"
+            and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+            and database == "main"
+            and source is None
+        ):
+            # SQLite 3.37 compiles, then discards, this declaration UPDATE
+            # while connecting an existing FTS5 table for table_xinfo.
+            return sqlite3.SQLITE_OK
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:
                 return sqlite3.SQLITE_OK
+            if self.migration_owner == "db.chachanotes.primary":
+                allowed = (
+                    action == sqlite3.SQLITE_UPDATE
+                    and first == "db_schema_version"
+                    and second == "version"
+                    and database == "main"
+                    and source is None
+                )
+                allowed |= (
+                    self.fleet_progress_migration
+                    and database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first == "fleet_progress_messages"
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and first in {
+                            "idx_fleet_progress_conversation_sequence",
+                            "sqlite_autoindex_fleet_progress_messages_1",
+                        }
+                        and second == "fleet_progress_messages"
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first == "idx_fleet_progress_conversation_sequence"
+                        or action == sqlite3.SQLITE_INSERT
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
+                )
+                return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
             # Research keeps its existing ADD COLUMN authority. Only fixed
             # installed statements execute while this temporary gate is open.
             if (
@@ -175,7 +342,7 @@ class _Restrictions:
             if self.migration_owner == "db.agent_runs":
                 allowed = (
                     action == sqlite3.SQLITE_CREATE_TABLE
-                    and first == "agent_worktrees"
+                    and first in {"agent_worktrees", "automatic_progress_wake_claims"}
                     or action == sqlite3.SQLITE_CREATE_INDEX
                     and first
                     in {
@@ -183,13 +350,81 @@ class _Restrictions:
                         "sqlite_autoindex_agent_worktrees_1",
                     }
                     and second == "agent_worktrees"
+                    or action == sqlite3.SQLITE_CREATE_INDEX
+                    and first in {"idx_automatic_progress_claims_attempt", "sqlite_autoindex_automatic_progress_wake_claims_1"}
+                    and second == "automatic_progress_wake_claims"
+                    or action == sqlite3.SQLITE_REINDEX
+                    and first == "idx_automatic_progress_claims_attempt"
                     or action == sqlite3.SQLITE_REINDEX
                     and first == "idx_agent_worktrees_scope"
                     or action == sqlite3.SQLITE_ALTER_TABLE
                     and first == "main"
-                    and second in {"agent_definitions", "agent_runs"}
+                    and second in {"agent_definitions", "agent_runs", "automatic_wake_attempts"}
                     or action == sqlite3.SQLITE_INSERT
                     and first in {"sqlite_master", "schema_version"}
+                )
+                # Fixed ADR-219 migration objects; unrelated DDL and domain
+                # row writes remain refused under this temporary owner gate.
+                allowed |= (
+                    action == sqlite3.SQLITE_ALTER_TABLE
+                    and first == "main"
+                    and second == "automatic_work_chains"
+                    or action == sqlite3.SQLITE_CREATE_TABLE
+                    and first == "automatic_chat_start_attempts"
+                    or action == sqlite3.SQLITE_CREATE_INDEX
+                    and (
+                        first == "idx_automatic_chains_allowance_root"
+                        and second == "automatic_work_chains"
+                        or first
+                        in {
+                            "idx_automatic_chat_start_conversation_active",
+                            "sqlite_autoindex_automatic_chat_start_attempts_1",
+                            "sqlite_autoindex_automatic_chat_start_attempts_2",
+                            "sqlite_autoindex_automatic_chat_start_attempts_3",
+                        }
+                        and second == "automatic_chat_start_attempts"
+                    )
+                    or action == sqlite3.SQLITE_REINDEX
+                    and first
+                    in {
+                        "idx_automatic_chains_allowance_root",
+                        "idx_automatic_chat_start_conversation_active",
+                    }
+                    or action == sqlite3.SQLITE_DROP_TRIGGER
+                    and first == "automatic_chain_identity_immutable"
+                    and second == "automatic_work_chains"
+                    or action == sqlite3.SQLITE_CREATE_TRIGGER
+                    and (
+                        first
+                        in {
+                            "automatic_chain_identity_immutable",
+                            "automatic_chain_root_insert",
+                            "automatic_chain_root_update",
+                        }
+                        and second == "automatic_work_chains"
+                        or first == "automatic_chat_start_identity_immutable"
+                        and second == "automatic_chat_start_attempts"
+                    )
+                    or action == sqlite3.SQLITE_DELETE
+                    and first == "sqlite_master"
+                    and source is None
+                )
+                if allowed:
+                    return sqlite3.SQLITE_OK
+            if self.migration_owner == "db.prompts.primary":
+                allowed = (
+                    action == sqlite3.SQLITE_CREATE_TABLE
+                    and first == "LocalPromptDrafts"
+                    or action == sqlite3.SQLITE_CREATE_INDEX
+                    and first == "idx_local_prompt_drafts_updated"
+                    and second == "LocalPromptDrafts"
+                    or action == sqlite3.SQLITE_REINDEX
+                    and first == "idx_local_prompt_drafts_updated"
+                    or action == sqlite3.SQLITE_INSERT
+                    and first == "sqlite_master"
+                    or action == sqlite3.SQLITE_UPDATE
+                    and first == "schema_version"
+                    and second == "version"
                 )
                 if allowed:
                     return sqlite3.SQLITE_OK
@@ -201,7 +436,14 @@ class _Restrictions:
 def _restrict_connection(connection, cancel=None):
     """Install and verify mandatory primitives before any candidate query."""
     try:
-        connection.enable_load_extension(False)
+        disable_extensions = getattr(connection, "enable_load_extension", None)
+        if disable_extensions is None:
+            option = sqlite3.SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION
+            connection.setconfig(option, False)
+            if connection.getconfig(option) is not False:
+                raise ValueError("sqlite_security_unavailable")
+        else:
+            disable_extensions(False)
         connection.execute("PRAGMA trusted_schema=OFF")
         if connection.execute("PRAGMA trusted_schema").fetchone() != (0,):
             raise ValueError("sqlite_security_unavailable")
@@ -240,14 +482,27 @@ def _catalog(connection):
     return tuple(rows)
 
 
-def _metadata(connection, catalog):
+def _metadata(connection, catalog, restrictions=None):
     def quote(name):
         return '"' + name.replace('"', '""') + '"'
 
     result = []
-    for kind, name, _, _ in catalog:
+    for kind, name, _, sql in catalog:
         if kind in ("table", "view"):
-            columns = tuple(connection.execute(f"PRAGMA table_xinfo({quote(name)})"))
+            if restrictions is not None:
+                restrictions.reading_fts_metadata = (
+                    kind == "table"
+                    and sql is not None
+                    and sql.startswith("CREATE VIRTUAL TABLE")
+                    and "USING fts5(" in sql
+                )
+            try:
+                columns = tuple(
+                    connection.execute(f"PRAGMA table_xinfo({quote(name)})")
+                )
+            finally:
+                if restrictions is not None:
+                    restrictions.reading_fts_metadata = False
             # Sequence reflects creation order, not index semantics.
             indexes = tuple(
                 sorted(
@@ -278,6 +533,10 @@ def _canvas_schema_access(connection, schema, restrictions=None):
     )
     from tldw_chatbook.DB.recovery_core_schema import (
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+        CHACHANOTES_V76_SHIPPED_SCHEMAS,
+        CHACHANOTES_V76_NATIVE_SCHEMAS,
+        CHACHANOTES_V77_SCHEMAS,
+        CHACHANOTES_V78_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -293,6 +552,10 @@ def _canvas_schema_access(connection, schema, restrictions=None):
     frozen = (
         installed,
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+        *CHACHANOTES_V76_SHIPPED_SCHEMAS,
+        *CHACHANOTES_V76_NATIVE_SCHEMAS,
+        *CHACHANOTES_V77_SCHEMAS,
+        *CHACHANOTES_V78_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -367,8 +630,20 @@ def _reference(schema):
             others = [sql for sql in schema if sql not in tables]
             for sql in tables + others:
                 # AUTOINCREMENT and FTS create their own internal/shadow tables.
-                existing = {row[3] for row in _catalog(reference)}
-                if sql in existing:
+                # Keep the same bounds without copying the growing catalog
+                # into Python before every installed statement.
+                count, size, existing = reference.execute(
+                    "SELECT COUNT(*), COALESCE(SUM("
+                    "length(CAST(COALESCE(type,'') AS BLOB)) + "
+                    "length(CAST(COALESCE(name,'') AS BLOB)) + "
+                    "length(CAST(COALESCE(tbl_name,'') AS BLOB)) + "
+                    "length(CAST(COALESCE(sql,'') AS BLOB))),0), "
+                    "COALESCE(MAX(sql = ?),0) FROM sqlite_schema",
+                    (sql,),
+                ).fetchone()
+                if count > _CATALOG_LIMIT or size > _CATALOG_BYTES:
+                    raise ValueError("sqlite_resource_limit")
+                if existing:
                     continue
                 reference.execute(sql)
             catalog = _catalog(reference)
@@ -430,7 +705,10 @@ def _check(connection, owner, policy, restrictions):
         return ("unsupported_schema_version",), None
     with _canvas_schema_access(connection, matched[0][1], restrictions):
         reference_catalog, metadata = _reference(matched[0][1])
-        if actual != reference_catalog or _metadata(connection, actual) != metadata:
+        if (
+            actual != reference_catalog
+            or _metadata(connection, actual, restrictions) != metadata
+        ):
             return ("unsupported_schema",), None
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             return ("invalid_domain_reference",), None
@@ -439,15 +717,21 @@ def _check(connection, owner, policy, restrictions):
             return payload_issues, None
         if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
             return ("invalid_sqlite_integrity",), None
-        if (
-            owner.owner_id == "db.subscriptions"
-            and any(row[1] == "db_schema_version" for row in actual)
-            and connection.execute(
-                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
-            ).fetchone()
-            != (73,)
+        if owner.owner_id == "db.subscriptions" and any(
+            row[1] == "db_schema_version" for row in actual
         ):
-            return ("unsupported_schema_version",), None
+            from tldw_chatbook.DB.recovery_operations import (
+                _subscriptions_chachanotes_stamps,
+            )
+
+            expected_stamps = _subscriptions_chachanotes_stamps(actual_sql)
+            if (
+                connection.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+                ).fetchone()
+                not in expected_stamps
+            ):
+                return ("unsupported_schema_version",), None
         checker = getattr(owner, "_validate_connection", None)
         if checker is not None:
             issues = checker(connection)
@@ -483,6 +767,26 @@ def _validate_candidate(
             if issues:
                 return (issues, None)
             if migrate and version != max(policy.versions):
+                shipped_checkpoint = False
+                if installed.owner_id == "db.chachanotes.primary":
+                    from tldw_chatbook.DB.recovery_core_schema import (
+                        CHACHANOTES_V76_NATIVE_SCHEMAS,
+                        CHACHANOTES_V76_SHIPPED_SCHEMAS,
+                        CHACHANOTES_V77_SCHEMAS,
+                    )
+
+                    actual_sql = tuple(
+                        row[3] for row in _catalog(connection) if row[3] is not None
+                    )
+                    if not (
+                        version == 76 and actual_sql in (
+                            *CHACHANOTES_V76_NATIVE_SCHEMAS,
+                            *CHACHANOTES_V76_SHIPPED_SCHEMAS,
+                        )
+                        or version == 77 and actual_sql in CHACHANOTES_V77_SCHEMAS
+                    ):
+                        return (("unsupported_schema_migration",), None)
+                    shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
                 restrictions.migrating = True
                 restrictions.migration_owner = installed.owner_id
                 try:
@@ -496,6 +800,53 @@ def _validate_candidate(
                         if len(choices) != 1:
                             return (("unsupported_schema_migration",), None)
                         expected, statements = choices[0]
+                        if (
+                            shipped_checkpoint and version == 76
+                            or installed.owner_id == "db.chachanotes.primary"
+                            and version == 77
+                        ):
+                            migration = (
+                                Path(__file__).resolve().parents[1]
+                                / "DB"
+                                / "migrations"
+                                / (
+                                    "chachanotes_v77_to_v78_fleet_progress.sql"
+                                    if version == 77
+                                    else "chachanotes_v76_to_v77_agent_chat_starts.sql"
+                                )
+                            )
+                            restrictions.shipped_checkpoint_migration = version == 76
+                            restrictions.fleet_progress_migration = version == 77
+                            try:
+                                pending = ""
+                                for line in migration.read_text(
+                                    encoding="utf-8"
+                                ).splitlines(keepends=True):
+                                    pending += line
+                                    if sqlite3.complete_statement(pending):
+                                        if restrictions.expired():
+                                            raise InterruptedError
+                                        # Only this fixed RENAME needs internal sequence/temp
+                                        # updates; direct SQL cannot borrow their authority.
+                                        restrictions.shipped_checkpoint_rename = (
+                                            pending.strip()
+                                            == (
+                                                "ALTER TABLE console_dispatch_checkpoints_v77 "
+                                                "RENAME TO console_dispatch_checkpoints;"
+                                            )
+                                        )
+                                        try:
+                                            connection.execute(pending)
+                                        finally:
+                                            restrictions.shipped_checkpoint_rename = (
+                                                False
+                                            )
+                                        pending = ""
+                                if pending.strip():
+                                    raise ValueError("incomplete_installed_migration")
+                            finally:
+                                restrictions.shipped_checkpoint_migration = False
+                                restrictions.fleet_progress_migration = False
                         for statement in statements:
                             if restrictions.expired():
                                 raise InterruptedError

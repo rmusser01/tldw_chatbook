@@ -406,3 +406,52 @@ async def test_new_conversation_uses_store_default_without_post_create_write() -
         provider="llama_cpp",
         model="model-a",
     )
+
+
+@pytest.mark.asyncio
+async def test_effective_thinking_policy_uses_saved_policy_when_gateway_hangs(
+    monkeypatch,
+) -> None:
+    import asyncio
+    from unittest.mock import Mock
+
+    entered = []
+
+    async def hanging_gateway(selection):
+        entered.append(selection)
+        await asyncio.Event().wait()
+
+    store = ConsoleChatStore()
+    session = store.create_session(
+        settings=ConsoleSessionSettings(provider="deepseek", model="requested-model"),
+        thinking_history_policy="exclude",
+        ephemeral=True,
+    )
+    store.create_session(
+        settings=ConsoleSessionSettings(provider="openai", model="viewed-model"),
+        ephemeral=True,
+    )
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SimpleNamespace(resolve_for_send=hanging_gateway),
+        agent_runtime_enabled=False,
+    )
+    controller.PROVIDER_VALIDATION_TIMEOUT_SECONDS = 0.05
+    expected_selection = controller._provider_selection_for_session(session.id)
+    continuation = Mock()
+    monkeypatch.setattr(
+        controller, "_provider_continuation_history_for_resolution", continuation
+    )
+
+    try:
+        policy = await asyncio.wait_for(
+            controller.effective_thinking_history_policy_for_session(session.id),
+            timeout=1.0,
+        )
+    finally:
+        assert entered == [expected_selection]
+        assert entered[0].provider == "deepseek"
+        assert entered[0].explicit_model == "requested-model"
+        continuation.assert_not_called()
+        assert store.session_thinking_history_policy(session.id) == "exclude"
+    assert policy == "exclude"

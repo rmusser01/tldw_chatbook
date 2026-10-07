@@ -214,6 +214,8 @@ def test_make_default_write_before_its_publication_cannot_move_the_chat_it_came_
         QUICK_MODEL_DEFAULT_FIELDS,
         ConsoleSettingsAction,
         ConsoleSettingsDraftState,
+        ConsoleSettingsFieldDraft,
+        ConsoleSettingsFieldProvenance,
         ConsoleSettingsSubmission,
         ConsoleSettingsSurface,
     )
@@ -223,6 +225,7 @@ def test_make_default_write_before_its_publication_cannot_move_the_chat_it_came_
     background = _pristine(store, blank_console_session_settings(config))
     origin = _pristine(store, blank_console_session_settings(config))
     assert store.active_session_id == origin.id
+    made_default = replace(origin.settings, model="made-default")
     committed = store.commit_console_settings_live(
         ConsoleSettingsSubmission(
             submission_id="make-default-1",
@@ -230,9 +233,20 @@ def test_make_default_write_before_its_publication_cannot_move_the_chat_it_came_
             surface=ConsoleSettingsSurface.QUICK_POPOVER,
             origin=store.capture_console_settings_origin(origin.id),
             draft=ConsoleSettingsDraftState(
-                settings=replace(origin.settings, model="made-default"),
+                settings=made_default,
                 context_policy_overrides=ConsoleContextPolicyOverrides(),
-                field_drafts=(),
+                # A quick submission carries one draft per quick-mask field
+                # (TASK-33004.1 added max_tokens to that mask).
+                field_drafts=tuple(
+                    ConsoleSettingsFieldDraft(
+                        name=name,
+                        effective_value=getattr(made_default, name),
+                        profile_override=getattr(made_default, name),
+                        provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                        dirty=False,
+                    )
+                    for name in sorted(QUICK_MODEL_DEFAULT_FIELDS)
+                ),
                 model_drafts=(),
                 endpoint_draft=None,
             ),
@@ -296,8 +310,24 @@ def test_provider_change_posts_the_swap_notice_and_a_model_change_does_not():
     assert provider_config_key(_ensure(console).provider) == "anthropic"
     app.notify.assert_called_once()
     message = app.notify.call_args.args[0]
-    assert "llama_cpp" in message and "anthropic" in message
+    # TASK-33002.5 rewrote the notice to display names; no raw key remains.
+    assert "llama.cpp" in message and "Anthropic" in message
+    assert "llama_cpp" not in message and "anthropic" not in message
     assert app.notify.call_args.kwargs == {"severity": "warning"}
+
+
+def test_swap_notice_names_a_cleared_provider_as_not_selected():
+    """Final review (Task 5 minor): defaults without a provider read as the
+    chip reads them, not "changed llama.cpp -> : ..."."""
+    app, console, store = _console(_config("llama_cpp", "new-model"))
+    _pristine(store, ConsoleSessionSettings(provider="llama_cpp", model="old-model"))
+    _ensure(console)
+
+    app.app_config = {"chat_defaults": {}, "api_settings": {}}
+    _ensure(console)
+
+    message = app.notify.call_args.args[0]
+    assert message.startswith("Console provider changed llama.cpp -> not selected:")
 
 
 def test_rebuilds_rederive_a_pristine_chat_at_most_once_per_saved_config(

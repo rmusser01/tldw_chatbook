@@ -38,9 +38,17 @@ from tldw_chatbook.model_capabilities import (
 # retry/fallback/projection helpers are loop-only dependencies, imported
 # at the top of `run_agent_loop`; `FallbackRuntime` appears here only as
 # a string annotation on `LoopDeps.fallback`.
-from .agent_models import MESSAGE_TOOL_NAMES, READ_AGENT_MESSAGES_TOOL_NAME, REPORT_TO_SUPERVISOR_TOOL_NAME
+from .agent_models import (
+    LIST_PEER_AGENTS_TOOL_NAME,
+    MESSAGE_TOOL_NAMES,
+    READ_AGENT_MESSAGES_TOOL_NAME,
+    REPORT_TO_SUPERVISOR_TOOL_NAME,
+    SEND_TO_PEER_TOOL_NAME,
+)
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
+    PluginContextText,
+    carry_plugin_context,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
     FIND_TOOLS_NAME,
@@ -449,6 +457,12 @@ class LoopDeps:
     )
     # Restriction-only guard runs before approval exemptions; exceptions deny.
     guard_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # Required v2 effects are load-bearing; legacy observers remain optional.
+    prepare_hook_call: Callable[[ToolCall], ToolCall] | None = None
+    accept_hook_preparation: Callable[[ToolCall], None] | None = None
+    validate_hook_dispatch: Callable[[ToolCall], None] | None = None
+    install_tool_checkpoint: Callable[[ToolCall, ToolResult], None] | None = None
+    await_hook_checkpoints: Callable[[], tuple[dict, ...]] | None = None
     # Optional owner-authenticated exception to the review batch. A True
     # result omits only that exact call from review and approval Trace rows;
     # exceptions fail closed by keeping the call on the ordinary review path.
@@ -623,9 +637,9 @@ class LoopDeps:
     # Optional production-only causal dispatch seams. Appended after every
     # legacy field so positional LoopDeps callers retain their exact slots.
     invoke_tool_at_step: Callable[[ToolCall, int, str], ToolResult] | None = None
-    spawn_at_step: (
-        Callable[[str, int, str | None, str | None], ToolResult] | None
-    ) = None
+    spawn_at_step: Callable[[str, int, str | None, str | None], ToolResult] | None = (
+        None
+    )
     send_to_agent_at_step: Callable[[str, str, int], ToolResult] | None = None
     drain_mailbox_with_causes: (
         Callable[[], list[tuple[str, str, str | None]]] | None
@@ -651,7 +665,9 @@ class LoopDeps:
         [ToolProjectionAudience, ToolCall, ToolResult | None], ToolRecordProjection
     ] = field(
         default_factory=lambda: (
-            lambda _audience, call, result=None: default_tool_record_projection(call, result)
+            lambda _audience, call, result=None: default_tool_record_projection(
+                call, result
+            )
         )
     )
     # The catalog owns this signal: a tool provider cannot mark its own
@@ -661,6 +677,8 @@ class LoopDeps:
     # Ephemeral display copy; never changes durable trace payloads (ADR-195).
     # Append to preserve the positional constructor slots above.
     on_tool_activity: Callable[[AgentStep], None] | None = None
+    list_peer_agents: Callable[[dict], ToolResult] | None = None
+    send_to_peer: Callable[[dict], ToolResult] | None = None
 
 
 def _continuation_calls_match(
@@ -726,13 +744,11 @@ def _same_continuation_target(
     candidate: ProviderContinuationCheckpoint,
 ) -> bool:
     return (
-        current.schema_version,
         current.provider,
         current.protocol,
         current.model,
         current.api_base_url,
     ) == (
-        candidate.schema_version,
         candidate.provider,
         candidate.protocol,
         candidate.model,
@@ -801,8 +817,7 @@ def format_tool_load_selection(selection: ToolLoadSelection) -> ToolResult:
         return ToolResult(
             ok=False,
             error=(
-                "tool selection details omitted because the request budget "
-                "is exhausted"
+                "tool selection details omitted because the request budget is exhausted"
             ),
         )
     parts: list[str] = []
@@ -810,8 +825,7 @@ def format_tool_load_selection(selection: ToolLoadSelection) -> ToolResult:
         parts.append("loaded: " + ", ".join(s.name for s in selection.accepted))
     if selection.omitted_for_budget:
         parts.append(
-            "not loaded (request budget): "
-            + ", ".join(selection.omitted_for_budget)
+            "not loaded (request budget): " + ", ".join(selection.omitted_for_budget)
         )
     if selection.invalid_inputs:
         invalid = "invalid tool ids: " + ", ".join(selection.invalid_inputs)
@@ -923,6 +937,8 @@ def _truncate_tool_result(
             " Re-issue the call with a narrower query, or use the tool's "
             "offset/limit arguments to read the rest."
         )
+    if isinstance(content, PluginContextText):
+        return "ERROR: plugin context cannot fit whole in the tool result limit"
     full_trailer = (
         f"\n\n[truncated: {tool_name} returned {len(content)} characters.{recovery}]"
     )
@@ -969,7 +985,9 @@ def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> N
         messages.append(
             {
                 "role": "user",
-                "content": f"{FENCE_TOOL_RESULT_PREFIX}{call.name}: {content}",
+                "content": carry_plugin_context(
+                    f"{FENCE_TOOL_RESULT_PREFIX}{call.name}: {content}", content
+                ),
             }
         )
 
@@ -1094,6 +1112,7 @@ def run_agent_loop(
     """
     # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
     from .fallback_chain import is_credit_terminal
+    from tldw_chatbook.Chat.Chat_Deps import ChatModelUnavailableError
     from .history_projection import ProjectionError, project_history_for_protocol
     from .model_retry import (
         RetryPolicy,
@@ -1132,6 +1151,8 @@ def run_agent_loop(
         list(deps.fallback.candidates) if deps.fallback is not None else []
     )
     active_provider = config.provider or "unknown"
+    if deps.fallback is not None and deps.fallback.pre_tool_only:
+        active_provider = f"{active_provider}/{config.model}"
     budget_warning_delivered = False
     #: TASK-25901: transient-failure retries used so far in THIS run. Counted
     #: per run rather than per turn: a provider failing every turn is a failing
@@ -1144,6 +1165,7 @@ def run_agent_loop(
     consecutive_denials = 0
     spawned = 0
     model_turns = 0
+    tool_activity_proposed = False
     total_tokens = 0
     budget_steps = 0
     trace_steps = 0
@@ -1191,7 +1213,10 @@ def run_agent_loop(
         result: ToolResult | None = None,
     ) -> ToolRecordProjection:
         """Project one non-model tool consumer without ever formatting raw data."""
-        if call.name in MESSAGE_TOOL_NAMES and audience not in {"continuation", "cycle"}:
+        if call.name in MESSAGE_TOOL_NAMES and audience not in {
+            "continuation",
+            "cycle",
+        }:
             return ToolRecordProjection(
                 arguments={},
                 content=message_metadata(result),
@@ -1301,7 +1326,9 @@ def run_agent_loop(
                 )
             projected_rounds.append(
                 replace(
-                    round_, assistant_content=assistant_content, calls=tuple(projected_calls)
+                    round_,
+                    assistant_content=assistant_content,
+                    calls=tuple(projected_calls),
                 )
             )
         return replace(checkpoint, rounds=tuple(projected_rounds))
@@ -1403,7 +1430,7 @@ def run_agent_loop(
         final_messages = [
             row
             for row in messages[:coherent_len]
-            if row.get(EPHEMERAL_ORIGIN_KEY) != "project_instructions"
+            if row.get(EPHEMERAL_ORIGIN_KEY) not in {"project_instructions", "hooks_v2"}
         ]
         if status == RUN_DONE:
             final_messages = final_messages + [
@@ -1488,7 +1515,10 @@ def run_agent_loop(
             return False
         return True
 
-    def expand_restore_history(checkpoint: ProviderContinuationCheckpoint) -> bool:
+    def expand_restore_history(
+        checkpoint: ProviderContinuationCheckpoint,
+        live_result: tuple[ToolCall, str] | None = None,
+    ) -> bool:
         nonlocal restore_history_start
         expand = deps.expand_provider_continuation
         if expand is None:
@@ -1499,6 +1529,23 @@ def run_agent_loop(
             return False
         if type(rows) is not list or any(type(row) is not dict for row in rows):
             return False
+        live_contents = {
+            row["tool_call_id"]: row["content"]
+            for row in messages
+            if row.get("tool_call_id")
+            and isinstance(row.get("content"), PluginContextText)
+        }
+        if live_result is not None:
+            live_call, live_content = live_result
+            if isinstance(live_content, PluginContextText):
+                live_contents[live_call.call_id] = live_content
+        for index, row in enumerate(rows):
+            original = live_contents.get(row.get("tool_call_id"))
+            if original is not None:
+                original.checked_origins()
+                if row.get("content") != original:
+                    return False
+                rows[index] = {**row, "content": original}
         if restore_history_start is None:
             restore_history_start = len(messages)
         messages[restore_history_start:] = rows
@@ -1587,7 +1634,13 @@ def run_agent_loop(
             # half-answered native tool_calls pair -- exactly the shape that
             # poisons a provider call (the fleet-continuation coherence
             # property caught this in the first implementation).
+            hook_rows = (
+                deps.await_hook_checkpoints()
+                if deps.await_hook_checkpoints is not None
+                else ()
+            )
             wrap_messages = list(messages[:coherent_len])
+            wrap_messages.extend(hook_rows)
             wrap_messages.append(
                 {
                     "role": "user",
@@ -1643,8 +1696,10 @@ def run_agent_loop(
         )
         if not is_tool_result:
             return
-        newest["content"] = content + BUDGET_WARNING_TEMPLATE.format(
-            percent=int(fraction * 100), kind=kind
+        newest["content"] = carry_plugin_context(
+            content
+            + BUDGET_WARNING_TEMPLATE.format(percent=int(fraction * 100), kind=kind),
+            newest.get("content", ""),
         )
         budget_warning_delivered = True
 
@@ -1666,6 +1721,23 @@ def run_agent_loop(
             return _exhausted("wall-clock")
         if budget.max_total_tokens and total_tokens >= budget.max_total_tokens:
             return _exhausted("token")
+        if deps.await_hook_checkpoints is not None:
+            hook_rows = deps.await_hook_checkpoints()
+
+            existing_hook_blocks = {
+                (str(row.get("content")), row["content"].checked_hook_origins())
+                for row in messages
+                if isinstance(row.get("content"), PluginContextText)
+            }
+            messages.extend(
+                {**row, EPHEMERAL_ORIGIN_KEY: "hooks_v2"}
+                for row in hook_rows
+                if not isinstance(row.get("content"), PluginContextText)
+                or (str(row["content"]), row["content"].checked_hook_origins())
+                not in existing_hook_blocks
+            )
+            if deps.should_cancel():
+                return _outcome(RUN_CANCELLED)
         _maybe_deliver_budget_warning()
 
         restoring_batch = restored_calls is not None and bool(restored_calls)
@@ -1717,16 +1789,28 @@ def run_agent_loop(
                         )
                         add(
                             STEP_STEERING,
-                            summary=steer_message[:200],
+                            summary=(
+                                "Consumed " + steer_source
+                                if steer_source.startswith("peer:")
+                                else steer_message[:200]
+                            ),
                             parent_event_id=source_event_id,
                             source_event_id=source_event_id,
                         )
                         _emit_record(
                             deps,
                             "steering",
-                            content=steer_message,
+                            content=(
+                                steer_source
+                                if steer_source.startswith("peer:")
+                                else steer_message
+                            ),
                             tool="",
-                            status=steer_source,
+                            status=(
+                                "consumed"
+                                if steer_source.startswith("peer:")
+                                else steer_source
+                            ),
                             call_id="",
                         )
                 except Exception:  # noqa: BLE001 — containment, like on_step
@@ -1781,6 +1865,8 @@ def run_agent_loop(
                     context_injected_step.index if context_injected_step else None
                 ),
             )
+            if deps.fallback is not None and deps.fallback.pre_tool_only:
+                model_turns += 1
             try:
                 turn = (
                     active_call_model_with_continuation(
@@ -1792,6 +1878,12 @@ def run_agent_loop(
                     else active_call_model(messages, tuple(active))
                 )
             except Exception as exc:
+                if (
+                    deps.fallback is not None
+                    and deps.fallback.pre_tool_only
+                    and deps.should_cancel()
+                ):
+                    return _outcome(RUN_CANCELLED)
                 # TASK-25901: a transient provider failure used to discard the
                 # whole run along with every tool result already in it. Retry
                 # in place -- deliberately NOT by rebuilding LoopDeps, which
@@ -1804,9 +1896,7 @@ def run_agent_loop(
                     delay = retry_delay_seconds(
                         model_retry_attempts + 1, exc, _MODEL_RETRY_POLICY
                     )
-                    remaining_wall = budget.max_wall_seconds - (
-                        deps.clock() - started
-                    )
+                    remaining_wall = budget.max_wall_seconds - (deps.clock() - started)
                     if delay <= remaining_wall:
                         model_retry_attempts += 1
                         trace(
@@ -1841,20 +1931,31 @@ def run_agent_loop(
                     deps.fallback is not None
                     and fallback_candidates
                     and continuation_checkpoint is None
+                    and not deps.should_cancel()
+                    and (not deps.fallback.pre_tool_only or not tool_activity_proposed)
                     and (
-                        is_credit_terminal(exc)
-                        or is_transient_model_error(exc)
+                        is_transient_model_error(exc)
+                        or (
+                            deps.fallback.pre_tool_only
+                            and isinstance(exc, ChatModelUnavailableError)
+                        )
+                        or (not deps.fallback.pre_tool_only and is_credit_terminal(exc))
                     )
                 ):
                     switched = False
                     while fallback_candidates:
                         candidate = fallback_candidates.pop(0)
+                        candidate_name = (
+                            f"{candidate.provider}/{candidate.model}"
+                            if candidate.model
+                            else candidate.provider
+                        )
                         if not candidate.ready:
                             trace(
                                 STEP_MODEL_ERROR,
                                 summary=(
                                     f"Provider fallback skipped: "
-                                    f"{candidate.provider} "
+                                    f"{candidate_name} "
                                     f"({candidate.skip_reason})"
                                 ),
                                 status="failed",
@@ -1881,7 +1982,11 @@ def run_agent_loop(
                                 parent_step_index=model_request_step.index,
                             )
                             continue
-                        new_call = deps.fallback.build(candidate.provider)
+                        new_call = deps.fallback.build(
+                            candidate
+                            if deps.fallback.pre_tool_only
+                            else candidate.provider
+                        )
                         if new_call is None:
                             # Review M-1: the only silent skip in the chain
                             # walk -- trace it like the unready skip, or a
@@ -1904,6 +2009,8 @@ def run_agent_loop(
                         # and every step index stay valid; in-place so the
                         # projection becomes the run's canonical history
                         # (decision 4 -- the run now IS the new protocol).
+                        if deps.fallback.select is not None:
+                            deps.fallback.select(candidate)
                         messages[:] = projected
                         active_call_model = new_call
                         active_call_model_with_continuation = new_call
@@ -1911,7 +2018,7 @@ def run_agent_loop(
                             STEP_MODEL_ERROR,
                             summary=(
                                 f"Provider fallback: {active_provider} -> "
-                                f"{candidate.provider} "
+                                f"{candidate_name} "
                                 f"(after {type(exc).__name__})"
                             ),
                             status="failed",
@@ -1919,7 +2026,7 @@ def run_agent_loop(
                             sensitivity="diagnostic",
                             parent_step_index=model_request_step.index,
                         )
-                        active_provider = candidate.provider
+                        active_provider = candidate_name
                         switched = True
                         break
                     if switched:
@@ -1941,7 +2048,8 @@ def run_agent_loop(
                 sensitivity="diagnostic",
                 parent_step_index=model_request_step.index,
             )
-            model_turns += 1
+            if deps.fallback is None or not deps.fallback.pre_tool_only:
+                model_turns += 1
             total_tokens += turn.tokens
             calls = list(turn.tool_calls)
             if calls:
@@ -1957,6 +2065,7 @@ def run_agent_loop(
                 # with_preamble_rationale).
                 calls = list(with_preamble_rationale([fenced], _visible))
         if calls:
+            tool_activity_proposed = True
             # A tool call is content: it resets the empty streak even when the
             # turn carried no text, which is the ordinary shape of a model
             # deciding to call a tool (TASK-26002 AC#5). Sits AFTER the fence
@@ -2025,9 +2134,7 @@ def run_agent_loop(
                     # AC#3: the partial the user watched stream stays in
                     # context; the fence (a call the user just cancelled)
                     # does not, and is never executed.
-                    messages.append(
-                        {"role": "assistant", "content": visible.strip()}
-                    )
+                    messages.append({"role": "assistant", "content": visible.strip()})
                 for steer_source, steer_text, source_event_id in entries:
                     content = (
                         steer_text
@@ -2043,16 +2150,28 @@ def run_agent_loop(
                     )
                     add(
                         STEP_STEERING,
-                        summary=content[:200],
+                        summary=(
+                            "Consumed " + steer_source
+                            if steer_source.startswith("peer:")
+                            else content[:200]
+                        ),
                         parent_event_id=source_event_id,
                         source_event_id=source_event_id,
                     )
                     _emit_record(
                         deps,
                         "steering",
-                        content=content,
+                        content=(
+                            steer_source
+                            if steer_source.startswith("peer:")
+                            else content
+                        ),
                         tool="",
-                        status=steer_source,
+                        status=(
+                            "consumed"
+                            if steer_source.startswith("peer:")
+                            else steer_source
+                        ),
                         call_id="",
                     )
                 continue
@@ -2197,6 +2316,8 @@ def run_agent_loop(
                 )
                 model_log_content = safe_tool_summary
                 model_step_summary = safe_tool_summary
+            if any(call.name in MESSAGE_TOOL_NAMES for call in calls):
+                model_log_content = "progress_tool_call"
             add(
                 STEP_MODEL,
                 summary=(
@@ -2266,6 +2387,22 @@ def run_agent_loop(
         # makes every `.get(name, "proceed")` lookup below resolve to
         # "proceed" -- the exact same dispatch path as before this hook
         # existed, so absent-hook behavior stays byte-identical.
+        hook_preparation_refusals: dict[int, str] = {}
+        if deps.prepare_hook_call is not None:
+            prepared_calls = []
+            for call in calls:
+                try:
+                    prepared = deps.prepare_hook_call(call)
+                    if prepared.name != call.name or prepared.call_id != call.call_id:
+                        raise ValueError("hook changed tool identity")
+                except Exception:  # noqa: BLE001 -- transformation is controlling
+                    prepared = call
+                    hook_preparation_refusals[id(prepared)] = (
+                        "hook: preparation refused"
+                    )
+                prepared_calls.append(prepared)
+            calls = prepared_calls
+
         call_trace: dict[int, dict[str, AgentStep | str]] = {}
         reserved_correlations = {call.call_id for call in calls if call.call_id}
         used_correlations: set[str] = set()
@@ -2309,7 +2446,11 @@ def run_agent_loop(
                 else call
             )
 
-        guard_refusals: dict[str, str] = {}
+        guard_refusals: dict[str, str] = {
+            review.call_id: hook_preparation_refusals[id(call)]
+            for call, review in zip(calls, review_calls)
+            if id(call) in hook_preparation_refusals
+        }
         if deps.guard_tool_calls is not None:
             try:
                 guarded = deps.guard_tool_calls(review_calls)
@@ -2325,6 +2466,17 @@ def run_agent_loop(
                     call.call_id: "hook: tool guard failed; failing closed"
                     for call in review_calls
                 }
+
+        if deps.accept_hook_preparation is not None:
+            for call, review_call in zip(calls, review_calls):
+                if review_call.call_id in guard_refusals:
+                    continue
+                try:
+                    deps.accept_hook_preparation(call)
+                except Exception:  # noqa: BLE001 -- fail closed
+                    guard_refusals[review_call.call_id] = (
+                        "hook: effect acceptance refused"
+                    )
 
         preauthorized_call_ids: set[int] = set()
         if deps.is_tool_call_preauthorized is not None:
@@ -2347,7 +2499,10 @@ def run_agent_loop(
         review_hook_failed = False
         if deps.review_tool_calls is not None and review_required_calls:
             for call in calls:
-                if id(call) in preauthorized_call_ids or str(call_trace[id(call)]["correlation"]) in guard_refusals:
+                if (
+                    id(call) in preauthorized_call_ids
+                    or str(call_trace[id(call)]["correlation"]) in guard_refusals
+                ):
                     continue
                 trace_state = call_trace[id(call)]
                 proposal_step = trace_state["proposal"]
@@ -2381,7 +2536,10 @@ def run_agent_loop(
 
             if not (review_hook_failed and continuation_checkpoint is not None):
                 for call in calls:
-                    if id(call) in preauthorized_call_ids or str(call_trace[id(call)]["correlation"]) in guard_refusals:
+                    if (
+                        id(call) in preauthorized_call_ids
+                        or str(call_trace[id(call)]["correlation"]) in guard_refusals
+                    ):
                         continue
                     trace_state = call_trace[id(call)]
                     proposal_step = trace_state["proposal"]
@@ -2498,8 +2656,14 @@ def run_agent_loop(
                     )
                 return _outcome(RUN_CANCELLED)
             cycle_projection = project_record("cycle", call)
-            recent_calls.append((call.name, projection_arguments_json(cycle_projection)))
-            cycle = None if call.name == READ_AGENT_MESSAGES_TOOL_NAME else _detect_cycle(recent_calls)
+            recent_calls.append(
+                (call.name, projection_arguments_json(cycle_projection))
+            )
+            cycle = (
+                None
+                if call.name == READ_AGENT_MESSAGES_TOOL_NAME
+                else _detect_cycle(recent_calls)
+            )
             if cycle is not None:
                 period, repeats = cycle
                 # Name the offending tool(s) so the user-facing "Agent run
@@ -2655,12 +2819,44 @@ def run_agent_loop(
                     source_step_index=proposal_step.index,
                 )
                 trace_state["execution"] = execution_step
-                if call.name == SPAWN_TOOL_NAME:
+
+                def publish_output(
+                    text: str, *, output_call=call, source=execution_step
+                ) -> None:
+                    # Separate from trace/add: partial bodies are never durable.
+                    projected = project_record(
+                        "display", output_call, ToolResult(ok=True, content=text)
+                    )
+                    try:
+                        deps.on_tool_activity(
+                            replace(
+                                source, kind="tool_output", result=projected.content
+                            )
+                        )
+                    except Exception:  # noqa: BLE001, S110 — best-effort display, no body logging
+                        pass
+
+                from .tool_output import tool_output_scope
+
+                output_observer = (
+                    publish_output if deps.on_tool_activity is not None else None
+                )
+                dispatch_refused = False
+                if deps.validate_hook_dispatch is not None:
+                    try:
+                        deps.validate_hook_dispatch(call)
+                    except Exception:  # noqa: BLE001 -- fail closed
+                        dispatch_refused = True
+                if dispatch_refused:
+                    result = ToolResult.blocked("hook: final dispatch identity refused")
+                elif call.name == SPAWN_TOOL_NAME:
                     if SPAWN_TOOL_NAME not in config.allowed_tools:
                         # Q6: refuse before dispatch — no budget consumption,
                         # no STEP_SPAWN, deps.spawn never called.
                         result = ToolResult(
-                            ok=False, error=f"Tool not permitted: {SPAWN_TOOL_NAME}"
+                            ok=False,
+                            error=f"Tool not permitted: {SPAWN_TOOL_NAME}",
+                            dispatch_state="not_started",
                         )
                     else:
                         task = str(call.args.get("task", "")).strip()
@@ -2676,7 +2872,9 @@ def run_agent_loop(
                         # values are only "worktree" or absent, but a
                         # stray JSON `null` must not become the truthy
                         # string "None".
-                        isolation = str(call.args.get("isolation") or "").strip() or None
+                        isolation = (
+                            str(call.args.get("isolation") or "").strip() or None
+                        )
                         # ADR-147 (Task 6): ad-hoc routing args. Same
                         # `.get(...) or ""` coercion as `agent` above: an
                         # explicit JSON null must not become the truthy
@@ -2690,11 +2888,15 @@ def run_agent_loop(
                             # G4: an empty task is refused with no budget
                             # consumption and no STEP_SPAWN.
                             result = ToolResult(
-                                ok=False, error="Task description cannot be empty"
+                                ok=False,
+                                error="Task description cannot be empty",
+                                dispatch_state="not_started",
                             )
                         elif spawned >= budget.max_subagents:
                             result = ToolResult(
-                                ok=False, error="sub-agent budget exhausted"
+                                ok=False,
+                                error="sub-agent budget exhausted",
+                                dispatch_state="not_started",
                             )
                         else:
                             spawn_step = add(
@@ -2778,12 +2980,16 @@ def run_agent_loop(
                             #   VALID named spawn would be wrongly refused here
                             #   before ever reaching deps.spawn's own (real)
                             #   budget check.
-                            if not isinstance(result, SpawnAdmissionRefusal) and (result.ok or not agent_name):
+                            if not isinstance(result, SpawnAdmissionRefusal) and (
+                                result.ok or not agent_name
+                            ):
                                 spawned += 1
                 elif (
                     call.name == WAIT_AGENTS_TOOL_NAME and deps.wait_agents is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     # Same defensive coercion as load_tools' `ids` right
                     # below: an unreliable local model may send one bare
                     # string, a JSON null, or junk. A bare string is ONE
@@ -2805,7 +3011,9 @@ def run_agent_loop(
                     call.name == CHECK_AGENTS_TOOL_NAME
                     and deps.check_agents is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     result = deps.check_agents()
                 elif (
                     call.name == SEND_TO_AGENT_TOOL_NAME
@@ -2835,7 +3043,9 @@ def run_agent_loop(
                     call.name == MERGE_AGENT_WORKTREE_TOOL_NAME
                     and deps.merge_agent_worktree is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     raw_mode = call.args.get("mode")
                     mode = str(raw_mode) if raw_mode else "apply"
                     result = deps.merge_agent_worktree(
@@ -2845,7 +3055,9 @@ def run_agent_loop(
                     call.name == DISCARD_AGENT_WORKTREE_TOOL_NAME
                     and deps.discard_agent_worktree is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     result = deps.discard_agent_worktree(
                         str(call.args.get("handle_id", ""))
                     )
@@ -2853,29 +3065,41 @@ def run_agent_loop(
                     from .fleet_message_tools import refused
 
                     add(STEP_TOOL_CALL, tool_name=call.name, args=call.args)
-                    callback = (
-                        deps.report_to_supervisor
-                        if call.name == REPORT_TO_SUPERVISOR_TOOL_NAME
-                        else deps.read_agent_messages
+                    callback = {
+                        REPORT_TO_SUPERVISOR_TOOL_NAME: deps.report_to_supervisor,
+                        READ_AGENT_MESSAGES_TOOL_NAME: deps.read_agent_messages,
+                        LIST_PEER_AGENTS_TOOL_NAME: deps.list_peer_agents,
+                        SEND_TO_PEER_TOOL_NAME: deps.send_to_peer,
+                    }.get(call.name)
+                    result = (
+                        callback(call.args)
+                        if callback is not None
+                        else replace(refused(), dispatch_state="not_started")
                     )
-                    result = callback(call.args) if callback is not None else refused()
                 elif (
                     call.name == SEND_TO_AGENT_TOOL_NAME and deps.send_to_agent is None
                 ):
                     add(STEP_TOOL_CALL, tool_name=call.name, args={})
                     result = ToolResult(
-                        False, error="Tool not permitted: send_to_agent"
+                        False,
+                        error="Tool not permitted: send_to_agent",
+                        dispatch_state="not_started",
                     )
                 elif call.name == FIND_TOOLS_NAME:
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     entries = deps.find_tools(str(call.args.get("query", "")))
                     result = ToolResult(ok=True, content=_catalog_lines(entries))
                 elif call.name == LOAD_TOOLS_NAME:
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     if not load_batch_exclusive:
                         result = ToolResult(
                             ok=False,
                             error="call load_tools alone in its own tool batch",
+                            dispatch_state="not_started",
                         )
                     else:
                         # A bare string is one id, never a sequence of chars.
@@ -2908,7 +3132,9 @@ def run_agent_loop(
                     call.name == SKILL_FILE_TOOL_NAME
                     and deps.read_skill_file is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     result = deps.read_skill_file(
                         str(call.args.get("skill_name", "")),
                         str(call.args.get("path", "")),
@@ -2917,10 +3143,14 @@ def run_agent_loop(
                     call.name == INSTALL_SKILL_TOOL_NAME
                     and deps.install_skill is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     result = deps.install_skill(str(call.args.get("url", "")))
                 elif call.name == PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME:
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     if deps.prepare_managed_skill_promotion is None:
                         result = ToolResult.blocked(
                             "Managed-skill promotion proposals are unavailable."
@@ -2934,57 +3164,61 @@ def run_agent_loop(
                     call.name == RUN_SKILL_SCRIPT_TOOL_NAME
                     and deps.run_skill_script is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     raw_args = call.args.get("args") or []
                     if not isinstance(raw_args, (list, tuple)):
                         raw_args = [raw_args]
-                    result = deps.run_skill_script(
-                        str(call.args.get("skill_name", "")),
-                        str(call.args.get("script_path", "")),
-                        [str(item) for item in raw_args],
-                    )
-                elif (
-                    call.name == FORK_CHAT_TOOL_NAME
-                    and deps.fork_chat is not None
-                ):
+                    with tool_output_scope(output_observer):
+                        result = deps.run_skill_script(
+                            str(call.args.get("skill_name", "")),
+                            str(call.args.get("script_path", "")),
+                            [str(item) for item in raw_args],
+                        )
+                elif call.name == FORK_CHAT_TOOL_NAME and deps.fork_chat is not None:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.fork_chat(dict(call.args))
-                elif (
-                    call.name == NEW_CHAT_TOOL_NAME
-                    and deps.new_chat is not None
-                ):
+                elif call.name == NEW_CHAT_TOOL_NAME and deps.new_chat is not None:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=dict(call.args))
                     result = deps.new_chat(dict(call.args))
                 elif (
                     call.name == SEARCH_RUN_LOG_TOOL_NAME
                     and deps.search_run_log is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     result = deps.search_run_log(dict(call.args))
                 elif (
                     call.name == RUN_LOG_STATS_TOOL_NAME
                     and deps.run_log_stats is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     result = deps.run_log_stats(dict(call.args))
                 elif (
                     call.name == RUN_LOG_SLICE_TOOL_NAME
                     and deps.run_log_slice is not None
                 ):
-                    add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
+                    add(
+                        STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
+                    )
                     result = deps.run_log_slice(dict(call.args))
                 else:
                     tool_step = add(
                         STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments
                     )
-                    if deps.invoke_tool_at_step is not None:
-                        result = deps.invoke_tool_at_step(
-                            call,
-                            tool_step.index,
-                            current_call_correlation,
-                        )
-                    else:
-                        result = deps.invoke_tool(call)
+                    with tool_output_scope(output_observer):
+                        if deps.invoke_tool_at_step is not None:
+                            result = deps.invoke_tool_at_step(
+                                call,
+                                tool_step.index,
+                                current_call_correlation,
+                            )
+                        else:
+                            result = deps.invoke_tool(call)
 
                 tool_outcome = (
                     TOOL_OUTCOME_SUCCESS
@@ -3001,6 +3235,9 @@ def run_agent_loop(
                     )
                 )
                 content = result.content if result.ok else f"ERROR: {result.error}"
+
+            if verdict == "proceed" and deps.install_tool_checkpoint is not None:
+                deps.install_tool_checkpoint(call, result)
 
             if verdict == "proceed":
                 trace_state = call_trace[id(call)]
@@ -3044,7 +3281,9 @@ def run_agent_loop(
             # that assigns it in THIS iteration (a non-"proceed" verdict
             # skips dispatch entirely, so `result` -- if it exists at all --
             # would be a stale value from a different call in this batch).
-            record_result = result if verdict == "proceed" else ToolResult.blocked(verdict)
+            record_result = (
+                result if verdict == "proceed" else ToolResult.blocked(verdict)
+            )
             display_projection = project_record("display", call, record_result)
             display_result_content = projection_result_content(
                 display_projection, record_result
@@ -3095,7 +3334,7 @@ def run_agent_loop(
                 if not transition_call(
                     call,
                     target_state,
-                    ContinuationResult(continuation_content),
+                    ContinuationResult(str(continuation_content)),
                 ):
                     return continuation_error()
                 _emit_record(
@@ -3113,8 +3352,11 @@ def run_agent_loop(
                 if deps.post_tool_call is not None and verdict == "proceed":
                     try:
                         deps.post_tool_call(
-                            call.name, call.call_id, call.args,
-                            full_content, result.ok,
+                            call.name,
+                            call.call_id,
+                            call.args,
+                            full_content,
+                            result.ok,
                         )
                     except Exception as exc:  # noqa: BLE001 - dep must never break a run
                         logger.warning(
@@ -3137,8 +3379,11 @@ def run_agent_loop(
                 if deps.post_tool_call is not None and verdict == "proceed":
                     try:
                         deps.post_tool_call(
-                            call.name, call.call_id, call.args,
-                            content, result.ok,
+                            call.name,
+                            call.call_id,
+                            call.args,
+                            content,
+                            result.ok,
                         )
                     except Exception as exc:  # noqa: BLE001 - dep must never break a run
                         logger.warning(
@@ -3174,7 +3419,7 @@ def run_agent_loop(
                 ),
             )
             if restoring_batch and continuation_checkpoint is not None:
-                if not expand_restore_history(continuation_checkpoint):
+                if not expand_restore_history(continuation_checkpoint, (call, content)):
                     return continuation_error()
             else:
                 _append_tool_result(messages, call, content)

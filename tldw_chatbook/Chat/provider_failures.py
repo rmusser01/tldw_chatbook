@@ -10,7 +10,7 @@ through this module.
 
 import asyncio
 
-from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
+from tldw_chatbook.Chat.Chat_Deps import ChatAPIError, ChatConfigurationError
 
 _MDN_BOILERPLATE_MARKER = "For more information check:"
 
@@ -39,11 +39,7 @@ def _provider_error_body_detail(response: object) -> str:
             candidate = payload.get("error")
             if isinstance(candidate, dict):
                 candidate = candidate.get("message") or candidate.get("detail")
-            candidate = (
-                candidate
-                or payload.get("message")
-                or payload.get("detail")
-            )
+            candidate = candidate or payload.get("message") or payload.get("detail")
             if isinstance(candidate, str) and candidate.strip():
                 detail = candidate
     except (ValueError, TypeError):
@@ -53,6 +49,12 @@ def _provider_error_body_detail(response: object) -> str:
     from tldw_chatbook.Utils.Utils import truncate
 
     return truncate(detail, 240)
+
+
+#: TASK-34100.5 AC#4: the longest failure summary an agent step keeps. The
+#: provider's reason (<= 200 chars) plus the per-category fix overran the old
+#: 500-character cut, which ended a 404 at '...another model from the.'.
+FAILURE_SUMMARY_MAX_CHARS = 1200
 
 
 def describe_stream_failure(exc: BaseException) -> str:
@@ -84,6 +86,35 @@ def describe_stream_failure(exc: BaseException) -> str:
     exc_name = type(exc).__name__
     lowered_name = exc_name.lower()
 
+    stall_seconds = getattr(exc, "timeout_seconds", None)
+    if exc_name == "StreamStallError" and isinstance(stall_seconds, (int, float)):
+        # TASK-34100.5 AC#4/#5: a stall is its own category with its own
+        # fixes, never "unexpected provider error". A self-hosted first-token
+        # stall is a model still loading, so it names the cold-load setting;
+        # a hosted model loads nothing here (review round 2, R2-F1).
+        if getattr(exc, "first_token", False):
+            from tldw_chatbook.Chat.provider_readiness import (
+                is_self_hosted_provider,
+            )
+
+            if not is_self_hosted_provider(getattr(exc, "provider", None)):
+                return (
+                    f"no first token after {stall_seconds:g} s — the provider "
+                    "hasn't started answering. Retry, or wait longer by "
+                    "raising chat_defaults.first_token_timeout_seconds in "
+                    "config.toml."
+                )
+            return (
+                f"no first token after {stall_seconds:g} s — the model may still "
+                "be loading. Wait longer by raising "
+                "chat_defaults.first_token_timeout_seconds in config.toml, or "
+                "try a smaller model."
+            )
+        return (
+            f"no reply for {stall_seconds:g} s — the provider stopped sending. "
+            "Retry, or wait longer by raising "
+            "chat_defaults.stream_stall_timeout_seconds in config.toml."
+        )
     if (
         isinstance(exc, (asyncio.TimeoutError, TimeoutError))
         or "timeout" in lowered_name
@@ -122,6 +153,28 @@ def describe_stream_failure(exc: BaseException) -> str:
         if marker != -1:
             detail = detail[:marker].rstrip()
         detail = " ".join(detail.split())
+    if (
+        detail
+        and type(status_code) is int
+        and f"Status: {status_code}." in detail
+    ):
+        # Review round 2 (V2-F6): the gateway's own finished copy already
+        # names the status and the fix; wrapping it again read
+        # "HTTP 404 (... Status: 404. ... (Alt+M: Switch model).)."
+        return detail
     if detail and detail.lower() != summary.lower():
-        return f"{summary} ({detail})"
+        # The closing parenthesis ends the clause; a period inside it read
+        # "(... broke.)." once the caller closed the sentence.
+        return f"{summary} ({detail.rstrip('.')})"
     return summary
+
+
+def describe_console_stream_failure(exc: BaseException) -> str:
+    """Return gateway-sanitized copy at the Console's visible failure surfaces.
+
+    Durable agent summaries continue to use the unchanged diagnostic helper.
+    Other errors keep their existing description.
+    """
+    if isinstance(exc, ChatAPIError) and exc.console_copy:
+        return exc.console_copy
+    return describe_stream_failure(exc)

@@ -6,6 +6,7 @@ REAL objects (the real tool, the real gate, the real DB) rather than the
 synthetic doubles the neighbouring suites use, because "the double behaves"
 is exactly what those reviews found insufficient.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -105,6 +106,7 @@ def test_a_real_reads_tagged_tool_reaches_the_approval_card_not_silence(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.integration
 def test_create_note_persists_through_a_real_db_on_a_worker_thread(
     tmp_path, monkeypatch

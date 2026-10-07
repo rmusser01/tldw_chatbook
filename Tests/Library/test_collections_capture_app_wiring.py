@@ -8,7 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
 import tldw_chatbook.app as app_module
+from tldw_chatbook import app_service_wiring
 from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
 from tldw_chatbook.Library.collections_capture_models import (
     ExternalMediaReference,
@@ -204,11 +206,11 @@ def test_local_capture_wiring_reuses_configured_collections_database(
         server_context_provider=None,
     )
     monkeypatch.setattr(
-        app_module,
+        app_service_wiring,
         "get_library_collections_db_path",
         lambda: database_path,
     )
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path / "profile")
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path / "profile")
 
     TldwCli._wire_collections_capture_services(app)
 

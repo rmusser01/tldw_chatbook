@@ -112,7 +112,9 @@ def acquire_bulk_rag_slot(slot: str) -> Optional[str]:
         if slot in _bulk_rag_slots_held:
             return f"{own_label} is already running."
         if other in _bulk_rag_slots_held:
-            return f"{other_label} is running — start the {own_label} after it finishes."
+            return (
+                f"{other_label} is running — start the {own_label} after it finishes."
+            )
         _bulk_rag_slots_held.add(slot)
         return None
 
@@ -145,7 +147,9 @@ def list_legacy_media_ids(media_db: MediaDatabase) -> List[int]:
     return [int(row["media_id"]) for row in cursor.fetchall()]
 
 
-def _stored_chunking_config(media: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _stored_chunking_config(
+    media: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
     """The stored per-media chunking config (``Media.chunking_config``), if any.
 
     Tolerant of both spellings the column can hold (a JSON string from the
@@ -612,9 +616,7 @@ async def rechunk_one_item(
                     media_db,
                     _stored_chunking_config(media_row),
                     media_type=str(
-                        media_row.get("type")
-                        or media_row.get("media_type")
-                        or ""
+                        media_row.get("type") or media_row.get("media_type") or ""
                     ).strip()
                     or None,
                     title=str(media_row.get("title") or "").strip() or None,
@@ -628,15 +630,11 @@ async def rechunk_one_item(
                 logger.warning(f"Re-chunk skipped media {media_id}: {exc}")
                 return {"status": "skipped", "notes": [str(exc)]}
             if isinstance(resolved, AutoDecision):
-                if (
-                    resolved.tier == "template"
-                    and isinstance(resolved.template, dict)
-                ):
+                if resolved.tier == "template" and isinstance(resolved.template, dict):
                     chunker_template_arg = resolved.template
                     options = {}
-                elif (
-                    resolved.tier == "plan"
-                    and isinstance(resolved.chunk_options, dict)
+                elif resolved.tier == "plan" and isinstance(
+                    resolved.chunk_options, dict
                 ):
                     # The planner's options govern this run.
                     chunker_template_arg = None
@@ -689,9 +687,7 @@ async def rechunk_one_item(
                 # construction); the lazy import mirrors
                 # ``_effective_template_params``'s.
                 if rows_template_params is not None:
-                    governed_params: Dict[str, Any] = json.loads(
-                        rows_template_params
-                    )
+                    governed_params: Dict[str, Any] = json.loads(rows_template_params)
                 else:
                     from ..Local_Ingestion.local_file_ingestion import (
                         _effective_chunk_params,

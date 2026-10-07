@@ -1,7 +1,9 @@
 """Authenticated captured values restore into new scopes without shared writes."""
 
+import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -11,7 +13,10 @@ from threading import Event
 import pytest
 
 from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
-from Tests.Backup_Recovery.test_replacement import _credential_candidate
+from Tests.Backup_Recovery.test_replacement import (
+    _credential_candidate,
+    profile_provider,
+)
 from tldw_chatbook.Backup_Recovery import bootstrap, crypto, publication, replacement
 from tldw_chatbook.Backup_Recovery.journal import Journal
 
@@ -66,9 +71,11 @@ def test_authenticated_old_secret_restores_to_new_owner_reference(
             )
         monkeypatch.setattr(publication, "finalize_candidate", finalize)
         if changed == "changed":
-            store.set_secret("peer", "api_key", "other-profile-new-value")
+            profile_provider(store).store_scoped_credential(
+                "peer", "api_key", "other-profile-new-value"
+            )
         else:
-            store.delete_secret("peer", "api_key")
+            profile_provider(store).delete_scoped_credential("peer", "api_key")
         deleted = list(backend.deleted)
         pending, _ = bootstrap._records(tmp_path / "bootstrap")
         operation = pending[0]["operation_id"]
@@ -85,11 +92,19 @@ def test_authenticated_old_secret_restores_to_new_owner_reference(
         row = json.loads(targets.read_text())["targets"][0]
         purpose = row["auth_reference"].removeprefix("keyring:")
         assert purpose.startswith("recovery_")
-        assert store.get_secret("peer", purpose) == "current-shared-secret"
-        assert store.get_secret("peer", "api_key") == (
+        assert (
+            profile_provider(store)._get_credential_secret("peer", purpose)
+            == "current-shared-secret"
+        )
+        assert profile_provider(store)._get_credential_secret("peer", "api_key") == (
             "other-profile-new-value" if changed == "changed" else None
         )
-        assert backend.deleted == deleted
+        assert backend.deleted[: len(deleted)] == deleted
+        assert all(
+            service == store.service_name
+            and re.fullmatch(r"__credential_refs__:[0-9a-f]{32}:[0-9]+", username)
+            for service, username in backend.deleted[len(deleted) :]
+        )
         previous = json.loads(originals[targets])
         previous["targets"][0]["auth_reference"] = "keyring:" + purpose
         assert json.loads(targets.read_text()) == previous
@@ -126,7 +141,9 @@ def _interrupted(tmp_path, monkeypatch, helper, *, second=False):
                 }
             )
             targets.write_text(json.dumps(document))
-            store.set_secret("second", "api_key", "second-captured-secret")
+            profile_provider(store).store_scoped_credential(
+                "second", "api_key", "second-captured-secret"
+            )
             plan = plan_restore(
                 archive,
                 mode="replace",
@@ -200,7 +217,9 @@ def test_late_old_scope_drift_requires_new_terminal_proof(
             _recover(tmp_path, operation)
         monkeypatch.setattr(Journal, "_append", append)
         assert targets.read_bytes() == original
-        store.set_secret("peer", "api_key", "late-foreign-value")
+        profile_provider(store).store_scoped_credential(
+            "peer", "api_key", "late-foreign-value"
+        )
         assert _recover(tmp_path, operation) == "rolled_back"
         rows = _records(tmp_path, operation)
         last_plan = next(
@@ -215,8 +234,14 @@ def test_late_old_scope_drift_requires_new_terminal_proof(
         purpose = json.loads(targets.read_bytes())["targets"][0][
             "auth_reference"
         ].removeprefix("keyring:")
-        assert store.get_secret("peer", purpose) == "current-shared-secret"
-        assert store.get_secret("peer", "api_key") == "late-foreign-value"
+        assert (
+            profile_provider(store)._get_credential_secret("peer", purpose)
+            == "current-shared-secret"
+        )
+        assert (
+            profile_provider(store)._get_credential_secret("peer", "api_key")
+            == "late-foreign-value"
+        )
         from tldw_chatbook.Backup_Recovery.isolated_restore import (
             installation_client_id,
         )
@@ -263,8 +288,14 @@ def test_backend_unavailability_never_authorizes_shared_write(
             purpose = json.loads(targets.read_bytes())["targets"][0][
                 "auth_reference"
             ].removeprefix("keyring:")
-            assert store.get_secret("peer", purpose) == "current-shared-secret"
-        assert store.get_secret("peer", "api_key") == "current-shared-secret"
+            assert (
+                profile_provider(store)._get_credential_secret("peer", purpose)
+                == "current-shared-secret"
+            )
+        assert (
+            profile_provider(store)._get_credential_secret("peer", "api_key")
+            == "current-shared-secret"
+        )
 
 
 class _PersistentKeyring:
@@ -299,13 +330,18 @@ class _PersistentKeyring:
         raise AssertionError("recovery must not delete credential scopes")
 
 
-_CHILD = r"""
+# Importing this test module in a child also loads application config through
+# its helper imports, creating directories during the protected recovery phase.
+_CHILD = (
+    r"""
 import os,sys,json
 from pathlib import Path
 from threading import Event
 from Tests.network_guard import install,blocked_attempts
 install()
-from Tests.Backup_Recovery.test_rollback_credentials import _PersistentKeyring
+"""
+    + inspect.getsource(_PersistentKeyring)
+    + r"""
 from tldw_chatbook.Backup_Recovery import bootstrap,crypto,credentials,publication,replacement
 from tldw_chatbook.Backup_Recovery.journal import Journal
 from tldw_chatbook.runtime_policy.server_credentials import KeyringServerCredentialStore
@@ -339,6 +375,7 @@ assert len(installation_client_id())==32
 assert not blocked_attempts(),blocked_attempts()
 print(result)
 """
+)
 
 
 def _child(tmp_path, helper, operation, boundary, expected):
@@ -400,7 +437,9 @@ def test_fresh_process_kill_reuses_exact_planned_scope(
             with pytest.raises(KeyboardInterrupt):
                 _recover(tmp_path, operation)
             monkeypatch.setattr(Journal, "_append", append)
-        store.set_secret("peer", "api_key", "foreign-shared-value")
+        profile_provider(store).store_scoped_credential(
+            "peer", "api_key", "foreign-shared-value"
+        )
         saved = tmp_path / "backend.json"
         saved.write_text(
             json.dumps([[*key, value] for key, value in backend.values.items()])
@@ -419,8 +458,14 @@ def test_fresh_process_kill_reuses_exact_planned_scope(
             == "keyring:" + purpose
         )
         actual = KeyringServerCredentialStore(keyring_backend=_PersistentKeyring(saved))
-        assert actual.get_secret("peer", purpose) == "current-shared-secret"
-        assert actual.get_secret("peer", "api_key") == "foreign-shared-value"
+        assert (
+            profile_provider(actual)._get_credential_secret("peer", purpose)
+            == "current-shared-secret"
+        )
+        assert (
+            profile_provider(actual)._get_credential_secret("peer", "api_key")
+            == "foreign-shared-value"
+        )
         rows = _records(tmp_path, operation)
         assert sum(row.event == "rollback_credentials_planned" for row in rows) == 1
         assert rows[-1].event == "rolled_back"
@@ -445,7 +490,9 @@ def test_interrupted_plan_rejects_changed_value_or_candidate(
         _original,
         operation,
     ):
-        store.set_secret("peer", "api_key", "foreign-shared-value")
+        profile_provider(store).store_scoped_credential(
+            "peer", "api_key", "foreign-shared-value"
+        )
         before = {path: path.read_bytes() for path in (case[4], case[5], targets)}
         append = Journal._append
 
@@ -464,9 +511,11 @@ def test_interrupted_plan_rejects_changed_value_or_candidate(
         )
         purpose = next(iter(plan["scopes"].values()))["purpose"]
         if damage == "foreign":
-            store.set_secret("peer", purpose, "other-owner-value")
+            profile_provider(store).store_scoped_credential(
+                "peer", purpose, "other-owner-value"
+            )
         elif damage == "missing":
-            store.delete_secret("peer", purpose)
+            profile_provider(store).delete_scoped_credential("peer", purpose)
         else:
             Path(plan["artifacts"][0]["candidate"]["path"]).write_text('{"targets":[]}')
         with pytest.raises(
@@ -475,7 +524,10 @@ def test_interrupted_plan_rejects_changed_value_or_candidate(
             _recover(tmp_path, operation)
         assert all(path.read_bytes() == value for path, value in before.items())
         assert not bootstrap.startup_permission(case[5], tmp_path / "bootstrap")[0]
-        assert store.get_secret("peer", "api_key") == "foreign-shared-value"
+        assert (
+            profile_provider(store)._get_credential_secret("peer", "api_key")
+            == "foreign-shared-value"
+        )
         with pytest.raises(ValueError, match="rollback_direction_selected"):
             replacement.recover_replacement(
                 operation,
@@ -499,7 +551,9 @@ def test_private_candidate_capacity_refuses_before_values_or_reverse_effects(
         _original,
         operation,
     ):
-        store.set_secret("peer", "api_key", "foreign-shared-value")
+        profile_provider(store).store_scoped_credential(
+            "peer", "api_key", "foreign-shared-value"
+        )
         before = {path: path.read_bytes() for path in (case[4], case[5], targets)}
         values = dict(backend.values)
         check = space.require_capacity
@@ -530,9 +584,11 @@ def test_actual_installed_rejection_uses_authenticated_value_in_same_session(
         )
         validate = publication._validate_installed
 
-        def reject(*args):
-            validate(*args)
-            store.set_secret("peer", "api_key", "foreign-shared-value")
+        def reject(*args, **kwargs):
+            validate(*args, **kwargs)
+            profile_provider(store).store_scoped_credential(
+                "peer", "api_key", "foreign-shared-value"
+            )
             raise ValueError("actual installed validation rejection")
 
         monkeypatch.setattr(publication, "_validate_installed", reject)
@@ -559,8 +615,14 @@ def test_actual_installed_rejection_uses_authenticated_value_in_same_session(
         purpose = json.loads(targets.read_bytes())["targets"][0][
             "auth_reference"
         ].removeprefix("keyring:")
-        assert store.get_secret("peer", purpose) == "current-shared-secret"
-        assert store.get_secret("peer", "api_key") == "foreign-shared-value"
+        assert (
+            profile_provider(store)._get_credential_secret("peer", purpose)
+            == "current-shared-secret"
+        )
+        assert (
+            profile_provider(store)._get_credential_secret("peer", "api_key")
+            == "foreign-shared-value"
+        )
         assert bootstrap.startup_permission(case[5], tmp_path / "bootstrap")[0]
 
 
@@ -575,7 +637,9 @@ def test_second_amendment_preserves_prior_scope_and_raw_original(
         original,
         operation,
     ):
-        store.set_secret("peer", "api_key", "first-foreign")
+        profile_provider(store).store_scoped_credential(
+            "peer", "api_key", "first-foreign"
+        )
         append = Journal._append
 
         def stopped(self, parent, event, evidence):
@@ -588,12 +652,14 @@ def test_second_amendment_preserves_prior_scope_and_raw_original(
             _recover(tmp_path, operation)
         monkeypatch.setattr(Journal, "_append", append)
         first = json.loads(targets.read_bytes())["targets"][0]["auth_reference"]
-        store.set_secret("second", "api_key", "second-foreign")
+        profile_provider(store).store_scoped_credential(
+            "second", "api_key", "second-foreign"
+        )
         assert _recover(tmp_path, operation) == "rolled_back"
         active = json.loads(targets.read_bytes())["targets"]
         assert active[0]["auth_reference"] == first
         assert [
-            store.get_secret(
+            profile_provider(store)._get_credential_secret(
                 row["server_id"], row["auth_reference"].removeprefix("keyring:")
             )
             for row in active
@@ -623,7 +689,9 @@ def test_missing_previously_applied_carried_scope_refuses(
         _original,
         operation,
     ):
-        store.set_secret("peer", "api_key", "first-foreign")
+        profile_provider(store).store_scoped_credential(
+            "peer", "api_key", "first-foreign"
+        )
         append = Journal._append
 
         def first_stop(self, parent, event, evidence):
@@ -638,8 +706,13 @@ def test_missing_previously_applied_carried_scope_refuses(
         purpose = json.loads(targets.read_bytes())["targets"][0][
             "auth_reference"
         ].removeprefix("keyring:")
-        assert store.get_secret("peer", purpose) == "current-shared-secret"
-        store.set_secret("second", "api_key", "second-foreign")
+        assert (
+            profile_provider(store)._get_credential_secret("peer", purpose)
+            == "current-shared-secret"
+        )
+        profile_provider(store).store_scoped_credential(
+            "second", "api_key", "second-foreign"
+        )
 
         def second_stop(self, parent, event, evidence):
             append(self, parent, event, evidence)
@@ -653,14 +726,16 @@ def test_missing_previously_applied_carried_scope_refuses(
         rows = _records(tmp_path, operation)
         assert sum(row.event == "rollback_credentials_planned" for row in rows) == 2
         assert rows[-1].event == "rollback_credentials_planned"
-        store.delete_secret("peer", purpose)
+        profile_provider(store).delete_scoped_credential("peer", purpose)
         before = targets.read_bytes()
         values = dict(backend.values)
         try:
             outcome = _recover(tmp_path, operation)
         except ValueError as error:
             assert str(error) == "rollback_credential_value_changed"
-            assert store.get_secret("peer", purpose) is None
+            assert (
+                profile_provider(store)._get_credential_secret("peer", purpose) is None
+            )
             assert targets.read_bytes() == before
             assert backend.values == values
             assert not bootstrap.startup_permission(case[5], tmp_path / "bootstrap")[0]
@@ -673,7 +748,7 @@ def test_missing_previously_applied_carried_scope_refuses(
                 "unexpected recovery",
                 outcome,
                 "deleted applied scope recreated",
-                store.get_secret("peer", purpose),
+                profile_provider(store)._get_credential_secret("peer", purpose),
                 "terminal",
                 _records(tmp_path, operation)[-1].event,
             )

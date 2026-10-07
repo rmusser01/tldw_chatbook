@@ -299,7 +299,11 @@ class WorkspaceToolExecutor:
             tree = ExecutorProcessTree(adapter, admission, identity)
             tree.admit()
 
-            if process.stdout is None or process.stderr is None or process.stdin is None:
+            if (
+                process.stdout is None
+                or process.stderr is None
+                or process.stdin is None
+            ):
                 raise WorkspaceToolExecutionError("spawn_failed")
             candidate_supervisor = _CleanupSupervisor(tree, process, deadline)
             candidate_supervisor.start()
@@ -332,7 +336,9 @@ class WorkspaceToolExecutor:
                     process,
                     deadline,
                 )
-                _join_threads_until(deadline, writer_thread, stdout_thread, stderr_thread)
+                _join_threads_until(
+                    deadline, writer_thread, stdout_thread, stderr_thread
+                )
                 if not cleanup:
                     raise WorkspaceToolExecutionError("cleanup_unproven") from None
                 raise WorkspaceToolExecutionError("worker_timed_out") from None
@@ -447,8 +453,8 @@ class WorkspaceToolExecutor:
             writer_errors.clear()
             stdout_capture.clear()
             stderr_capture.clear()
-            active_cancellation = (
-                active_error is not None and not isinstance(active_error, Exception)
+            active_cancellation = active_error is not None and not isinstance(
+                active_error, Exception
             )
             if not active_cancellation:
                 if cleanup_cancellation is not None:
@@ -491,9 +497,7 @@ class WorkspaceToolExecutor:
                     ".", chain.canonical_root, intent="list", context=context
                 )
                 exclusions, _ = _parent_read_exclusions(root, context)
-                normalized["sensitive_exclusions"] = _serialize_exclusions(
-                    exclusions
-                )
+                normalized["sensitive_exclusions"] = _serialize_exclusions(exclusions)
                 raw_path = arguments.get("path")
                 if raw_path is not None:
                     if type(raw_path) is not str:
@@ -541,12 +545,8 @@ class WorkspaceToolExecutor:
                     context=context,
                 )
                 normalized["path"] = _normalize_relative_path(raw_path)
-                exclusions, _ = _parent_read_exclusions(
-                    chain.canonical_root, context
-                )
-                normalized["sensitive_exclusions"] = _serialize_exclusions(
-                    exclusions
-                )
+                exclusions, _ = _parent_read_exclusions(chain.canonical_root, context)
+                normalized["sensitive_exclusions"] = _serialize_exclusions(exclusions)
             if operation == "fs_patch" and type(arguments) is dict:
                 raw_diff = arguments.get("diff")
                 if type(raw_diff) is not str:
@@ -565,12 +565,8 @@ class WorkspaceToolExecutor:
                     )
                     targets.append(_normalize_relative_path(rel_path))
                 normalized["targets"] = targets
-                exclusions, _ = _parent_read_exclusions(
-                    chain.canonical_root, context
-                )
-                normalized["sensitive_exclusions"] = _serialize_exclusions(
-                    exclusions
-                )
+                exclusions, _ = _parent_read_exclusions(chain.canonical_root, context)
+                normalized["sensitive_exclusions"] = _serialize_exclusions(exclusions)
             request = WorkspaceToolRequest(
                 operation_id=uuid.uuid4().hex,
                 operation=operation,  # type: ignore[arg-type]
@@ -831,9 +827,13 @@ def _parent_read_exclusions(
     return tuple(dict.fromkeys(exclusions)), tuple(dict.fromkeys(content_exclusions))
 
 
-def _serialize_exclusions(exclusions: tuple[SensitiveExclusion, ...]) -> list[dict[str, str]]:
+def _serialize_exclusions(
+    exclusions: tuple[SensitiveExclusion, ...],
+) -> list[dict[str, str]]:
     """Serialize bounded parent exclusions into the closed worker request."""
-    return [{"kind": exclusion.kind, "value": exclusion.value} for exclusion in exclusions]
+    return [
+        {"kind": exclusion.kind, "value": exclusion.value} for exclusion in exclusions
+    ]
 
 
 def _start_bounded_reader(

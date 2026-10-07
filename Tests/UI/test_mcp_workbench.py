@@ -91,7 +91,6 @@ class _AllGatesOn(dict):
         return True
 
 
-
 _BUNDLED_CSS_PATH = str(
     Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
 )
@@ -1193,7 +1192,9 @@ async def test_tool_gate_checkbox_toggle_saves_setting_and_reloads_catalog(monke
                 fake_save_setting_to_cli_config(section, key, value)
         return ConfigMutationResult(True, True, None)
 
-    monkeypatch.setattr(mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate)
+    monkeypatch.setattr(
+        mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate
+    )
 
     app = WorkbenchApp()
     async with app.run_test(size=(120, 40)) as pilot:
@@ -1303,7 +1304,9 @@ def _fake_tool_gate_config_seam(monkeypatch):
                 fake_save_setting_to_cli_config(section, key, value)
         return ConfigMutationResult(True, True, None)
 
-    monkeypatch.setattr(mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate)
+    monkeypatch.setattr(
+        mcp_workbench_module, "apply_settings_mutation_to_cli_config", fake_mutate
+    )
     return flags, save_calls
 
 
@@ -3725,6 +3728,7 @@ class ToolTestHubService(FakeHubService):
         self.preview_profile_calls: list[tuple[str, str | None, int | None]] = []
         self.lease_observer = None
         self.lease_observations: list[int] = []
+
     def gate_tool_test(
         self, tool: Any, *, profile_id: str = "default"
     ) -> EffectiveToolState:
@@ -6191,7 +6195,7 @@ async def test_render_failure_in_show_tool_test_result_notifies_instead_of_only_
             messages.append, level="WARNING", format="{message}"
         )
         try:
-            await pilot.click(run_button)
+            await _click_test_run(pilot)
             await app.workers.wait_for_complete()
             await pilot.pause()
         finally:
@@ -6496,7 +6500,9 @@ class PermissionsHubService(FakeHubService):
             server_key, tool_name, profile_id=profile_id
         )
 
-    def remove_tool_arg_rule(self, server_key, tool_name, rule_id, *, profile_id="default"):
+    def remove_tool_arg_rule(
+        self, server_key, tool_name, rule_id, *, profile_id="default"
+    ):
         return self._store.remove_tool_arg_rule(
             server_key, tool_name, rule_id, profile_id=profile_id
         )
@@ -7759,8 +7765,7 @@ async def test_space_on_server_default_row_round_trips_through_store(tmp_path):
         payload = app.unified_mcp_service.permission_store.load()
         # Wave B: first press from Inherit lands on "ask"
         assert (
-            payload["profiles"]["default"]["servers"]["local:docs"]["default"]
-            == "ask"
+            payload["profiles"]["default"]["servers"]["local:docs"]["default"] == "ask"
         )
         assert _perm_table_texts(app, 1) == ["Server default — docs", "Ask •"]
 
@@ -8268,9 +8273,7 @@ async def test_matrix_marks_and_inspector_lists_and_removes_arg_rules(tmp_path):
         # open on the SAME tool.
         assert app.query_one("#mcp-inspector-permission").display is True
         assert (
-            str(
-                app.query_one("#mcp-inspector-permission-tool", Static).renderable
-            )
+            str(app.query_one("#mcp-inspector-permission-tool", Static).renderable)
             == "search — docs"
         )
 
@@ -8494,7 +8497,6 @@ async def test_reallow_round_trip_clears_config_changed_marker_and_matrix_warnin
         tool_entry = payload["profiles"]["default"]["servers"]["local:docs"]["tools"][
             "search"
         ]
-
 
         assert tool_entry["state"] == "allow"
 
@@ -9805,9 +9807,7 @@ def test_audit_entry_detail_payload_is_metadata_only():
     assert payload["decision"] == "allowed"
     assert payload["decision_label"] == "Allowed"
     assert (
-        audit_entry_detail_payload({"decision": "denied-killswitch"})[
-            "decision_label"
-        ]
+        audit_entry_detail_payload({"decision": "denied-killswitch"})["decision_label"]
         == "Blocked (kill switch)"
     )
     assert payload["argument_names"] == ["query"]
@@ -11142,8 +11142,9 @@ async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatc
 
     monkeypatch.setattr(mcp_workbench_module, "get_cli_setting", fake_get)
     monkeypatch.setattr(
-        mcp_workbench_module, "apply_settings_mutation_to_cli_config",
-        lambda *args, **kwargs: ConfigMutationResult(False, False, "before_replace")
+        mcp_workbench_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *args, **kwargs: ConfigMutationResult(False, False, "before_replace"),
     )
 
     app = WorkbenchApp()
@@ -11154,9 +11155,7 @@ async def test_tools_mode_failed_master_save_restores_persisted_truth(monkeypatc
         await workbench._mount_deferred_canvases()
         await workbench._sync_children()
         toggle = app.query_one("#mcp-tools-local-enabled", Button)
-        assert str(toggle.label) == (
-            "Local workspace, web, and Watchlists tools: on ▸"
-        )
+        assert str(toggle.label) == ("Local workspace, web, and Watchlists tools: on ▸")
         toggle.press()
         await pilot.pause()
         await app.workers.wait_for_complete()
@@ -11516,6 +11515,7 @@ async def test_matrix_marks_and_inspector_revokes_session_approvals(tmp_path):
     service.session_approvals.add(("default", "local:docs", "search"))
     service.session_approvals.add(("default", "agent:builtin", "calculator"))
 
+
 # -- Wave A (2026-09-11 MCP Hub UX program): bounded polish -----------------
 
 
@@ -11612,9 +11612,7 @@ def test_tool_has_arg_rules_marks_an_inherited_rule(tmp_path):
     # The child stores nothing of its own.
     assert has_rules(child_servers, "srv", "search") is False
     assert (
-        has_rules(
-            child_servers, "srv", "search", ancestor_servers=(default_servers,)
-        )
+        has_rules(child_servers, "srv", "search", ancestor_servers=(default_servers,))
         is True
     )
     # An ancestor that carries nothing for this tool changes nothing.

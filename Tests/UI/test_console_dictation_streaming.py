@@ -182,9 +182,7 @@ class FakeDictationService:
         self.on_speech_resumed()
 
     def emit_segment_no_final(self) -> None:
-        assert self.on_segment_no_final is not None, (
-            "start_dictation() has not run yet"
-        )
+        assert self.on_segment_no_final is not None, "start_dictation() has not run yet"
         self.on_segment_no_final()
 
     def emit_error(self, message: str) -> None:
@@ -306,13 +304,9 @@ async def test_busy_parakeet_capture_stays_live_then_inserts_without_sending(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             store = console._ensure_console_chat_store()
-            message_count = len(
-                store.messages_for_session(store.active_session_id)
-            )
+            message_count = len(store.messages_for_session(store.active_session_id))
 
             await pilot.click("#console-dictation")
             deadline = time.monotonic() + 4
@@ -933,7 +927,9 @@ async def test_segment_transcribing_alone_does_not_mark_recognizer_output_heard(
             for call in notify.call_args_list
             if "No audio was captured from the microphone." in str(call.args[0])
             and call.kwargs.get("severity") == "error"
-        ], "a segment-transcribing-only capture must read as silent, not heard-but-empty"
+        ], (
+            "a segment-transcribing-only capture must read as silent, not heard-but-empty"
+        )
 
 
 @pytest.mark.asyncio
@@ -1422,8 +1418,7 @@ async def test_the_tick_forwards_the_indication_while_it_is_still_live(monkeypat
         await pilot.pause()
 
         assert "Transcribing" in _painted(chip), (
-            "the elapsed-counter tick blanked a live segment-transcribing "
-            "indication"
+            "the elapsed-counter tick blanked a live segment-transcribing indication"
         )
         # And the elapsed counter itself did advance -- this is a real tick,
         # not a no-op that happens to leave everything untouched.
@@ -1661,7 +1656,9 @@ async def test_dictation_tooltip_names_the_missing_capture_extra_only(monkeypatc
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        mic = await _wait_for_mic_tooltip_containing(composer, pilot, "speech_recording")
+        mic = await _wait_for_mic_tooltip_containing(
+            composer, pilot, "speech_recording"
+        )
 
         tooltip = str(mic.tooltip)
         assert "speech_recording" in tooltip
@@ -1766,7 +1763,9 @@ async def test_dictation_reprobes_on_activation_and_recovers_without_a_remount(
     async with host.run_test(size=(140, 42)) as pilot:
         console = await _mounted_console(host, pilot)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
-        mic = await _wait_for_mic_tooltip_containing(composer, pilot, "speech_recording")
+        mic = await _wait_for_mic_tooltip_containing(
+            composer, pilot, "speech_recording"
+        )
         assert "speech_recording" in str(mic.tooltip)
 
         # The extra gets installed mid-run: the next probe succeeds.
@@ -1812,7 +1811,8 @@ async def test_voice_provider_overridden_notifies_once_per_app_run(monkeypatch):
         return [
             call
             for call in notify.call_args_list
-            if "parakeet-mlx" in str(call.args[0]) and "faster-whisper" in str(call.args[0])
+            if "parakeet-mlx" in str(call.args[0])
+            and "faster-whisper" in str(call.args[0])
         ]
 
     async with host.run_test(size=(140, 42)) as pilot:
@@ -1966,9 +1966,7 @@ async def test_a_failure_landing_while_start_is_in_flight_arms_nothing(monkeypat
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             composer.load_draft("keep this draft")
             mic = composer.query_one("#console-dictation", Button)
 
@@ -2231,9 +2229,7 @@ async def test_cancelling_releases_the_microphone_off_the_ui_thread(monkeypatch)
 
 def test_join_segments_concatenates_break_entries_without_padding():
     """A plain `" ".join` would sandwich a break in spaces: `"one. \n\n two"`."""
-    assert (
-        dictation_module._join_segments(["one.", "\n\n", "two"]) == "one.\n\ntwo"
-    )
+    assert dictation_module._join_segments(["one.", "\n\n", "two"]) == "one.\n\ntwo"
     assert (
         dictation_module._join_segments(["one", "\n", "two", "\n\n", "three"])
         == "one\ntwo\n\nthree"
@@ -2417,7 +2413,7 @@ async def test_genuinely_empty_capture_with_no_commands_still_raises(monkeypatch
 async def test_a_trailing_inline_break_survives_insertion_into_an_empty_draft(
     monkeypatch,
 ):
-    """"one." + "Console, new paragraph." must not silently drop the break.
+    """ "one." + "Console, new paragraph." must not silently drop the break.
 
     `_join_segments` keeps the trailing "\\n\\n", but the pre-existing
     `_dictation_insertion` used to `.strip()` it back off on the way into the
@@ -2620,9 +2616,7 @@ async def test_a_capture_ending_command_replaces_the_stale_partial_with_an_ack(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -2813,9 +2807,7 @@ async def test_send_command_inserts_then_presses_send_after_the_stop_completes(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -2949,9 +2941,7 @@ async def test_new_session_command_opens_a_new_tab_after_the_stop_completes(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -3071,9 +3061,7 @@ async def test_read_that_back_speaks_the_last_completed_assistant_reply(monkeypa
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             store = console._ensure_console_chat_store()
             session_id = store.active_session_id
             store.append_message(
@@ -3216,7 +3204,7 @@ async def test_a_command_draining_after_its_capture_ended_is_not_queued_for_the_
 async def test_discard_after_send_within_the_transcribe_window_ships_nothing(
     monkeypatch,
 ):
-    """"Console, send." then "Console, discard." inside the SAME capture's
+    """ "Console, send." then "Console, discard." inside the SAME capture's
     transcribe window must ship nothing -- the discard cannot itself abort
     an in-flight stop-and-transcribe (nothing is cancelable at that point),
     but it must still drop whatever "send" already queued.
@@ -3241,9 +3229,7 @@ async def test_discard_after_send_within_the_transcribe_window_ships_nothing(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -3308,9 +3294,7 @@ async def test_a_command_finalizing_during_its_own_transcribe_window_still_queue
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -3328,9 +3312,7 @@ async def test_a_command_finalizing_during_its_own_transcribe_window_still_queue
             assert console._console_dictation_state == "transcribing"
 
             console._handle_console_dictation_event(
-                chat_screen_module.ConsoleDictationEvent(
-                    session, VoiceCommand("send")
-                )
+                chat_screen_module.ConsoleDictationEvent(session, VoiceCommand("send"))
             )
             assert console._console_pending_voice_action == "send"
 
@@ -3903,7 +3885,7 @@ async def test_spoken_feedback_on_speaks_nothing_to_read_yet_for_read_that_back(
 async def test_read_that_back_speech_is_unaffected_by_spoken_feedback_toggle_on(
     monkeypatch,
 ):
-    """"Read that back" is an explicit request, not ambient feedback -- its
+    """ "Read that back" is an explicit request, not ambient feedback -- its
     own reply speech must post exactly once, unchanged, whether or not
     `dictation.spoken_feedback` is on. (The toggle-off case is already
     pinned by `test_read_that_back_speaks_the_last_completed_assistant_reply`
@@ -4053,7 +4035,7 @@ async def test_starting_capture_stops_any_in_flight_playback_before_opening_mic(
 
 @pytest.mark.asyncio
 async def test_capture_started_is_never_spoken_even_with_feedback_on(monkeypatch):
-    """"Capture started" is deliberately never an ack (spec): the mic is
+    """ "Capture started" is deliberately never an ack (spec): the mic is
     already open by the time a capture starts, so speaking it would violate
     the mutual-exclusion rule and transcribe itself into the new draft. Only
     the unconditional playback-stop may fire on the way in.
@@ -4093,7 +4075,7 @@ async def test_capture_started_is_never_spoken_even_with_feedback_on(monkeypatch
 async def test_send_refuses_when_the_user_switched_sessions_mid_transcribe(
     monkeypatch,
 ):
-    """"Console, send." must never ship a DIFFERENT session's draft.
+    """ "Console, send." must never ship a DIFFERENT session's draft.
 
     The transcript is inserted into the session the capture BEGAN in
     (`_console_dictation_origin_session_id`), while Send acts on whatever
@@ -4123,9 +4105,7 @@ async def test_send_refuses_when_the_user_switched_sessions_mid_transcribe(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             store = console._ensure_console_chat_store()
             origin_id = store.active_session_id
 
@@ -4288,9 +4268,7 @@ async def test_a_late_discard_is_acknowledged_instead_of_silently_ignored(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -4363,9 +4341,7 @@ async def test_discarded_is_spoken_only_after_the_microphone_is_released(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
 
             await pilot.click("#console-dictation")
             await _wait_for_mic_label(composer, pilot, "Dictating")
@@ -4399,7 +4375,7 @@ async def test_discarded_is_spoken_only_after_the_microphone_is_released(
 async def test_a_command_only_capture_acknowledges_that_nothing_was_inserted(
     monkeypatch,
 ):
-    """"Console, new paragraph." then "Console, stop." inserts nothing.
+    """ "Console, new paragraph." then "Console, stop." inserts nothing.
 
     `stop_and_transcribe` returns "" for a command-only capture by design
     (not a silent-microphone failure), and the screen correctly declines to
@@ -4437,14 +4413,12 @@ async def test_a_command_only_capture_acknowledges_that_nothing_was_inserted(
 
         assert spoken == ["Nothing to insert."]
         assert any(
-            "Nothing to insert." in str(call.args[0])
-            for call in notify.call_args_list
+            "Nothing to insert." in str(call.args[0]) for call in notify.call_args_list
         )
         # Not an error, and the draft is untouched -- no stray padding space.
         assert composer.draft_text() == "untouched"
         assert not any(
-            call.kwargs.get("severity") == "error"
-            for call in notify.call_args_list
+            call.kwargs.get("severity") == "error" for call in notify.call_args_list
         )
 
 

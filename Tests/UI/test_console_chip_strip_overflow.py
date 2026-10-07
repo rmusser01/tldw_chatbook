@@ -102,9 +102,7 @@ class _ChipsOverflowApp(App):
 
 def _visible_chips(scroller: HorizontalScroll):
     return [
-        chip
-        for chip in scroller.query(".console-control-chip")
-        if chip.display is True
+        chip for chip in scroller.query(".console-control-chip") if chip.display is True
     ]
 
 

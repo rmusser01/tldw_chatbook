@@ -20,14 +20,8 @@ from tldw_chatbook.DB.sql_validation import (
 def test_subscription_item_order_profiles_are_centrally_validated():
     resolver = getattr(sql_validation, "get_safe_order_by_clause", None)
     assert callable(resolver), "dynamic ORDER BY profiles need one central validator"
-    assert (
-        resolver("subscription_items_agent")
-        == "i.effective_date DESC, i.id ASC"
-    )
-    assert (
-        resolver("subscription_items_reader")
-        == "i.effective_date DESC, i.id DESC"
-    )
+    assert resolver("subscription_items_agent") == "i.effective_date DESC, i.id ASC"
+    assert resolver("subscription_items_reader") == "i.effective_date DESC, i.id DESC"
     try:
         resolver("i.id DESC; DROP TABLE subscription_items")
     except ValueError:
@@ -163,7 +157,13 @@ class TestValidateTableName:
 
         database = CharactersRAGDB(str(tmp_path / "scopes.db"), client_id="test")
         try:
-            for _, table, id_column, _, _ in CharactersRAGDB._SYNC_LOG_LATEST_ONLY_SCOPES:
+            for (
+                _,
+                table,
+                id_column,
+                _,
+                _,
+            ) in CharactersRAGDB._SYNC_LOG_LATEST_ONLY_SCOPES:
                 assert validate_table_name(table, "chachanotes") is True
                 live = {
                     row["name"]

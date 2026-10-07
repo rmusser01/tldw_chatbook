@@ -130,8 +130,7 @@ def find_project_skills_dir(root: Path) -> Path | None:
             found = candidate
         else:
             logger.debug(
-                "project-skills: both {} and {} exist in {}; using {}, "
-                "ignoring {}",
+                "project-skills: both {} and {} exist in {}; using {}, ignoring {}",
                 found.name,
                 candidate.name,
                 root,
@@ -173,7 +172,9 @@ def find_project_dir_with_skills(start: Path) -> Path | None:
             resolved_current = current.resolve()
         except OSError:
             return None
-        if resolved_current == home or resolved_current == Path(resolved_current.anchor):
+        if resolved_current == home or resolved_current == Path(
+            resolved_current.anchor
+        ):
             return None
         if find_project_skills_dir(current) is not None:
             return current
@@ -232,9 +233,7 @@ def _fingerprint(entries: list[ProjectSkillEntry]) -> str:
         body = entry.path / "SKILL.md" if entry.kind == "directory" else entry.path
         try:
             stat = body.stat()
-            digest.update(
-                f"{entry.name}|{stat.st_size}|{stat.st_mtime_ns}\n".encode()
-            )
+            digest.update(f"{entry.name}|{stat.st_size}|{stat.st_mtime_ns}\n".encode())
         except OSError:
             digest.update(f"{entry.name}|?\n".encode())
     return digest.hexdigest()
@@ -288,9 +287,7 @@ def discover_project_skills(root: Path) -> ProjectSkillsDiscovery | None:
     try:
         # `+1` distinguishes "exactly the bound" from "more than the
         # bound" without a second, unbounded iterdir() pass.
-        scanned = list(
-            itertools.islice(skills_dir.iterdir(), MAX_SCANNED_CHILDREN + 1)
-        )
+        scanned = list(itertools.islice(skills_dir.iterdir(), MAX_SCANNED_CHILDREN + 1))
     except OSError:
         return None
     scan_bound_exceeded = len(scanned) > MAX_SCANNED_CHILDREN
@@ -330,11 +327,13 @@ def discover_project_skills(root: Path) -> ProjectSkillsDiscovery | None:
     if scan_bound_exceeded:
         truncated += 1
     if skipped_overflow and scan_bound_exceeded:
-        skipped.append((
-            "…",
-            f"{skipped_overflow} more skipped; directory has more entries "
-            "than the scan bound",
-        ))
+        skipped.append(
+            (
+                "…",
+                f"{skipped_overflow} more skipped; directory has more entries "
+                "than the scan bound",
+            )
+        )
     elif scan_bound_exceeded:
         skipped.append(("…", "directory has more entries than the scan bound"))
     elif skipped_overflow:

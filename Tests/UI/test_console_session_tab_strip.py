@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -19,6 +20,9 @@ from tldw_chatbook.Widgets.Console.console_session_surface import (
     ConsoleSessionSurface,
     ConsoleSessionTabStrip,
 )
+
+# The composed transcript reads the collection-admitted config participant.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _rendered_tooltip(button: Button) -> str:
@@ -447,3 +451,56 @@ def test_chat_screen_exposes_rail_body_height_seam() -> None:
     """
     assert callable(getattr(ChatScreen, "_console_rail_body_height", None))
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "detach_after",
+    [
+        "lock",
+        "removal",
+        "console-session-tab-s1",
+        "console-close-session-tab-s1",
+        "console-new-chat-tab",
+    ],
+)
+async def test_tab_rebuild_stops_when_its_surface_or_strip_detaches(
+    monkeypatch, detach_after
+) -> None:
+    """Real removal across each await must not mount controls on a retired strip."""
+    app = TabStripHost()
+    async with app.run_test(size=(80, 24)):
+        surface = app.query_one(ConsoleSessionSurface)
+        strip = surface.query_one(ConsoleSessionTabStrip)
+        original_mount = strip.mount
+        mounts_after_detach = []
+
+        async def observed_mount(*widgets, **kwargs):
+            if not strip.is_attached:
+                mounts_after_detach.extend(widget.id for widget in widgets)
+            await original_mount(*widgets, **kwargs)
+            if widgets[0].id == detach_after:
+                await strip.remove()
+
+        monkeypatch.setattr(strip, "mount", observed_mount)
+        if detach_after == "lock":
+            async with surface._session_sync_lock:
+                sync = asyncio.create_task(
+                    surface.sync_sessions(sessions=_sessions(1), active_session_id="s1")
+                )
+                await asyncio.sleep(0)
+                await surface.remove()
+            await sync
+        else:
+            if detach_after == "removal":
+                child = strip.children[0]
+                original_remove = child.remove
+
+                async def remove_then_detach():
+                    await original_remove()
+                    await strip.remove()
+
+                monkeypatch.setattr(child, "remove", remove_then_detach)
+            await surface.sync_sessions(sessions=_sessions(1), active_session_id="s1")
+        assert not strip.is_attached
+        assert mounts_after_detach == []

@@ -1,0 +1,26 @@
+# tldw_server connection: not in the wizard; buried in Settings > Overview > 'Advanced / Diagnostics' collapsible
+## Template [tldw_api] ships a placeholder token (config.py:4063-4066)
+[tldw_api]
+base_url = "http://127.0.0.1:8000" # Or your actual default remote endpoint
+# Default auth token can be stored here, or leave empty if user must always provide
+auth_token = "default-secret-key-for-single-user"
+
+## Settings location (settings_screen.py:17621-17657): inside Collapsible 'Advanced / Diagnostics' on Overview
+                                ),
+                            )
+            with Collapsible(
+                title="Advanced / Diagnostics",
+                collapsed=self._overview_sync_details_collapsed,
+                id="settings-overview-sync-details",
+                )
+                with Horizontal(classes="settings-action-row"):
+                    yield Button(
+                        "Switch Source / Server",
+                        id="settings-switch-runtime-source",
+                        tooltip="Choose local-only or bind a tldw server as the runtime source.",
+                    )
+
+## Wizard grep for tldw_api / server / runtime source:
+(no matches in FirstRunSetupWizard.py)
+
+## Provider list has no tldw server row (see 01-provider-list-as-rendered.txt)

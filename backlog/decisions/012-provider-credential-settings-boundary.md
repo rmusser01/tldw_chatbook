@@ -1,6 +1,6 @@
 # ADR 012: Provider Credential Settings Boundary
 
-Status: Accepted (amended 2026-09-26: explicit key check by model listing)
+Status: Accepted (amended 2026-09-26: explicit key check by model listing; amended 2026-10-03: the OS keychain as an optional credential store, TASK-34100.17)
 Date: 2026-06-30
 Related Task: [backlog/tasks/task-145 - Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md](../tasks/task-145%20-%20Restore-provider-credential-onboarding-and-polish-Console-setup-UX.md)
 Supersedes: N/A
@@ -195,7 +195,8 @@ The rules:
   | Outcome | Shown as |
   |---|---|
   | The listing returns models | `Ready · verified HH:MM`, with "key accepted (models listed); generation not tested" |
-  | 401 or 403 | `Not ready · key rejected` |
+  | 401 | `Not ready · key rejected` |
+  | 403, or a successful answer with no model in it (ruling of 2026-10-02, PR #2958 review) | "model listing unavailable": `Ready · not tested`, never blocks. A 403 says this key may not list models, not that it cannot chat. Every local model-listing probe reads a 403 the same way |
   | Connection refused or timed out | a distinct `Not ready` reason |
   | The listing needs no key (OpenRouter's catalog is public, per ADR-020) | "models listed; key not checked". Never "accepted" |
   | The provider has no listing endpoint | today's local readiness check, labelled as local |
@@ -223,6 +224,42 @@ Unchanged:
 - Console still only surfaces blockers and routes recovery to the exact
   Settings credential control.
 - Key precedence (2026-09-19) is unchanged.
+
+## Amendment 2026-10-03: the OS keychain as an optional credential store (TASK-34100.17)
+
+Source: the [first-run setup shape spec](../../Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md), D9 as amended by the owner's
+ruling on its Q3, and [TASK-34100.17](../tasks/task-34100.17%20-%20Owner-approved-design-spec-for-the-setup-flow-Quick-track-tldw-server-re-run-dashboard-Say-hello.md). The owner approved the spec on
+2026-10-03 with one exception: keychain storage must be optional, not the default.
+
+The Consequences sentence "This ADR does not introduce encrypted credential
+storage, keyring migration…" is narrowed.
+
+- **The default is unchanged.** A new provider key is stored as today, under
+  `api_settings.<provider>` in config.toml, and the config writer encrypts it when
+  password encryption is on.
+- **The keychain is an option, never the default.** Where a secure OS keychain is
+  detected, Settings ▸ Providers & Models and setup offer, at each key field,
+  keeping that key in the keychain instead, through one credential-store owner.
+  Such a key is recorded as `credential_source = "keychain"`, with no `api_key` in
+  config.toml, under a persisted `credential_scope_id`.
+- **The environment first.** Where an environment variable exists, using it
+  unstored is the default. Storage applies only to a different key the user types.
+- **Precedence keeps its shape.** A stored credential (keychain or config) outranks
+  the environment variable, which outranks legacy `[API]` (the 2026-09-19
+  amendment).
+- **Resolution.** Keychain values are resolved after first paint, off the UI loop,
+  into one provenance overlay that every reader uses, so spend and readiness read
+  one value. No writer persists an overlay value.
+- **No silent fallback.** When the user chose the keychain and it fails, the key is
+  not written to config.toml unless the user then chooses that.
+- **Moves.** Keys move to or from the keychain only on an explicit user action.
+- **Unchanged.** Console still never accepts or displays a key (the
+  model-configuration redesign's owner ruling, task-33008 AC#4). Settings remains
+  the configuration owner.
+
+Rejected: the keychain as the default store for new keys (the owner's ruling), and
+encryption as a per-key choice at the key field (encryption stays one profile-wide
+choice under TASK-34100.4's lifecycle; the key field only names it).
 
 ## Links
 

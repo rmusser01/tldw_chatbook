@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_library_policy import (
 from tldw_chatbook.Chat.console_project_instructions import (
     ProjectInstructionControlState,
 )
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.rag_scope import EffectiveScope, RagScope
 from tldw_chatbook.RAG_Search.local_citation_capture import (
     LocalEvidenceContext,
@@ -237,6 +238,24 @@ def _mcp_inspector_row(
     return None
 
 
+#: TASK-33625.1: the send control's queue-state labels (the prompt-queue
+#: presentation's vocabulary). While a run owns the slot the reason strip
+#: names these states instead of blaming provider setup or saying "Send".
+SEND_LABEL_PREPARING = "Preparing..."
+SEND_LABEL_QUEUE_FULL = "Queue full"
+SEND_LABEL_QUEUE = "Queue"
+
+#: The reason strip's queue copy. TASK-33620.4: the prompt-queue
+#: presentation's refusing tooltips are these same strings, so the strip and
+#: the Send tooltip agree. Only a prompt-chain turn is ever queue-accepted: a
+#: regenerate / continue / agent wake holds the slot (Send still reads
+#: "Preparing...") with no chain, so that hold names the run it waits on
+#: rather than promising a queue that never opens.
+QUEUE_REASON_PREPARING = "Queue opens once this turn is accepted"
+QUEUE_REASON_FULL = "Queue full — manage it to make room"
+QUEUE_REASON_RUN_HOLD = "Wait for the current run to finish"
+
+
 def build_console_disabled_reason(
     *,
     action_id: str,
@@ -245,6 +264,8 @@ def build_console_disabled_reason(
     setup_blocked_reason: str = "",
     wake_turn_active: bool = False,
     dispatch_recovery_blocked: bool = False,
+    send_label: str = "Send",
+    queue_blocked_reason: str = "",
 ) -> str:
     """Return concise disabled copy for Console action controls.
 
@@ -254,13 +275,26 @@ def build_console_disabled_reason(
         send_blocked: Whether sending is blocked by setup or run state.
         setup_blocked_reason: Provider/setup blocker copy, when present.
         dispatch_recovery_blocked: An unresolved response needs explicit recovery.
+        send_label: The send control's current label. TASK-33625.1: mid-run it
+            reads a queue state (``Preparing...``, ``Queue``, ``Queue full``);
+            the copy names that state rather than provider setup, and never
+            says "Send" beside a button labelled Queue.
+        queue_blocked_reason: The prompt queue's own disabled tooltip, when
+            the queue (not setup) blocks Send. A real ``setup_blocked_reason``
+            outranks it: a "Preparing..." label must not mask a setup or
+            attachment blocker (TASK-33625.1 review). TASK-33620.4: it used
+            to ride ``setup_blocked_reason`` and fall through to "finish
+            provider setup" -- mid-run, as a link to the first-run wizard --
+            so a queue refusal outside the labelled states is shown
+            verbatim, never as setup or run copy. Under ``Preparing...`` a
+            chainless hold's ``QUEUE_REASON_RUN_HOLD`` keeps its own copy.
         wake_turn_active: Whether the active session is busy with a
             machine-injected auto-wake turn (task-15862 AC#3). Checked
-            before provider setup: during a wake the queue presentation's "wait to be
-            accepted" tooltip rides the ``setup_blocked_reason`` slot (a
-            chainless wake is never queue-accepted), and the setup
-            fallback below would blame provider setup for it -- the
-            observed live lie.
+            before the queue and setup copy: a chainless wake is never
+            queue-accepted, so the queue's "Preparing" state is present for
+            its whole duration and would name the wrong blocker (before
+            TASK-33625.1 that copy rode ``setup_blocked_reason`` and blamed
+            provider setup -- the observed live lie).
 
     Returns:
         A user-facing disabled reason, or an empty string when no conservative
@@ -275,6 +309,16 @@ def build_console_disabled_reason(
         return "Send blocked — delivering a sub-agent result"
 
     setup_reason = _clean(setup_blocked_reason, "")
+    queue_reason = _clean(queue_blocked_reason, "")
+    queue_blocked = send_blocked and bool(queue_reason) and not setup_reason
+    if queue_blocked and send_label == SEND_LABEL_PREPARING:
+        # TASK-33620.4: a chainless hold (regenerate / continue / wake) is
+        # labelled Preparing too, but no queue ever opens behind it.
+        if queue_reason == QUEUE_REASON_RUN_HOLD:
+            return QUEUE_REASON_RUN_HOLD
+        return QUEUE_REASON_PREPARING
+    if queue_blocked and send_label == SEND_LABEL_QUEUE_FULL:
+        return QUEUE_REASON_FULL
     setup_reason_lower = setup_reason.lower()
     if send_blocked and setup_reason:
         if setup_reason == "Checking Claude subscription credential.":
@@ -298,12 +342,20 @@ def build_console_disabled_reason(
             or "missing provider" in setup_reason_lower
         ):
             return "Send blocked — choose a provider to continue"
+        if "retry connection" in setup_reason_lower:  # TASK-33005.2
+            return "Send blocked — retry the connection to continue"
         return "Send blocked — finish provider setup to continue"
+    if queue_blocked:
+        # TASK-33620.4: any other queue refusal names itself -- it never
+        # falls through to provider-setup or active-run copy.
+        return queue_reason
     if send_blocked:
         # No setup copy means an active run is the blocker (the setup gate
         # always supplies its own reason).
         return "Send blocked — wait for the active run to finish"
     if not has_draft:
+        if send_label == SEND_LABEL_QUEUE:
+            return "Type to queue"
         return "Send disabled: type a message"
     return ""
 
@@ -332,6 +384,11 @@ class ConsoleProjectInstructionSourceRow:
     byte_count: int | None
     outcome: str
     warning_code: str = ""
+
+
+#: ``ConsoleProjectInstructionState.locator_match`` before the chosen folder's
+#: locator was validated in this run (the Inspector resolves that state early).
+PROJECT_LOCATOR_NOT_CHECKED = "not checked"
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,7 +451,7 @@ def build_console_project_instruction_state(
         if locator_matches is True
         else "mismatch"
         if locator_matches is False
-        else "not checked"
+        else PROJECT_LOCATOR_NOT_CHECKED
     )
     recovery_actions = (
         ("enable",)
@@ -650,9 +707,11 @@ class ConsoleLibraryPolicyDisplayState:
             chip_label = "Library: blocked · policy unavailable"
             source_status = "Unavailable — using Never and Blocked"
         else:
+            # TASK-34100.5 AC#9: say what is off (the agent's Library access),
+            # not "blocked" -- the normal default read as an error on arrival.
             chip_label = (
                 f"Library · Auto {'on' if automatic else 'off'} · "
-                f"Agent {'allowed' if allowed else 'blocked'}"
+                f"Agent access {'on' if allowed else 'off'}"
             )
             source_status = {
                 "durable": "Saved on this device · not synced",
@@ -707,11 +766,14 @@ class ConsoleControlState:
         mcp_tool_count: int | None = None,
         approval_count: int = 0,
         system_prompt_set: bool = False,
+        app_config: Mapping[str, object] | None = None,
     ) -> "ConsoleControlState":
         """Build the Console control-bar chip state from raw run values.
 
         Args:
-            provider: Active provider name, or falsy for "not selected".
+            provider: Active provider config key or ``custom-ep`` id, or falsy
+                for "not selected". The chip shows its catalog display name
+                (TASK-33002.5); the key itself is never rendered.
             model: Active model name, or falsy for "not selected".
             character: Existing character presentation value; when present,
                 renders as ``Character: <name>``.
@@ -727,6 +789,8 @@ class ConsoleControlState:
             approval_count: Pending MCP approvals.
             system_prompt_set: Whether the active session has a system prompt;
                 the chip then reads ``System Prompt: set``.
+            app_config: Config holding the ADR-146 endpoint registry, so a
+                ``custom-ep`` provider shows its entry's name.
 
         Returns:
             A ``ConsoleControlState`` whose ``tools_label`` counts the tools that
@@ -772,8 +836,9 @@ class ConsoleControlState:
                 source="new_session",
             )
         library_display = ConsoleLibraryPolicyDisplayState.from_snapshot(library_policy)
+        provider_name = provider_display_name(_clean(provider, ""), app_config)
         return cls(
-            provider_label=f"Provider: {_clean(provider, 'not selected')}",
+            provider_label=f"Provider: {_clean(provider_name, 'not selected')}",
             model_label=f"Model: {_clean(model, 'not selected')}",
             assistant_label=assistant_label,
             rag_label=library_display.chip_label,
@@ -1356,6 +1421,9 @@ class ConsoleInspectorState:
     #: transcript that said the run had failed.
     run_failed: bool = False
     run_failure_reason: str = ""
+    #: TASK-33621.2: why the viewed chat's accepted turn is stuck unsent
+    #: (paused for trace recovery); empty when no turn is blocked.
+    run_blocked_reason: str = ""
     staged_source_count: int = 0
     pending_approval_count: int = 0
     scope_item_count: int | None = None
@@ -1366,6 +1434,7 @@ class ConsoleInspectorState:
         cls,
         *,
         live_work_title: Any = None,
+        pending_interrupt_copy: str = "",
         provider_label: Any = None,
         model_label: Any = None,
         provider_ready: bool = True,
@@ -1387,6 +1456,7 @@ class ConsoleInspectorState:
         # in flight. Defaults preserve every existing caller.
         run_failed: bool = False,
         run_failure_reason: str = "",
+        run_blocked_reason: str = "",
         ephemeral: bool = False,
         change_review_available: bool = False,
         staged_source_count: int = 0,
@@ -1403,6 +1473,8 @@ class ConsoleInspectorState:
                 "Generating…" -- and ignored while ``approval_count`` is
                 non-zero, which reads "Waiting for your approval" instead
                 (task-32345: outranks ``run_active`` too).
+            pending_interrupt_copy: Waiting copy derived from the session's
+                registered interrupt kinds, ahead of active generation copy.
             provider_label: Active provider name for the run-recipe line.
             model_label: Active model name for the run-recipe line.
             provider_ready: Whether the provider can be sent to. ``False``
@@ -1435,6 +1507,8 @@ class ConsoleInspectorState:
                 (TASK-24602).
             run_failure_reason: Visible copy for that failure, surfaced on
                 the pinned authority line.
+            run_blocked_reason: Why an accepted turn is stuck unsent, or ""
+                (TASK-33621.2).
             ephemeral: Whether this is a temporary conversation, which
                 blocks the Save Chatbook action.
             change_review_available: Whether change tracking has anything to
@@ -1481,17 +1555,15 @@ class ConsoleInspectorState:
             ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow(
                 "Live work",
-                # task-32345: a pending approval outranks everything below
-                # -- it is a fact about the USER (a card is waiting on
-                # them), more current than "a generation is in flight".
-                # TASK-347: else a running generation shows "Generating…";
-                # else the pending Library-RAG launch title, else no
-                # active work.
+                # Session-owned decisions outrank generation and launch copy.
+                # Approval has priority over questions and confirmations.
                 "Waiting for your approval"
                 if normalized_approval_count > 0
-                else "Generating…"
-                if run_active
-                else _clean(live_work_title, "No active work"),
+                else _clean(pending_interrupt_copy, "") or (
+                    "Generating…"
+                    if run_active
+                    else _clean(live_work_title, "No active work")
+                ),
             ),
             ConsoleDisplayRow(
                 "Provider",
@@ -1579,6 +1651,7 @@ class ConsoleInspectorState:
             run_active=run_active,
             run_failed=run_failed,
             run_failure_reason=_clean(run_failure_reason, ""),
+            run_blocked_reason=_clean(run_blocked_reason, ""),
             staged_source_count=coerce_non_negative_int(staged_source_count),
             pending_approval_count=normalized_approval_count,
             scope_item_count=scope_item_count,

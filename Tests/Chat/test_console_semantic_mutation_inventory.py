@@ -63,6 +63,8 @@ DIRECT_SQL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.select_message_variant::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.soft_delete_message::sql:update:messages",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.soft_delete_message_subtree::sql:update:messages",
+            # TASK-33628.2: Console Delete's Undo clears exactly its tombstones.
+            "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.restore_message_subtree::sql:update:messages",
         },
         "visibility/ownership-only",
     ),
@@ -142,6 +144,7 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Character_Chat/Character_Chat_Lib.py::remove_message_from_conversation::call:db:soft_delete_message",
             "tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.delete_character_chat_message::call:db:soft_delete_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_message_subtree::call:db:soft_delete_message_subtree",
+            "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.restore_message_subtree::call:db:restore_message_subtree",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:db:soft_delete_message",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._delete_message::call:persistence:delete_message_subtree",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.delete_chat_message::call:db:soft_delete_message",
@@ -202,6 +205,7 @@ _DB_MUTATORS = {
     "delete_chat_message",
     "delete_full_exchanges_for_conversation",
     "replace_assistant_generation_projection",
+    "restore_message_subtree",
     "select_message_variant",
     "set_message_attachments",
     "set_message_generation_metadata",
@@ -2803,7 +2807,7 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
     assert "ADR-097" in inventory
     assert "Hard deletion" in inventory
     assert "Generated and dynamic SQL" in inventory
-    assert "40 live SQL sink identities and 65 boundary call" in inventory
+    assert "41 live SQL sink identities and 66 boundary call" in inventory
     all_classifications = (
         *DIRECT_SQL_ROUTE_CLASSIFICATION.values(),
         *BOUNDARY_CALL_ROUTE_CLASSIFICATION.values(),
@@ -2813,10 +2817,10 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
         for classification in CLASSIFICATIONS
     } == {
         "model-visible": 66,
-        "visibility/ownership-only": 12,
+        "visibility/ownership-only": 14,
         "presentation-only": 26,
     }
-    assert "67 model-visible, 12 visibility/ownership-only, and 26" in inventory
+    assert "67 model-visible, 14 visibility/ownership-only, and 26" in inventory
     for phrase in (
         "generation settlement",
         "Edit and regeneration replacement",

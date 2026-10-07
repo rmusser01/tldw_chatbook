@@ -1,0 +1,40 @@
+                                                                                            ╭─────────────╮
+ ‹  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌───────────────────────────────────────────────────────┐  │  ┌───────────────────┐
+│                              │  │  │                                                       │  │  │                   │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and      │  │  │  Scope Inspector  │
+│  No filter | / focus         │  │  │  unused open chats · used chats keep theirs           │  │  │                   │
+│  category search             │  │  │  (Console: Alt+M)                                     │  │  │ Selected          │
+│                              │  │  │ │ Nous Research                                    │  │  │  │ category:         │
+│  Core                        │  │  │ │ Novita AI                                        │  │  │  │ Providers &       │
+│      Overview (view)         │  │  │ │ NVIDIA NIM                                       │▇ │  │  │ Models            │
+│    > Providers & Models      │  │  │ │ Ollama Cloud                                     │  │  │  │ No unsaved        │
+│      Web Search              │  │  │ │ OpenAI                                           │  │  │  │ changes           │
+│      Speech & TTS            │  │  │ │ Choose a provider or enter a supported provider  │  │  │  │  Guided edits:    │
+│  Interface                   │  │  │ │ alias.                                           │▆ │  │  │  change a field   │
+│      Appearance              │  │  │ │ Model                   │ gpt-5.6-terra          │  │  │  │  first.           │
+│      Theme                   │  │  │ │ Endpoint                │ https://api.openai.co  │  │  │  │  Save (s) — no ch │
+│      Splash Screen           │  │  │ │                                                  │  │  │  │  Revert (r) — no  │
+│      Console Behavior        │  │  │ │  Credentials                                     │  │  │  │ Local-only: saves │
+│  Data & Privacy              │  │  │ │  API key source: missing; set OPENAI_API_KEY or  │  │  │  │ write your config │
+│      Storage                 │  │  │ │  paste a local key                               │  │  │  │ file.             │
+│      Workspaces              │  │  │ │ API key                 █ Paste API key to save  │  │  │  │  api_settings.o   │
+│      Tool Profiles           │  │  │ │                          Clear saved key         │  │  │  │  penai.           │
+│      Privacy & Security      │  │  │ │ Env var                 │ OPENAI_API_KEY         │  │  │  │    api_key      ▃ │
+│      Network                 │  │  │ │  Env vars are safer for shells, shared           │  │  │  │  Save: staged -   │
+│      My Profile              │  │  │ │  machines, and CI. This field stores the         │  │  │  │  press s to     ▆ │
+│  Troubleshooting             │  │  │ │  variable name, not the secret.                  │  │  │  │  save, r to       │
+│      Diagnostics (view)      │  │  │ │  Review restored OpenAI connection               │  │  │  │  revert           │
+│      About (view)            │  │  │ │  Test Provider                                   │  │  │  │  Validation:      │
+│      Agents                  │  │  │ │  Checks the settings, then lists models without  │  │  │  │  single-line      │
+│  Expert                      │  │  │ │  generating: a cloud provider's listing checks   │  │  │  │  secret value;    │
+│      Hooks                   │  │  │ │  the API key, a local server's shows it          │  │  │  │  visible UI       │
+│      Internal Prompts        │  │  │ │  answers. Nothing is saved.                      │  │  │  │  stays masked     │
+│      Advanced Config       ▇ │  │  │ │ Configuration check has not run.                 │  │  │  │ ▼ more — scroll   │
+│                              │  │  │                                                       │  │  │                   │
+└──────────────────────────────┘  │  └───────────────────────────────────────────────────────┘  │  └───────────────────┘
+
+  Esc, s save category | Esc, r revert category | Esc, t test provider | F1 · F6 · Ctrl+P · Ctrl+Q

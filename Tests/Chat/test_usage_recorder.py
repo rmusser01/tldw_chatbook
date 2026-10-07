@@ -115,14 +115,18 @@ def test_chat_api_call_records_nothing_without_active_recorder(monkeypatch):
 
 # --- OpenAI-shaped dict normalization (task-16330 live-baseline unblock) --------
 
+
 def test_chat_api_call_passes_provider_dicts_through_unchanged(monkeypatch):
     # The Console gateway parses tool_calls/finish_reason/usage from these
     # dicts -- chat_api_call must NOT normalize them to content strings
     # (task-16331 correction). String consumers use chat_reply_text.
     payload = {
         "choices": [
-            {"index": 0, "finish_reason": "stop",
-             "message": {"role": "assistant", "content": "the answer"}}
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "the answer"},
+            }
         ],
         "usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18},
     }
@@ -133,8 +137,15 @@ def test_chat_api_call_passes_provider_dicts_through_unchanged(monkeypatch):
     result = chat_api_call(
         api_endpoint="llama_cpp",
         messages_payload=[{"role": "user", "content": "prompt"}],
-        api_key=None, temp=0.5, system_message=None, streaming=False,
-        minp=None, maxp=None, model=None, topk=None, topp=None,
+        api_key=None,
+        temp=0.5,
+        system_message=None,
+        streaming=False,
+        minp=None,
+        maxp=None,
+        model=None,
+        topk=None,
+        topp=None,
     )
 
     assert result == payload
@@ -144,9 +155,12 @@ def test_chat_reply_text_extracts_known_shapes_and_empty_for_unknown():
     from tldw_chatbook.Chat.Chat_Functions import chat_reply_text
 
     assert chat_reply_text("plain") == "plain"
-    assert chat_reply_text(
-        {"choices": [{"message": {"role": "assistant", "content": "duck"}}]}
-    ) == "duck"
+    assert (
+        chat_reply_text(
+            {"choices": [{"message": {"role": "assistant", "content": "duck"}}]}
+        )
+        == "duck"
+    )
     assert chat_reply_text({"choices": [{"text": "legacy"}]}) == "legacy"
     assert chat_reply_text({"choices": [{"message": {"content": None}}]}) == ""
     assert chat_reply_text({"error": "odd"}) == ""
@@ -155,9 +169,7 @@ def test_chat_reply_text_extracts_known_shapes_and_empty_for_unknown():
 
 def test_chat_api_call_records_real_usage_from_dict_responses(monkeypatch):
     payload = {
-        "choices": [
-            {"message": {"role": "assistant", "content": "answer text"}}
-        ],
+        "choices": [{"message": {"role": "assistant", "content": "answer text"}}],
         "usage": {"prompt_tokens": 11, "completion_tokens": 7},
     }
     handler = _fake_handler(payload)
@@ -166,9 +178,18 @@ def test_chat_api_call_records_real_usage_from_dict_responses(monkeypatch):
     with usage_scope() as recorder:
         chat_api_call(
             api_endpoint="llama_cpp",
-            messages_payload=[{"role": "user", "content": "a much longer prompt text here"}],
-            api_key=None, temp=0.5, system_message=None, streaming=False,
-            minp=None, maxp=None, model=None, topk=None, topp=None,
+            messages_payload=[
+                {"role": "user", "content": "a much longer prompt text here"}
+            ],
+            api_key=None,
+            temp=0.5,
+            system_message=None,
+            streaming=False,
+            minp=None,
+            maxp=None,
+            model=None,
+            topk=None,
+            topp=None,
         )
 
     # EXACT counts from the provider, not character estimates.
@@ -187,8 +208,15 @@ def test_chat_api_call_dict_without_usage_falls_back_to_estimates(monkeypatch):
         result = chat_api_call(
             api_endpoint="llama_cpp",
             messages_payload=[{"role": "user", "content": "abcdefg"}],
-            api_key=None, temp=0.5, system_message=None, streaming=False,
-            minp=None, maxp=None, model=None, topk=None, topp=None,
+            api_key=None,
+            temp=0.5,
+            system_message=None,
+            streaming=False,
+            minp=None,
+            maxp=None,
+            model=None,
+            topk=None,
+            topp=None,
         )
 
     assert result == payload  # passthrough preserved
@@ -205,14 +233,22 @@ def test_chat_api_call_unknown_dict_shape_passes_through(monkeypatch):
     result = chat_api_call(
         api_endpoint="llama_cpp",
         messages_payload=[{"role": "user", "content": "prompt"}],
-        api_key=None, temp=0.5, system_message=None, streaming=False,
-        minp=None, maxp=None, model=None, topk=None, topp=None,
+        api_key=None,
+        temp=0.5,
+        system_message=None,
+        streaming=False,
+        minp=None,
+        maxp=None,
+        model=None,
+        topk=None,
+        topp=None,
     )
 
     assert result == {"error": "odd provider payload"}
 
 
 # --- cloud provider usage key variants (task-16335) -------------------------------
+
 
 def test_chat_api_call_records_anthropic_style_usage_keys(monkeypatch):
     # Anthropic normalizes its response to the OpenAI chat shape but keeps
@@ -229,8 +265,15 @@ def test_chat_api_call_records_anthropic_style_usage_keys(monkeypatch):
         chat_api_call(
             api_endpoint="anthropic",
             messages_payload=[{"role": "user", "content": "a long enough prompt"}],
-            api_key=None, temp=0.5, system_message=None, streaming=False,
-            minp=None, maxp=None, model=None, topk=None, topp=None,
+            api_key=None,
+            temp=0.5,
+            system_message=None,
+            streaming=False,
+            minp=None,
+            maxp=None,
+            model=None,
+            topk=None,
+            topp=None,
         )
 
     assert recorder.prompt_tokens() == 31
@@ -250,8 +293,15 @@ def test_chat_api_call_openai_style_usage_still_exact(monkeypatch):
         chat_api_call(
             api_endpoint="anthropic",
             messages_payload=[{"role": "user", "content": "prompt"}],
-            api_key=None, temp=0.5, system_message=None, streaming=False,
-            minp=None, maxp=None, model=None, topk=None, topp=None,
+            api_key=None,
+            temp=0.5,
+            system_message=None,
+            streaming=False,
+            minp=None,
+            maxp=None,
+            model=None,
+            topk=None,
+            topp=None,
         )
 
     assert (recorder.prompt_tokens(), recorder.completion_tokens()) == (5, 6)
@@ -260,8 +310,12 @@ def test_chat_api_call_openai_style_usage_still_exact(monkeypatch):
 def test_chat_api_call_mixed_usage_keys_prefer_openai_names(monkeypatch):
     payload = {
         "choices": [{"message": {"role": "assistant", "content": "answer"}}],
-        "usage": {"prompt_tokens": 8, "completion_tokens": 9,
-                  "input_tokens": 100, "output_tokens": 100},
+        "usage": {
+            "prompt_tokens": 8,
+            "completion_tokens": 9,
+            "input_tokens": 100,
+            "output_tokens": 100,
+        },
     }
     monkeypatch.setitem(
         Chat_Functions.API_CALL_HANDLERS, "anthropic", _fake_handler(payload)
@@ -271,14 +325,22 @@ def test_chat_api_call_mixed_usage_keys_prefer_openai_names(monkeypatch):
         chat_api_call(
             api_endpoint="anthropic",
             messages_payload=[{"role": "user", "content": "prompt"}],
-            api_key=None, temp=0.5, system_message=None, streaming=False,
-            minp=None, maxp=None, model=None, topk=None, topp=None,
+            api_key=None,
+            temp=0.5,
+            system_message=None,
+            streaming=False,
+            minp=None,
+            maxp=None,
+            model=None,
+            topk=None,
+            topp=None,
         )
 
     assert (recorder.prompt_tokens(), recorder.completion_tokens()) == (8, 9)
 
 
 # --- Qodo remediation (task-16814) ------------------------------------------------
+
 
 def test_estimate_includes_system_message():
     handler = _fake_handler("answer")
@@ -287,16 +349,30 @@ def test_estimate_includes_system_message():
         chat_api_call(
             api_endpoint="llama_cpp",
             messages_payload=[{"role": "user", "content": "tiny"}],
-            api_key=None, temp=0.5, system_message="A LONG SYSTEM PROMPT " * 10,
-            streaming=False, minp=None, maxp=None, model=None, topk=None, topp=None,
+            api_key=None,
+            temp=0.5,
+            system_message="A LONG SYSTEM PROMPT " * 10,
+            streaming=False,
+            minp=None,
+            maxp=None,
+            model=None,
+            topk=None,
+            topp=None,
         )
     Chat_Functions.API_CALL_HANDLERS["llama_cpp"] = _fake_handler("answer")
     with usage_scope() as without_system:
         chat_api_call(
             api_endpoint="llama_cpp",
             messages_payload=[{"role": "user", "content": "tiny"}],
-            api_key=None, temp=0.5, system_message=None,
-            streaming=False, minp=None, maxp=None, model=None, topk=None, topp=None,
+            api_key=None,
+            temp=0.5,
+            system_message=None,
+            streaming=False,
+            minp=None,
+            maxp=None,
+            model=None,
+            topk=None,
+            topp=None,
         )
 
     assert with_system.prompt_tokens() > without_system.prompt_tokens()
@@ -309,12 +385,24 @@ def test_estimate_ignores_non_text_multimodal_content():
     with usage_scope() as recorder:
         chat_api_call(
             api_endpoint="llama_cpp",
-            messages_payload=[{"role": "user", "content": [
-                {"type": "text", "text": "describe"},
-                {"type": "image_url", "image_url": {"url": huge_b64}},
-            ]}],
-            api_key=None, temp=0.5, system_message=None,
-            streaming=False, minp=None, maxp=None, model=None, topk=None, topp=None,
+            messages_payload=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "describe"},
+                        {"type": "image_url", "image_url": {"url": huge_b64}},
+                    ],
+                }
+            ],
+            api_key=None,
+            temp=0.5,
+            system_message=None,
+            streaming=False,
+            minp=None,
+            maxp=None,
+            model=None,
+            topk=None,
+            topp=None,
         )
 
     # Base64 payloads must not explode the estimate: only the text part counts.
@@ -335,8 +423,15 @@ def test_partial_provider_usage_is_not_marked_exact(monkeypatch):
         chat_api_call(
             api_endpoint="llama_cpp",
             messages_payload=[{"role": "user", "content": "prompt text"}],
-            api_key=None, temp=0.5, system_message=None, streaming=False,
-            minp=None, maxp=None, model=None, topk=None, topp=None,
+            api_key=None,
+            temp=0.5,
+            system_message=None,
+            streaming=False,
+            minp=None,
+            maxp=None,
+            model=None,
+            topk=None,
+            topp=None,
         )
 
     assert recorder.prompt_tokens() == 11

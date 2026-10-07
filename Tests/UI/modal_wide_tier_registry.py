@@ -19,9 +19,9 @@ deliberately absent, as is the Console session switcher: its
 ``_sync_modal_max_height`` sets ``width`` imperatively via
 ``set_styles`` (inline styles outrank every CSS rule), so it joins the
 inventory's imperative-geometry exclusions. The Conversation settings
-modal keeps its own shipped ``196`` cap and Python toggle (PR #2670);
-the Alt+M model popover keeps its own shipped per-surface tier
-(PR #2672).
+modal and the Alt+M Switch model popover are fixed width tokens (150 and
+140 columns: TASK-33006.1 retired the modal's PR #2670 196-column tier,
+TASK-33004.4 the popover's PR #2672 tier).
 
 Each entry: ``(anchor, cap, owner_module)``.
 
@@ -33,7 +33,7 @@ Each entry: ``(anchor, cap, owner_module)``.
   ``.dialog-container``) from leaking to other widgets.
 * ``cap`` is the ``max-width`` (columns) at the wide tier; base tier
   geometry is untouched. Ladder: base width >= 104 -> 170, 84-96 -> 150,
-  <= 80 -> 120 (settings modal's 196 stays as shipped).
+  <= 80 -> 120.
 * ``owner_module`` is the tldw_chatbook module whose Python (or owning
   sheet) defines the anchor, so the contract can fail loudly when an id
   is renamed without updating the tier.
@@ -62,6 +62,7 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "VoiceBlendDialog": "inventory #74: fixed 15-column slider grid, extra width is dead space",
     "ConfirmationDialog": "inventory #76: tiny-by-design confirm",
     "UnsavedChangesDialog": "tiny-by-design confirm (ConfirmationDialog family)",
+    "GeneratedVideoConfirmation": "tiny-by-design confirm (ConfirmationDialog family)",
     "CancelConfirmationDialog": "inventory #77: tiny-by-design confirm",
     "RecoveryPassphraseDialog": "inventory #78: tiny passphrase entry",
     "RagProfileNameModal": "inventory #79: tiny single-input (settings sheet geometry)",
@@ -73,7 +74,8 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "ConsoleWorkspaceRenameModal": "inventory #85: tiny rename dialog",
     "TagFilterPicker": "inventory #86: tiny tag list",
     # -- inventory section B (special surfaces) + rollout exclusions --------
-    "ConsoleModelPopover": "ships its own per-surface wide tier (PR #2672)",
+    "ConsoleModelPopover": "Switch model: fixed 140-column width token (TASK-33004.4)",
+    "ConsoleSettingsModal": "Chat settings: fixed 150x22 width/height tokens (TASK-33006.1)",
     "ConsoleSessionSwitcherModal": "imperative inline width via set_styles outranks every CSS rule",
     "ConsoleImageViewerModal": "content-fit auto geometry, nothing to scale",
     "ProjectInstructionNoticeModal": "notice-style modal, inventory section-B exclusion",
@@ -150,9 +152,8 @@ WIDE_TIER_WIDTH_PERCENT = 85
 #: then anchor, so the generated CSS block and the tables read top-down
 #: from biggest cap to smallest.
 MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
-    # cap 196 -- the shipped Conversation settings tier, unchanged (PR #2670)
-    ("#console-settings-modal", 196, "Widgets/Console/console_settings_modal.py"),
     # cap 170 -- base width >= 104
+    ("#console-hooks-review", 170, "Widgets/Console/console_hooks_review_modal.py"),
     (
         "#console-inspector-modal",
         170,
@@ -193,7 +194,11 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     ("#notes-recovery-dialog", 170, "Widgets/Library/notes_recovery_dialog.py"),
     ("#skills-recovery-review", 170, "UI/Screens/skills_screen.py"),
     ("ChatbookCreationWindow > Container", 170, "UI/ChatbookCreationWindow.py"),
-    ("ChatbookExportManagementWindow > Container", 170, "UI/ChatbookExportManagementWindow.py"),
+    (
+        "ChatbookExportManagementWindow > Container",
+        170,
+        "UI/ChatbookExportManagementWindow.py",
+    ),
     ("ChatbookTemplatesWindow > Container", 170, "UI/ChatbookTemplatesWindow.py"),
     # cap 150 -- base width 84-96
     ("#personal-context-review-modal", 150, "css/components/_profile_interview.tcss"),
@@ -223,12 +228,32 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     # surfaces missed by the 2026-09-13 inventory (bases 86-96)
     ("#buddy-review", 150, "Widgets/Persona_Widgets/buddy_character_review.py"),
     ("#petdex-review", 150, "Widgets/Persona_Widgets/petdex_import_review.py"),
-    ("#tool-pack-export-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
-    ("#tool-pack-import-options", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
-    ("#tool-pack-import-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
-    ("#tool-profile-bind-review", 150, "Widgets/Settings_Widgets/tool_pack_import_review.py"),
+    (
+        "#tool-pack-export-review",
+        150,
+        "Widgets/Settings_Widgets/tool_pack_import_review.py",
+    ),
+    (
+        "#tool-pack-import-options",
+        150,
+        "Widgets/Settings_Widgets/tool_pack_import_review.py",
+    ),
+    (
+        "#tool-pack-import-review",
+        150,
+        "Widgets/Settings_Widgets/tool_pack_import_review.py",
+    ),
+    (
+        "#tool-profile-bind-review",
+        150,
+        "Widgets/Settings_Widgets/tool_pack_import_review.py",
+    ),
     # cap 150 -- wave 2 (2026-09-19): skip-list follow-up (base width 96)
-    ("#prompt-collection-manager", 150, "UI/Library_Modules/prompt_collection_manager_modal.py"),
+    (
+        "#prompt-collection-manager",
+        150,
+        "UI/Library_Modules/prompt_collection_manager_modal.py",
+    ),
     # cap 120 -- base width <= 80
     (
         "NoteCreationModal > Container",
@@ -393,7 +418,11 @@ MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
     ("#prompt-variables-dialog", 120, "Widgets/Console/prompt_variables_dialog.py"),
     # cap 120 -- wave 2 (2026-09-19): base-width-rule gap closed (dialog had
     # no width rule at all; base geometry shipped with this wave)
-    ("TemplateSelectorDialog .template-selector-dialog", 120, "Widgets/template_selector.py"),
+    (
+        "TemplateSelectorDialog .template-selector-dialog",
+        120,
+        "Widgets/template_selector.py",
+    ),
 )
 
 #: Cap -> one representative anchor pinned by a live geometry test.

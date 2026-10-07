@@ -34,7 +34,9 @@ import tldw_chatbook.UI.Console_Modules.session as session_module
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import BUNDLED_STYLESHEET, ConsolidatedCSSApp
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.console_rail_section_helpers import open_rail_section
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -64,6 +66,8 @@ from tldw_chatbook.Widgets.Console.console_reaction_picker_modal import (
     ConsoleReactionPickerModal,
     ReactionOption,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _avatar_png(color: tuple[int, int, int]) -> bytes:
@@ -292,6 +296,7 @@ def test_build_character_avatar_widget_pixels_failure_falls_back_to_text(monkeyp
 async def console_screen_with_character():
     """Mounted Console screen under the default config (avatar rail on)."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
@@ -320,6 +325,7 @@ def _set_chat_images_setting(app, key: str, value) -> None:
 async def console_screen_avatar_off():
     """Mounted Console screen with ``chat.images.show_character_avatar`` off."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     _set_chat_images_setting(app, "show_character_avatar", False)
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
@@ -332,6 +338,7 @@ async def console_screen_avatar_off():
 async def console_screen_generic():
     """Mounted Console screen, default config, generic (no-character) session."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
         screen = host.screen_stack[-1]
@@ -366,8 +373,9 @@ async def test_character_section_empty_state_for_generic_session(
     console_screen_generic,
 ):
     screen = console_screen_generic
-    name = screen.query_one("#console-character-name")
-    assert "No character" in str(name.renderable)  # empty-state copy
+    identity = screen.query_one("#console-character-identity")
+    assert "No current character" in str(identity.renderable)
+    assert not screen.query_one("#console-character-name").display
 
 
 @pytest.mark.asyncio
@@ -412,9 +420,11 @@ def avatar_db(tmp_path):
 
 
 @pytest_asyncio.fixture
-async def console_screen_with_db(avatar_db):
+async def console_screen_with_db(avatar_db, request):
     """Mounted Console screen wired to a real ``CharactersRAGDB``."""
     app = _build_test_app()
+    _configure_native_ready_console(app)
+    request.getfixturevalue("owned_console_apps")(app.console_runtime, avatar_db)
     app.chachanotes_db = avatar_db
     host = ConsoleHarness(app)
     async with host.run_test(size=(180, 48)) as pilot:
@@ -434,7 +444,7 @@ async def console_screen_with_db(avatar_db):
 
 
 @pytest_asyncio.fixture
-async def console_screen_with_db_and_pilot(avatar_db):
+async def console_screen_with_db_and_pilot(avatar_db, request):
     """Mounted real Character rail plus Pilot for post-refresh geometry checks."""
 
     class CharacterGeometryHarness(ConsoleHarness):
@@ -443,6 +453,8 @@ async def console_screen_with_db_and_pilot(avatar_db):
         CSS_PATH = str(BUNDLED_STYLESHEET)
 
     app = _build_test_app()
+    _configure_native_ready_console(app)
+    request.getfixturevalue("owned_console_apps")(app.console_runtime, avatar_db)
     app.chachanotes_db = avatar_db
     _set_chat_images_setting(app, "default_render_mode", "pixels")
     host = CharacterGeometryHarness(app)
@@ -455,11 +467,13 @@ async def console_screen_with_db_and_pilot(avatar_db):
 
 
 @pytest_asyncio.fixture
-async def console_screen_with_db_avatar_off(avatar_db):
+async def console_screen_with_db_avatar_off(avatar_db, request):
     """Mounted Console screen wired to a real DB, with the avatar rail
     section config-off (``chat.images.show_character_avatar = False``).
     """
     app = _build_test_app()
+    _configure_native_ready_console(app)
+    request.getfixturevalue("owned_console_apps")(app.console_runtime, avatar_db)
     app.chachanotes_db = avatar_db
     _set_chat_images_setting(app, "show_character_avatar", False)
     host = ConsoleHarness(app)
@@ -1708,11 +1722,11 @@ async def test_failed_session_close_preserves_reaction_override(
     session = store.ensure_session(title="Samira")
     scope = (session.id, "character", "7")
     screen._session._set_manual_reaction(scope, "custom:relief")
-    controller = screen._ensure_console_chat_controller()
+    runtime = screen._session._console_runtime_accessor()
     monkeypatch.setattr(
-        controller,
+        runtime,
         "close_session",
-        lambda _session_id: (_ for _ in ()).throw(RuntimeError("close failed")),
+        AsyncMock(side_effect=RuntimeError("close failed")),
     )
 
     with pytest.raises(RuntimeError, match="close failed"):
@@ -2323,18 +2337,14 @@ async def test_avatar_holder_hugs_its_content():
     """
     import inspect
 
-    # wave-1 console decomposition, task 3: the Character section's
-    # `compose()` code (including the avatar holder) moved out of
-    # `ChatScreen.compose_content` onto `ConsoleLeftRail`. Retargeted per
-    # the screen-decomposition design's testing rule -- the source-location
-    # assertion moves with the code, the width/height assertions stay
-    # byte-for-byte.
+    # The extracted rail now assigns ADR-150 utility classes; both still
+    # resolve to auto sizing in the production app-tier stylesheet.
     from tldw_chatbook.UI.Console_Modules.left_rail import ConsoleLeftRail
 
     src = inspect.getsource(ConsoleLeftRail.compose)
     holder = src.split("avatar_holder = ClickableAvatarBox", 1)[1][:900]
-    assert 'avatar_holder.styles.width = "auto"' in holder
-    assert 'avatar_holder.styles.height = "auto"' in holder
+    assert 'avatar_holder.add_class("w-auto")' in holder
+    assert 'avatar_holder.add_class("h-auto")' in holder
 
 
 @pytest.mark.asyncio
@@ -2465,6 +2475,8 @@ def test_expanding_the_character_section_reallows_a_rail_width_avatar():
 class _AvatarHolderApp(ConsolidatedCSSApp):
     """Host mirroring the rail's auto/auto avatar holder (task-1661 shape)."""
 
+    CSS_PATH = str(BUNDLED_STYLESHEET)
+
     def __init__(
         self,
         screen: ChatScreen,
@@ -2479,8 +2491,7 @@ class _AvatarHolderApp(ConsolidatedCSSApp):
 
     def compose(self) -> ComposeResult:
         holder = ClickableAvatarBox(id="console-character-avatar")
-        holder.styles.width = "auto"
-        holder.styles.height = "auto"
+        holder.add_class("w-auto", "h-auto")
         with holder:
             # Built HERE, inside the active app context: the pixels fallback
             # reads `self.app.no_color` for its monochrome guard, which needs

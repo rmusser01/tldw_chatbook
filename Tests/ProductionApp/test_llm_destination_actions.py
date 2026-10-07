@@ -18,6 +18,7 @@ import pytest
 from textual.widgets import Button, Input, RichLog, TextArea
 
 import tldw_chatbook.app as app_module
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Constants import TAB_LLM
 from tldw_chatbook.Event_Handlers.LLM_Management_Events import (
@@ -493,9 +494,11 @@ def test_server_lifecycle_is_app_owned_and_root_worker_handler_is_retired() -> N
     assert "_ollama_launch_reserved" not in window_source
     assert "_ollama_launch_cancel_event" not in window_source
     assert "ServerWorkerHandler" not in worker_init_source
-    assert "ServerWorkerHandler" not in (
-        PROJECT_ROOT / "tldw_chatbook" / "app.py"
-    ).read_text(encoding="utf-8")
+    # TASK-33011: TldwCli's service composition lives in app_service_wiring.py.
+    for app_file in ("app.py", "app_service_wiring.py"):
+        assert "ServerWorkerHandler" not in (
+            PROJECT_ROOT / "tldw_chatbook" / app_file
+        ).read_text(encoding="utf-8")
     assert not (
         PROJECT_ROOT
         / "tldw_chatbook"
@@ -985,7 +988,7 @@ async def test_production_llm_lifecycle_generations_survive_window_replacement(
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
     app = TldwCli()
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
@@ -1248,7 +1251,7 @@ async def test_production_llm_async_results_require_current_owner_and_generation
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
     app = TldwCli()
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
@@ -1439,7 +1442,7 @@ async def test_transformers_browse_and_list_preserve_provider_cache_and_selected
             self.select_dirs = select_dirs
             self.title = title
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
     picker_module = ModuleType("textual_fspicker")
     picker_module.FileOpen = Picker
     monkeypatch.setitem(
@@ -1579,7 +1582,7 @@ async def test_production_llm_duplicate_starts_are_reserved_for_every_provider(
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
     app = TldwCli()
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True
@@ -1678,11 +1681,7 @@ async def test_production_llm_destination_owns_navigation_actions_and_recovery(
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(
-        app_module,
-        "get_cli_setting",
-        get_cli_setting_without_splash,
-    )
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
     app = TldwCli()
     app.app_config["_first_run"] = False
     app.app_config.setdefault("first_run", {})["setup_completed"] = True

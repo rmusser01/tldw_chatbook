@@ -2325,6 +2325,51 @@ class ConsoleTraceService:
             ),
             rendered_system_slot=rendered_system_slot,
         )
+        if reserved_call is not None and reserved_call.call_sequence > 0:
+            previous = self.repository.get_call_by_logical_identity(
+                cursor,
+                owner_id=reserved_call.owner_id,
+                segment_id=reserved_call.segment_id,
+                turn_id=reserved_call.turn_id,
+                run_id=reserved_call.run_id,
+                call_sequence=reserved_call.call_sequence - 1,
+            )
+            if previous is not None and previous.state is TraceCallState.ERROR:
+                prior_header = self.repository.get_request_header(
+                    cursor, previous.request_header_id
+                )
+                if prior_header is None or (
+                    prior_header.provider_name != header.provider_name
+                    or prior_header.model_name != header.model_name
+                    or prior_header.endpoint_identity != header.endpoint_identity
+                    or prior_header.generation_parameters != header.generation_parameters
+                    or prior_header.response_format != header.response_format
+                    or prior_header.reasoning_controls != header.reasoning_controls
+                    or self._resolve_system_composition(prior_header)
+                    != self._resolve_system_composition(header)
+                    or tuple(
+                        item
+                        for item in prior_header.components
+                        if item.component_kind in {
+                            "rendered_system_part",
+                            "tool_schema",
+                            "provider_literal_envelope",
+                        }
+                    )
+                    != tuple(
+                        item
+                        for item in header.components
+                        if item.component_kind in {
+                            "rendered_system_part",
+                            "tool_schema",
+                            "provider_literal_envelope",
+                        }
+                    )
+                ):
+                    # Compare the sanitized request at the final dispatch
+                    # boundary. The route may advance AGENT_FIRST -> TOOL_LOOP;
+                    # the provider target, settings and schemas may not change.
+                    raise ValueError("trace_tool_chain_unavailable")
         if child_state is not None:
             root = _ProjectionRoot(
                 projection.root,

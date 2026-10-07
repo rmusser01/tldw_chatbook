@@ -205,3 +205,112 @@ def test_owned_json_post_authorization_follows_auth_scheme_and_key(
             streaming=False,
         )
     assert refused.posts == []
+
+
+# --- api_key_header scheme (ADR-179 Phase 3, TASK-33350) ---
+
+
+def test_api_key_header_scheme_sends_api_key_and_no_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The key rides an ``api-key`` header; no Authorization header is sent.
+
+    Args:
+        monkeypatch: Replaces the HTTP session with a recording fake.
+    """
+    success = {"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]}
+    session = _record_session(monkeypatch, _TransportResponse(dict(success)))
+    owned_json_post(
+        config=_transport("api_key_header", "mimo-key"),
+        route="chat/completions",
+        payload={"model": "m", "messages": [], "stream": False},
+        streaming=False,
+    )
+    headers = session.posts[0]["headers"]
+    assert headers["api-key"] == "mimo-key"
+    assert "Authorization" not in headers
+    assert not any(value.startswith("Bearer") for value in headers.values())
+
+
+def test_api_key_header_scheme_requires_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty key fails closed before any request fires, like ``bearer``.
+
+    Args:
+        monkeypatch: Replaces the HTTP session with a recording fake.
+    """
+    session = _record_session(monkeypatch, _TransportResponse({}))
+    with pytest.raises(ChatProviderError):
+        owned_json_post(
+            config=_transport("api_key_header", ""),
+            route="chat/completions",
+            payload={"model": "m", "messages": [], "stream": False},
+            streaming=False,
+        )
+    assert session.posts == []
+
+
+@pytest.mark.parametrize("scheme", ["bearer", "bearer_optional", "api_key_header"])
+@pytest.mark.parametrize("name", ["api-key", "API-Key", "Authorization", "content-type"])
+def test_extra_headers_can_never_carry_a_credential_header(
+    scheme: str, name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No scheme lets a provider's extra headers set or override a credential.
+
+    Args:
+        scheme: Auth scheme under test.
+        name: A reserved header name, in any casing.
+        monkeypatch: Replaces the HTTP session with a recording fake.
+    """
+    session = _record_session(monkeypatch, _TransportResponse({}))
+    config = HostedHTTPTransportConfig(
+        provider="optional-auth",
+        base_url="https://anywhere.example/v1",
+        api_key="real-key",
+        timeout=0.2,
+        retries=0,
+        retry_delay=0.0,
+        auth_scheme=scheme,
+        extra_headers={name: "attacker-value"},
+    )
+    with pytest.raises(ChatProviderError):
+        owned_json_post(
+            config=config,
+            route="chat/completions",
+            payload={"model": "m", "messages": [], "stream": False},
+            streaming=False,
+        )
+    assert session.posts == []
+
+
+def test_bearer_headers_keep_their_exact_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Existing presets are byte-identical: Authorization then Content-Type.
+
+    Args:
+        monkeypatch: Replaces the HTTP session with a recording fake.
+    """
+    success = {"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]}
+    session = _record_session(monkeypatch, _TransportResponse(dict(success)))
+    owned_json_post(
+        config=_transport("bearer", "k"),
+        route="chat/completions",
+        payload={"model": "m", "messages": [], "stream": False},
+        streaming=False,
+    )
+    assert list(session.posts[0]["headers"]) == ["Authorization", "Content-Type"]
+
+
+def test_unknown_auth_scheme_still_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the three documented schemes are accepted.
+
+    Args:
+        monkeypatch: Replaces the HTTP session with a recording fake.
+    """
+    session = _record_session(monkeypatch, _TransportResponse({}))
+    with pytest.raises(ChatProviderError):
+        owned_json_post(
+            config=_transport("x-api-key", "k"),
+            route="chat/completions",
+            payload={"model": "m", "messages": [], "stream": False},
+            streaming=False,
+        )
+    assert session.posts == []

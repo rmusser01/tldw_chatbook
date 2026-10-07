@@ -39,6 +39,7 @@ that surface, not just `play()`. It is deterministic by CALL COUNT, not
 wall-clock, so these tests carry no real-time sleep dependency despite
 exercising the actual poll loop.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -96,7 +97,14 @@ class _MultiCallService:
 
         return SimpleNamespace(provider_id=self._provider_id)
 
-    async def synthesize_default(self, *, text, voice_override=None, response_format_override=None, progress_sink=None):
+    async def synthesize_default(
+        self,
+        *,
+        text,
+        voice_override=None,
+        response_format_override=None,
+        progress_sink=None,
+    ):
         self.synthesize_default_calls.append((text, voice_override))
         return self._response_factory()
 
@@ -111,7 +119,14 @@ class _FailingService:
 
         return SimpleNamespace(provider_id="openai")
 
-    async def synthesize_default(self, *, text, voice_override=None, response_format_override=None, progress_sink=None):
+    async def synthesize_default(
+        self,
+        *,
+        text,
+        voice_override=None,
+        response_format_override=None,
+        progress_sink=None,
+    ):
         raise TTSProviderUnavailableError("synthesis unavailable")
 
 
@@ -129,7 +144,14 @@ class _PausableService:
 
         return SimpleNamespace(provider_id="openai")
 
-    async def synthesize_default(self, *, text, voice_override=None, response_format_override=None, progress_sink=None):
+    async def synthesize_default(
+        self,
+        *,
+        text,
+        voice_override=None,
+        response_format_override=None,
+        progress_sink=None,
+    ):
         await self.proceed.wait()
         return self._response
 
@@ -184,7 +206,10 @@ class _FakeLegacyPlayer:
         if self._finished:
             return PlaybackState.FINISHED
         self._poll_calls += 1
-        if self._stop_after_polls is not None and self._poll_calls >= self._stop_after_polls:
+        if (
+            self._stop_after_polls is not None
+            and self._poll_calls >= self._stop_after_polls
+        ):
             self.stop()
             return PlaybackState.IDLE
         if self._poll_calls >= self._finishes_after_polls:
@@ -257,7 +282,8 @@ def _counting_on_finished():
 
 @pytest.mark.asyncio
 async def test_two_utterances_back_to_back_never_touch_the_cooldown_gate(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     """RED against a naive TTSRequestEvent-based approach: routing through
     the ad-hoc branch's `_enforce_cooldown_limit()` maintenance call (or
@@ -272,7 +298,9 @@ async def test_two_utterances_back_to_back_never_touch_the_cooldown_gate(
         calls.append("called")
         return original(self)
 
-    monkeypatch.setattr(tts_events_module.TTSEventHandler, "_enforce_cooldown_limit", _spy)
+    monkeypatch.setattr(
+        tts_events_module.TTSEventHandler, "_enforce_cooldown_limit", _spy
+    )
     monkeypatch.setattr(tts_events_module, "sink_available", lambda: True)
     monkeypatch.setattr(
         tts_events_module,
@@ -292,8 +320,12 @@ async def test_two_utterances_back_to_back_never_touch_the_cooldown_gate(
     await handler.speak_utterance("First utterance.", on_finished=on_finished_1)
     await handler.speak_utterance("Second utterance.", on_finished=on_finished_2)
 
-    assert calls == [], "the cooldown gate/maintenance call must never run for this entry"
-    assert len(service.synthesize_default_calls) == 2, "both utterances must actually generate"
+    assert calls == [], (
+        "the cooldown gate/maintenance call must never run for this entry"
+    )
+    assert len(service.synthesize_default_calls) == 2, (
+        "both utterances must actually generate"
+    )
     assert results_1 == [True]
     assert results_2 == [True]
 
@@ -319,7 +351,9 @@ async def test_legacy_path_completion_fires_exactly_once(handler, monkeypatch):
     try:
         await handler.speak_utterance("Discarded.", on_finished=on_finished)
 
-        assert results == [True], "must fire exactly once, once playback actually finished"
+        assert results == [True], (
+            "must fire exactly once, once playback actually finished"
+        )
         assert len(fake_player.play_calls) == 1, (
             "the legacy artifact must actually be played, not just written"
         )
@@ -329,7 +363,8 @@ async def test_legacy_path_completion_fires_exactly_once(handler, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_legacy_path_completion_fires_false_once_when_the_player_fails(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     chunks = [b"ID3", b"restofmp3bytes"]
     response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
@@ -345,7 +380,9 @@ async def test_legacy_path_completion_fires_false_once_when_the_player_fails(
     try:
         await handler.speak_utterance("Discarded.", on_finished=on_finished)
 
-        assert results == [False], "a player failure must still fire exactly once, as False"
+        assert results == [False], (
+            "a player failure must still fire exactly once, as False"
+        )
     finally:
         await handler.cleanup_tts_resources()
 
@@ -378,7 +415,9 @@ async def test_sink_path_completion_fires_exactly_once_on_drain(handler, monkeyp
     assert results == [True]
     sink = sink_holder["sink"]
     assert b"".join(sink.fed) == b"".join(chunks)
-    assert handler._audio_files == {}, "a streamed response must never touch the legacy artifact path"
+    assert handler._audio_files == {}, (
+        "a streamed response must never touch the legacy artifact path"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +445,9 @@ async def test_synthesis_failure_fires_on_finished_false_exactly_once(handler):
 
 
 @pytest.mark.asyncio
-async def test_stopped_sink_fires_completion_exactly_once_as_ok_false(handler, monkeypatch):
+async def test_stopped_sink_fires_completion_exactly_once_as_ok_false(
+    handler, monkeypatch
+):
     """Same deterministic technique `test_spoken_feedback_streaming.py`'s
     `_BargedInSink` already established for this exact scenario (a real
     concurrent stop landing mid-pump can't be driven synchronously without
@@ -416,6 +457,7 @@ async def test_stopped_sink_fires_completion_exactly_once_as_ok_false(handler, m
     both-ways stop routine (`handle_tts_playback`) is exercised separately,
     end to end, by the integration test below.
     """
+
     class _BargedInSink(_RecordingSink):
         def feed(self, pcm: bytes) -> bool:
             accepted = super().feed(pcm)
@@ -449,7 +491,8 @@ async def test_stopped_sink_fires_completion_exactly_once_as_ok_false(handler, m
 
 @pytest.mark.asyncio
 async def test_legacy_completion_advertises_no_audio_file_so_the_app_cannot_double_play(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     chunks = [b"ID3", b"restofmp3bytes"]
     response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
@@ -479,7 +522,8 @@ async def test_legacy_completion_advertises_no_audio_file_so_the_app_cannot_doub
 
 @pytest.mark.asyncio
 async def test_non_handsfree_legacy_completion_still_advertises_its_audio_file(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     """Regression guard: F1's fix is gated on `on_finished is not None` --
     every OTHER caller (spoken feedback, character speech, ad-hoc requests)
@@ -493,7 +537,9 @@ async def test_non_handsfree_legacy_completion_still_advertises_its_audio_file(
     try:
         await handler._generate_tts("Discarded.", "adhoc", None)
 
-        complete_events = [m for m in handler.messages if isinstance(m, TTSCompleteEvent)]
+        complete_events = [
+            m for m in handler.messages if isinstance(m, TTSCompleteEvent)
+        ]
         assert len(complete_events) == 1
         assert complete_events[0].audio_file is not None
         assert complete_events[0].audio_file.exists()
@@ -515,7 +561,8 @@ async def test_non_handsfree_legacy_completion_still_advertises_its_audio_file(
 
 @pytest.mark.asyncio
 async def test_completion_waits_for_the_poll_to_observe_finished_before_firing(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     chunks = [b"ID3", b"restofmp3bytes"]
     response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
@@ -543,7 +590,8 @@ async def test_completion_waits_for_the_poll_to_observe_finished_before_firing(
 
 @pytest.mark.asyncio
 async def test_completion_reports_false_when_the_clip_is_displaced_before_finishing(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     """A clip that stops being current for any reason OTHER than reaching
     FINISHED (an explicit stop, or displacement by a different clip) must
@@ -590,7 +638,9 @@ async def test_completion_reports_false_when_the_clip_is_displaced_before_finish
 
 @pytest.mark.asyncio
 async def test_last_played_and_the_handoff_event_are_registered_before_the_file_reaches_the_player(
-    handler, monkeypatch, tmp_path,
+    handler,
+    monkeypatch,
+    tmp_path,
 ):
     """Not the fix itself (see below) -- but this ordering is still worth
     keeping: `_last_played` reflects the truth as early as possible for
@@ -643,7 +693,9 @@ async def test_last_played_and_the_handoff_event_are_registered_before_the_file_
 
 @pytest.mark.asyncio
 async def test_bare_stop_during_an_in_flight_handoff_reaches_the_unconditional_stop_guard(
-    handler, monkeypatch, tmp_path,
+    handler,
+    monkeypatch,
+    tmp_path,
 ):
     """Deterministic guard-level pin (kept per the reviewer's binding
     test-strength note: this models the GUARD -- that a bare stop reaches
@@ -739,7 +791,8 @@ def test_a_stop_requested_before_popen_results_in_silence_not_a_played_through_c
 
 @pytest.mark.asyncio
 async def test_non_bare_stop_never_touches_unrelated_audio_when_nothing_tracked(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     """N2: `_stream_response_via_sink`'s own call shape (`bare_stop`
     defaults False) must remain a deliberate no-op when `_last_played is
@@ -758,17 +811,19 @@ async def test_non_bare_stop_never_touches_unrelated_audio_when_nothing_tracked(
     async with handler._audio_files_lock:
         handler._last_played = None
 
-    await handler._stop_prior_legacy_clip()  # bare_stop=False, the sink call's own shape
+    await (
+        handler._stop_prior_legacy_clip()
+    )  # bare_stop=False, the sink call's own shape
 
     assert fake_player.stop_calls == 0, (
-        "must never stop an unrelated clip when nothing is tracked "
-        "(task-4 review N2)"
+        "must never stop an unrelated clip when nothing is tracked (task-4 review N2)"
     )
 
 
 @pytest.mark.asyncio
 async def test_bare_stop_without_an_in_flight_handoff_keeps_the_tracked_only_behavior(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     """Regression guard: the unconditional branch must be gated on BOTH
     `bare_stop=True` AND at least one in-flight handoff -- a bare stop
@@ -789,7 +844,9 @@ async def test_bare_stop_without_an_in_flight_handoff_keeps_the_tracked_only_beh
 
 @pytest.mark.asyncio
 async def test_bare_stop_still_uses_the_tracked_branch_when_something_is_tracked(
-    handler, monkeypatch, tmp_path,
+    handler,
+    monkeypatch,
+    tmp_path,
 ):
     """Regression guard: a bare stop for an ORDINARY (non-hands-free,
     no in-flight handoff) tracked clip must still go through the
@@ -829,7 +886,8 @@ async def test_bare_stop_still_uses_the_tracked_branch_when_something_is_tracked
 
 @pytest.mark.asyncio
 async def test_a_completing_handoff_does_not_clear_a_different_still_in_flight_handoffs_registration(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     event_a = threading.Event()
     event_b = threading.Event()
@@ -862,7 +920,9 @@ async def test_a_completing_handoff_does_not_clear_a_different_still_in_flight_h
 
 @pytest.mark.asyncio
 async def test_a_real_handoffs_own_finally_discards_only_its_own_event(
-    handler, monkeypatch, tmp_path,
+    handler,
+    monkeypatch,
+    tmp_path,
 ):
     """The actual PRODUCTION code path D1 touches: `_play_utterance_
     legacy_artifact`'s own `finally` block must discard ONLY the event it
@@ -912,11 +972,12 @@ async def test_a_real_handoffs_own_finally_discards_only_its_own_event(
 def test_legacy_playback_timeout_seconds_widens_for_a_slower_configured_speed():
     text_length = 200
     normal = tts_events_module._legacy_playback_timeout_seconds(text_length, speed=1.0)
-    half_speed = tts_events_module._legacy_playback_timeout_seconds(text_length, speed=0.5)
+    half_speed = tts_events_module._legacy_playback_timeout_seconds(
+        text_length, speed=0.5
+    )
 
     expected_half = (
-        text_length
-        / (tts_events_module._LEGACY_PLAYBACK_MIN_CHARS_PER_SECOND * 0.5)
+        text_length / (tts_events_module._LEGACY_PLAYBACK_MIN_CHARS_PER_SECOND * 0.5)
         + tts_events_module._LEGACY_PLAYBACK_POLL_MARGIN_SECONDS
     )
     assert half_speed == pytest.approx(expected_half)
@@ -931,13 +992,18 @@ def test_legacy_playback_timeout_seconds_floors_non_positive_speed_to_normal():
     guarantees "finite positive" upstream, but this function must never
     divide by zero or go negative regardless of what a caller passes."""
     baseline = tts_events_module._legacy_playback_timeout_seconds(100, speed=1.0)
-    assert tts_events_module._legacy_playback_timeout_seconds(100, speed=0.0) == baseline
-    assert tts_events_module._legacy_playback_timeout_seconds(100, speed=-2.0) == baseline
+    assert (
+        tts_events_module._legacy_playback_timeout_seconds(100, speed=0.0) == baseline
+    )
+    assert (
+        tts_events_module._legacy_playback_timeout_seconds(100, speed=-2.0) == baseline
+    )
 
 
 @pytest.mark.asyncio
 async def test_generate_tts_extracts_speed_from_preferences_and_threads_it_through(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     chunks = [b"ID3", b"restofmp3bytes"]
     response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
@@ -948,7 +1014,14 @@ async def test_generate_tts_extracts_speed_from_preferences_and_threads_it_throu
 
             return SimpleNamespace(provider_id="openai", speed=0.5)
 
-        async def synthesize_default(self, *, text, voice_override=None, response_format_override=None, progress_sink=None):
+        async def synthesize_default(
+            self,
+            *,
+            text,
+            voice_override=None,
+            response_format_override=None,
+            progress_sink=None,
+        ):
             return response
 
     handler._tts_service = _SlowSpeedService()
@@ -1050,7 +1123,9 @@ async def test_cancelling_mid_poll_promptly_stops_the_player(handler, monkeypatc
         "cancellation must promptly stop the player, not wait out the "
         "poll's own bound (task-4 review N4)"
     )
-    assert results == [False], "on_finished must still fire exactly once via the finally net"
+    assert results == [False], (
+        "on_finished must still fire exactly once via the finally net"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1102,7 +1177,8 @@ class _SynchronizedFakePlayer:
 
 @pytest.mark.asyncio
 async def test_cancelling_after_the_clip_was_displaced_does_not_kill_the_new_clip(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     chunks = [b"ID3", b"restofmp3bytes"]
     response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
@@ -1157,7 +1233,8 @@ async def test_cancelling_after_the_clip_was_displaced_does_not_kill_the_new_cli
 
 @pytest.mark.asyncio
 async def test_cleanup_tts_resources_cancels_the_legacy_timer_instead_of_awaiting_it(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     chunks = [b"ID3", b"restofmp3bytes"]
     response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
@@ -1198,7 +1275,8 @@ async def test_cleanup_tts_resources_cancels_the_legacy_timer_instead_of_awaitin
 
 @pytest.mark.asyncio
 async def test_generation_is_registered_in_active_tasks_while_in_flight(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     chunks = [b"ID3", b"restofmp3bytes"]
     response = _FakeResponse(chunks, audio_format="mp3", sample_rate=None)
@@ -1229,7 +1307,9 @@ async def test_generation_is_registered_in_active_tasks_while_in_flight(
     await task
 
     async with handler._active_tasks_lock:
-        assert len(handler._active_tasks) == 0, "must be removed once generation completes"
+        assert len(handler._active_tasks) == 0, (
+            "must be removed once generation completes"
+        )
     assert results == [True]
 
 
@@ -1277,7 +1357,8 @@ async def test_quiet_suppresses_the_text_validation_toast_too(handler):
 
 @pytest.mark.asyncio
 async def test_a_raising_on_finished_is_not_reported_as_a_generation_failure(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     chunks = [bytes([1, 0]) * 10]
     response = _FakeResponse(chunks, audio_format="pcm", sample_rate=RATE)
@@ -1376,7 +1457,8 @@ async def _drain(driver: _SequencerDriver) -> None:
 
 @pytest.mark.asyncio
 async def test_sentence_sequencer_wired_through_speak_utterance_survives_a_mid_utterance_stop(
-    handler, monkeypatch,
+    handler,
+    monkeypatch,
 ):
     driver = _SequencerDriver(handler)
     sequencer = SentenceSequencer(speak=driver.speak, stop_speech=driver.stop_speech)

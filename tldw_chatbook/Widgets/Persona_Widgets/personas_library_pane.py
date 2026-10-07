@@ -9,6 +9,7 @@ from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.events import Resize
 from textual.widgets import Button, Input, ListItem, ListView, Static
 
@@ -628,7 +629,8 @@ class PersonasLibraryPane(Vertical):
 
     def set_tag_label(self, text: str) -> None:
         """Update the tag button's label (the screen owns the active tag)."""
-        self.query_one("#personas-library-tag", Button).label = text
+        # TASK-34400: the active tag is untrusted; a str label parses as markup.
+        self.query_one("#personas-library-tag", Button).label = Content(text)
         self._sync_control_layout()
 
     @on(Input.Changed, "#personas-library-search")

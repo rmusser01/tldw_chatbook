@@ -41,9 +41,7 @@ class FakeDB:
     child_messages: dict[tuple[str, tuple[str, ...], str], list[dict[str, Any]]] = (
         field(default_factory=dict)
     )
-    tree_rows: dict[tuple[str, str], list[dict[str, Any]]] = field(
-        default_factory=dict
-    )
+    tree_rows: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
     images_by_message_id: dict[str, dict[str, Any]] = field(default_factory=dict)
     latest_message: dict[str, dict[str, Any] | None] = field(default_factory=dict)
     messages_by_id: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -652,9 +650,7 @@ def test_list_conversations_retains_the_exact_ordinary_page_envelope():
         ({"offset": 2**63}, "offset"),
     ],
 )
-def test_list_conversations_rejects_invalid_coordinates_before_db_call(
-    kwargs, message
-):
+def test_list_conversations_rejects_invalid_coordinates_before_db_call(kwargs, message):
     db = FakeDB(conversations_page_rows=[{"id": "conv-1"}])
     service = ChatConversationService(db)
 
@@ -699,9 +695,7 @@ def test_locate_conversation_page_normalizes_the_bounded_owning_page():
     )
     service = ChatConversationService(db)
 
-    result = service.locate_conversation_page(
-        "conv-24", scope_type="all", limit=20
-    )
+    result = service.locate_conversation_page("conv-24", scope_type="all", limit=20)
 
     assert result["pagination"] == {
         "limit": 20,
@@ -715,7 +709,9 @@ def test_locate_conversation_page_normalizes_the_bounded_owning_page():
     assert result["items"][4]["id"] == "conv-24"
     assert result["items"][4]["keywords"] == ["located"]
     assert result["items"][4]["message_count"] == 3
-    locate_call = next(call for call in db.calls if call[0] == "locate_conversation_page")
+    locate_call = next(
+        call for call in db.calls if call[0] == "locate_conversation_page"
+    )
     assert locate_call[2]["scope_type"] == "all"
     assert locate_call[2]["workspace_id"] is None
 
@@ -737,9 +733,7 @@ def test_locate_conversation_page_normalizes_the_bounded_owning_page():
         ),
     ],
 )
-def test_locate_conversation_page_rejects_malformed_coordinates(
-    located_page, match
-):
+def test_locate_conversation_page_rejects_malformed_coordinates(located_page, match):
     service = ChatConversationService(FakeDB(located_page=located_page))
 
     with pytest.raises(ValueError, match=match):
@@ -926,7 +920,7 @@ def test_get_and_update_conversation_metadata_routes_normalized_fields():
                 "external_ref": "ref-2",
             },
             9,
-        )
+        ),
     ]
 
 
@@ -1401,7 +1395,6 @@ def test_canonical_reader_never_merges_changed_legacy_records(tmp_path):
     assert citations["citations"] == []
 
 
-
 class TestLibraryConversationSeams:
     """task-1337 (plan Task 4): thin agent-facing delegates over the
     additive DB library read seams. The service forwards pagination/window
@@ -1456,9 +1449,14 @@ class TestLibraryConversationSeams:
             def __init__(self):
                 self.calls = []
 
-            def search_library_conversations_page(self, *, query, limit, offset, archive_scope):
+            def search_library_conversations_page(
+                self, *, query, limit, offset, archive_scope
+            ):
                 self.calls.append(("search", query, limit, offset, archive_scope))
-                return {"items": [{"id": "conv-2", "matched_fields": ["title"]}], "total": 1}
+                return {
+                    "items": [{"id": "conv-2", "matched_fields": ["title"]}],
+                    "total": 1,
+                }
 
         db = FakeLibraryDB()
         service = ChatConversationService(db)
@@ -1826,13 +1824,12 @@ def test_list_conversations_character_scope_filters_before_pagination(tmp_path):
             if item["id"] != character_conversation
         ]
         assert generic["pagination"]["total"] == 2
-        assert [item["id"] for item in character["items"]] == [
-            character_conversation
-        ]
+        assert [item["id"] for item in character["items"]] == [character_conversation]
         assert character["pagination"]["total"] == 1
         assert unfiltered["pagination"]["total"] == 3
     finally:
         db.close_connection()
+
 
 @pytest.fixture
 def service_with_db(tmp_path):
@@ -1866,7 +1863,9 @@ def _seed_chain(db, service, conv_id, texts):
 def test_copy_active_path_copies_and_remaps(service_with_db):
     db, service = service_with_db
     src = service.create_conversation(title="Src")
-    ids = _seed_chain(db, service, src, [("user", "hello"), ("assistant", "hi"), ("user", "go")])
+    ids = _seed_chain(
+        db, service, src, [("user", "hello"), ("assistant", "hi"), ("user", "go")]
+    )
     dst = service.create_conversation(title="Dst")
 
     outcome = service.copy_conversation_active_path(src, dst)
@@ -1882,17 +1881,33 @@ def test_copy_active_path_copies_and_remaps(service_with_db):
     # ids are fresh, not the source's
     assert {m["id"] for m in copied}.isdisjoint(set(ids))
     # active leaf points at the copied leaf
-    assert db.get_conversation_active_leaf(dst) == copied[-1]["id"] == outcome["leaf_message_id"]
+    assert (
+        db.get_conversation_active_leaf(dst)
+        == copied[-1]["id"]
+        == outcome["leaf_message_id"]
+    )
 
 
 def test_copy_active_path_ignores_inactive_branch(service_with_db):
     db, service = service_with_db
     src = service.create_conversation(title="Src")
     root = db.add_message({"conversation_id": src, "sender": "user", "content": "root"})
-    kept = db.add_message({"conversation_id": src, "sender": "assistant", "content": "kept",
-                           "parent_message_id": root})
-    db.add_message({"conversation_id": src, "sender": "assistant", "content": "dropped",
-                    "parent_message_id": root})
+    kept = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "kept",
+            "parent_message_id": root,
+        }
+    )
+    db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "dropped",
+            "parent_message_id": root,
+        }
+    )
     db.set_conversation_active_leaf(src, kept)
     dst = service.create_conversation(title="Dst")
 
@@ -1909,15 +1924,23 @@ def test_copy_active_path_falls_back_to_latest_when_no_leaf(service_with_db):
     # Explicit distinct timestamps: the DB clock has millisecond precision, so
     # same-millisecond seeding can tie the fallback's latest-timestamp pick
     # (max() keeps the first candidate) and flake this test.
-    root = db.add_message({
-        "conversation_id": src, "sender": "user", "content": "a",
-        "timestamp": "2026-01-01T00:00:00.001Z",
-    })
-    db.add_message({
-        "conversation_id": src, "sender": "assistant", "content": "b",
-        "parent_message_id": root,
-        "timestamp": "2026-01-01T00:00:00.002Z",
-    })
+    root = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "user",
+            "content": "a",
+            "timestamp": "2026-01-01T00:00:00.001Z",
+        }
+    )
+    db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "b",
+            "parent_message_id": root,
+            "timestamp": "2026-01-01T00:00:00.002Z",
+        }
+    )
     db.set_conversation_active_leaf(src, None)  # API-created conversation, never opened
     dst = service.create_conversation(title="Dst")
 
@@ -1937,10 +1960,16 @@ def test_copy_active_path_empty_history_raises(service_with_db):
 def test_copy_active_path_preserves_fields(service_with_db):
     db, service = service_with_db
     src = service.create_conversation(title="Src")
-    mid = db.add_message({
-        "conversation_id": src, "sender": "assistant", "content": "tool stuff",
-        "role": "tool", "metadata_json": '{"k": 1}', "usage_json": '{"tokens": 5}',
-    })
+    mid = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "tool stuff",
+            "role": "tool",
+            "metadata_json": '{"k": 1}',
+            "usage_json": '{"tokens": 5}',
+        }
+    )
     db.set_conversation_active_leaf(src, mid)
     dst = service.create_conversation(title="Dst")
 
@@ -1956,19 +1985,40 @@ def test_copy_active_path_preserves_fields(service_with_db):
 def test_copy_active_path_preserves_provider_continuation(service_with_db):
     db, service = service_with_db
     src = service.create_conversation(title="Src")
-    checkpoint = json.dumps({
-        "schema_version": 1, "checkpoint_revision": 1,
-        "provider": "deepseek", "protocol": "responses",
-        "model": "deepseek-v4-flash", "api_base_url": "https://api.deepseek.com/v1",
-        "state": "active",
-        "rounds": [{"assistant_content": "", "reasoning_blocks": [],
-                    "calls": [{"call_id": "call_active", "name": "lookup",
-                               "arguments": "{}", "state": "pending"}]}],
-    })
-    mid = db.add_message({
-        "conversation_id": src, "sender": "assistant", "content": "partial answer",
-        "role": "assistant", "provider_continuation_json": checkpoint,
-    })
+    checkpoint = json.dumps(
+        {
+            "schema_version": 1,
+            "checkpoint_revision": 1,
+            "provider": "deepseek",
+            "protocol": "responses",
+            "model": "deepseek-v4-flash",
+            "api_base_url": "https://api.deepseek.com/v1",
+            "state": "active",
+            "rounds": [
+                {
+                    "assistant_content": "",
+                    "reasoning_blocks": [],
+                    "calls": [
+                        {
+                            "call_id": "call_active",
+                            "name": "lookup",
+                            "arguments": "{}",
+                            "state": "pending",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    mid = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "partial answer",
+            "role": "assistant",
+            "provider_continuation_json": checkpoint,
+        }
+    )
     db.set_conversation_active_leaf(src, mid)
     dst = service.create_conversation(title="Dst")
 
@@ -2058,7 +2108,9 @@ def test_copy_active_path_leaf_failure_rolls_back(service_with_db, monkeypatch):
     pointer failure must not strand copied messages without a leaf."""
     db, service = service_with_db
     src = service.create_conversation(title="Src")
-    _seed = db.add_message({"conversation_id": src, "sender": "user", "content": "hello"})
+    _seed = db.add_message(
+        {"conversation_id": src, "sender": "user", "content": "hello"}
+    )
     db.set_conversation_active_leaf(src, str(_seed))
     dst = service.create_conversation(title="Dst")
 
@@ -2079,8 +2131,12 @@ def test_effective_active_leaf_falls_back_on_dangling_pointer(service_with_db):
     src = service.create_conversation(title="Src")
     first = db.add_message({"conversation_id": src, "sender": "user", "content": "one"})
     second = db.add_message(
-        {"conversation_id": src, "sender": "assistant", "content": "two",
-         "parent_message_id": first}
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "two",
+            "parent_message_id": first,
+        }
     )
     db.set_conversation_active_leaf(src, "not-a-real-message-id")
     assert service.effective_active_leaf(src) == str(second)

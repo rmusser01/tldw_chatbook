@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐rc  More ▾
+────────────│ Conversation Inspector · Using my Library sources: h...                                                                              │────────────
+ Console — C│ “Using my Library sources: h...” · Capture On · Fidelity Safe · Creds filtered                                                       │     Ready
+   New tab  │ PII Off · Viewer Safe · No active run is frozen                                                                                      │
+────────────│  Context  Usage & cost  Exchange history                                                                                             │────────────
+            │                                                                                                                                      │ │
+            │ Provider-adapter capture; HTTP framing may differ. llama.cpp captures its sent payload.                                              │ │
+   Terminal │  Turn · 1 · user            Select a section                                                                                         │ │
+ ───────────│  Turn · 2 · assistant       ┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐ │ │
+ Workspaces │                             │                                                                                                      │ │ │
+ ───────────│                             │                                                                                                      │ │ │
+ Conversatio│                             │                                                                                                      │ │ │
+     Archive│                             │                                                                                                      │ │ │
+      Archiv│                             │                                                                                                      │ │ │
+     Search │                             │                                                                                                      │ │ │
+   Using my │                             │                                                                                                      │ │ │
+   sources: │                             │                                                                                                      │ │ │
+            │                             │                                                                                                      │ │ │
+  ▊▔▔▔▔▔▔▔▔▔│                             │                                                                                                      │ │ │
+  ▊  Filter │                             │                                                                                                      │ │ │◂ Inspect
+  ▊▁▁▁▁▁▁▁▁▁│                             │                                                                                                      │ │ │
+            │                             │                                                                                                      │ │ │
+  Chats     │                             │                                                                                                      │ │ │
+   Using my │                             │                                                                                                      │ │ │
+            │                             │                                                                                                      │ │ │
+ ───────────│                             │                                                                                                      │ │ │
+ Character ·│                             │                                                                                                      │ │ │
+ ───────────│                             │                                                                                                      │ │ │
+ Model      │                             │                                                                                                      │ │ │
+ ───────────│                             │                                                                                                      │ │ │
+ Agent      │                             │                                                                                                      │ │ │
+ ───────────│                             │                                                                                                      │ │ │
+ Details    │                             │                                                                                                      │ │ │
+            │                             │                                                                                                      │ │ │
+────────────│                             │                                                                                                      │ │────────────
+ Staged for │                             │                                                                                                      │ │ Un-stage
+ zephyr-irri│                             │                                                                                                      │ │
+ copper-lant│                             │                                                                                                      │ │
+ quillmere-b│                             └──────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+ Status ▾   │   Export selected call…                                                                                                              │ Sources: 0
+            │   View: Safe    Capture settings…       Close                                                                                        │
+█  Composer └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

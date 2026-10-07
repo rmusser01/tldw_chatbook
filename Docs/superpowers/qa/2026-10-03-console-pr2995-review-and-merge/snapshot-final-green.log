@@ -1,0 +1,9 @@
+....                                                                     [100%]
+============================= slowest 25 durations =============================
+6.35s call     Tests/UI/test_console_send_draft_snapshot.py::test_console_pre_durable_failure_keeps_newer_typing_and_recovery
+4.60s call     Tests/UI/test_console_send_draft_snapshot.py::test_console_blocked_send_retains_exact_recovery_after_runtime_custody
+4.07s call     Tests/UI/test_console_send_draft_snapshot.py::test_console_armed_unknown_mouse_send_snapshots_before_skill_await
+1.19s call     Tests/UI/test_console_native_chat_flow.py::test_native_ready_console_config_survives_cache_invalidating_reload
+
+(8 durations < 1s hidden.)
+4 passed in 21.47s

@@ -290,29 +290,24 @@
     margin-right: $ds-space-0;
 }
 
-/* Collapsible styling enhancements */
-Collapsible {
-    margin-bottom: $ds-space-1;
-}
-
-Collapsible > CollapsibleTitle {
-    background: $primary-background-darken-1;
-    color: $text;
-    padding: $ds-space-0 $ds-space-1;
-    height: $ds-size-3;
-}
-
+/* Collapsible and Select styling -- RETIRED (TASK-33003.1).
+ *
+ * Bare `Collapsible { margin-bottom }`, `Collapsible > CollapsibleTitle
+ * { height: 3; ... }` and `Select { width: 100%; margin-bottom: 1; }` type
+ * rules lived here. Their owner, `#conversations_characters_prompts-window`,
+ * is composed nowhere (see the Checkbox note below), so they only ever
+ * reached OTHER screens: a 3-row title on every disclosure and a blank row
+ * plus a full-row claim under every Select app-wide. Retired rather than
+ * rescoped -- there is no live root to scope them to.
+ *
+ * `Collapsible.-active` below is kept: Textual's Collapsible never sets
+ * `-active`, no app code adds it, and test_non_obscuring_focus_contract pins
+ * the selector. */
 Collapsible.-active > CollapsibleTitle {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
     border-bottom: solid $ds-focus-accent;
-}
-
-/* Select widget styling */
-Select {
-    width: $ds-width-full;
-    margin-bottom: $ds-space-1;
 }
 
 /* Checkbox styling -- RETIRED (TASK-18960).

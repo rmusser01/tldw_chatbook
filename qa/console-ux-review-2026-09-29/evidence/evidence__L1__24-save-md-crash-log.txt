@@ -1,0 +1,4 @@
+2026-09-29 12:19:05 [INFO    ] tldw_chatbook.UI.Screens.chat_screen:496 - ChatScreen on_button_pressed called with button: console-conversation-actions-0
+2026-09-29 12:19:44 [ERROR   ] tldw_chatbook.diagnostics.app:256 - event=unhandled_exception component=app exception_type=AttributeError raise_function=_save_console_conversation_markdown raise_line=7149 raise_module=tldw_chatbook.UI.Screens.chat_screen site_function=_save_console_conversation_markdown site_line=7149 site_module=tldw_chatbook.UI.Screens.chat_screen
+2026-09-29 12:19:44 [INFO    ] root:987 - --- App Unmounting ---
+2026-09-29 12:19:44 [INFO    ] tldw_chatbook.diagnostics.app:256 - event=app_stopping component=app

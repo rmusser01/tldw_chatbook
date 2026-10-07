@@ -103,7 +103,7 @@ call-site edit / stays, with reasons) is in the task-1 extraction report.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
@@ -148,6 +148,7 @@ from ...Chat.console_message_actions import (
     ConsoleCanvasBlockReference,
     ConsoleMessageActionService,
     canvas_compile_repair_result,
+    is_refused_echo,
     resolve_canvas_html_block,
 )
 from ...Chat.console_save_targets import (
@@ -173,7 +174,14 @@ from ...Widgets.Console import (
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
+    from ...Chat.console_message_delete import ConsoleDeleteScope
     from ...Widgets.Console.console_transcript import ConsoleThinkingEditRequested
+
+#: Actions the message Delete flow (``message_delete``) owns end to end; the
+#: confirm/cancel pair only exists on a row whose delete is pending. The flow
+#: and its confirmation/receipt modules are imported at first use, never at
+#: boot (ADR-097: they are not first-paint dependencies).
+CONSOLE_DELETE_ACTION_IDS = frozenset({"delete", "delete-confirm", "delete-cancel"})
 
 logger = logger.bind(module="ChatScreen")
 
@@ -229,6 +237,7 @@ class ConsoleMessageController:
         current_chat_store_accessor: Callable[[], ConsoleChatStore | None],
         ensure_console_chat_controller: Callable[[], Any],
         current_chat_controller_accessor: Callable[[], Any | None],
+        generation_refusal_copy: Callable[[Any, str | None], str | None],
         sync_native_console_chat_ui: Callable[[], Any],
         active_session_is_ephemeral: Callable[[], bool],
         active_native_console_session: Callable[[], Any],
@@ -255,6 +264,9 @@ class ConsoleMessageController:
             Callable[[ConsoleCanvasBlockReference, str], Any] | None
         ) = None,
         prefill_canvas_repair: Callable[[str], Any] | None = None,
+        resend_refused_echo: (
+            Callable[[ConsoleChatMessage], Awaitable[str | None]] | None
+        ) = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -301,6 +313,8 @@ class ConsoleMessageController:
                 `ensure_console_chat_controller` for the same reason
                 `chat_store_accessor`/`current_chat_store_accessor` are
                 kept separate.
+            generation_refusal_copy: Existing controller activity and screen
+                provider-readiness refusal, checked before text replay workers.
             sync_native_console_chat_ui: `ChatScreen._sync_native_console_
                 chat_ui`, the big render/inspector re-sync bridge -- stays
                 screen-owned (DOM), reached here as an async callable.
@@ -361,6 +375,10 @@ class ConsoleMessageController:
                 video_copy`, used by the video save action.
             regenerate_console_video_message: `ConsoleVideoController._regenerate_
                 console_video_message`, used by the video regenerate action.
+            resend_refused_echo: TASK-33661 -- re-sends a refused, never-persisted
+                echo through the screen's normal send path
+                (`_dispatch_console_draft_send`); returns refusal copy or None.
+                ``None`` leaves Resend on a refused echo refused.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -368,6 +386,7 @@ class ConsoleMessageController:
         self._current_chat_store_accessor = current_chat_store_accessor
         self._ensure_console_chat_controller_fn = ensure_console_chat_controller
         self._current_chat_controller_accessor = current_chat_controller_accessor
+        self._generation_refusal_copy = generation_refusal_copy
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
         self._active_session_is_ephemeral_fn = active_session_is_ephemeral
         self._active_native_console_session_fn = active_native_console_session
@@ -406,6 +425,7 @@ class ConsoleMessageController:
         )
         self._open_canvas_block_fn = open_canvas_block
         self._prefill_canvas_repair_fn = prefill_canvas_repair
+        self._resend_refused_echo_fn = resend_refused_echo
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -419,6 +439,8 @@ class ConsoleMessageController:
         )
         self._last_console_action: ConsoleActionResult | None = None
         self._pending_console_delete_message_id: str | None = None
+        # TASK-33628.2: the scope the pending delete showed the user.
+        self._console_delete_scope: ConsoleDeleteScope | None = None
         self._console_original_attempt_previews: Dict[str, str] = {}
         self._console_speaking_message_id: str | None = None
         self._console_speech_states: dict[str, str] = {}
@@ -1003,7 +1025,10 @@ class ConsoleMessageController:
         that session's id explicitly instead -- re-resolving "active" at
         append time would let a session switch during the awaited work
         misattribute the row to whatever the user is looking at NOW rather
-        than the session that actually produced it. The resync below is
+        than the session that actually produced it. Slash commands run in a
+        worker (TASK-33622.16), so one that awaits before answering posts
+        through ``command_handoff.append_command_output``, which passes the
+        chat the command was sent from. The resync below is
         unconditional either way and stays harmless: it only ever renders
         the store's CURRENTLY active session, so a background session's
         just-appended row simply doesn't show until the user visits it
@@ -1461,8 +1486,12 @@ class ConsoleMessageController:
             )
             return True
 
-        if action_id != "delete":
+        if action_id not in CONSOLE_DELETE_ACTION_IDS:
             self._pending_console_delete_message_id = None
+        else:
+            from .message_delete import handle_console_delete_action
+
+            return await handle_console_delete_action(self, action_id, message_id)
 
         if action_id == "save-as":
             destinations = self._console_save_as_destinations(message)
@@ -1681,15 +1710,37 @@ class ConsoleMessageController:
                 content=result.target_content or "",
             )
             return True
-        if action_id == "retry" and result.status == "completed":
+        if action_id in {"retry", "resend"} and result.status == "completed":
             controller = self._ensure_console_chat_controller()
             # Gate BEFORE spawning: an exclusive console-run worker cancels the
             # in-flight run at creation time, before the controller's own
             # rejection can run -- the screen must refuse, like the submit path.
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
+                return True
+            # TASK-33661 review I2: a refused echo's resend awaits the send
+            # path with no run state set yet, so a second press would pass the
+            # gate above and its exclusive worker would cancel the first
+            # mid-flight. Refuse while this session's resend worker is live.
+            if action_id == "resend" and any(
+                worker.name == "console-resend"
+                and worker.group == f"console-run-{target_session_id}"
+                and not worker.is_finished
+                for worker in self._screen.workers
+            ):
+                self.app_instance.notify(
+                    "Resend is already in progress.", severity="warning"
+                )
+                return True
+            if action_id == "resend":
+                self.run_worker(
+                    self._resend_console_turn(controller, message_id),
+                    name="console-resend",
+                    exclusive=True,
+                    group=f"console-run-{target_session_id}",
+                )
                 return True
             self.run_worker(
                 self._retry_console_message(controller, message_id),
@@ -1735,7 +1786,7 @@ class ConsoleMessageController:
                 return True
             controller = self._ensure_console_chat_controller()
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
@@ -1805,43 +1856,10 @@ class ConsoleMessageController:
                 group="console-save-video",
             )
             return True
-        if action_id == "delete" and result.status == "completed":
-            if self._pending_console_delete_message_id != message_id:
-                self._pending_console_delete_message_id = message_id
-                self._last_console_action = ConsoleActionResult(
-                    action_id=action_id,
-                    status="blocked",
-                    visible_copy="Press Delete again to remove this message.",
-                    target_message_id=message_id,
-                )
-                await self._sync_native_console_chat_ui()
-                return True
-            self._pending_console_delete_message_id = None
-            session_id = store.session_id_for_message(message_id)
-            controller = self._ensure_console_chat_controller()
-            # Deletion is subtree-wide, so clear the owning session while
-            # descendant-to-session identity is still available.
-            controller.clear_original_attempts_for_session(session_id)
-            self._console_original_attempt_previews.clear()
-            subtree_ids = store.subtree_message_ids(message_id)
-            store.delete_message(message_id)
-            cleanup_warning = getattr(
-                store.persistence, "recovered_media_cleanup_warning", None
-            )
-            if cleanup_warning:
-                self.app_instance.notify(cleanup_warning, severity="warning")
-            self._invalidate_console_fork_image_selections(subtree_ids)
-            # TASK-251: a deleted message can change what the browser row
-            # shows for this conversation (title/updated_at) -- invalidate
-            # so the next sync reflects it immediately.
-            self._invalidate_console_persisted_rows_cache()
-            await self._sync_native_console_chat_ui()
-            self.app_instance.notify(result.visible_copy, severity="information")
-            return True
         if action_id == "continue" and result.status == "continue_requested":
             controller = self._ensure_console_chat_controller()
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
@@ -1874,7 +1892,37 @@ class ConsoleMessageController:
         )
         if selected_id is not None:
             transcript.set_fork_eligibilities({selected_id: eligibility})
+        self._sync_delete_confirmation(transcript)
         return selected_id, eligibility
+
+    def _sync_delete_confirmation(self, transcript: Any) -> None:
+        """Show, refresh or clear the transcript's row-scoped delete confirmation.
+
+        With no delete armed here and none shown on ``transcript`` there is
+        nothing to sync -- every sync before the first Delete -- so the
+        confirmation helpers are imported only once there is.
+
+        Args:
+            transcript: The ``ConsoleTranscript`` (or a test double) to update.
+        """
+        if (
+            self._console_delete_scope is None
+            and getattr(transcript, "_delete_scope", None) is None
+        ):
+            return
+        from ...Widgets.Console.console_transcript_delete_confirmation import (
+            show_delete_confirmation,
+        )
+        from .message_delete import pending_delete_scope
+
+        show_delete_confirmation(transcript, pending_delete_scope(self))
+
+    @property
+    def console_pending_delete_copy(self) -> str:
+        """Inspector copy for the pending, row-scoped delete confirmation."""
+        from .message_delete import pending_delete_copy
+
+        return pending_delete_copy(self)
 
     def _console_message_presentation(
         self, message: ConsoleChatMessage
@@ -2682,7 +2730,7 @@ class ConsoleMessageController:
             # in-flight run at creation time, before the controller's own
             # rejection can run -- the screen must refuse, like the submit path.
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return
@@ -2823,8 +2871,12 @@ class ConsoleMessageController:
             ("console-message-action-toggle-image-view-", "toggle-image-view"),
             ("console-message-action-regenerate-", "regenerate"),
             ("console-message-action-continue-", "continue"),
+            # The confirm/cancel pair must win over the bare delete prefix.
+            ("console-message-action-delete-confirm-", "delete-confirm"),
+            ("console-message-action-delete-cancel-", "delete-cancel"),
             ("console-message-action-delete-", "delete"),
             ("console-message-action-retry-", "retry"),
+            ("console-message-action-resend-", "resend"),
             # speak-stop MUST be checked before speak -- "speak-" is itself
             # a prefix of "speak-stop-", so the more specific entry has to
             # win the ordered startswith() scan below (else a speak-stop
@@ -2864,6 +2916,33 @@ class ConsoleMessageController:
                 severity="success",
             )
         elif result.visible_copy:
+            self.app_instance.notify(result.visible_copy, severity="warning")
+        await self._sync_native_console_chat_ui()
+
+    async def _resend_console_turn(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        """Re-run a broken last turn in place (TASK-33661, ``console_turn_resend``).
+
+        A refused echo re-enters the normal send path, which starts the sync
+        timer once its turn is in custody. Starting it here first let a tick
+        stop the timer while the session still read blocked, so the resent
+        turn ran unpolled and the transcript froze (live check, 2026-10-01).
+        """
+        from ...Chat.console_turn_resend import resend_turn
+
+        try:
+            refused_echo = is_refused_echo(controller.store.get_message(message_id))
+        except KeyError:
+            refused_echo = False
+        if not refused_echo:
+            self._start_console_transcript_sync_timer()
+        result = await resend_turn(
+            controller, message_id, resend_echo=self._resend_refused_echo_fn
+        )
+        if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
         await self._sync_native_console_chat_ui()
 

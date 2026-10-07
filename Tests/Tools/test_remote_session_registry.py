@@ -9,6 +9,7 @@ import pytest
 
 from tldw_chatbook.Tools.remote_session_registry import RemoteSessionRegistry
 from tldw_chatbook.Tools.remote_session_worker import SessionStartError
+from tldw_chatbook.Tools.remote_workspace_transport import TransportFailure, TransportFailureKind
 
 
 class FakeWorker:
@@ -101,6 +102,10 @@ def test_close_key_and_idle_reap():
     assert reg._key_locks == {}
     w2 = reg.acquire(("run-2", "b1"), lambda: FakeWorker(idle_since=0.0))
     reg.reap_idle(now=100.0, idle_s=60)
+    # reap_idle closes off the calling thread (TASK-33401): bounded poll.
+    deadline = time.monotonic() + 5
+    while not w2.closed and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert w2.closed
 
 
@@ -200,7 +205,10 @@ def test_app_exit_closes_sessions_before_masters_in_one_best_effort_try():
 
     import tldw_chatbook
 
-    tree = ast.parse((Path(tldw_chatbook.__file__).parent / "app.py").read_text("utf-8"))
+    # TASK-33011: on_unmount moved verbatim into LifecycleMixin (app_lifecycle.py).
+    tree = ast.parse(
+        (Path(tldw_chatbook.__file__).parent / "app_lifecycle.py").read_text("utf-8")
+    )
     unmount = next(
         node
         for node in ast.walk(tree)
@@ -285,3 +293,139 @@ def test_shutdown_singleton_part_2_next_test_gets_a_working_registry():
     assert not reg._shutdown
     assert reg.acquire(("run-x", "b1"), FakeWorker) is not None
     reg.close_key("run-x")
+
+
+def test_waiters_share_one_transport_start_failure():
+    """A dead host costs one start, not one per queued caller (TASK-33400)."""
+    reg = RemoteSessionRegistry()
+    creates = []
+    release = threading.Event()
+    entered = threading.Barrier(5)
+
+    def create():
+        creates.append(1)
+        return FakeWorker(
+            start_error=SessionStartError(True, None, "255"),
+            start_hook=lambda: release.wait(5),
+        )
+
+    errors = []
+
+    def caller():
+        entered.wait(5)
+        try:
+            reg.acquire(("run-1", "b1"), create)
+        except SessionStartError as error:
+            errors.append(error)
+
+    threads = [threading.Thread(target=caller) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    entered.wait(5)
+    time.sleep(0.3)  # all four are inside acquire: one starting, three queued
+    release.set()
+    for thread in threads:
+        thread.join(10)
+    assert len(creates) == 1
+    assert len(errors) == 4 and all(error.transport for error in errors)
+
+
+def _mux_error():
+    failure = TransportFailure(TransportFailureKind.MUX_ERROR, 255, "mux_client_hello_exchange")
+    return SessionStartError(False, failure, "session start failed: mux")
+
+
+def test_mux_start_failure_goes_one_shot_for_that_call_only():
+    """TASK-33402: a stale control socket costs one one-shot call, not the run's warm path."""
+    reg = RemoteSessionRegistry()
+    assert reg.acquire(("run-1", "b1"), lambda: FakeWorker(start_error=_mux_error())) is None
+    assert reg.acquire(("run-1", "b1"), FakeWorker) is not None
+
+
+def test_repeated_mux_start_failure_disables_the_key_for_the_run():
+    reg = RemoteSessionRegistry()
+    assert reg.acquire(("run-1", "b1"), lambda: FakeWorker(start_error=_mux_error())) is None
+    assert reg.acquire(("run-1", "b1"), lambda: FakeWorker(start_error=_mux_error())) is None
+    assert reg.acquire(("run-1", "b1"), lambda: pytest.fail("mux-disabled key restarted")) is None
+
+
+@pytest.mark.parametrize("closer", ["close_key", "close_all"])
+@pytest.mark.parametrize("error", ["transport", "mux", "protocol"])
+def test_start_failing_after_its_run_closed_records_nothing(closer, error):
+    """A start that fails after its key was pruned never re-populates the bookkeeping."""
+    reg = RemoteSessionRegistry()
+    start_error = {
+        "transport": SessionStartError(True, None, "255"),
+        "mux": _mux_error(),
+        "protocol": SessionStartError(False, None, "stamp"),
+    }[error]
+    close = (lambda: reg.close_key("run-1")) if closer == "close_key" else reg.close_all
+
+    def create():
+        return FakeWorker(start_error=start_error, start_hook=close)
+
+    if error == "transport":
+        with pytest.raises(SessionStartError):
+            reg.acquire(("run-1", "b1"), create)
+    else:
+        assert reg.acquire(("run-1", "b1"), create) is None
+    assert ("run-1", "b1") not in reg._start_failures
+    assert ("run-1", "b1") not in reg._mux_failed
+    assert ("run-1", "b1") not in reg._disabled
+
+
+class SlowCloseWorker(FakeWorker):
+    def __init__(self, delay=1.0, **kwargs):
+        super().__init__(**kwargs)
+        self.delay, self.closed_on = delay, None
+
+    def close(self):
+        self.closed_on = threading.current_thread()
+        time.sleep(self.delay)
+        super().close()
+
+
+def test_reap_idle_never_closes_on_the_calling_thread():
+    """TASK-33401: a wedged session's close never lands on an unrelated call."""
+    reg = RemoteSessionRegistry()
+    worker = reg.acquire(("run-1", "b1"), lambda: SlowCloseWorker(delay=2.0, idle_since=0.0))
+    started = time.monotonic()
+    reg.reap_idle(now=100.0, idle_s=1.0)
+    assert time.monotonic() - started < 0.5
+    deadline = time.monotonic() + 5
+    while worker.closed_on is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert worker.closed_on is not None
+    assert worker.closed_on is not threading.current_thread()
+
+
+def test_close_all_closes_in_parallel_and_is_bounded(monkeypatch):
+    """TASK-33405: app exit costs about the slowest close, never their sum."""
+    from tldw_chatbook.Tools import remote_session_registry as registry_module
+
+    reg = RemoteSessionRegistry()
+    workers = [
+        reg.acquire((f"run-{i}", "b1"), lambda: SlowCloseWorker(delay=1.0)) for i in range(3)
+    ]
+    started = time.monotonic()
+    reg.close_all()
+    assert time.monotonic() - started < 2.5  # serial would be ~3 s
+    assert all(w.closed for w in workers)
+
+    monkeypatch.setattr(registry_module, "_CLOSE_JOIN_S", 0.5)
+    reg = RemoteSessionRegistry()
+    reg.acquire(("run-x", "b1"), lambda: SlowCloseWorker(delay=5.0))
+    started = time.monotonic()
+    reg.close_all()
+    assert time.monotonic() - started < 2.0  # a wedged close never holds app exit
+
+
+def test_budget_expired_start_is_not_shared_with_waiters():
+    """TASK-33420: OP_TIMEOUT is the first caller's budget, not a dead host."""
+    reg = RemoteSessionRegistry()
+    timeout = TransportFailure(TransportFailureKind.OP_TIMEOUT, None, "operation timed out")
+    with pytest.raises(SessionStartError):
+        reg.acquire(("run-1", "b1"), lambda: FakeWorker(start_error=SessionStartError(True, timeout, "budget")))
+    assert ("run-1", "b1") not in reg._start_failures
+    assert ("run-1", "b1") not in reg._disabled
+    assert reg.acquire(("run-1", "b1"), FakeWorker) is not None  # next call gets a session

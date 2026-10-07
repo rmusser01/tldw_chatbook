@@ -1,0 +1,52 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                                            Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Reply with the single word...                                                                                                            │
+                       Context ◂  │   Call the todo_crea…  ✕  Reply with the sin…  ✕    New tab     Temporary                                                                               │  ▸ Inspect
+   Terminal                       │                                                                                                                                                         │           Choose folder · Project
+ ───────────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                           ✕  │  What happens if I send now?
+ Workspaces                  ▸    │  ▊                                                                                                                                                      │  Where: Default › Reply with the single wo…
+ ───────────────────────────────  │  ▊  1 to 60 in French words:                                                                                                                            │  Scope: Everything available
+ Conversations               ▾    │  ▊                                                                                                                                                      │  Run: Ready
+       Archive this chat          │  ▊  Un, Deux, Trois, Quatre, Cinq, Six, Sept, Huit, Neuf, Dix, Onze, Douze, Treize, Quatorze, Quinze, Seize, Dix-sept, Dix-huit, Dix-neuf, Vingt,       │  Sources: None staged
+         Archived chats           │  ▊  Vingt-et-un, Vingt-deux, Vingt-trois, Vingt-quatre, Vingt-cinq, Vingt-six, Vingt-sept, Vingt-huit, Vingt-neuf, Trente, Trente-et-un,                │  Approvals: None pending
+       Search all chats…          │  ▊  Trente-deux, Trente-trois, Trente-quatre, Trente-cinq, Trente-six, Trente-sept, Trente-huit, Trente-neuf, Quarante, Quarante-et-un,                 │ Environment                              ▾
+   Reply with the single          │  ▊  Quarante-deux, Quarante-trois, Quarante-quatre, Quarante-cinq, Quarante-six, Quarante-sept, Quarante-huit, Quarante-neuf, Cinquante,                │   Changes aren't tracked for this workspa…
+   word...                        │  ▊  Cinquante-et-un, Cinquante-deux, Cinquante-trois, Cinquante-quatre, Cinquante-cinq, Cinquante-six, Cinquante-sept, Cinquante-huit,                  │   Bind a folder and enable Change Review …
+                                  │  ▊  Cinquante-neuf, Soixante                                                                                                                            │                   Refresh
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊                                                                                                                                                      │
+  ▊  Filter visible   ▎           │  ▊                                                                                                                                                      │ Agents                       Run history ▸
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │                View all runs
+                                  │   User                                                                                                                                                  │
+   New conversation               │   Count from 1 to 40 in German words.                                                                                                                   │  Sources — next send                  none
+  Chats                      ▾    │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  No sources attached. Stage sources from
+   Reply with the single …  ✓     │  ▊ Assistant                                                                                                                                            │  Library.                                  ▇
+   Call the todo_create t…  ✓     │  ▊                                                                                                                                                      │
+                                  │  ▊  Eins, Zwei, Drei, Vier, Fünf, Sechs, Sieben, Acht, Neun, Zehn, Elf, Zwölf, Dreizehn, Vierzehn, Fünfzehn, Sechzehn, Siebzehn, Achtzehn,              │  Sources: Notes, Media, Conversations
+ ───────────────────────────────  │  ▊  Neunzehn, Zwanzig, Einundzwanzig, Zweiundzwanzig, Dreiundzwanzig, Vierundzwanzig, Fünfundzwanzig, Sechsundzwanzig, Siebenundzwanzig,                │  (Prompts off)
+ Character · No chats        ▸    │  ▊  Achtundzwanzig, Neunundzwanzig, Dreißig, Einunddreißig, Zweiunddreißig, Dreiunddreißig, Vierunddreißig, Fünfunddreißig, Sechsunddreißig,            │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ ───────────────────────────────  │  ▊  Siebenunddreißig, Achtunddreißig, Neununddreißig, Vierzig                                                                                           │  ▊  Ask Library sources before sending   ▎
+ Model                       ▸    │  ▊                                                                                                                                                   ▂  │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+ ───────────────────────────────  │  ▊                                                                                                                                                      │    Search Library
+ Agent                       ▸    │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+ ───────────────────────────────  │   User                                                                                                                                                  │  Scope: everything                Narrow…
+ Details                     ▸    │   Count from 1 to 40 in Spanish words.                                                                                                                  │
+                                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │ Run
+                                  │  ▊ Assistant                                                                                                                                            │ Run recipe: Anthropic / claude-haiku-4-5 /
+                                  │  ▊                                                                                                                                                      │ sources not staged / tools 6 / approvals 0
+                                  │  ▊  Uno, Dos, Tres, Cuatro, Cinco, Seis, Siete, Ocho, Nueve, Diez, Once, Doce, Trece, Catorce, Quince, Dieciséis, Diecisiete, Dieciocho,                │ Live work: No active work
+                                  │  ▊  Diecinueve, Veinte, Veintiuno, Veintidós, Veintitrés, Veinticuatro, Veinticinco, Veintiséis, Veintisiete, Veintiocho, Veintinueve, Treinta,         │ Provider: ready
+                                  │  ▊  Treinta y uno, Treinta y dos, Treinta y tres, Treinta y cuatro, Treinta y cinco, Treinta y seis, Treinta y siete, Treinta y ocho, Treinta y         │
+                                  │  ▊  nueve, Cuarenta                                                                                                                                     │ Source Readiness
+                                  │  ▊                                                                                                                                                      │ Retrieval: not staged
+                                  │  ▊                                                                                                                                                      │ ▼ more sections — scroll
+                                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Context 1% · Current ~$0.0
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                                                                                                      Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit

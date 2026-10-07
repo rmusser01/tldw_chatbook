@@ -68,6 +68,23 @@ class ConsolePreparationPauseKind(str, Enum):
     TRACE_PROVENANCE = "trace_provenance"
     TRACE_CALL = "trace_call"
     TEMPORARY_CAPTURE = "temporary_capture"
+    #: TASK-34350: the send reached the compaction threshold under Ask.
+    CONTEXT_COMPACTION = "context_compaction"
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCompactionHold:
+    """Why one send is held at the compaction threshold (TASK-34350).
+
+    Content-free: token counts and whether they rest on an estimated
+    context window, for the hold card's copy.
+    """
+
+    session_id: str
+    used_tokens: int
+    trigger_tokens: int
+    budget_tokens: int
+    estimated: bool
 
 
 PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingProxyType(
@@ -90,6 +107,11 @@ PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingPr
             "send_without_capture",
             "cancel",
         ),
+        ConsolePreparationPauseKind.CONTEXT_COMPACTION: (
+            "compact_and_send",
+            "send_without_compacting",
+            "cancel",
+        ),
     }
 )
 
@@ -101,7 +123,7 @@ class ConsoleTurnPreparation:
     preparation_id: str
     attempt_id: str
     session_id: str
-    origin: Literal["manual", "queued"]
+    origin: Literal["manual", "queued", "agent_chat_start"]
     queue_entry_id: str | None
     executed_draft: str = field(repr=False)
     execution_context: ConsoleTurnExecutionContext = field(repr=False)
@@ -514,6 +536,7 @@ def _transition_is_legal(
                 ConsolePreparationPauseKind.PERSISTENCE,
                 ConsolePreparationPauseKind.DESTINATION_CHANGED,
                 ConsolePreparationPauseKind.TRACE_PROVENANCE,
+                ConsolePreparationPauseKind.CONTEXT_COMPACTION,
             }
         if current in {
             ConsoleTurnPreparationState.ACCEPTED,
@@ -557,6 +580,13 @@ def _transition_is_legal(
         if pause is ConsolePreparationPauseKind.TRACE_CALL:
             return (
                 new is ConsoleTurnPreparationState.ACCEPTED
+                and transition.new_attempt_id is None
+            )
+        if pause is ConsolePreparationPauseKind.CONTEXT_COMPACTION:
+            # TASK-34350: nothing was committed, so an answered hold re-enters
+            # the send exactly where it stopped -- READY, before commit.
+            return (
+                new is ConsoleTurnPreparationState.READY
                 and transition.new_attempt_id is None
             )
         return False
@@ -711,9 +741,10 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
     if type(preparation.origin) is not str or preparation.origin not in {
         "manual",
         "queued",
+        "agent_chat_start",
     }:
         _invalid("origin")
-    if preparation.origin == "manual":
+    if preparation.origin in {"manual", "agent_chat_start"}:
         if (
             preparation.queue_entry_id is not None
             or preparation.queue_generation is not None

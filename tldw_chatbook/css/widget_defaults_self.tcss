@@ -118,7 +118,6 @@
     ConsolePromptQueueRegion {
         display: none;
         height: 1;
-        min-height: 1;
         max-height: 1;
         width: 100%;
         background: $panel;
@@ -127,12 +126,6 @@
 
     ConsolePromptQueueRegion.-visible {
         display: block;
-    }
-
-    ConsolePromptQueueRegion > #console-prompt-queue-row {
-        height: 1;
-        width: 100%;
-        layout: horizontal;
     }
 
 
@@ -145,6 +138,14 @@
 
     ConsolePromptQueueRegion.-narrow #console-prompt-queue-preview {
         display: none;
+    }
+
+
+    ConsolePromptQueueRegion.-narrow #console-prompt-queue-summary {
+        width: 1fr;
+        min-width: 0;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
 /* ===== WIDGET: TraceCallRecoveryCallout (UI/Console_Modules/provider_continuation_recovery.py) ===== */
@@ -369,7 +370,7 @@
     ChatScreen ToastRack {
         dock: top;
         align: right top;
-        margin-top: 1;
+        margin-top: 8;
         margin-bottom: 0;
     }
 
@@ -1446,26 +1447,6 @@
 /* ===== WIDGET: ProjectInstructionNoticeModal (Widgets/Console/console_project_instructions.py) ===== */
 
     ProjectInstructionNoticeModal { align: center middle; }
-
-/* ===== WIDGET: ConsoleProviderPicker (Widgets/Console/console_provider_picker.py) ===== */
-
-    ConsoleProviderPicker {
-        height: auto;
-        width: 1fr;
-    }
-
-    ConsoleProviderPicker #console-settings-provider-picker-input {
-        width: 100%;
-    }
-
-    ConsoleProviderPicker #console-settings-provider-picker-status {
-        height: auto;
-        color: $text-muted;
-    }
-
-    ConsoleProviderPicker #console-settings-provider-picker-results {
-        max-height: 12;
-    }
 
 /* ===== WIDGET: ConsoleReactionPickerModal (Widgets/Console/console_reaction_picker_modal.py) ===== */
 

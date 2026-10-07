@@ -10,18 +10,30 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from rich.console import Console as RichConsole
 from textual.app import ComposeResult
+from textual.screen import Screen
+from textual.widgets import Button, ListItem, ListView, Static
+
+import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+from Tests.Chat.test_citation_trace_repository import (
+    _identity as _repository_identity,
+)
+from Tests.Chat.test_citation_trace_repository import (
+    _persist as _persist_repository_trace,
+)
+from Tests.Chat.test_citation_trace_repository import (
+    _repository as _citation_repository,
+)
+from Tests.UI.console_controller_stubs import (
+    NO_APP,
+    stub_fleet_controller,
+    stub_image_controller,
+    stub_library_activity_controller,
+    stub_message_controller,
+)
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.screen import Screen
-from textual.widgets import Button, ListItem, ListView, Static
-
-from Tests.Chat.test_citation_trace_repository import (
-    _identity as _repository_identity,
-    _persist as _persist_repository_trace,
-    _repository as _citation_repository,
-)
 from tldw_chatbook.Chat.citation_payload_lifecycle import (
     CitationPayloadLifecycle,
     PayloadRetentionPolicy,
@@ -42,8 +54,8 @@ from tldw_chatbook.Chat.citation_trace_models import (
     CitationOccurrence,
     CitationTrace,
     ClaimSupport,
-    EvidenceSnapshotPayload,
     EvidenceRun,
+    EvidenceSnapshotPayload,
     EvidenceStorageMode,
     MarkerNamespace,
     PromptEvidenceEntry,
@@ -64,23 +76,19 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.console_context_compaction import (
+    EffectiveMemoryKind,
+    EffectiveMemoryResult,
+)
 from tldw_chatbook.Constants import (
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
 )
-from Tests.UI.console_controller_stubs import (
-    NO_APP,
-    stub_fleet_controller,
-    stub_image_controller,
-    stub_library_activity_controller,
-    stub_message_controller,
-)
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
-from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Console_Modules.review_selection import (
     ConsoleReviewSelectionController,
 )
+from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
     ConsoleCitationSourceRow,
     ConsoleCitationSourcesModal,
@@ -89,6 +97,7 @@ from tldw_chatbook.Widgets.Console.console_citation_sources_modal import (
 )
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
+pytestmark = pytest.mark.bootstrap_profile
 
 NOW = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 
@@ -493,6 +502,14 @@ def _bare_screen(
         # calls the controller, whose seams are all raisers.
         app_instance=NO_APP,
     )
+    # Session extraction added view hooks before the store setter attaches.
+    # This detached citation fixture has no project-instruction projection.
+    screen._session = SimpleNamespace(
+        _project_project_instruction_binding=lambda *_args, **_kwargs: None,
+        _project_project_instruction_dispatch=lambda *_args, **_kwargs: None,
+        _dismiss_project_instruction_decision_projection=lambda *_args, **_kwargs: None,
+        _ensure_console_chat_store=lambda: screen._console_chat_store,
+    )
     screen._console_chat_store = _FakeStore(messages)
     screen._review_selection = ConsoleReviewSelectionController(
         store_accessor=lambda: screen._console_chat_store,
@@ -516,7 +533,10 @@ def _bare_screen(
     screen._console_annotation_loaded_conversation = None
     # Dev's turn-activity line (task-17652 era): the sync path reads
     # self._agent.console_turn_activity() every tick.
-    screen._agent = SimpleNamespace(console_turn_activity=lambda: "")
+    screen._agent = SimpleNamespace(
+        console_turn_activity=lambda: "",
+        console_turn_activity_abandon_action=lambda: None,
+    )
     screen._console_citation_resolved_signatures = {}
     screen._console_citation_input_signature = None
     screen._console_citation_repository_token = None
@@ -527,9 +547,7 @@ def _bare_screen(
     screen._change_review_projection = SimpleNamespace(
         project=lambda projected_messages: projected_messages
     )
-    screen._library_activity = SimpleNamespace(
-        sync_transcript=lambda _transcript: {}
-    )
+    screen._library_activity = SimpleNamespace(sync_transcript=lambda _transcript: {})
     screen.app_instance = SimpleNamespace(
         citation_trace_repository=repository,
         chachanotes_db=app_db,
@@ -728,7 +746,6 @@ def test_stable_repository_and_identical_signature_dispatch_only_one_worker() ->
 
     def capture_worker(coroutine, **kwargs):
         dispatched.append((coroutine, kwargs))
-        return None
 
     screen.run_worker = capture_worker
 
@@ -792,7 +809,9 @@ def test_repository_absence_or_database_mismatch_fails_closed() -> None:
         screen = _bare_screen(messages, repository, app_db=app_db)
         screen._console_citation_counts = {"stale": 9}
         dispatched: list[object] = []
-        screen.run_worker = lambda coroutine, **_kwargs: dispatched.append(coroutine)
+        screen.run_worker = lambda coroutine, _dispatched=dispatched, **_kwargs: (
+            _dispatched.append(coroutine)
+        )
 
         screen._sync_console_citation_count_discovery(messages)
 
@@ -1028,6 +1047,13 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
         _FakeRepository(_active_result(_trace())),
     )
     screen._console_chat_controller = None
+    screen._ensure_console_chat_controller = lambda: SimpleNamespace(
+        context_control_inputs=lambda _session: (
+            None,
+            None,
+            EffectiveMemoryResult(EffectiveMemoryKind.RAW),
+        )
+    )
     screen._console_original_attempt_previews = {}
     screen._pending_console_swipe_selection = None
     screen._sync_console_citation_count_discovery = lambda _messages: None
@@ -1070,6 +1096,7 @@ async def test_zero_only_count_cache_does_not_refresh_unchanged_transcript() -> 
         set_messages=Mock(),
         set_citation_counts=Mock(),
         set_annotation_previews=Mock(),
+        set_memory_banner_presentation=Mock(),
         apply_turn_activity=Mock(return_value=""),
         set_original_attempt_previews=Mock(),
         set_summary_boundary=Mock(),
@@ -1363,22 +1390,8 @@ def _citation_harness(
         hydration_started=hydration_started,
         hydration_release=hydration_release,
     )
-    screen = ChatScreen.__new__(ChatScreen)
+    screen = _bare_screen([message], repository, app_db=db)
     Screen.__init__(screen)
-    # Both precede the `_console_chat_store` assignment on purpose: that
-    # setter reaches `ConsoleRuntime.attach_view` ->
-    # `ChatScreen.console_view_hooks`, which reads
-    # `self._fleet._console_wake_user_priority` (TASK-21381) and
-    # `self._library_activity.build_provider` (TASK-23144) unguarded.
-    stub_fleet_controller(screen, context="citation harness screen")
-    stub_library_activity_controller(
-        screen,
-        context="citation harness screen",
-        # `_CitationHarnessApp.__init__` below is what sets `app_instance`;
-        # this shell exercises no library-activity seam.
-        app_instance=NO_APP,
-    )
-    screen._console_chat_store = _FakeStore([message])
     screen._console_citation_counts = {"assistant-1": 2}
     screen._console_citation_request_generation = 1
     app = _CitationHarnessApp(

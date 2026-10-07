@@ -64,6 +64,10 @@ from tldw_chatbook.Workspaces import SkippedReviewRoot
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 
 
+# Runtime/config authority must retain the profile selected during collection.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 class ConsoleChatStore(_ConsoleChatStore):
     """Test store whose intentionally db-less sessions are explicitly ephemeral."""
 
@@ -131,6 +135,10 @@ class _PausedGateway:
 class _CustodyController:
     def __init__(self, *, fail_before_acceptance: bool = False) -> None:
         self.fail_before_acceptance = fail_before_acceptance
+        # This custody double has no prompt chain for the request to update.
+        self.prompt_queue_coordinator = SimpleNamespace(
+            bind_turn_request=lambda *_args, **_kwargs: None
+        )
         self.calls: list[dict[str, object]] = []
 
     async def run_prompt_chain(self, *, session_id, initial_turn):
@@ -261,7 +269,14 @@ async def test_runtime_custody_transfers_exact_attachments_and_frozen_inputs():
     assert store.pending_attachments(session.id) == []
     await runtime.wait_for_turn(turn_id)
     call = controller.calls[0]
-    assert call["configuration"] is configuration
+    assert call["configuration"] == replace(
+        configuration,
+        skill_context_maximum={
+            **configuration.skill_context_maximum,
+            "plugin_turn_id": request.turn_id,
+        },
+    )
+    assert request.configuration is configuration
     assert call["accepted_attachments"] == (first, second)
     assert call["accepted_attachments"][0] is first
     assert call["staged_evidence_launch"] is launch
@@ -338,7 +353,7 @@ async def test_manual_custody_uses_captured_one_shot_and_preserves_newer_revisio
     assert store.session_one_shot_prefill(session.id) is None
 
 
-def test_queued_custody_freezes_prefill_at_enqueue_and_later_entry_gets_new_value():
+async def test_queued_custody_freezes_prefill_at_enqueue_and_later_entry_gets_new_value():
     store = ConsoleChatStore()
     session = store.create_session(title="Queued prefill", workspace_id="global")
     controller = ConsoleChatController(store=store, provider_gateway=SimpleNamespace())
@@ -351,7 +366,7 @@ def test_queued_custody_freezes_prefill_at_enqueue_and_later_entry_gets_new_valu
     store.set_session_one_shot_prefill(session.id, "queued-old")
     old_revision = store.session_one_shot_prefill_snapshot(session.id)[1]
 
-    first = controller.queue_prompt(
+    first = await controller.queue_prompt(
         session.id,
         text="first queued turn",
         expected_revision=armed.snapshot.revision,
@@ -366,7 +381,7 @@ def test_queued_custody_freezes_prefill_at_enqueue_and_later_entry_gets_new_valu
 
     store.set_session_one_shot_prefill(session.id, "queued-new")
     new_revision = store.session_one_shot_prefill_snapshot(session.id)[1]
-    second = controller.queue_prompt(
+    second = await controller.queue_prompt(
         session.id,
         text="second queued turn",
         expected_revision=first.snapshot.revision,
@@ -480,7 +495,7 @@ async def test_runtime_created_controller_captures_owning_workspace_policy(
                 context_epoch=store.conversation_context_epoch(owner.id),
                 expected_revision=initial.revision,
             )
-            queued = controller.queue_prompt(
+            queued = await controller.queue_prompt(
                 owner.id, text="queued", expected_revision=armed.snapshot.revision
             )
             assert queued.applied
@@ -1678,11 +1693,10 @@ def test_frozen_workspace_binding_maximum_excludes_later_roots(
         ) == (sandbox,)
         initial_note = roots_module.workspace_context_note(
             "workspace-a",
-            launch_cwd=tmp_path,
             registry=registry,
             binding_authority=frozen_authority,
         )
-        assert "  - a (read-only)" in initial_note
+        assert "  - binding-a → a [read-only]" in initial_note
         assert roots_module.frozen_workspace_roots(
             "workspace-a", frozen_authority, registry=registry
         ) == (root_a,)
@@ -1702,9 +1716,8 @@ def test_frozen_workspace_binding_maximum_excludes_later_roots(
             write=True,
             sandbox_root=sandbox,
         ) == (sandbox,)
-        assert "  - b" not in roots_module.workspace_context_note(
+        assert "binding-b" not in roots_module.workspace_context_note(
             "workspace-a",
-            launch_cwd=tmp_path,
             registry=registry,
             binding_authority=frozen_authority,
         )
@@ -3230,3 +3243,61 @@ def test_screen_selection_re_expands_character_template_parity():
     )
 
     assert selection.system_prompt == "You are Kestrel. Help Rowan."
+
+
+def _send_fields(selection):
+    return (
+        selection.provider,
+        selection.explicit_model or selection.configured_model,
+        selection.base_url,
+        selection.temperature,
+        selection.max_tokens,
+        selection.streaming,
+        selection.system_prompt,
+        selection.endpoint_provenance,
+        selection.configured_endpoint_fallback_allowed,
+        selection.workspace_context.active_workspace_id,
+    )
+
+
+def test_a_viewless_send_builds_the_mounted_sends_selection():
+    """TASK-33004.2 review round 1: a fleet wake and every viewless send
+    build their selection in ``_provider_selection_for_session``; the mounted
+    send builds it in ChatScreen. Both now call the one builder, so they send
+    the same fields for a settings session. The old controller copy refilled
+    a blank Max tokens from the provider default and gave a template-less
+    character the viewed tab's prompt."""
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    config = {
+        "api_settings": {"openai": {"model": "configured", "max_tokens": 4096}},
+        "console": {},
+    }
+    store = ConsoleChatStore()
+    blank = store.create_session(
+        title="Blank max tokens",
+        workspace_id="workspace-a",
+        settings=replace(_settings("openai", "model", "Blank prompt."), max_tokens=None),
+    )
+    character = store.create_session(
+        title="Chat with Kestrel",
+        workspace_id="workspace-a",
+        settings=_settings("openai", "model", "Kestrel settings prompt."),
+        assistant_kind="character",
+        assistant_id="7",
+        character_id=7,
+        character_name="Kestrel",
+    )
+    fake_screen = _identity_selection_screen(store)
+    fake_screen._provider_readiness_app_config = lambda: config
+    controller = ConsoleChatController(
+        store=store, provider_gateway=SimpleNamespace(), provider_config=lambda: config
+    )
+    controller.system_prompt = "the viewed tab's prompt"
+
+    for session in (blank, character):
+        mounted = ChatScreen._build_console_provider_selection(fake_screen, session.id)
+        viewless = controller._provider_selection_for_session(session.id)
+        assert _send_fields(viewless) == _send_fields(mounted)
+    assert mounted.system_prompt == "Kestrel settings prompt."
+    assert controller._provider_selection_for_session(blank.id).max_tokens is None

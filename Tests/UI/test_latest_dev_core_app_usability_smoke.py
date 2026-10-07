@@ -5,12 +5,12 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Callable
-from unittest.mock import patch
 
 import pytest
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.test_product_maturity_phase1_core_loop import _core_loop_payload
 from Tests.UI.test_product_maturity_phase1_first_run import (
     _assert_no_local_path_prefixes,
@@ -123,7 +123,7 @@ async def test_latest_dev_core_first_use_routes_exclude_sync_and_persona(
     app = _build_clean_first_run_app(monkeypatch, tmp_path)
     visited_routes: list[str] = []
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
@@ -172,7 +172,7 @@ async def test_home_console_model_setup_routes_to_settings_provider_defaults(
 ) -> None:
     app = _build_clean_first_run_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 50)) as pilot:
             await _wait_until(
                 pilot,
@@ -219,7 +219,7 @@ async def test_latest_dev_library_to_console_staged_context_smoke() -> None:
     app._initial_tab_value = TAB_HOME
     payload = _core_loop_payload()
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,

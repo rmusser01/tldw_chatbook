@@ -31,6 +31,8 @@ from .recovered_media_schema import SCHEMAS, migrate, schema_policy
 
 MAX_PAYLOAD_BYTES = 512 * 1024 * 1024
 _ASSET_ID = re.compile(r"^[0-9a-f]{32}$")
+#: Message ids bound per ``IN (...)`` query by ``message_references_exist``.
+_MESSAGE_LOOKUP_BATCH = 200
 
 
 def _recovered_alias_authorizer(read_authorizer):
@@ -1661,6 +1663,38 @@ def message_reference_page(
         for message in result:
             _identity(profile, message, "page", "image/png")
         return result
+
+
+def message_references_exist(
+    root: Path, profile: str, message_ids: tuple[str, ...]
+) -> bool:
+    """Report whether any current-profile reference names these messages.
+
+    Passive, read-only inspection: a missing catalog means no references.
+
+    Args:
+        root: The recovered-media root whose catalog to inspect.
+        profile: The current profile id references are scoped to.
+        message_ids: Persisted message ids to look for.
+
+    Returns:
+        True when at least one reference names one of ``message_ids``.
+    """
+    for message in message_ids:
+        _identity(profile, message, "inspect", "image/png")
+    if not message_ids or list_recovered_media(root, limit=1) is None:
+        return False
+    with _inspect_catalog(_existing_store(root)) as connection:
+        for start in range(0, len(message_ids), _MESSAGE_LOOKUP_BATCH):
+            batch = message_ids[start : start + _MESSAGE_LOOKUP_BATCH]
+            slots = ",".join("?" for _ in batch)
+            if connection.execute(
+                "SELECT 1 FROM refs WHERE profile=? "
+                f"AND message IN ({slots}) LIMIT 1",  # nosec B608: placeholders only
+                (profile, *batch),
+            ).fetchone():
+                return True
+    return False
 
 
 def release_message_references(

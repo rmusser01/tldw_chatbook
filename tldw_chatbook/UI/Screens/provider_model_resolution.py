@@ -294,9 +294,8 @@ async def resolve_provider_model_options(
         ordered_entries.append(entry)
         merged_by_model_id.pop(model_id, None)
     merged_entries = tuple(ordered_entries)
-    has_endpoint_catalog = (
-        provider_key in _ENDPOINT_AUTHORITATIVE_PROVIDER_KEYS
-        and (snapshot_present is True or has_endpoint_entries)
+    has_endpoint_catalog = provider_key in _ENDPOINT_AUTHORITATIVE_PROVIDER_KEYS and (
+        snapshot_present is True or has_endpoint_entries
     )
     endpoint_entries = tuple(
         entry

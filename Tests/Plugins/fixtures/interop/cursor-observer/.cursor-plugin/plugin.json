@@ -1,0 +1,13 @@
+{
+  "name": "cursor-observer",
+  "hooks": {
+    "version": 1,
+    "hooks": {
+      "postToolUse": [
+        {
+          "command": "python3 ./observe.py"
+        }
+      ]
+    }
+  }
+}

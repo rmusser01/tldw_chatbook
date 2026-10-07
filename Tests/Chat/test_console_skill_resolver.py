@@ -160,3 +160,11 @@ def test_mixed_unmatched_backtick_runs_masks_entire_line():
     lengths, so every run is unmatched."""
     text = "before `` x ``` y ` $path after"
     assert find_embedded_mentions(text, frozenset({"path"})) == ()
+
+
+def test_namespaced_plugin_mentions_are_not_standalone_prefix_matches():
+    from tldw_chatbook.Chat.console_skill_resolver import find_embedded_mentions
+
+    text = "Use $package:review then $package."
+    mentions = find_embedded_mentions(text, frozenset({"package", "package:review"}))
+    assert [mention.name for mention in mentions] == ["package:review", "package"]

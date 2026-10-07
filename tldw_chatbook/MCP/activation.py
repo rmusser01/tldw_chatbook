@@ -203,7 +203,7 @@ def client_guard(function):
         except MCPActivationRequired:
             return (
                 False
-                if function.__name__ == "connect_to_server"
+                if function.__name__ in {"connect_to_server", "connect_profile"}
                 else {"error": "mcp_activation_required"}
             )
 

@@ -7,8 +7,10 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 from urllib.parse import urlsplit
+
+from tldw_chatbook.Chat.message_metadata import AgentChatStartMetadata
 
 from tldw_chatbook.Chat.console_library_policy import (
     AUTOMATIC_LIBRARY_SOURCE_TYPES,
@@ -24,6 +26,10 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsolePromotionTransactionContribution,
     ConsoleTransactionContribution,
 )
+
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationReceipt
 
 
 CHECKPOINT_AUTHORITY_MAX_BYTES = 4096
@@ -165,11 +171,12 @@ class ConsoleDispatchCheckpoint:
     checkpoint_revision: int
     user_message_version: int
     assistant_message_version: int
-    origin: Literal["manual", "queued"]
+    origin: Literal["manual", "queued", "agent_chat_start"]
     queue_entry_id: str | None
     frozen_authority: ConsoleTurnLibraryAuthority
     resolved_destination: ConsoleResolvedDestination
     reconstructability: ConsoleDispatchReconstructability
+    agent_chat_start_attempt_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,12 +191,20 @@ class ConsoleDurableTurnAcceptance:
     attachments: tuple[Mapping[str, object], ...]
     preparation_id: str
     attempt_id: str
-    origin: Literal["manual", "queued"]
+    origin: Literal["manual", "queued", "agent_chat_start"]
     queue_entry_id: str | None
     frozen_authority: ConsoleTurnLibraryAuthority
     resolved_destination: ConsoleResolvedDestination
     reconstructability: ConsoleDispatchReconstructability
     contributions: tuple[ConsoleTransactionContribution, ...]
+    continuation_receipt: ContinuationReceipt | None = None
+    #: The USER row is a new root-level branch beside an existing root; it is
+    #: saved with ``MessageMetadata(root_fork=True)`` (see
+    #: ``console_legacy_flat_roots``). Valid only with no parent.
+    user_root_fork: bool = False
+    agent_chat_start_attempt_id: str | None = None
+    agent_chat_start: AgentChatStartMetadata | None = None
+    handoff_draft_revision: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

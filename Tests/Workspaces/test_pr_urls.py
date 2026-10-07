@@ -9,6 +9,7 @@ mocked git) -- `test_pr_url_codeberg_remote_name_with_slash` in particular
 pins the "never derive by splitting on '/'" rule (spec §2 probe 6 applied
 to the codeberg lookup): the remote is literally named `a/b`.
 """
+
 import subprocess
 from pathlib import Path
 from urllib.parse import quote

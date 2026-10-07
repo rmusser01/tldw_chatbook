@@ -80,7 +80,8 @@ def test_voice_presets_enforce_authentication_without_erasing_custom_values() ->
     official = apply_voice_preset(custom, VOICE_PRESET_OFFICIAL_OPENAI)
     restored = apply_voice_preset(custom, VOICE_PRESET_CUSTOM)
 
-    assert pocket.endpoint == "http://127.0.0.1:8765/v1/audio/speech"
+    # TASK-34100.8: pocket-tts's own server speaks POST /tts on port 8000.
+    assert pocket.endpoint == "http://127.0.0.1:8000/tts"
     assert pocket.authentication_mode == "none"
     assert official.endpoint == "https://api.openai.com/v1/audio/speech"
     assert official.authentication_mode == "api_key"
@@ -218,6 +219,8 @@ def test_save_event_is_opt_in_and_carries_only_exact_default_axes() -> None:
     }
     assert without_default.preferences is None
     assert without_default.commit_defaults_after_handoff is False
+    # TASK-34100.8: and the handler must not materialize defaults for it.
+    assert without_default.persist_default_preferences is False
     assert with_default.preferences is not None
     assert with_default.preferences.provider_id == "openai"
     assert with_default.preferences.model_id == "pocket-tts"

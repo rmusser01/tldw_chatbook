@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from unittest.mock import Mock
 
 import httpx
@@ -744,6 +745,30 @@ async def test_discovery_returns_typed_error_for_invalid_response():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("body", [["runtime-a"], [{"name": "no-id"}], [[{"id": "nested"}]]])
+async def test_bare_array_listing_of_non_model_objects_stays_invalid(body):
+    """TASK-34361 accepts Together's bare array, but only of model objects.
+
+    Args:
+        body: A bare JSON array whose entries are not model objects with an id.
+    """
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body))
+    ) as client:
+        result = await discover_openai_compatible_models(
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint="https://api.example.test/v1",
+            api_key=None,
+            client=client,
+        )
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert result.error.kind == "invalid_response"
+
+
+@pytest.mark.asyncio
 async def test_discovery_returns_typed_error_for_non_json_response():
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -1126,18 +1151,105 @@ def test_normalize_models_rejects_unsafe_or_oversized_model_ids(model_id):
             }
         },
         {"many": list(range(300))},
-        {"large": "x" * 5000},
+        {"large": ["x" * 5000]},
+        {"not_finite": float("nan")},
+        {"pricing": {f"tier_{n}": {"input": n, "output": n} for n in range(90)}},
+        {"blob": ["x" * 4000 for _ in range(5)]},  # 20 KB serialized, over 16 KiB
+        {"k" * 129: 1},  # key over MODEL_METADATA_MAX_KEY_CHARS
     ],
 )
-def test_normalize_models_rejects_unbounded_metadata(metadata):
-    with pytest.raises(ValueError, match="metadata"):
-        normalize_models_response(
-            {"data": [{"id": "safe-model", "metadata": metadata}]},
-            provider="Custom",
-            provider_list_key="Custom",
-            endpoint_fingerprint="https://api.example.test/v1",
-            now_iso="2026-08-12T00:00:00Z",
-        )
+def test_normalize_models_keeps_a_model_but_none_of_its_unbounded_metadata(metadata):
+    """TASK-34363: one model's oversized details used to reject the whole list.
+
+    Only the field that breaks a bound is dropped; the model's other details stay.
+
+    Args:
+        metadata: Model details that exceed one of the metadata bounds.
+    """
+    models = normalize_models_response(
+        {"data": [{"id": "safe-model", "owned_by": "kept", "metadata": metadata},
+                  {"id": "plain", "owned_by": "x"}]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    assert [model.model_id for model in models] == ["safe-model", "plain"]
+    assert dict(models[0].metadata_raw_safe) == {"id": "safe-model", "owned_by": "kept"}
+    assert models[1].metadata_raw_safe["owned_by"] == "x"
+
+
+def test_a_model_with_a_huge_number_of_fields_is_handled_without_quadratic_work():
+    """Qodo #3019: 100k tiny top-level fields must not stall discovery."""
+    model = {"id": "wide", **{f"k{n}": n for n in range(100_000)}}
+    started = time.monotonic()
+    models = normalize_models_response(
+        {"data": [model, {"id": "plain", "owned_by": "x"}]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    assert time.monotonic() - started < 2.0
+    assert [found.model_id for found in models] == ["wide", "plain"]
+    assert dict(models[0].metadata_raw_safe) == {}
+
+
+def test_many_small_fields_under_the_field_cap_drop_largest_first():
+    """200 fields that fit one by one but not together: the biggest go, in one sorted pass."""
+    model = {"id": "many", **{f"k{n}": list(range(n % 7)) for n in range(200)}}
+    (found,) = normalize_models_response(
+        {"data": [model]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    kept = dict(found.metadata_raw_safe)
+    assert kept["id"] == "many" and 0 < len(kept) < len(model)
+    # Every dropped field is at least as large as every kept list field.
+    dropped_sizes = [len(value) for name, value in model.items() if name not in kept]
+    kept_sizes = [len(value) for name, value in kept.items() if name != "id"]
+    assert min(dropped_sizes) >= max(kept_sizes)
+
+
+def test_fields_that_only_overflow_together_lose_the_largest_and_keep_the_vision_hint():
+    """Vercel's shape: each field fits alone, tiered pricing pushes the total over 256 items."""
+    model = {
+        "id": "openai/gpt-5.6-sol",
+        "architecture": {"input_modalities": ["text", "image"]},
+        "extras": list(range(60)),
+        "pricing": {f"tier_{n}": {"input": n, "output": n} for n in range(68)},
+    }
+    (discovered,) = normalize_models_response(
+        {"data": [model]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    assert set(discovered.metadata_raw_safe) == {"id", "architecture", "extras"}
+    assert tuple(discovered.metadata_raw_safe["architecture"]["input_modalities"]) == ("text", "image")
+
+
+def test_normalize_models_drops_an_oversized_field_but_keeps_the_model():
+    """TASK-34361: Together's 16 KB chat templates rejected the whole listing."""
+    models = normalize_models_response(
+        {"data": [{"id": "templated", "context_length": 8192,
+                   "config": {"chat_template": "x" * 16_317, "stop": ["</s>"]}}]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    assert [model.model_id for model in models] == ["templated"]
+    assert dict(models[0].metadata_raw_safe["config"]) == {"stop": ("</s>",)}
+    assert models[0].metadata_raw_safe["context_length"] == 8192
 
 
 @pytest.mark.asyncio
@@ -1180,3 +1292,71 @@ async def test_discovery_handles_a_real_openai_sized_catalog():
     assert result.status == "success"
     assert result.error is None
     assert len(result.models) == observed_openai_catalog_size
+
+
+def _refused(request: httpx.Request) -> httpx.Response:
+    import errno
+
+    raise httpx.ConnectError("secret refused URL") from OSError(
+        errno.ECONNREFUSED, "Connection refused"
+    )
+
+
+def _timed_out(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("secret slow URL", request=request)
+
+
+def _unreachable(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("secret dns URL", request=request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler", "status", "kind", "category"),
+    [
+        (lambda request: httpx.Response(401), "error", "missing_credentials", "unauthorized"),
+        (lambda request: httpx.Response(403), "error", "missing_credentials", "forbidden"),
+        (lambda request: httpx.Response(404), "unsupported", "unsupported_endpoint", "http_status"),
+        (lambda request: httpx.Response(503), "error", "request_failed", "http_status"),
+        (_timed_out, "error", "request_failed", "timeout"),
+        (_refused, "error", "request_failed", "connection_refused"),
+        (_unreachable, "error", "request_failed", "connection_error"),
+    ],
+    ids=["401", "403", "404", "503", "timeout", "refused", "connect-error"],
+)
+async def test_discovery_error_names_its_bounded_failure_category(
+    handler, status, kind, category
+):
+    """TASK-33005.4 (AC#3/#4): Settings 't' reports a timeout, a refused
+    connection and a rejected key each in its own words, so the discovery
+    error carries the probe's bounded category beside its kind."""
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await discover_openai_compatible_models(
+            provider="openai",
+            provider_list_key="OpenAI",
+            endpoint="https://api.example.test/v1",
+            api_key="sk-secret-test-key",
+            client=client,
+        )
+
+    assert (result.status, result.error.kind, result.error.category) == (
+        status,
+        kind,
+        category,
+    )
+    assert "secret" not in repr(result)
+
+
+@pytest.mark.asyncio
+async def test_discovery_refused_before_any_request_has_no_failure_category():
+    """A shape the client will not request reports no transport category: a
+    caller can tell "nothing was sent" from "the server said 404"."""
+    result = await discover_openai_compatible_models(
+        provider="anthropic",
+        provider_list_key="Anthropic",
+        endpoint="https://api.anthropic.com",
+        api_key="sk-secret-test-key",
+    )
+
+    assert result.status == "unsupported"
+    assert result.error.category is None

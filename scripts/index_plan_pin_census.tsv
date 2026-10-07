@@ -189,10 +189,10 @@ idx_messages_feedback	pre-convention	plan never captured without stats
 idx_messages_role	pre-convention	plan never captured without stats
 idx_messages_selected_variant	pre-convention	plan never captured without stats
 idx_messages_variant_of	pre-convention	plan never captured without stats
-idx_messages_variants_by_parent	pre-convention	plan never captured without stats
+idx_messages_variants_by_parent	plan-pinned	Tests/DB/test_message_subtree_delete_bounds.py (TASK-33628.11)
 idx_mindmap_nodes_mindmap_id	pre-convention	plan never captured without stats
 idx_msg_gen_meta_message	pre-convention	plan never captured without stats
-idx_msgs_conv_ts	pre-convention	plan never captured without stats
+idx_msgs_conv_ts	plan-pinned	Tests/DB/test_message_root_rows_page.py (TASK-33628.7)
 idx_msgs_conversation	pre-convention	plan never captured without stats
 idx_msgs_parent	pre-convention	plan never captured without stats
 idx_msgs_ranking	pre-convention	plan never captured without stats
@@ -209,14 +209,11 @@ idx_notes_organization_heads_note_subject	plan-pinned	Tests/DB/test_chachanotes_
 idx_notes_organization_intents_note_subject_latest	plan-pinned	Tests/DB/test_chachanotes_note_organization_receipts_migration.py
 idx_notes_organization_intents_pending	plan-pinned	Tests/DB/test_chachanotes_notes_organization_migration.py
 idx_notes_file_path	pre-convention	plan never captured without stats
-idx_notes_file_path_on_disk	pre-convention	plan never captured without stats
 idx_notes_file_path_unique	pre-convention	plan never captured without stats
-idx_notes_is_externally_synced	pre-convention	plan never captured without stats
 idx_notes_is_synced	pre-convention	plan never captured without stats
 idx_notes_last_modified	pre-convention	plan never captured without stats
 idx_notes_sync_excluded	pre-convention	plan never captured without stats
 idx_notes_sync_root	pre-convention	plan never captured without stats
-idx_notes_sync_root_folder	pre-convention	plan never captured without stats
 idx_persona_visual_assets_version_key	pre-convention	plan never captured without stats
 idx_persona_visual_bindings_persona_active	pre-convention	plan never captured without stats
 idx_probe_annotations_group	pre-convention	plan never captured without stats
@@ -331,3 +328,12 @@ idx_notekw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26
 idx_dream_track_runs_item	plan-pinned	Tests/Dreams/test_dreams_db_track.py (list_recent_track_runs + consecutive_track_dispositions ordering; tldw_chatbook/DB/Dreams_DB.py)
 idx_dream_tracked_status	plan-pinned	Tests/Dreams/test_dreams_db_track.py (list_tracked_items status filter + count_active_tracked; tldw_chatbook/DB/Dreams_DB.py)
 idx_dream_tracked_origin_story	plan-pinned	Tests/Dreams/test_dreams_db_track.py (find_tracked_by_story active-only lookup; per-story badge read; tldw_chatbook/DB/Dreams_DB.py)
+
+# Native foreign-key conversation cleanup searches body-free Stop receipts.
+idx_hook_continuation_receipts_conversation	plan-pinned	Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py::test_conversation_cascade_uses_receipt_index_without_statistics
+
+# ADR-199: real FIFO report loading and exact progress-claim abort cleanup.
+idx_fleet_progress_conversation_sequence	plan-pinned	Tests/Agents/test_durable_fleet_messages.py::test_saved_reopen_preserves_fifo_and_revokes_old_capabilities
+idx_automatic_progress_claims_attempt	plan-pinned	Tests/DB/test_automatic_work_budget.py::test_automatic_work_indexes_serve_real_queries_without_statistics
+idx_automatic_chains_allowance_root	plan-pinned	Tests/DB/test_automatic_work_budget.py
+idx_automatic_chat_start_conversation_active	plan-pinned	Tests/DB/test_automatic_work_budget.py

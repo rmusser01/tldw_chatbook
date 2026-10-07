@@ -99,6 +99,7 @@ from .console_spend_projection import ConsoleDraftSpendRefresh
 from .dictation import ConsoleDictationController
 from .fleet import ConsoleFleetLifecycleController
 from .hands_free import ConsoleHandsFreeController
+from .hooks import ConsoleHooksController
 from .image import ConsoleImageController
 from .library_activity import ConsoleLibraryActivityController
 from .library_policy import ConsoleLibraryPolicyController
@@ -126,10 +127,34 @@ from .workspace import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from tldw_chatbook.Widgets.Console.console_voice_preview import VoicePreviewProjection
+    from tldw_chatbook.Agents.hook_permissions import HookReviewSnapshot
+    from .hooks import HookReviewResult
+    from tldw_chatbook.Widgets.Console.console_voice_preview import (
+        VoicePreviewProjection,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 __all__ = ["build_console_controllers"]
+
+
+async def request_console_hooks_review(
+    screen: "ChatScreen",
+    snapshot: "HookReviewSnapshot",
+    waiting: bool,
+    cancel: Callable[[], None],
+) -> "HookReviewResult":
+    """Open the existing modal with the current screen and permission owner."""
+    from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
+        request_hook_review,
+    )
+
+    return await request_hook_review(
+        screen,
+        screen._console_runtime().ensure_hook_permissions(),
+        snapshot,
+        waiting,
+        cancel,
+    )
 
 
 def _navigate_character_context(
@@ -299,13 +324,27 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
     return turn_id
 
 
+async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:
+    """TASK-33661: re-send a refused echo through the normal send path."""
+    from tldw_chatbook.Chat.console_turn_resend import resend_refused_echo
+
+    store = screen._ensure_console_chat_store()
+    visible = screen._console_visible_draft_session_id == store.active_session_id
+    return await resend_refused_echo(
+        echo,
+        store=store,
+        runtime=screen._console_runtime(),
+        composer=screen._console_composer_or_none() if visible else None,
+        dispatch=lambda draft, stash, session_id: screen._dispatch_console_draft_send(
+            draft, stash, session_id=session_id
+        ),
+    )
+
+
 def _commit_captured_console_draft(screen: Any, session_id: str, stash: Any) -> None:
     """Commit and persist a custody handoff only in its owning session view."""
     composer = screen._console_composer_or_none()
-    if (
-        composer is not None
-        and screen._console_visible_draft_session_id == session_id
-    ):
+    if composer is not None and screen._console_visible_draft_session_id == session_id:
         composer.commit_captured_draft(stash)
         try:
             screen._ensure_console_chat_store().set_session_draft(
@@ -723,6 +762,12 @@ class _DeferredConsoleTerminalController:
 def build_console_controllers(
     screen: "ChatScreen",
     *,
+    resume_screen_is_torn_down: Callable[[], bool],
+    read_resume_asyncio: Callable[[], Any],
+    resume_isawaitable: Callable[[Any], bool],
+    read_resume_logger: Callable[[], Any],
+    read_trace_recovery_dispatch: Callable[[], Callable[..., Any]],
+    read_trace_recovery_state: Callable[[], Callable[..., Any]],
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
@@ -749,6 +794,10 @@ def build_console_controllers(
     can see everything the pre-move constructions could.
 
     Args:
+        resume_screen_is_torn_down: Invoke the live screen-module teardown helper.
+        read_resume_asyncio: Read the live screen-module asyncio binding.
+        resume_isawaitable: Invoke the live screen-module awaitability check.
+        read_resume_logger: Read the live screen-module logger binding.
         screen: The Console screen (`ChatScreen`) to wire. Mutated in place;
             taken as a parameter rather than imported so this module has no
             import cycle with `Screens/chat_screen.py`.
@@ -859,9 +908,9 @@ def build_console_controllers(
         ),
         library_rag_source_scope=rag_source_types_accessor,
         library_rag_top_k=rag_top_k_accessor,
-        pending_launch=lambda: screen._console_runtime().snapshot_console_staged_evidence()[
-            0
-        ],
+        pending_launch=lambda: (
+            screen._console_runtime().snapshot_console_staged_evidence()[0]
+        ),
         set_pending_launch=(
             lambda launch: screen._console_runtime().stage_console_staged_evidence(
                 launch
@@ -899,7 +948,9 @@ def build_console_controllers(
     screen._skill = ConsoleSkillController(
         app_instance=screen.app_instance,
         append_native_console_system_message=(
-            lambda message: screen._append_native_console_system_message(message)
+            lambda message, **kwargs: screen._append_native_console_system_message(
+                message, **kwargs
+            )
         ),
         sync_console_command_popup=lambda: screen._sync_console_command_popup(),
         task_resume_state=lambda: screen._task_resume_state,
@@ -914,6 +965,8 @@ def build_console_controllers(
     #: only the bounded plain-value input delegate and DOM edges.
     screen._workspace = ConsoleWorkspaceController(
         screen,
+        sync_session_titles=lambda: screen._sync_console_native_session_tabs(),
+        await_title_views=lambda: screen._await_console_title_views(),
         notify_character_navigation=lambda message, severity: screen._notify(
             message, severity
         ),
@@ -1163,6 +1216,7 @@ def build_console_controllers(
             lambda **kwargs: screen._render_character_avatar_into_section(**kwargs)
         ),
     )
+
     def _character_progress_counts() -> dict[str, int]:
         bridge = screen._ensure_console_agent_bridge()
         store = screen._console_chat_store
@@ -1238,34 +1292,38 @@ def build_console_controllers(
                 screen, key, database, name, is_current
             )
         ),
-        state_changed=lambda state: _sync_character_context_presentation(
-            screen, state
-        ),
+        state_changed=lambda state: _sync_character_context_presentation(screen, state),
         query_handoff_capability=ConsoleCharacterQueryHandoffCapability(
             available=screen.console_character_switcher_available()
         ),
         query_handoff=(
-            lambda handoff: screen.open_console_character_switcher_query(
-                handoff.query
-            )
+            lambda handoff: screen.open_console_character_switcher_query(handoff.query)
         ),
     )
 
     async def _seed_console_fleet_history(wake) -> None:
         import asyncio
+
         try:
             if await asyncio.to_thread(wake.seed_from_marks):
                 wake.retry_soon()
         except Exception as exc:
             from loguru import logger
-            logger.warning("console fleet history seed failed (exception_type={})", type(exc).__name__)
+
+            logger.warning(
+                "console fleet history seed failed (exception_type={})",
+                type(exc).__name__,
+            )
 
     def _schedule_console_fleet_history_seed() -> bool:
         from functools import partial
+
         wake = getattr(screen._console_chat_controller, "fleet_wake", None)
         store = screen._console_chat_store
-        if wake is not None and store is not None and any(
-            session.persisted_conversation_id for session in store.sessions()
+        if (
+            wake is not None
+            and store is not None
+            and any(session.persisted_conversation_id for session in store.sessions())
         ):
             screen.run_worker(
                 partial(_seed_console_fleet_history, wake),
@@ -1470,9 +1528,87 @@ def build_console_controllers(
     #: docstring for the full map of what moved and why.
     screen._session = ConsoleSessionController(
         screen,
+        resume_screen_is_torn_down=resume_screen_is_torn_down,
+        read_resume_asyncio=read_resume_asyncio,
+        resume_isawaitable=resume_isawaitable,
+        read_resume_logger=read_resume_logger,
+        read_resume_startup_worker=lambda: screen._resume_navigation_startup_worker,
+        write_resume_startup_worker=lambda worker: setattr(
+            screen, "_resume_navigation_startup_worker", worker
+        ),
+        read_resume_dispatch_worker=lambda: screen._resume_navigation_dispatch_worker,
+        read_resume_local_conversation_id=lambda: (
+            screen._pending_resume_local_conversation_id
+        ),
+        write_resume_local_conversation_id=lambda target: setattr(
+            screen, "_pending_resume_local_conversation_id", target
+        ),
+        read_resume_character_target=lambda: (
+            screen._pending_character_conversation_target
+        ),
+        write_resume_character_target=lambda target: setattr(
+            screen, "_pending_character_conversation_target", target
+        ),
+        write_resume_startup_in_progress=lambda active: setattr(
+            screen, "_resume_navigation_startup_in_progress", active
+        ),
+        read_resume_handoff_timers=lambda: getattr(
+            screen, "_console_resume_handoff_timers", ()
+        ),
+        write_resume_handoff_timers=lambda timers: setattr(
+            screen, "_console_resume_handoff_timers", timers
+        ),
+        consume_resume_chat_handoff=lambda **kwargs: (
+            screen._consume_pending_chat_handoff(**kwargs)
+        ),
+        consume_resume_roleplay_repair=lambda: (
+            screen._consume_pending_console_roleplay_repair()
+        ),
+        consume_resume_prompt_insert=lambda: (
+            screen._consume_pending_console_prompt_insert()
+        ),
+        consume_resume_fleet_completion=lambda: (
+            screen._fleet.consume_pending_console_fleet_completion()
+        ),
+        open_resume_character_target=lambda target: (
+            screen._workspace.open_character_navigation_target(target)
+        ),
+        open_resume_local_conversation=lambda target: (
+            screen._workspace.open_console_workspace_conversation(target)
+        ),
+        consume_resume_conversation_return=lambda: (
+            screen._consume_pending_conversation_resume()
+        ),
+        reconcile_resume_session_with_registry=lambda: (
+            screen._workspace._reconcile_console_session_with_registry()
+        ),
+        rename_saved_conversation=lambda conversation_id, title: (
+            screen._workspace._rename_console_conversation(conversation_id, title)
+        ),
+        on_draft_session_changed=lambda: (
+            screen._hooks.cancel_pending(),
+            screen.call_after_refresh(
+                lambda: screen.run_worker(
+                    screen._refresh_console_hooks,
+                    group="console-hook-refresh",
+                    exclusive=True,
+                )
+            ),
+        ),
         app_instance=screen.app_instance,
         chat_store_accessor=lambda: screen._ensure_console_chat_store(),
         current_chat_store_accessor=lambda: screen._console_chat_store,
+        current_chat_controller_accessor=lambda: screen._console_chat_controller,
+        build_current_provider_selection=lambda: (
+            screen._build_console_provider_selection()
+        ),
+        build_settings_summary=lambda: screen._build_console_settings_summary_state(),
+        apply_settings_summary=lambda state: (
+            screen._apply_console_settings_summary_state(state)
+        ),
+        settings_initial_draft=lambda settings, context_policy, **kwargs: (
+            screen._console_settings_initial_draft(settings, context_policy, **kwargs)
+        ),
         ensure_console_chat_controller=(
             lambda: screen._ensure_console_chat_controller()
         ),
@@ -1630,6 +1766,10 @@ def build_console_controllers(
                 workspace_id
             )
         ),
+        read_trace_recovery_dispatch=read_trace_recovery_dispatch,
+        read_trace_recovery_state=read_trace_recovery_state,
+        read_trace_recovery_started=lambda: screen._start_console_transcript_sync_timer,
+        read_trace_recovery_finished=lambda: screen._sync_native_console_chat_ui,
     )
     #: Dictation's own state and lifecycle moved to
     #: `ConsoleDictationController` (wave-1 console decomposition,
@@ -1820,6 +1960,10 @@ def build_console_controllers(
             lambda: screen._ensure_console_chat_controller()
         ),
         current_chat_controller_accessor=(lambda: screen._console_chat_controller),
+        generation_refusal_copy=lambda controller, session_id: (
+            controller.send_refusal_copy(session_id)
+            or screen._console_provider_blocker_copy()
+        ),
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         # Session <-> message seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door
@@ -1922,6 +2066,7 @@ def build_console_controllers(
         prefill_canvas_repair=(
             lambda repair: screen._prefill_console_canvas_repair(repair)
         ),
+        resend_refused_echo=lambda echo: _resend_refused_console_echo(screen, echo),
     )
     screen._console_fork_eligibility = screen._message.console_fork_eligibility
     screen._console_auto_speak = ConsoleAutoSpeakCoordinator(
@@ -2061,6 +2206,7 @@ def build_console_controllers(
         sync_console_system_prompt_surfaces=_sync_console_system_prompt_surfaces,
         sync_console_command_popup=lambda: screen._sync_console_command_popup(),
     )
+
     #: The agent runtime's screen-side cluster -- the lazily-built
     #: `ConsoleAgentBridge`, the Agent rail section's text derivation, the
     #: sub-agent drill-in cycle, the "View full log" target/probe/loader,
@@ -2083,6 +2229,7 @@ def build_console_controllers(
     #: this cluster.
     def _reveal_agent_detail() -> None:
         from ...Chat.console_rail_state import console_context_reveal_preferences
+
         columns = screen._console_rail_available_columns()
         changes = console_context_reveal_preferences(
             screen._current_console_rail_state(available_columns=columns), columns
@@ -2251,6 +2398,18 @@ def build_console_controllers(
                 )
             )
         ),
+        # TASK-33621.2: the oldest recovery's refusal copy, for the shelf.
+        turn_recovery_reason=(
+            lambda session_id: next(
+                (
+                    entry.reason
+                    for entry in screen._console_runtime().recoveries_for_session(
+                        session_id
+                    )
+                ),
+                "",
+            )
+        ),
         restore_turn_recovery=(
             lambda turn_id: screen._console_runtime().restore_turn_recovery(turn_id)
         ),
@@ -2269,6 +2428,30 @@ def build_console_controllers(
             )
         ),
         sync_ui=lambda: screen._sync_native_console_chat_ui(),
+    )
+    screen._hooks = ConsoleHooksController(
+        hook_permissions_accessor=lambda: (
+            screen._console_runtime().ensure_hook_permissions()
+        ),
+        request_review=lambda snapshot, waiting, cancel: request_console_hooks_review(
+            screen, snapshot, waiting, cancel
+        ),
+        current_session=lambda: screen._console_visible_send_session_id(),
+        current_stash=lambda: (
+            screen._console_composer_or_none().capture_draft_for_send()
+            if screen._console_composer_or_none()
+            else None
+        ),
+        on_state=lambda snapshot: screen._apply_console_hooks_state(snapshot),
+        notify=lambda text, severity: screen.app_instance.notify(
+            text, severity=severity
+        ),
+        # TASK-33621.28: a Send from a handler or Enter's app.call_later
+        # callback reviews hooks here, never on the pump that must deliver
+        # the review's keys.
+        start_worker=lambda continuation: screen.run_worker(
+            continuation, group="console-hook-send-review"
+        ),
     )
     screen._review_selection = ConsoleReviewSelectionController(
         store_accessor=lambda: screen._ensure_console_chat_store(),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import queue
 import sys
@@ -363,3 +364,27 @@ def _sample_stack(thread_id: int | None) -> dict[str, object]:
             sample[f"{slot}_line"] = frame.f_lineno
         frame = frame.f_back
     return sample
+
+
+def freeze_long_lived_heap(reason: str) -> int:
+    """Move the objects alive now into CPython's permanent GC generation.
+
+    ADR-198 (PERF-11, TASK-33270): with nothing frozen, every automatic
+    generation-2 collection walked the whole boot heap -- 130-871 ms UI
+    stalls on screen switches in the 2026-09-27 audit, against ~0 ms for the
+    freeze. A young collection first reclaims short-lived boot cycles
+    cheaply; a full collection is deliberately NOT run (a one-time 130-270 ms
+    loop stall right as the user starts interacting). Thresholds stay at
+    CPython's defaults and the collector is never disabled (see the ADR).
+
+    Args:
+        reason: Which boot point froze the heap, for the DEBUG log line.
+
+    Returns:
+        The permanent generation's size after the freeze.
+    """
+    gc.collect(1)
+    gc.freeze()
+    frozen = gc.get_freeze_count()
+    logging.getLogger(__name__).debug("gc heap frozen (%s): %d objects", reason, frozen)
+    return frozen
