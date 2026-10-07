@@ -18554,6 +18554,23 @@ class ChatScreen(BaseAppScreen):
             return
         self._console_sync_in_progress = True
         self._record_ui_worker_started("console-sync")
+
+        def sync_live_state(sync: Callable[[], None]) -> bool:
+            # These paths also update controller/store state, so retain fresh
+            # native config checks rather than disposable display provenance.
+            completed = spend.run_console_config_sync(
+                sync,
+                maintenance_paused=getattr(
+                    self, "_console_sync_maintenance_paused", False
+                ),
+                request_retry=lambda: self._request_console_control_bar_sync(
+                    delayed=True
+                ),
+            )
+            if completed is False:
+                self._console_control_bar_replay_whole_sync = True
+            return completed
+
         try:
             store = self._console_chat_store
             self._message.reconcile_console_speech_context()
@@ -18566,7 +18583,8 @@ class ChatScreen(BaseAppScreen):
                         registry.drop_session(missing_session_id)
                 self._console_h3_known_session_ids = live_session_ids
                 self._image._reconcile_h3_image_edit_completions(store)
-            self._sync_console_chat_core_state()
+            if not sync_live_state(self._sync_console_chat_core_state):
+                return
             self._session._sync_console_session_draft()
             # PR#757 review (comment 4): warm the effective-scope cache for
             # an already-active persisted session before anything below
@@ -18653,7 +18671,8 @@ class ChatScreen(BaseAppScreen):
                     and store.active_session_id
                 ):
                     await read_snapshot.warm(controller, store.active_session_id)
-                self._dispatch_active_console_roleplay_refresh()
+                if not sync_live_state(self._dispatch_active_console_roleplay_refresh):
+                    return
                 self._sync_console_workspace_context()
                 project_instruction_ui.sync_project_instruction_status_for_screen(self)
                 await self._sync_native_console_transcript()

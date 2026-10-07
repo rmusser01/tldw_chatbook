@@ -530,7 +530,9 @@ def test_console_native_worker_defers_later_native_reads_with_its_refresh(
     _run(tmp_path, case, "config-sync", script=_WORKER_RETRY, timeout=40)
 
 
-_LOCK_RETRY = _SYNC.split("if case=='pause_before':")[0] + r'''
+_LOCK_RETRY = (
+    _SYNC.split("if case=='pause_before':")[0]
+    + r"""
 import asyncio,threading
 from tldw_chatbook.Backup_Recovery import config_participants
 rebuild=config._settings_rebuild_lock();file_lock=config._config_file_lock()
@@ -597,7 +599,8 @@ finally:
  if thread.ident is not None:thread.join(3)
 assert not errors and not storage._raw_operations
 print('retired and reopened')
-'''
+"""
+)
 
 
 @pytest.mark.parametrize(
@@ -607,7 +610,9 @@ def test_console_refresh_defers_real_worker_held_config_locks(tmp_path, case):
     _run(tmp_path, case, "config-sync", script=_LOCK_RETRY, timeout=40)
 
 
-_DEFAULT_LOCK_WAIT = _SYNC.split("if case=='pause_before':")[0] + r'''
+_DEFAULT_LOCK_WAIT = (
+    _SYNC.split("if case=='pause_before':")[0]
+    + r"""
 import threading
 held_lock=config._settings_rebuild_lock() if case=='default-rebuild' else config._config_file_lock()
 holding=threading.Event();release=threading.Event()
@@ -632,7 +637,8 @@ assert not thread.is_alive() and not finisher.is_alive()
 assert not storage._raw_operations and not storage._pending_acquisitions
 assert getattr(raw._local,'operation',None) is None
 print('retired and reopened')
-'''
+"""
+)
 
 
 @pytest.mark.parametrize("case", ["default-rebuild", "default-file"])
@@ -650,3 +656,76 @@ def test_console_body_busy_error_is_not_mistaken_for_entry_deferral(tmp_path):
         "assert not scheduled\nassert not storage._raw_operations\n",
     )
     _run(tmp_path, "error", "config-sync", script=script, timeout=40)
+
+
+_FULL_SYNC_LOCK_RETRY = (
+    _WORKER_RETRY.split("async def main():")[0]
+    + r"""
+# No maintenance request is involved in this lock-contention intervention.
+Admission.pause_requested=original_probe
+boundary,kind=case.split('-')
+blocked=config._settings_rebuild_lock() if kind=='rebuild' else config._config_file_lock()
+holding=threading.Event();release=threading.Event();expired=threading.Event()
+errors=[];observed=[]
+def holder():
+ try:
+  with blocked:
+   holding.set()
+   assert release.wait(5)
+ except BaseException as error:errors.append(error)
+owner=threading.Thread(target=holder)
+def expire():expired.set();release.set()
+watchdog=threading.Timer(2,expire)
+started_holder=False
+def begin_holding():
+ global started_holder
+ if started_holder:return
+ started_holder=True
+ owner.start();assert holding.wait(3)
+ watchdog.start()
+def read_live():
+ operation=raw._runtime_operation()
+ value=config.get_cli_setting('general','users_name')
+ observed.append((operation,value))
+if boundary=='core':
+ screen._sync_console_chat_core_state=read_live
+else:
+ screen._dispatch_active_console_roleplay_refresh=read_live
+ screen._sync_console_mode_bar=begin_holding
+async def main():
+ if boundary=='core':begin_holding()
+ await screen._sync_native_console_chat_ui()
+ assert holding.is_set() and not expired.is_set(),'ordinary Console sync blocked on config lock'
+ assert owner.is_alive() and not release.is_set()
+ assert not observed,'busy config entry must defer before mutating live state'
+ assert screen._console_control_bar_replay_whole_sync
+ assert len(scheduled)==1 and not workers
+ assert not screen._console_sync_in_progress
+ release.set();owner.join(3);watchdog.cancel();watchdog.join(3)
+ assert not owner.is_alive() and not errors
+ assert config.save_setting_to_cli_config('general','users_name','fresh full sync')
+ delay,callback=scheduled.pop();assert delay>0;callback()
+ assert len(workers)==1
+ await workers.pop()
+ assert len(observed)==1 and observed[0][1]=='fresh full sync'
+ assert observed[0][0] is not None and observed[0][0] not in raw._states
+ assert not scheduled and not workers
+ assert not screen._console_control_bar_replay_whole_sync
+try:asyncio.run(main())
+finally:
+ release.set();watchdog.cancel()
+ if owner.ident is not None:owner.join(3)
+ if watchdog.ident is not None:watchdog.join(3)
+ for worker in workers:worker.close()
+ storage._shutdown()
+assert not storage._raw_operations
+print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize(
+    "case", ["core-rebuild", "core-file", "roleplay-rebuild", "roleplay-file"]
+)
+def test_full_console_sync_defers_live_state_until_fresh_config_entry(tmp_path, case):
+    _run(tmp_path, case, "config-sync", script=_FULL_SYNC_LOCK_RETRY, timeout=40)

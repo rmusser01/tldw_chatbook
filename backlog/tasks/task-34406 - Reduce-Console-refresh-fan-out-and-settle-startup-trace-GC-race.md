@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-07 23:13'
+updated_date: '2026-10-07 23:43'
 labels: []
 dependencies: []
 ---
@@ -430,6 +430,8 @@ Compact review corrections before further implementation (AC23): reproduce origi
 Integration correction: reproduce metadata evidence rejecting exact absent ancestor creation-intent stamps retained by selector evidence; preserve only those already validated missing inputs, reject marker appearance between observations, and rerun original warm-reader and mutation controls. ADR required: no. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: restore composition of existing complete admission evidence without changing authority or reuse boundaries.
 
 Shutdown verification: port only the existing finite presentation host-terminal regression from the protected evidence checkout, add positive observation of original host drain and exact worker capture, and reproduce each context/readiness/history/hooks route before changing production. Preserve original ten-second callback bounds and pre-creator-cleanup oracle. ADR check: existing ADR-126 applies; any physical-completion adapter contract must be documented before implementation.
+
+Live Console refresh contention: original Compact ownership run exposed main-loop checked config lock entry under ordinary roleplay identity refresh. Add fresh nonblocking config entry around the early core-state sync and later ordinary roleplay dispatch; defer before either mutates live state and retain existing whole-sync retry. No display snapshot authority for persistence, no scope across await, and explicit repair/action callers unchanged. Add real held-lock regressions for both boundaries and recheck original controls. ADR required: no. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: apply the existing checked nonblocking refresh contract to omitted call sites. Also align leading-dollar composer test with existing received-Send keyword contract while retaining verbatim draft, execution, transcript, and no-tool-row assertions.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -590,6 +592,8 @@ Integrated peer immutable057fae7bbe as97b641d859 after independent source review
 Generated remote-worker follow-up: CI37691945159 reproduced a stale bundle after the prepared userdata-path change. Regenerated only Tools/remote_worker_bundle.py through the unchanged builder; a second --check matches byte-for-byte. Windows targeted module collection is unavailable because its original test imports POSIX fcntl (remote-bundle-regenerated-a21-1: collection error, source/HEAD unchanged, normal process retirement). The unchanged Ubuntu remote-bundle CI control remains required after push. No startup or Send performance acceptance follows; task remains In Progress.
 
 Integrated reviewed Send-session commits4560fc513a and256a0f66b2 as bounded deltas, retaining CLEAN parent-FD/derived-proof code. Original related-member order, primary authority, canonical custody, custom callbacks and final native/source checks remain. Root verification:40PASS/12POSIX skips/2Windows fixture failures in178.734s, then both corrected controls PASS in12.250s;42distinct targeted cases pass. Both runs kept sources/HEAD unchanged and retired normally with zero PID-history overflow or identity lookup races. Native DACL-derived0600 replaces synthetic Windows mode bits in the consent assertion. Real verified Windows junction retargeting replaces an unavailable symlink stimulus; original refusal, exact leases and no-effects assertions remain. Three empty-transcript read controls reproduced RED; the three render paths now avoid unused file-card config reads for empty rows, with all three and both original populated-toggle tests passing. Independent source review found no blocker. Added the same bounded selection, including skipped-on-Windows parent/uncertain-close controls, to existing Windows/macOS/Linux CI; final platform results remain required. Changed-code lint and YAML structure pass. No whole startup/Send speed acceptance; status remains In Progress.
+
+Saved follow-up scope: ordinary Console core-state and roleplay refresh now enter the existing nonblocking fresh config scope, returning before live-state mutation when either config lock is busy and scheduling the existing delayed full replay. Four real worker-held-lock cases pass, including fresh config on replay; bounded independent source review is clear. The mixed five-case run has four passes and one unrelated skill-composer fixture failure because the isolated app has no ChaChaNotes database. That fixture correction is pending and is excluded from this product checkpoint. No full performance or whole-suite acceptance is claimed. Existing ADR126 applies; no new boundary or deadline change.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up
@@ -1013,9 +1017,16 @@ Coordinated peer integration eb97918 is saved as69698e7dac. All24 targeted sensi
 
 Compact ownership-control prerequisite plan: construct the unrelated skill-trust service through the original awaitable App ensure API before arming the selected model-reader control. This is an explicit finite dependency warm, not an idle wait, guard/cache override or startup performance acceptance. Require its exact published service and retired preparation, and require the intervention to execute while the exact private model producer, raw operation and leases are still live. Keep the two original full-App responsiveness cases unwarmed so they retain detection of the broader first-use skill-trust UI defect (AC29). Existing deadlines and original sources remain unchanged. ADR required:no; fixture isolation and stronger assertions only, with the real broader defect retained.
 
-
 ### Metadata evidence composition correction (2026-10-07)
 
 The six POSIX warm-reader failures on saved 34e8639002 came from an earlier integration conflict: selector evidence correctly retained absent ancestor creation-intent stamps, but metadata evidence rejected every missing non-selector input. Both collectors are AST-identical at 8ccebe7f18 and 34e8639002, so the task-34563.20 batching change did not introduce this mismatch. Preserve only absent inputs already validated by selector evidence; refuse a marker appearing during the second observation and retain absence stamps for subsequent invalidation. Existing ADR-126 applies; no authority, cache freshness, or platform qualification boundary changes.
 
 Causal RED: metadata evidence was None for a real initialized private startup hold. GREEN: all four creation-intent evidence controls pass on Windows (metadata-composition-green-1; 2.52 seconds pytest, unchanged source/HEAD, normally retired owned process). The original Linux/macOS six-reader assertions remain unchanged and await CI. Added these four controls to the existing all-platform related-source selection. Ruff's eight existing exact-type diagnostics in storage_admission.py match HEAD; new test changes lint clean.
+
+### Combined ownership follow-up (2026-10-07, fa4225dd3c)
+
+The saved metadata correction passes the unchanged six former failures: all58 related-source checks report57 passed/one skipped on Linux and macOS,46 passed/12 POSIX-only skips on Windows (run37701158990; downloaded XML receipts). Other startup and performance gates remain failing.
+
+Compact helper source qualification and actual App-closing controls have genuine RED-to-GREEN evidence; bounded review found no remaining source blocker in those two repairs. The subsequent combined local ownership selection reports37 passed/five failed:12 of15 Compact ownership cases passed, all five original generic skill-builder controls passed, all11 scope-service tests passed, and nine of10 original composer skill-command cases passed. The leading-dollar failure is the old submit signature assertion versus the existing received-Send metadata; verbatim text still arrived. Update that expectation while retaining actual skill execution/transcript/no-tool assertions.
+
+Compact normal/recancel/missing-provider failures did not complete their intervention action inside the original0.1-second held-read window. Normal positively observed original Main config lock entry under ordinary roleplay identity refresh; missing-provider observed models.dev enablement under a display refresh, pending capacity-versus-price attribution. The new context host-terminal test never armed: original readiness/history bootstrap remained pending inside its existing10-second prerequisite; this is not causal shutdown evidence. Parent process containment retired normally with unchanged source/HEAD, but PID history overflowed2742 entries with one lookup race; do not claim complete process sampling or whole performance acceptance. Native product/test changes remain uncommitted pending these controls.
