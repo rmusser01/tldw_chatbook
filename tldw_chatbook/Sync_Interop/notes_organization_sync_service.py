@@ -1381,18 +1381,22 @@ class NotesOrganizationSyncService:
         dataset_id: str,
         base_version: int | None,
         request_fingerprint: str,
+        source_scope: dict[str, Any] | None = None,
     ) -> None:
         operation = "create" if int(note["version"]) == 1 else "update"
         payload = {
             "id": str(note["id"]),
             "title": str(note["title"]),
             "content": str(note["content"]),
+            "content_language": note["content_language"],
             "created_at": str(note["created_at"]),
             "last_modified": str(note["last_modified"]),
             "deleted": int(note["deleted"]),
             "client_id": str(note["client_id"]),
             "version": int(note["version"]),
         }
+        if source_scope is not None:
+            payload["_source_scope"] = source_scope
         cursor.execute(
             "INSERT INTO note_sync_publication_intents("
             "intent_id, server_profile_id, dataset_id, note_id, operation, "
@@ -1552,6 +1556,13 @@ class NotesOrganizationSyncService:
             dataset_id=dataset_id,
         ):
             payload = json.loads(str(row["payload"]))
+            origin = payload.get("_source_scope")
+            expected_origin = {
+                "authenticated_principal_id": authenticated_principal_id,
+                "workspace_scope": workspace_scope,
+            }
+            if not isinstance(origin, dict) or origin != expected_origin:
+                continue
             note_id = str(row["entity_id"])
             if str(row["operation"]) == "delete":
                 result = self.notes_producer.enqueue_note_delete(
@@ -1571,6 +1582,11 @@ class NotesOrganizationSyncService:
                     note_id=note_id,
                     title=str(payload.get("title") or ""),
                     content=str(payload.get("content") or ""),
+                    **(
+                        {"content_language": payload["content_language"]}
+                        if "content_language" in payload
+                        else {}
+                    ),
                     status="active",
                     base_version=row["base_version"],
                     entity_version=int(row["version"]),

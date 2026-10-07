@@ -15,6 +15,31 @@ from tldw_chatbook.runtime_policy.server_parity_models import (
     SourceAuthority,
 )
 
+NOTE_LANGUAGE_UNSET = object()
+
+
+@dataclass(frozen=True, slots=True)
+class NotesLanguageCapability:
+    """Bounded result of an authenticated Notes support probe."""
+
+    available: bool
+    reason: str | None = None
+
+    @classmethod
+    def from_response(cls, value: Any) -> NotesLanguageCapability:
+        if isinstance(value, Mapping) and value.get("content_language") is True:
+            return cls(True)
+        return cls(False, "unsupported_server")
+
+
+def validate_note_language(value: Any) -> None:
+    """Preserve opaque language identifiers, rejecting malformed metadata."""
+    if value is not None and (not isinstance(value, str) or not 1 <= len(value) <= 100):
+        raise ValueError(
+            "content_language must be null or a string of 1 to 100 characters"
+        )
+
+
 _SOURCE_AUTHORITIES = {"local", "server"}
 
 # Keep the domain census in this lightweight, already-resident state module so

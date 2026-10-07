@@ -67,3 +67,7 @@ new editing surfaces, external commands, or a wholesale editor replacement.
 The complete language rules, bounds, compatibility behavior, and acceptance matrix
 are in the linked spec. Written-spec approval was received on 2026-09-27;
 implementation planning may proceed. No existing accepted ADR is superseded.
+
+### Immutable publication origin scope (F4)
+
+Existing local publication-intent payloads carry the exact originating principal and workspace, including explicit null. Drain compares both before copying source into a scoped outbox. Missing historical proof remains pending; an active profile cannot supply historical authority. This local metadata never enters wire payloads and adds no schema or transport.

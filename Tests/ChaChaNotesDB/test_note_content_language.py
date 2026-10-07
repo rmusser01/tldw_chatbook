@@ -173,7 +173,7 @@ def test_exact_version_snapshot_contains_language(db):
 
 
 @pytest.mark.asyncio
-async def test_local_scope_preserves_metadata_and_gates_active_sync_before_mutation(
+async def test_local_scope_preserves_metadata_and_keeps_local_save_usable_with_pending_sync(
     db, tmp_path
 ):
     from tldw_chatbook.Notes.Notes_Library import NotesInteropService
@@ -201,27 +201,27 @@ async def test_local_scope_preserves_metadata_and_gates_active_sync_before_mutat
         "authenticated_principal_id": "test",
         "workspace_scope": None,
     }
-    with pytest.raises(ValueError, match="cannot be published"):
-        await scope.save_note(
-            scope="local_note",
-            user_id="test",
-            note_id=note_id,
-            version=1,
-            title="Changed",
-            content="a: 1",
-            sync_v2_profile=profile,
-        )
-    assert db.get_note_by_id(note_id)["version"] == 1
-    db.soft_delete_note(note_id, expected_version=1)
-    with pytest.raises(ValueError, match="cannot be published"):
-        await scope.restore_note(
-            scope="local_note",
-            user_id="test",
-            note_id=note_id,
-            version=2,
-            sync_v2_profile=profile,
-        )
-    assert db.get_note_by_id(note_id, include_deleted=True)["deleted"]
+    assert await scope.save_note(
+        scope="local_note",
+        user_id="test",
+        note_id=note_id,
+        version=1,
+        title="Changed",
+        content="a: 1",
+        sync_v2_profile=profile,
+    )
+    assert db.get_note_by_id(note_id)["version"] == 2
+    assert db.get_note_by_id(note_id)["content_language"] == "yaml"
+    db.soft_delete_note(note_id, expected_version=2)
+    restored = await scope.restore_note(
+        scope="local_note",
+        user_id="test",
+        note_id=note_id,
+        version=3,
+        sync_v2_profile=profile,
+    )
+    assert restored["content_language"] == "yaml"
+    assert not db.get_note_by_id(note_id)["deleted"]
 
 
 @pytest.mark.asyncio

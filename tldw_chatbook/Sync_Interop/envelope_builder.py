@@ -16,6 +16,10 @@ from tldw_chatbook.Chat.assistant_generation_state import (
     AssistantGenerationState,
     normalize_assistant_generation_state,
 )
+from tldw_chatbook.Sync_Interop.sync_state import (
+    NOTE_LANGUAGE_UNSET,
+    validate_note_language,
+)
 from tldw_chatbook.Sync_Interop.crypto import encrypt_sync_payload
 from tldw_chatbook.Sync_Interop.hashing import (
     canonical_payload_hash,
@@ -37,12 +41,29 @@ class SyncEnvelopeBuilder:
         dataset_key: bytes,
         adapter_version: int = 1,
         notes_mirror: Any = None,
+        notes_adapter_versions: Mapping[str, list[int]] | None = None,
     ) -> None:
         self.dataset_id = dataset_id
         self.device_id = device_id
         self.dataset_key = dataset_key
         self.adapter_version = adapter_version
         self.notes_mirror = notes_mirror
+        self.notes_adapter_versions = notes_adapter_versions or {}
+
+    def _note_version(self, domain: str, language: Any) -> int:
+        if language is not NOTE_LANGUAGE_UNSET:
+            validate_note_language(language)
+        if (
+            language is not NOTE_LANGUAGE_UNSET
+            and 2 in self.notes_adapter_versions.get(domain, [])
+        ):
+            return 2
+        if language is not NOTE_LANGUAGE_UNSET or (
+            self.notes_adapter_versions.get(domain)
+            and 1 not in self.notes_adapter_versions[domain]
+        ):
+            raise ValueError("notes_language_upgrade_required")
+        return 1
 
     # ------------------------------------------------------------------ M1 dotted-domain builders
 
@@ -103,11 +124,33 @@ class SyncEnvelopeBuilder:
         )
 
     def build_notes_note_upsert(
-        self, *, note_id: str, title: str, content: str
+        self,
+        *,
+        note_id: str,
+        title: str,
+        content: str,
+        content_language: Any = NOTE_LANGUAGE_UNSET,
+        conversation_id: str | None = None,
+        message_id: str | None = None,
     ) -> SyncV2Envelope:
+        version = self._note_version("notes.note", content_language)
         payload = {"title": title, "content": content}
+        if version == 2:
+            payload.update(
+                conversation_id=conversation_id,
+                message_id=message_id,
+                content_language=(
+                    None
+                    if content_language is NOTE_LANGUAGE_UNSET
+                    else content_language
+                ),
+            )
         return self._notes_note_envelope(
-            note_id=note_id, operation="upsert", payload=payload, deleted=False
+            note_id=note_id,
+            operation="upsert",
+            payload=payload,
+            deleted=False,
+            version=version,
         )
 
     def build_notes_note_tombstone(
@@ -122,7 +165,13 @@ class SyncEnvelopeBuilder:
         )
 
     def _notes_note_envelope(
-        self, *, note_id: str, operation: str, payload: dict[str, Any], deleted: bool
+        self,
+        *,
+        note_id: str,
+        operation: str,
+        payload: dict[str, Any],
+        deleted: bool,
+        version: int = 1,
     ) -> SyncV2Envelope:
         # Deferred import: avoid module-scope tldw_api schema import (task-285 phase 2).
         from tldw_chatbook.tldw_api import SyncV2Envelope
@@ -140,8 +189,8 @@ class SyncEnvelopeBuilder:
             domain="notes.note",
             object_id=note_id,
             operation=operation,
-            adapter_version=self.adapter_version,
-            schema_version=1,
+            adapter_version=version,
+            schema_version=version,
             deleted=deleted,
             payload=payload,
             payload_hash=payload_hash,
@@ -164,8 +213,14 @@ class SyncEnvelopeBuilder:
         tag_ids: list[str] | None = None,
         base_version: str | int | None = None,
         entity_version: str | int | None = None,
+        content_language: Any = NOTE_LANGUAGE_UNSET,
     ) -> SyncV2Envelope:
+        version = self._note_version("notes", content_language)
         payload = {"body": body, "title": title}
+        if version == 2:
+            payload["content_language"] = (
+                None if content_language is NOTE_LANGUAGE_UNSET else content_language
+            )
         clear: dict[str, Any] = {}
         if status is not None:
             clear["status"] = status
@@ -177,6 +232,7 @@ class SyncEnvelopeBuilder:
             operation="upsert",
             stable_key=note_id,
             payload=payload,
+            note_version=version,
             payload_clear=clear,
             routing_metadata={"entity_kind": "note"},
             base_version=base_version,
@@ -429,6 +485,7 @@ class SyncEnvelopeBuilder:
         operation: str,
         stable_key: str,
         payload: Mapping[str, Any],
+        note_version: int | None = None,
         payload_clear: Mapping[str, Any],
         routing_metadata: Mapping[str, Any],
         base_version: str | int | None = None,
@@ -446,7 +503,8 @@ class SyncEnvelopeBuilder:
             domain=domain,
             entity_id=entity_id,
             operation=operation,
-            adapter_version=self.adapter_version,
+            adapter_version=note_version or self.adapter_version,
+            schema_version=note_version or 1,
             stable_key=stable_key,
             base_version=base_version,
             entity_version=entity_version or payload_hash,

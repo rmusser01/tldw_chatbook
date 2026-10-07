@@ -35,6 +35,11 @@ class InMemoryNotesStore:
             "content": payload.get("content", payload.get("body", "")),
             "deleted": False,
         }
+        existing = self._notes.get(object_id, {})
+        if "content_language" in payload:
+            record["content_language"] = payload["content_language"]
+        elif "content_language" in existing:
+            record["content_language"] = existing["content_language"]
         self._notes[object_id] = record
 
     def soft_delete_note(self, object_id: str, *, object_revision: int) -> None:

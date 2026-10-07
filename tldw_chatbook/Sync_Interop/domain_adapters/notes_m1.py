@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, TYPE_CHECKING
 
+from tldw_chatbook.Sync_Interop.sync_state import validate_note_language
+
 NOTES_NOTE_TITLE_MAX_CHARS = 255
 NOTES_NOTE_CONTENT_MAX_CHARS = 5_000_000
 
@@ -21,6 +23,12 @@ class NotesM1SyncAdapter:
         dataset_id: str,
         record_conflict: Callable[..., dict[str, Any]],
     ) -> dict[str, Any]:
+        if (envelope.adapter_version, envelope.schema_version) not in {(1, 1), (2, 2)}:
+            return record_conflict(
+                envelope,
+                conflict_type="notes_language_upgrade_required",
+                message="Unsupported Notes snapshot version.",
+            )
         if notes_mirror is None or dataset_id is None:
             raise ValueError(
                 "notes_mirror and dataset_id must be provided to NotesM1SyncAdapter"
@@ -51,6 +59,14 @@ class NotesM1SyncAdapter:
             local_store.soft_delete_note(object_id, object_revision=revision)
         else:
             payload = self._validated_note_payload(envelope.payload)
+            if envelope.adapter_version == 2 and set(envelope.payload) != {
+                "title",
+                "content",
+                "conversation_id",
+                "message_id",
+                "content_language",
+            }:
+                payload = None
             if payload is None:
                 return record_conflict(
                     envelope,
@@ -87,4 +103,11 @@ class NotesM1SyncAdapter:
         # Reject unsafe controls rather than silently deleting source characters.
         if any(ord(char) < 32 and char not in "\t\n\r" for char in title + content):
             return None
-        return {"title": title, "content": content}
+        result = {"title": title, "content": content}
+        if "content_language" in payload:
+            try:
+                validate_note_language(payload["content_language"])
+            except ValueError:
+                return None
+            result["content_language"] = payload["content_language"]
+        return result

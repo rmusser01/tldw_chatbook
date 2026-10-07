@@ -16403,6 +16403,37 @@ class TLDWAPIClient:
         )
         return ServerChangesResponse.model_validate(response)
 
+    async def get_notes_language_capability(self) -> Any:
+        """Fetch explicit authenticated portable-language support without stale caching."""
+        from tldw_chatbook.Sync_Interop.sync_state import NotesLanguageCapability
+
+        try:
+            response = await self._request("GET", "/api/v1/notes/capabilities")
+        except (
+            APIConnectionError,
+            APIResponseError,
+            AuthenticationError,
+            httpx.HTTPError,
+        ) as exc:
+            status = getattr(exc, "status_code", None)
+            if status is None:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+            reason = (
+                "authentication_required"
+                if isinstance(exc, AuthenticationError)
+                else (
+                    "unsupported_server"
+                    if status == 404
+                    else (
+                        "authentication_required"
+                        if status in {401, 403}
+                        else "transport_unavailable"
+                    )
+                )
+            )
+            return NotesLanguageCapability(False, reason)
+        return NotesLanguageCapability.from_response(response)
+
     async def get_sync_v2_capabilities(
         self,
         *,

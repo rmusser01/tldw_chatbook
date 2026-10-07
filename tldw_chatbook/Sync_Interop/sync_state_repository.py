@@ -1450,6 +1450,11 @@ class SyncStateRepository(BaseDB):
                 result["object_revision"] = item["object_revision"]
             for field in (
                 "apply_status",
+                "domain",
+                "object_id",
+                "payload_hash",
+                "adapter_version",
+                "schema_version",
                 "apply_error_code",
                 "apply_error_message",
             ):
@@ -1478,6 +1483,39 @@ class SyncStateRepository(BaseDB):
                     "AND client_envelope_id = ? AND status = 'pending'",
                     (source_scope_key, dataset_id, client_envelope_id),
                 ).fetchone()
+                if existing is not None:
+                    stored = self._parse_outbox_envelope(
+                        json.loads(existing["envelope"])
+                    )
+                    if (
+                        stored.domain in {"notes", "notes.note"}
+                        and stored.adapter_version == 2
+                        and (
+                            accepted_result.get("domain") != stored.domain
+                            or accepted_result.get("object_id") != stored.object_id
+                            or accepted_result.get("apply_status") != "applied"
+                            or type(accepted_result.get("server_cursor")) is not int
+                            or accepted_result["server_cursor"] < 1
+                            or type(accepted_result.get("object_revision")) is not int
+                            or accepted_result["object_revision"]
+                            != (stored.base_object_revision or 0) + 1
+                        )
+                    ):
+                        conn.execute(
+                            "UPDATE sync_v2_local_outbox SET last_error = ?, updated_at = ? "
+                            "WHERE source_scope_key = ? AND dataset_id = ? AND client_envelope_id = ? AND status = 'pending'",
+                            (
+                                _json_dumps(
+                                    {"error_code": "notes_language_ack_required"}
+                                ),
+                                now,
+                                source_scope_key,
+                                dataset_id,
+                                client_envelope_id,
+                            ),
+                        )
+                        retained += 1
+                        continue
                 organization_result = (
                     existing is not None
                     and str(existing["domain"]) in NOTES_ORGANIZATION_DOMAINS

@@ -941,6 +941,30 @@ class SyncV2Envelope(BaseModel):
     def _reject_clear_private_payload(self) -> "SyncV2Envelope":
         if self.encryption_policy != "client_private_v1":
             return self
+
+        def leaked_language(value: Any) -> bool:
+            if isinstance(value, dict):
+                return any(
+                    str(key).strip().lower().replace("-", "_") == "content_language"
+                    or leaked_language(item)
+                    for key, item in value.items()
+                )
+            if isinstance(value, list):
+                return any(leaked_language(item) for item in value)
+            return False
+
+        if any(
+            leaked_language(value)
+            for value in (
+                self.payload,
+                self.payload_clear,
+                self.routing_metadata,
+                self.encryption_metadata,
+            )
+        ):
+            raise ValueError(
+                "content_language is not allowed in clear client_private_v1 metadata"
+            )
         disallowed_key_path = _find_disallowed_private_clear_payload_key(
             self.payload_clear
         )
