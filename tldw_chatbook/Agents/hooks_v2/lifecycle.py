@@ -117,6 +117,8 @@ class HookSessionLifecycle:
         )
         self.live = False
         self._sealed = False
+        self._session_end_event = None
+        self._session_end_execution = None
         self._reservations = {}
         self._executions = {}
         self.turn_scope = None
@@ -431,10 +433,20 @@ class HookSessionLifecycle:
                 self.close_scope(owner)
         if self.live:
             self.live = False
+            self._session_end_event = self.event("SessionEnd", initiator="host_cleanup")
+            self._session_end_execution = self.engine.begin_event(
+                self._session_end_event, teardown=True
+            )
             self.engine.notify_teardown(
-                self.event("SessionEnd", initiator="host_cleanup")
+                self._session_end_event, _execution=self._session_end_execution
             )
         self.engine.begin_close()
+
+    def _session_end_current(self, event: HookEvent) -> bool:
+        """Only this host-issued delivery, never a public replay, survives disposal."""
+        return self.engine._delivery_current(
+            self._session_end_execution, self._session_end_event, event
+        )
 
 
 class CompactionHooks:

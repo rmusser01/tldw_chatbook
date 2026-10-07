@@ -91,3 +91,23 @@ as evidence of the error shape, but they are not replayed.
 
 Review a fixture before committing it. It holds model output (a short "ok"
 and one tool call) and, for per-account providers, a redacted URL.
+
+
+## Available-key qualification (2026-10-06)
+
+TASK-33640's completed capture wave covers the two presets with available keys:
+
+| Preset | Capture | Evidence-backed record change |
+| --- | --- | --- |
+| Together | [together.json](together.json) | Null `logprobs` allowance and explicit streamed usage request (TASK-34362). |
+| Fireworks | [fireworks.json](fireworks.json) | Non-streamed tool-call `index` and null `name` allowances (TASK-34364). |
+
+Both contain successful plain, tool, plain-stream and tool-stream rounds and a
+model-listing capture. Their existing registry comments cite these exact fixtures;
+No new allowance or live request was needed for closure. Fresh actual-engine and
+discovery replay passed all 19 checks, with zero uncovered response keys. Fixture
+credential-fragment scans were clear.
+
+The other 30 current presets have no available credentials and remain provisional.
+Their no-key probes do not qualify key-only listings or live response shapes.
+Run the same capture/replay/amend workflow when another key becomes available.
