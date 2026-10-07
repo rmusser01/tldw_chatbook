@@ -372,6 +372,24 @@ def install_css_parse_cache() -> "Iterator[None]":
 
 
 @pytest.fixture(autouse=True)
+def reset_provider_session_registry() -> "Iterator[None]":
+    """Drop the calling thread's provider HTTP sessions between tests.
+
+    ADR-222 (TASK-34418): provider calls cache one ``requests.Session`` per
+    ``(key, thread)``. Tests monkeypatch ``create_default_session`` per
+    test, so without this reset a session built under test N's patched
+    factory could be handed to test N+1 under the same registry key.
+    """
+    from tldw_chatbook.LLM_Calls.provider_sessions import (
+        close_all_for_current_thread,
+    )
+
+    close_all_for_current_thread()
+    yield
+    close_all_for_current_thread()
+
+
+@pytest.fixture(autouse=True)
 def drain_test_app_user_data_dirs() -> "Iterator[None]":
     """Remove the user-data dirs and stop the service patches the shared app
     factory created during a test.

@@ -47,6 +47,7 @@ from tldw_chatbook.LLM_Calls.Local_Summarization_Lib import (
 from tldw_chatbook.Logging_Config import logging
 from tldw_chatbook.config import get_cli_setting, without_ciphertext
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
+from tldw_chatbook.LLM_Calls.provider_sessions import get_session
 from tldw_chatbook.Utils.egress import create_default_session, default_session_timeout
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
@@ -1037,7 +1038,11 @@ def _post_with_retry(
     caller's own handling. Raises the final ``requests.RequestException``
     when network attempts are exhausted.
     """
-    session = create_default_session()
+    # ADR-222 (TASK-34418): one registry session per (url, thread); the
+    # attempts below reuse it (unchanged in-call retry reuse). This
+    # transport passes an explicit timeout and a per-request verify, so no
+    # config-derived fragment is needed in the key.
+    session = get_session(f"summarizer:{url}", create_default_session)
     for attempt in range(max_attempts):
         try:
             response = session.post(

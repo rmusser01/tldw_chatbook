@@ -33,6 +33,7 @@ from urllib.parse import urlparse
 #
 # Import 3rd-Party Libraries
 import requests
+from contextlib import nullcontext
 from loguru import logger
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -62,6 +63,11 @@ from tldw_chatbook.config import (
     resolve_provider_api_key,
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
+from tldw_chatbook.LLM_Calls.provider_sessions import (
+    default_timeout_fragment,
+    get_session,
+    trust_setting_fragment,
+)
 from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.tls_trust import requests_verify
 from tldw_chatbook.LLM_Calls.moonshot import (
@@ -487,7 +493,15 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
     }
     try:
         logger.debug("OpenAI Embeddings: Posting request to embeddings API")
-        with create_default_session() as session:
+        # ADR-222 (TASK-34418): registry session per thread; the default
+        # timeout and TLS trust are key fragments because this call relies
+        # on both being baked into the session at factory time.
+        session = get_session(
+            "openai_embeddings:https://api.openai.com/v1/embeddings:"
+            f"{trust_setting_fragment()}:{default_timeout_fragment()}",
+            create_default_session,
+        )
+        with nullcontext(session) as session:
             response = session.post(
                 "https://api.openai.com/v1/embeddings",
                 headers=headers,
@@ -849,6 +863,12 @@ def chat_with_openai(
             logger.debug("OpenAI: Posting request (streaming)")
 
             def stream_generator():
+                # ADR-222 (TASK-34418): deliberately NOT registry-backed --
+                # openai_post() transfers session ownership to the guarded
+                # recovery _Operation, which closes it at operation end and
+                # (recovered mode) sets session.trust_env = False. A shared
+                # session would be closed per call anyway and would leak
+                # that mutation into later calls. See ADR-222 §5.
                 session_context = create_default_session()
                 session = session_context.__enter__()
                 response = None
@@ -965,6 +985,9 @@ def chat_with_openai(
                 allowed_methods=["POST"],  # Changed from method_whitelist
             )
             adapter = HTTPAdapter(max_retries=retry_strategy)
+            # ADR-222 (TASK-34418): deliberately NOT registry-backed --
+            # openai_post() owns and closes the session via the guarded
+            # recovery _Operation; see ADR-222 §5.
             with create_default_session() as session:
                 session.mount("https://", adapter)
                 session.mount("http://", adapter)  # Though OpenAI is https
@@ -1922,8 +1945,25 @@ def chat_with_anthropic(
             allowed_methods=["POST"],
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
-        with create_default_session() as session:
+
+        def _anthropic_registry_session() -> requests.Session:
+            # ADR-222 (TASK-34418): factory for the per-thread registry;
+            # the mount must live here so a cached session keeps its
+            # adapter (and warm pool) across calls.
+            session = create_default_session()
             session.mount("https://", adapter)
+            return session
+
+        # ADR-222: nullcontext so leaving the block does NOT close the
+        # registry-owned session (retries below stay on one session).
+        with nullcontext(
+            get_session(
+                "anthropic:"
+                f"{api_url}:{retry_strategy.total}:{retry_strategy.backoff_factor}:"
+                f"{trust_setting_fragment()}",
+                _anthropic_registry_session,
+            )
+        ) as session:
             response = session.post(
                 api_url,
                 headers=headers,
@@ -2921,7 +2961,6 @@ def chat_with_cohere(
     logger.debug(f"Cohere request host: {safe_llm_url_host(COHERE_CHAT_URL)}")
 
     # --- Retry Mechanism ---
-    session = create_default_session()
     retry_count = int(cohere_config.get("api_retries", 3))
     retry_delay = float(
         cohere_config.get("api_retry_delay", 1.0)
@@ -2934,8 +2973,24 @@ def chat_with_cohere(
         allowed_methods=["POST"],  # Retry only for POST requests
     )
     adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
+
+    def _cohere_registry_session() -> requests.Session:
+        # ADR-222 (TASK-34418): factory for the per-thread registry; the
+        # mount lives here so a cached session keeps its adapter (and warm
+        # pool) across calls.
+        session = create_default_session()
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
+
+    # ADR-222: one registry session per thread; the effective retry budget
+    # and TLS trust are key fragments (settings changes get a new session).
+    session = get_session(
+        "cohere:"
+        f"{COHERE_CHAT_URL}:{retry_strategy.total}:{retry_strategy.backoff_factor}:"
+        f"{trust_setting_fragment()}",
+        _cohere_registry_session,
+    )
     # --- End Retry Mechanism ---
 
     try:
@@ -3761,16 +3816,33 @@ def chat_with_google(
 
     response = None  # Initialize response to None for the finally block
     try:
-        adapter = HTTPAdapter(
-            max_retries=Retry(
-                total=llm_retry_count(int(google_config.get("api_retries", 3))),
-                backoff_factor=float(google_config.get("api_retry_delay", 1)),
-                status_forcelist=[429, 500, 503],
-                allowed_methods=["POST"],
-            )
+        google_retry = Retry(
+            total=llm_retry_count(int(google_config.get("api_retries", 3))),
+            backoff_factor=float(google_config.get("api_retry_delay", 1)),
+            status_forcelist=[429, 500, 503],
+            allowed_methods=["POST"],
         )
-        with create_default_session() as session:
+        adapter = HTTPAdapter(max_retries=google_retry)
+
+        def _google_registry_session() -> requests.Session:
+            # ADR-222 (TASK-34418): factory for the per-thread registry;
+            # the mount lives here so a cached session keeps its adapter
+            # (and warm pool) across calls.
+            session = create_default_session()
             session.mount("https://", adapter)
+            return session
+
+        # ADR-222: nullcontext so leaving the block does NOT close the
+        # registry-owned session; retry budget + TLS trust are key
+        # fragments so settings changes get a new session.
+        with nullcontext(
+            get_session(
+                "google:"
+                f"{api_url}:{google_retry.total}:{google_retry.backoff_factor}:"
+                f"{trust_setting_fragment()}",
+                _google_registry_session,
+            )
+        ) as session:
             response = session.post(
                 api_url,
                 headers=headers,
@@ -4527,9 +4599,14 @@ def chat_with_huggingface(
                 f"host={safe_llm_url_host(api_url)}"
             )
             # The default session carries the app's response hooks (TASK-28229:
-            # rate-limit capture). Closing it after the POST is what
-            # requests.post does too; the open stream keeps its connection.
-            with create_default_session() as session:
+            # rate-limit capture). ADR-222 (TASK-34418): the session now
+            # comes from the per-thread registry and is not closed here; the
+            # open stream still keeps its checked-out connection either way.
+            # Per-request verify + explicit timeout mean no config fragment
+            # is needed in the key.
+            with nullcontext(
+                get_session(f"huggingface:{api_url}", create_default_session)
+            ) as session:
                 response = session.post(
                     api_url,
                     headers=headers,
@@ -4617,9 +4694,22 @@ def chat_with_huggingface(
                     # or method_whitelist for older versions.
                 )
             )
-            session = create_default_session()
-            session.mount("https://", adapter)
-            session.mount("http://", adapter)
+            def _hf_registry_session() -> requests.Session:
+                # ADR-222 (TASK-34418): factory for the per-thread registry;
+                # the mount lives here so a cached session keeps its adapter
+                # (and warm pool) across calls.
+                session = create_default_session()
+                session.mount("https://", adapter)
+                session.mount("http://", adapter)
+                return session
+
+            hf_retry = adapter.max_retries
+            session = get_session(
+                "huggingface:"
+                f"{api_url}:{hf_retry.total}:{hf_retry.backoff_factor}:"
+                f"{trust_setting_fragment()}",
+                _hf_registry_session,
+            )
 
             response = session.post(
                 api_url, headers=headers, json=payload, timeout=timeout_seconds
