@@ -160,20 +160,18 @@ async def test_restoring_the_deleted_note_releases_the_hold_and_the_root_is_heal
         await owner.shutdown()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "TASK-34000.49: the restore moved the note's version without a content "
-        "change, and the executor's update_note precondition compares the "
-        "binding's recorded version, so the next file-to-note update is refused "
-        "as stale_observation (needs_attention, nothing to review). Pre-existing; "
-        "found by this slice."
-    ),
-)
 async def test_a_disk_edit_after_a_restore_still_flows_into_the_note(
     vault: Vault,
 ) -> None:
-    """The folder must keep syncing both ways after a delete and restore."""
+    """The folder must keep syncing both ways after a delete and restore.
+
+    Pinned as a strict xfail by the TASK-32633 slice: the restore moved the
+    note's version without a content change and ``_validate_initial``
+    compared the binding's recorded version against the live note, so the
+    next file-to-note update was refused as ``stale_observation`` with nothing
+    to review. TASK-34000.49 dropped that version proxy; the fuller pins live
+    in ``Tests/Notes/test_notes_sync_version_only_move.py``.
+    """
 
     owner = build_owner(vault)
     await owner.start()

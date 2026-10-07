@@ -613,6 +613,18 @@ def _note_matches_baseline(
     REPRESENTED digest (:func:`_note_baseline_digest`); every earlier baseline
     -- including a migrated binding's placeholder profile -- kept the RAW one.
     A note matching either has not changed since the baseline was taken.
+
+    TASK-34000.49: this helper and the exact fresh re-observe
+    (``note != request.note`` in ``_validate_initial`` / ``_classify``) carry
+    the "note is still what we synced" invariant on their own.
+    ``binding.note_version`` is the note's version at the last baseline
+    commit; it is compared only against journal-recorded binding facts
+    (``reviewed.get("note_version")``, ``operation.expected_note_version``)
+    and is never a precondition against the live note. A soft-delete and
+    restore, a keywords-only save or a title-only edit all move the version
+    without touching the content, and the digest-only reconciler never
+    re-bases a binding for them -- comparing the version here wedged every
+    later ``update_note`` as ``stale_observation`` with nothing to review.
     """
 
     return note.content_digest == baseline_digest or (
@@ -1720,7 +1732,6 @@ class NotesSyncExecutor:
             or binding.note_id != note.note_id
             or binding.note_scope_id != note.note_scope_id
             or binding.normalized_relative_path != relative_path
-            or binding.note_version != note.version
             or not _note_matches_baseline(
                 note, binding.content_digest, binding.serialization
             )
@@ -2545,7 +2556,6 @@ class NotesSyncExecutor:
             or binding.normalized_relative_path
             != self._required_metadata_text(source_metadata, "file_relative_path")
             or binding.state is not NotesSyncBindingState.ACTIVE
-            or binding.note_version != note.version
             or binding.content_digest
             != self._required_metadata_text(original, "content_digest")
             or binding.serialization != self._decoded_binding_serialization(original)
@@ -3271,7 +3281,6 @@ class NotesSyncExecutor:
             and _note_matches_baseline(
                 note, binding.content_digest, binding.serialization
             )
-            and binding.note_version == note.version
         ):
             raise RuntimeError("binding_authority_changed")
 
@@ -4014,11 +4023,12 @@ class NotesSyncExecutor:
         if request.journal_kind is not None:
             pass
         elif request.action_kind is NotesSyncActionKind.UPDATE_NOTE:
-            if (
-                binding.note_version != request.note.version
-                or not _note_matches_baseline(
-                    request.note, binding.content_digest, binding.serialization
-                )
+            # TASK-34000.49: the content baseline alone decides. The binding's
+            # note_version is never compared against the live note here (see
+            # _note_matches_baseline); the fresh re-observe below still refuses
+            # a note that moved between observation and execution.
+            if not _note_matches_baseline(
+                request.note, binding.content_digest, binding.serialization
             ):
                 raise RuntimeError("stale_observation")
         elif (
@@ -5384,7 +5394,6 @@ class NotesSyncExecutor:
             and _note_matches_baseline(
                 note, binding.content_digest, binding.serialization
             )
-            and binding.note_version == note.version
         )
         if not (
             self._binding_matches_reviewed(binding, metadata)
@@ -5554,7 +5563,6 @@ class NotesSyncExecutor:
             binding.stable_identity_digest != self.stable_identity_digest(file)
             or binding.serialization != _file_serialization(file)
             or not digest_matches
-            or binding.note_version != note.version
         )
 
     def _require_owner_identity(
