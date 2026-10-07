@@ -1,9 +1,9 @@
 ---
 id: TASK-34432
 title: Small perf fixes batch B
-status: In Progress
+status: Done
 created_date: 2026-10-07 02:43
-updated_date: 2026-10-07 22:28
+updated_date: 2026-10-07 23:06
 ---
 
 ## Description
@@ -26,9 +26,8 @@ See Docs/superpowers/plans/2026-10-06-nonconsole-efficiency-remediation.md Task 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Three fixes: (20a) chatbooks registry cached keyed (path, size, mtime_ns), stat-first re-parse on change, own-write path (_save_registry under the per-path RLock) refreshes the cache from the persisted payload (no mtime-granularity reliance), record copies remain independent; (20b) the debug payload-summary loop extracted verbatim into _debug_dump_llm_payload_summary and gated on logging.getLogger().isEnabledFor(DEBUG) — argument evaluation genuinely suppressed at INFO (site uses stdlib module-level logging.debug delegating to the root logger; byte-identical golden at DEBUG); (20c) post-gen replacement dictionary cached by (path, size, mtime_ns), parser exceptions uncached, golden replacement output through the real pipeline. Two list_chatbooks calls -> one parse (spy); two responses -> one dict parse (spy). 9 new TDD tests; failure lists byte-identical to baseline. Files: Chatbooks/local_chatbook_service.py, Chat/Chat_Functions.py, Tests/Chatbooks/test_local_chatbook_service.py, Tests/Chat/test_chat_send_path_efficiency.py. Report: .superpowers/sdd/task-20-report.md
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

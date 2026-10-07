@@ -1,11 +1,11 @@
 ---
 id: TASK-34433
 title: Dead-code removal save_history tool widget branch legacy streaming entry
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:43
 dependencies:
 - TASK-34426
-updated_date: 2026-10-07 02:45
+updated_date: 2026-10-07 23:06
 ---
 
 ## Description
