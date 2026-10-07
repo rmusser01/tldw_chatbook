@@ -622,6 +622,10 @@ async def _read_manual_unread_ids(service: object, ids: Iterable[str]) -> frozen
     return await run_owned_db_call(database, read_captured_owner)
 
 
+class _WorkspaceAvailabilityObsolete(RuntimeError):
+    """A finite display read lost its original publisher; no result is current."""
+
+
 class ConsoleWorkspaceController:
     """Own Workspace lifecycle, resume, scope, and conversation browsing.
 
@@ -857,6 +861,8 @@ class ConsoleWorkspaceController:
         self._workspace_files_availability_generation = 0
         self._workspace_files_availability_refresh_in_flight = False
         self._workspace_files_availability_cached_at = 0.0
+        self._preparation_reads = set()
+        self._workspace_files_availability_task = None
 
         self._workspace_tree_search = SearchAttemptState()
         self._flat_conversation_search = SearchAttemptState()
@@ -6727,6 +6733,57 @@ class ConsoleWorkspaceController:
         finally:
             self._console_tick_builds = None
 
+    def _workspace_availability_runtime(self):
+        """Read only an existing owner; a display request never constructs one."""
+        from ...Chat.console_runtime import CONSOLE_RUNTIME_ATTR, ConsoleRuntime
+
+        app_values = getattr(self.app_instance, "__dict__", {})
+        value = app_values.get(CONSOLE_RUNTIME_ATTR)
+        if value is None:
+            value = getattr(self._screen, "__dict__", {}).get("_console_runtime_fallback")
+        return value if isinstance(value, ConsoleRuntime) else None
+
+    async def _read_owned_workspace_availability(self, registry, database, workspace_ids):
+        """Retain the original callback's exact finite DB scopes through cancel."""
+        from ...Chat.console_preparation_reads import run_preparation_read
+        from ...DB.base_db import operation_owned_connection
+        from ...Backup_Recovery.participants import _core_operation
+
+        app = self.app_instance
+        runtime = self._workspace_availability_runtime()
+        reader = self._read_workspace_files_availability
+        database_path = database.db_path
+
+        def current():
+            if (
+                self.app_instance is not app
+                or getattr(app, "workspace_registry_service", None) is not registry
+                or self._workspace_availability_runtime() is not runtime
+                or getattr(registry, "db", None) is not database
+                or database.db_path != database_path
+                or (runtime is not None and runtime._disposed)
+            ):
+                raise _WorkspaceAvailabilityObsolete(
+                    "workspace_availability_source_changed"
+                )
+
+        def read_captured_availability():
+            # Same complete repository interval and newly-created-handle custody
+            # as run_owned_db_call; its global/custom API remains unchanged.
+            with operation_owned_connection(database):
+                with _core_operation(database):
+                    current()
+                    return reader(registry, database, workspace_ids)
+
+        return await run_preparation_read(
+            read_captured_availability,
+            creator=self,
+            session_id=None,
+            reads=self._preparation_reads,
+            observers=() if runtime is None else (runtime._preparation_reads,),
+            require_current=current,
+        )
+
     def _request_workspace_files_availability_refresh(
         self, workspace_ids: Sequence[str]
     ) -> None:
@@ -6737,6 +6794,9 @@ class ConsoleWorkspaceController:
         status and can stall every Console interaction, so renderers only
         enqueue this best-effort cache refresh and fail closed until it lands.
         """
+        runtime = self._workspace_availability_runtime()
+        if runtime is not None and runtime._disposed:
+            return
         requested_ids = tuple(
             sorted(
                 {
@@ -6847,13 +6907,16 @@ class ConsoleWorkspaceController:
 
     async def _refresh_workspace_files_availability_snapshot(self) -> None:
         """Publish only the latest completed folder-availability generation."""
+        owner_task = asyncio.current_task()
+        self._workspace_files_availability_task = owner_task
         try:
             while self._screen_running_accessor():
+                runtime = self._workspace_availability_runtime()
+                if runtime is not None and runtime._disposed:
+                    return
                 generation = self._workspace_files_availability_generation
                 workspace_ids = self._workspace_files_availability_requested_ids
-                registry = getattr(
-                    self.app_instance, "workspace_registry_service", None
-                )
+                registry = getattr(self.app_instance, "workspace_registry_service", None)
                 database = getattr(registry, "db", None)
                 policy = (
                     _default_presentation_policy(registry)
@@ -6866,9 +6929,10 @@ class ConsoleWorkspaceController:
                     if not policy():
                         return
                 elif type(database) is WorkspaceDB and not database.is_memory_db:
-                    read_operation = run_owned_db_call(
-                        database,
-                        self._read_workspace_files_availability,
+                    (
+                        availability_snapshot,
+                        bindings_snapshot,
+                    ) = await self._read_owned_workspace_availability(
                         registry,
                         database,
                         workspace_ids,
@@ -6879,7 +6943,9 @@ class ConsoleWorkspaceController:
                         registry,
                         workspace_ids,
                     )
-                if policy is None:
+                if policy is None and (
+                    type(database) is not WorkspaceDB or database.is_memory_db
+                ):
                     read_task = asyncio.create_task(read_operation)
                     try:
                         availability_snapshot, bindings_snapshot = await asyncio.shield(
@@ -6898,6 +6964,11 @@ class ConsoleWorkspaceController:
                         if not read_task.cancelled():
                             read_task.exception()
                         raise
+                runtime = self._workspace_availability_runtime()
+                if not self._screen_running_accessor() or (
+                    runtime is not None and runtime._disposed
+                ):
+                    return
                 if (
                     (policy is None or policy())
                     and generation == self._workspace_files_availability_generation
@@ -6923,13 +6994,17 @@ class ConsoleWorkspaceController:
                     self._workspace_files_availability_refresh_in_flight = False
                     self._sync_console_workspace_context()
                     return
+        except _WorkspaceAvailabilityObsolete:
+            return
         except asyncio.CancelledError:
             raise
         finally:
             # A screen-owned worker is cancelled during teardown.  Do not
             # retain an in-flight claim that would make a resumed screen think
             # a non-existent worker still owns its snapshot.
-            self._workspace_files_availability_refresh_in_flight = False
+            if self._workspace_files_availability_task is owner_task:
+                self._workspace_files_availability_refresh_in_flight = False
+                self._workspace_files_availability_task = None
 
     def _build_console_workspace_context_state(self) -> ConsoleWorkspaceContextState:
         builds = getattr(self, "_console_tick_builds", None)

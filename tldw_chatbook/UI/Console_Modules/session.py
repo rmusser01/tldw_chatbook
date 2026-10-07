@@ -5682,6 +5682,16 @@ class ConsoleSessionController:
         self._consume_visible_agent_handoff(store, composer)
         visible_session_id = self._console_visible_draft_session_id
         if visible_session_id == active_session_id:
+            known_revision = getattr(
+                self._screen, "_console_visible_draft_revision", None
+            )
+            actual_revision = store.session_input_snapshot(
+                active_session_id
+            ).draft_revision
+            if known_revision is not None and known_revision != actual_revision:
+                project = getattr(self._screen, "_project_console_received_input", None)
+                if callable(project):
+                    project(active_session_id)
             self._restore_banked_raw_cli_stashes_fn(active_session_id, composer)
             if visible_session_id is not None:
                 try:
@@ -5716,6 +5726,8 @@ class ConsoleSessionController:
             self._console_undo_histories[visible_session_id] = (
                 composer.export_undo_history()
             )
+        observer = getattr(composer, "_authored_draft_observer", None)
+        composer._authored_draft_observer = None
         try:
             composer.load_draft(store.session_draft(active_session_id))
         except KeyError:
@@ -5736,6 +5748,22 @@ class ConsoleSessionController:
         ):
             self._on_draft_session_changed()
         self._console_visible_draft_session_id = active_session_id
+        composer._authored_draft_observer = observer
+        self._screen._console_visible_draft_revision = store.session_input_snapshot(
+            active_session_id
+        ).draft_revision
+        if typed_suffix:
+            store.set_session_draft(
+                active_session_id,
+                composer.draft_text(),
+                authored_token=(
+                    composer.capture_draft_snapshot().generation,
+                    composer.edit_serial,
+                ),
+            )
+            self._screen._console_visible_draft_revision = store.session_input_snapshot(
+                active_session_id
+            ).draft_revision
         self._visible_agent_handoff_draft = (
             (
                 session.id,

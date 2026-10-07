@@ -76,7 +76,8 @@ async def wait_flag(event):
 
 def main():
     from tldw_chatbook import config
-    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage, participants
+    from tldw_chatbook.Chat import console_preparation_reads as preparation
     from tldw_chatbook.DB import base_db, private_sqlite, Workspace_DB as database_module
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.UI.Console_Modules import workspace as workspace_module
@@ -91,6 +92,12 @@ def main():
         (workspace_module, controller_class, '_request_workspace_files_availability_refresh'),
         (workspace_module, controller_class, '_refresh_workspace_files_availability_snapshot'),
         (workspace_module, controller_class, '_read_workspace_files_availability'),
+        (workspace_module, controller_class, '_read_owned_workspace_availability'),
+        (workspace_module, controller_class, '_workspace_availability_runtime'),
+        (preparation, preparation, 'run_preparation_read'),
+        (preparation, preparation, '_retire'),
+        (preparation, preparation, '_observe_locked'),
+        (participants, participants, '_core_operation'),
         (workspace_module, controller_class, '_capture_workspace_files_availability_for_registry'),
         (registry_module, registry_class, '__init__'),
         (registry_module, registry_class, 'list_runtime_bindings'),
@@ -220,8 +227,14 @@ def main():
     list_function = registry_class.list_runtime_bindings
     delete_function = registry_class._delete_default_runtime_bindings
     reader_function = controller_class._read_workspace_files_availability
-    invoke_code = nested(generic.__code__, 'run_owned_db_call.<locals>.invoke')
-    assert invoke_code is not None
+    owned_function = controller_class._read_owned_workspace_availability
+    invoke_code = nested(owned_function.__code__,
+                         'ConsoleWorkspaceController._read_owned_workspace_availability.<locals>.read_captured_availability')
+    current_code = nested(owned_function.__code__,
+                          'ConsoleWorkspaceController._read_owned_workspace_availability.<locals>.current')
+    producer_code = nested(preparation.run_preparation_read.__code__,
+                           'run_preparation_read.<locals>.invoke')
+    assert invoke_code is not None and current_code is not None and producer_code is not None
     tree = ast.parse(sources[Path(registry_module.__file__).absolute()])
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef)
                and node.name == 'LocalWorkspaceRegistryService')
@@ -244,14 +257,26 @@ def main():
     post_retirement = None
 
     def selected_invoke(frame):
-        operation = frame.f_locals.get('operation')
-        args = frame.f_locals.get('args')
+        operation = frame.f_locals.get('reader')
+        current = frame.f_locals.get('current')
+        producer = frame.f_back
+        read = producer.f_locals.get('read') if producer is not None else None
         return (
-            frame.f_code is invoke_code and frame.f_locals.get('database') is database
+            frame.f_code is invoke_code and frame.f_globals is workspace_module.__dict__
+            and frame.f_locals.get('database') is database
+            and frame.f_locals.get('registry') is registry
+            and frame.f_locals.get('workspace_ids') == workspace_ids
             and type(operation) is MethodType and operation.__self__ is controller
-            and operation.__func__ is reader_function and type(args) is tuple
-            and len(args) == 3 and args[0] is registry and args[1] is database
-            and args[2] == workspace_ids
+            and operation.__func__ is reader_function
+            and frame.f_locals.get('_core_operation') is participants._core_operation
+            and frame.f_locals.get('operation_owned_connection') is base_db.operation_owned_connection
+            and type(current) is FunctionType and current.__code__ is current_code
+            and producer.f_code is producer_code
+            and producer.f_globals is preparation.__dict__
+            and type(read) is preparation.ConsolePreparationRead
+            and read.creator is controller and read.session_id is None
+            and type(read.callback) is FunctionType and read.callback.__code__ is invoke_code
+            and producer.f_locals.get('callback') is read.callback
         )
 
     def observe_start(code, offset):
@@ -261,7 +286,10 @@ def main():
         if len(invocations) >= 8:
             invalid.append('selected_invoke_capacity')
             return
-        invocations.append(dict(frame=frame, thread=threading.current_thread(), returned=False))
+        read = frame.f_back.f_locals['read']
+        assert read in controller._preparation_reads and not read.retired.done()
+        invocations.append(dict(frame=frame, thread=threading.current_thread(), returned=False,
+                                physical_read=read))
 
     def observe_line(code, line):
         frame = sys._getframe(1)
@@ -413,6 +441,7 @@ def main():
                             held[0]['connection'] in held[0]['participant'].connections and
                             held[0]['operation'] in storage._operations)
                 assert live and not closed(held[0]['connection']) and not finished.is_set()
+                assert not held[0]['invoke']['physical_read'].retired.done()
                 state = dict(cancel_number=number, cancel_requested=cancel_requested,
                              outer_done=original.done(), outer_cancelling=original.cancelling(),
                              in_flight=controller._workspace_files_availability_refresh_in_flight,
@@ -456,6 +485,10 @@ def main():
                 if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
                     invalid.append('known_producer_task_error:' + type(result).__name__)
             assert held and not invalid and all(item['returned'] for item in invocations)
+            assert all(item['physical_read'].retired.done()
+                       and not item['physical_read'].retired.cancelled()
+                       and item['physical_read'] not in controller._preparation_reads
+                       for item in invocations)
             connection = held[0]['connection']
             with storage._lock:
                 lease_live = held[0]['lease'] in storage._live_leases

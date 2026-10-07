@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Iterator
 from weakref import ReferenceType, ref
 
@@ -37,6 +37,7 @@ class ConsoleReceivedTurnClaim:
     _binding_revision: int = field(repr=False)
     _ephemeral: bool = field(repr=False)
     _sealed: bool = field(default=False, repr=False)
+    draft_revision: int | None = None
 
     @property
     def sealed(self) -> bool:
@@ -79,6 +80,7 @@ class ConsoleReceivedTurnAdmissionMixin:
         request_id: str,
         *,
         origin: ConsoleSubmissionOrigin = ConsoleSubmissionOrigin.MANUAL,
+        draft_revision: int | None = None,
     ) -> ConsoleReceivedTurnClaim | None:
         """Reserve one live session before moving complete-request inputs.
 
@@ -92,11 +94,19 @@ class ConsoleReceivedTurnAdmissionMixin:
         _validate_identifier(request_id, "received request ID")
         if type(origin) is not ConsoleSubmissionOrigin:
             raise TypeError("origin must be ConsoleSubmissionOrigin")
+        if draft_revision is not None and (
+            not isinstance(draft_revision, int)
+            or isinstance(draft_revision, bool)
+            or draft_revision < 0
+        ):
+            raise ValueError("draft_revision must be a non-negative integer")
         if not isinstance(session_id, str) or not session_id:
             return None
         with self._preparation_lock:
             session = self._sessions.get(session_id)
-            if session is None:
+            if session is None or (
+                draft_revision is not None and session.draft_revision != draft_revision
+            ):
                 return None
             current = self._preparations_by_session.get(session_id)
             if isinstance(current, ConsoleReceivedTurnClaim):
@@ -112,6 +122,7 @@ class ConsoleReceivedTurnAdmissionMixin:
                 request_id=request_id,
                 generation=self._received_turn_sequence,
                 origin=origin,
+                draft_revision=draft_revision,
                 _store_ref=ref(self),
                 _session_ref=ref(session),
                 _session_incarnation=session.incarnation_id,
@@ -175,6 +186,10 @@ class ConsoleReceivedTurnAdmissionMixin:
                 or preparation.preparation_id in self._durable_tombstones
             ):
                 return None
+            if claim.draft_revision is not None:
+                preparation = replace(
+                    preparation, input_draft_revision=claim.draft_revision
+                )
             self._preparations_by_session[claim.session_id] = preparation
             self._preparations_by_id[preparation.preparation_id] = preparation
             return preparation

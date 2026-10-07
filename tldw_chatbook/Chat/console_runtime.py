@@ -172,6 +172,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_received_turn import ConsoleReceivedTurnClaim
+    from tldw_chatbook.Chat.console_received_intent import ConsoleReceivedTurnIntent
     from tldw_chatbook.Chat.console_worktree_recovery import ConsoleWorktreeRecovery
 
 #: The app attribute this module's helpers read and write. Named once so a
@@ -416,6 +417,7 @@ class _ConsoleTurnCustodyRecord:
     archive_conversation_id: str | None = None
     store: ConsoleChatStore | None = field(default=None, repr=False)
     received_claim: ConsoleReceivedTurnClaim | None = field(default=None, repr=False)
+    received_intent: ConsoleReceivedTurnIntent | None = field(default=None, repr=False)
 
 
 class _ConsoleTurnRefusedError(RuntimeError):
@@ -2438,22 +2440,25 @@ class ConsoleRuntime:
 
     def _register_custody(
         self,
-        request: ConsoleTurnCustodyRequest,
+        request: ConsoleTurnCustodyRequest | None,
         attachments: tuple[Any, ...] = (),
         staged_evidence_revision: int | None = None,
         *,
         store: ConsoleChatStore | None = None,
         received_claim: ConsoleReceivedTurnClaim | None = None,
+        received_intent: Any = None,
     ) -> _ConsoleTurnCustodyRecord:
         """Retain one request before its task may begin running."""
-        if request.turn_id in self._turn_custody:
+        identity = request if request is not None else received_intent
+        if identity.turn_id in self._turn_custody:
             raise RuntimeError("Console turn is already in runtime custody.")
         record = _ConsoleTurnCustodyRecord(
-            turn_id=request.turn_id,
-            session_id=request.session_id,
+            turn_id=identity.turn_id,
+            session_id=identity.session_id,
             request=request,
             store=store,
             received_claim=received_claim,
+            received_intent=received_intent,
             inputs=_ConsoleTurnCustodyInputs(
                 attachments=attachments,
                 staged_evidence_revision=staged_evidence_revision,
@@ -2465,7 +2470,7 @@ class ConsoleRuntime:
                 (
                     item
                     for item in self._chat_store.sessions()
-                    if item.id == request.session_id
+                    if item.id == identity.session_id
                 ),
                 None,
             )
@@ -2507,6 +2512,7 @@ class ConsoleRuntime:
                     )
             record.store = None
             record.received_claim = None
+            record.received_intent = None
             if record.archive_conversation_id:
                 reservations = self._app._conversation_send_inflight
                 remaining = reservations.get(record.archive_conversation_id, 1) - 1
@@ -2630,6 +2636,119 @@ class ConsoleRuntime:
         )
         return record.turn_id
 
+    def accept_received_intent(self, intent: ConsoleReceivedTurnIntent) -> str:
+        """Reserve bounded authored input before any hook or configuration read."""
+        from .console_received_intent import ConsoleReceivedTurnIntent
+        from .console_received_dispatch import (
+            received_preparation_source,
+            run_received_intent,
+        )
+
+        if type(intent) is not ConsoleReceivedTurnIntent:
+            raise TypeError("intent must be ConsoleReceivedTurnIntent")
+        self._raise_if_disposed_or_session_fenced(intent.session_id)
+        store = self._chat_store
+        if store is None or self._chat_controller is None:
+            raise RuntimeError("Console chat owner is unavailable.")
+        if not store.session_inputs_are_current(intent.inputs):
+            raise RuntimeError("Console input changed; Send again.")
+        source = received_preparation_source(self)
+        claim = None
+        if intent.queue_revision is None:
+            claim = store.claim_received_turn(
+                intent.session_id,
+                intent.turn_id,
+                draft_revision=intent.inputs.draft_revision,
+            )
+            if claim is None:
+                raise RuntimeError(
+                    "Console session already has a received or prepared turn."
+                )
+        record = coroutine = None
+        try:
+            record = self._register_custody(
+                None,
+                store=store,
+                received_claim=claim,
+                received_intent=intent,
+            )
+            coroutine = run_received_intent(self, record, source)
+            record.task = self._create_custody_task(coroutine)
+            record.task.add_done_callback(
+                functools.partial(
+                    self._finish_custodied_turn,
+                    turn_id=record.turn_id,
+                    recover_before_acceptance=True,
+                    terminal_callback=None,
+                )
+            )
+        except BaseException:
+            if coroutine is not None:
+                coroutine.close()
+            if record is not None:
+                self._release_custody(record.turn_id)
+            elif claim is not None:
+                store.release_received_turn(claim)
+            raise
+        try:
+            self._note_received_admission_changed(store, intent.session_id)
+            view = self.view
+            project = getattr(view, "_project_console_received_preparing", None)
+            if callable(project):
+                project(intent.session_id)
+        except Exception as error:
+            logger.debug(
+                "Received turn projection failed (exception_type={})",
+                type(error).__name__,
+            )
+        return record.turn_id
+
+    def has_received_intents(
+        self, session_id: str | None, *, unpromoted_only: bool = False
+    ) -> bool:
+        """Project existing intake lifetime without another admission index."""
+        return any(
+            record.session_id == session_id
+            and record.received_intent is not None
+            and record.task is not None
+            and not record.task.done()
+            and (not unpromoted_only or record.request is None)
+            for record in self._turn_custody.values()
+        )
+
+    def cancel_received_intents(self, session_id: str | None = None) -> bool:
+        """Cancel existing intake custody, including a queue/review with no claim."""
+        cancelled = False
+        for record in tuple(self._turn_custody.values()):
+            if record.received_intent is None or (
+                session_id is not None and record.session_id != session_id
+            ):
+                continue
+            if record.received_claim is not None and record.store is not None:
+                record.store.seal_received_turn(record.received_claim)
+            if record.task is not None and not record.task.done():
+                record.task.cancel()
+                cancelled = True
+        controller = self._chat_controller
+        host = getattr(controller, "_interrupt_host", None)
+        cancel_reviews = getattr(host, "cancel_hook_reviews", None)
+        if callable(cancel_reviews):
+            cancel_reviews(session_id)
+        return cancelled
+
+    def _project_received_input(self, record) -> None:
+        """Project a domain CAS into only the original attached composer."""
+        intent = record.received_intent
+        view = self.view
+        if (
+            intent is None
+            or self._attached_generation != intent.view_attachment_generation
+        ):
+            return
+        project = getattr(view, "_project_console_received_input", None)
+        if callable(project):
+            project(record.session_id)
+
     async def _submit_queued_turn(
         self,
         prompt: Any,
@@ -2718,6 +2837,40 @@ class ConsoleRuntime:
 
         def mark_durable_acceptance() -> None:
             record.inputs.durable_accepted = True
+            intent = record.received_intent
+            if intent is not None:
+                try:
+                    store, claim = record.store, record.received_claim
+                    # Saved acceptance is a fact even when its original owner
+                    # changed or Stop won. Those outcomes retain the composer.
+                    if (
+                        self._disposed
+                        or record.session_id in self._admission_fenced_sessions
+                        or self._chat_store is not store
+                        or self._chat_controller is not controller
+                        or controller.store is not store
+                        or claim is None
+                        or not store.received_turn_matches_session(claim)
+                    ):
+                        return
+                    preparation_id = controller._active_submit_preparations.get(
+                        asyncio.current_task()
+                    )
+                    native_owner = controller._ordinary_native_commit_owner(preparation_id)
+                    if native_owner is not None and (
+                        native_owner.caller_cancelled
+                        or native_owner.explicit_stop
+                        or native_owner.commit_error is not None
+                        or not controller._ordinary_native_commit_current(native_owner)
+                    ):
+                        return
+                    if store.commit_session_input_draft(intent.inputs):
+                        self._project_received_input(record)
+                except Exception as error:
+                    logger.debug(
+                        "Received input projection failed (exception_type={})",
+                        type(error).__name__,
+                    )
 
         async def submit() -> Any:
             from .console_received_turn import bind_received_turn_claim
@@ -2970,9 +3123,15 @@ class ConsoleRuntime:
         if record is not None and record.task is not task:
             record = None
         accepted = False
+        received_reason = ""
         try:
             result = task.result()
-            accepted = bool(getattr(result, "accepted", False))
+            accepted = bool(getattr(result, "accepted", False)) or bool(
+                record is not None
+                and record.received_intent is not None
+                and record.received_intent.queue_revision is not None
+                and getattr(result, "applied", False)
+            )
         except asyncio.CancelledError:
             if (
                 record is not None
@@ -2986,6 +3145,18 @@ class ConsoleRuntime:
             ):
                 self._record_turn_recovery(record)
         except BaseException as exc:
+            if (
+                record is not None
+                and record.received_intent is not None
+                and not record.inputs.durable_accepted
+            ):
+                from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+                received_reason = (
+                    "Draft, chat or settings changed; Send again."
+                    if isinstance(exc, RecoveryRequired)
+                    else "Send could not be prepared; draft kept."
+                )
             if (
                 record is not None
                 and recover_before_acceptance
@@ -3008,7 +3179,38 @@ class ConsoleRuntime:
                 record is not None and record.inputs.durable_accepted
             )
             if record is not None:
+                received = record.received_intent is not None
+                source_store = record.store
+                session_id = record.session_id
+                source_current = False
+                if received and source_store is self._chat_store:
+                    claim = record.received_claim
+                    if claim is not None:
+                        source_current = source_store.received_turn_matches_session(
+                            claim
+                        )
+                    else:
+                        try:
+                            actual = source_store.session_input_snapshot(session_id)
+                            expected = record.received_intent.inputs
+                            source_current = (
+                                actual.incarnation_id == expected.incarnation_id
+                                and actual.conversation_binding_revision
+                                == expected.conversation_binding_revision
+                                and actual.ephemeral == expected.ephemeral
+                            )
+                        except KeyError:
+                            pass
                 self._release_custody(record.turn_id)
+                if received and source_current:
+                    project = getattr(
+                        self.view, "_project_console_received_finished", None
+                    )
+                    if callable(project):
+                        try:
+                            project(session_id, received_reason)
+                        except Exception:
+                            pass
             if terminal_callback is not None:
                 try:
                     terminal_callback(accepted)
@@ -3442,9 +3644,32 @@ class ConsoleRuntime:
         )
 
     async def _drain_hook_preparation_reads(self, session_id=None):
-        from .console_hook_preparation import drain_hook_preparation_reads
+        from .console_hook_preparation import (
+            drain_hook_preparation_reads,
+            hook_preparation_reads_for,
+        )
 
-        return await drain_hook_preparation_reads(self._preparation_reads, session_id)
+        # Availability's outer owner has only its cache-lane finally after the
+        # finite native body. App disposal must retain that exact finally too.
+        owners = {
+            read.task
+            for read in hook_preparation_reads_for(self._preparation_reads, session_id)
+            if session_id is None
+            and getattr(read.creator, "_workspace_files_availability_task", None)
+            is read.task
+        }
+        cancelled = await drain_hook_preparation_reads(self._preparation_reads, session_id)
+        for owner in owners:
+            while not owner.done():
+                try:
+                    await asyncio.shield(owner)
+                except asyncio.CancelledError:
+                    if not owner.done():
+                        cancelled = True
+                except Exception:
+                    break
+            self._consume_task_outcome(owner)
+        return cancelled
 
     def _hooks_v2_context_key(self, session_id: str):
         """Capture host workspace/binding authority, without prompt bodies."""
@@ -5344,6 +5569,12 @@ class ConsoleRuntime:
         view = self.view
         if view is None:
             return
+        workspace = getattr(view, "_workspace", None)
+        reads = getattr(workspace, "_preparation_reads", None)
+        if reads is not None:
+            from .console_preparation_reads import observe_preparation_reads
+
+            observe_preparation_reads(reads, self._preparation_reads)
         provider = getattr(view, "console_view_hooks", None)
         hooks = provider() if callable(provider) else {}
         for slot in CONSOLE_VIEW_HOOK_SLOTS:

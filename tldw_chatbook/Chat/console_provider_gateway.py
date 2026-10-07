@@ -20,6 +20,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
+from functools import partial
 from time import monotonic
 from types import GeneratorType, MappingProxyType
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, TypeVar, cast
@@ -4357,12 +4358,27 @@ class ConsoleProviderGateway:
             )
 
     async def resolve_for_send(
-        self, selection: ConsoleProviderSelection
+        self,
+        selection: ConsoleProviderSelection,
+        *,
+        _run_native: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     ) -> ConsoleProviderResolution:
         """Resolve readiness and attach the credential-free destination."""
         from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
 
-        resolution = await self._resolve_for_send_unclassified(selection)
+        resolver = self._resolve_for_send_unclassified
+        original, code = _CONSOLE_PROVIDER_RESOLUTION_NATIVE_METHODS[1][1:]
+        if (
+            getattr(resolver, "__self__", None) is not self
+            or getattr(resolver, "__func__", None) is not original
+            or original.__code__ is not code
+        ):
+            _run_native = None
+        resolution = (
+            await resolver(selection)
+            if _run_native is None
+            else await resolver(selection, _run_native=_run_native)
+        )
         if resolution.ready:
             target = ContextWindowTarget(
                 selection.provider,
@@ -4409,7 +4425,10 @@ class ConsoleProviderGateway:
             logger.debug("Context-window metadata refresh failed", exc_info=True)
 
     async def _resolve_for_send_unclassified(
-        self, selection: ConsoleProviderSelection
+        self,
+        selection: ConsoleProviderSelection,
+        *,
+        _run_native: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     ) -> ConsoleProviderResolution:
         """Resolve the provider selected by Console before sending.
 
@@ -4751,11 +4770,16 @@ class ConsoleProviderGateway:
                 execution_key=identity.execution_key,
             )
 
-        readiness = await asyncio.to_thread(
+        readiness_call = partial(
             get_provider_readiness,
             identity.readiness_key,
             app_config,
             environ=self._environ,
+        )
+        readiness = (
+            await asyncio.to_thread(readiness_call)
+            if _run_native is None
+            else await _run_native(readiness_call)
         )
         if not readiness.ready:
             return self._blocked_resolution(
@@ -7839,4 +7863,17 @@ _CONTEXT_CAPACITY_DISPLAY_ORIGINALS = (
             ),
         )
     ),
+)
+
+
+# Defining-module provenance for the private finite-read scheduling adapter.
+_CONSOLE_PROVIDER_RESOLUTION_NATIVE_METHODS = tuple(
+    (name, method, method.__code__)
+    for name, method in (
+        ("resolve_for_send", ConsoleProviderGateway.resolve_for_send),
+        (
+            "_resolve_for_send_unclassified",
+            ConsoleProviderGateway._resolve_for_send_unclassified,
+        ),
+    )
 )

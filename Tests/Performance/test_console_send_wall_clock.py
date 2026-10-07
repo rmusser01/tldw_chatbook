@@ -145,6 +145,14 @@ async def test_clean_console_send_wall_clock(monkeypatch, tmp_path, request):
                 return turn_id
 
             monkeypatch.setattr(runtime, "accept_turn", accept)
+            original_receive = runtime.accept_received_intent
+
+            def receive(intent):
+                turn_id = original_receive(intent)
+                tasks.append(runtime._turn_custody[turn_id].task)
+                return turn_id
+
+            monkeypatch.setattr(runtime, "accept_received_intent", receive)
             with observed.phase_scope("idle"):
                 await asyncio.sleep(3)
             # Direct ticks time only the actual callback, avoiding Pilot cost.

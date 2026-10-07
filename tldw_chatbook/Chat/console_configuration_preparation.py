@@ -522,11 +522,9 @@ async def capture_console_turn_configuration_owned(
             tools["session_ephemeral"] = bool(session.ephemeral)
             if "agent_run_budget_maximum" not in tools:
                 tools["agent_run_budget_maximum"] = console_run_budget()
-            rag = (
-                {"top_k": library_rag_profile_top_k()}
-                if selection.rag_defaults is None
-                else selection.rag_defaults
-            )
+            rag = {} if selection.rag_defaults is None else dict(selection.rag_defaults)
+            if "top_k" not in rag:
+                rag["top_k"] = library_rag_profile_top_k()
             current()
             result = capture_console_turn_configuration(
                 app,

@@ -32,6 +32,10 @@ from uuid import uuid4
 
 from loguru import logger
 
+from tldw_chatbook.Chat.console_received_intent import (
+    ConsoleReceivedIntentInputMixin,
+    _replace_session_draft_locked,
+)
 from tldw_chatbook.Chat.console_received_turn import (
     ConsoleReceivedTurnAdmissionMixin,
     ConsoleReceivedTurnClaim,
@@ -1470,11 +1474,16 @@ class ConsoleChatSession:
     #: serialize it.
     ephemeral_endpoint_policy: ConsoleEphemeralEndpointPolicy | None = None
     draft: str = ""
+    draft_revision: int = 0
+    _draft_authored_token: tuple[int, int] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
     #: Session-lifetime evidence that the composer has held user-authored text.
     #: Clearing the draft does not make that work safe to overwrite.
     has_user_work: bool = False
     updated_at: str = field(default_factory=_utc_now_iso)
     pending_attachments: list[PendingAttachment] = field(default_factory=list)
+    attachment_revision: int = 0
     one_shot_prefill: str | None = None
     #: Live opaque identity for the one-shot slot. Every write, including
     #: clearing or re-arming the same text, advances this token.
@@ -1657,7 +1666,9 @@ class _ConsoleEphemeralPromotionReservation:
     canvas_settled: bool = False
 
 
-class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
+class ConsoleChatStore(
+    ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentInputMixin
+):
     """Manage native Console sessions and messages before UI integration."""
 
     DURABLE_TOMBSTONE_CAP = 128
@@ -3104,7 +3115,7 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
                     elif "version" in handoff:
                         session.agent_handoff_state = "review_required"
             if handoff_draft is not None:
-                session.draft = handoff_draft
+                _replace_session_draft_locked(session, handoff_draft)
             if self.active_session_id == session.id:
                 # An ACTIVATING restore (the post-restart open path) activates
                 # inside `create_session` -- before the pending clear above was
@@ -5878,8 +5889,11 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
             self._preparations_by_id[updated.preparation_id] = updated
             session = self._sessions.get(session_id)
             if session is not None:
-                if current.origin == "manual":
-                    session.draft = current.executed_draft
+                if current.origin == "manual" and (
+                    current.input_draft_revision is None
+                    or current.input_draft_revision == session.draft_revision
+                ):
+                    _replace_session_draft_locked(session, current.executed_draft)
                 if (
                     current.pre_send_conversation_id is None
                     or session.persisted_conversation_id
@@ -10109,30 +10123,30 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
         """Return the in-memory composer draft for a native Console session."""
         return self._session_or_raise(session_id).draft
 
-    def set_session_draft(self, session_id: str, draft: str) -> ConsoleChatSession:
-        """Replace a composer draft, persisting only pending version-2 handoffs."""
-        session = self._session_or_raise(session_id)
-        changed = session.draft != draft
-        session.draft = draft
-        if draft:
-            session.has_user_work = True
-        pending = self._agent_handoff_writes.get(session_id)
-        if changed and pending is not None and session.agent_handoff_state == "pending":
-            pending["revision"] += 1
-            pending["draft"] = draft
-            session.agent_handoff_revision = pending["revision"]
-            if self._agent_handoff_changed is not None:
-                self._agent_handoff_changed(session_id, "draft_changed")
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                self._write_agent_handoff_revision(pending)
-            else:
-                if pending["task"] is None or pending["task"].done():
-                    pending["task"] = loop.create_task(
-                        self._drain_agent_handoff_writer(pending)
-                    )
-        return session
+    def set_session_draft(
+        self,
+        session_id: str,
+        draft: str,
+        *,
+        authored_token: tuple[int, int] | None = None,
+    ) -> ConsoleChatSession:
+        """Mirror draft edits synchronously and retain pending handoff writes.
+
+        Args:
+            session_id: The live composer session.
+            draft: Current authored text.
+            authored_token: Optional composer generation/edit serial identity.
+
+        Returns:
+            The updated live session.
+
+        Raises:
+            KeyError: If the session is unknown.
+            ValueError: If an authored token is malformed.
+        """
+        return self._set_session_draft_inputs(
+            session_id, draft, authored_token=authored_token
+        )
 
     def _write_agent_handoff_revision(self, pending: dict[str, Any]) -> bool:
         revision, draft = pending["revision"], pending["draft"]
@@ -10181,7 +10195,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
             return
         self._agent_handoff_writes.pop(session_id, None)
         if pending["revision"] == revision:
-            session.draft = ""
+            with self._preparation_lock:
+                _replace_session_draft_locked(session, "")
         session.agent_handoff_state = "consumed"
         session.agent_handoff_revision = revision + 1
         # Typing after the accepted receipt belongs to the ordinary composer.
@@ -10734,18 +10749,20 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
         self, session_id: str, prefill: str | None
     ) -> ConsoleChatSession:
         """Arm (or clear, with ``None``) the one-shot response prefill."""
-        session = self._session_or_raise(session_id)
-        session.one_shot_prefill = prefill
-        session.one_shot_prefill_revision += 1
-        return session
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            session.one_shot_prefill = prefill
+            session.one_shot_prefill_revision += 1
+            return session
 
     def session_one_shot_prefill_snapshot(
         self, session_id: str
     ) -> tuple[str | None, int]:
         """Return the current one-shot value and its opaque live revision."""
 
-        session = self._session_or_raise(session_id)
-        return session.one_shot_prefill, session.one_shot_prefill_revision
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            return session.one_shot_prefill, session.one_shot_prefill_revision
 
     def consume_session_one_shot_prefill(
         self, session_id: str, expected_revision: int
@@ -10754,12 +10771,13 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
 
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
-        session = self._session_or_raise(session_id)
-        if session.one_shot_prefill_revision != expected_revision:
-            return False
-        session.one_shot_prefill = None
-        session.one_shot_prefill_revision += 1
-        return True
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            if session.one_shot_prefill_revision != expected_revision:
+                return False
+            session.one_shot_prefill = None
+            session.one_shot_prefill_revision += 1
+            return True
 
     def pending_attachments(self, session_id: str) -> list[PendingAttachment]:
         """Return the staged attachments for a session (stage order).
@@ -10773,7 +10791,8 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
         Raises:
             KeyError: If the session is unknown.
         """
-        return list(self._session_or_raise(session_id).pending_attachments)
+        with self._preparation_lock:
+            return list(self._session_or_raise(session_id).pending_attachments)
 
     def transfer_pending_attachments_to_turn(
         self,
@@ -10789,13 +10808,19 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
         if not turn_id:
             raise ValueError("turn_id must be non-empty")
         expected = tuple(expected_attachment_ids)
-        pending = self._session_or_raise(session_id).pending_attachments
-        actual = tuple(item.attachment_id for item in pending[: len(expected)])
-        if actual != expected:
-            raise RuntimeError("Pending attachments changed before runtime custody.")
-        transferred = tuple(pending[: len(expected)])
-        del pending[: len(expected)]
-        return transferred
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            pending = session.pending_attachments
+            actual = tuple(item.attachment_id for item in pending[: len(expected)])
+            if actual != expected:
+                raise RuntimeError(
+                    "Pending attachments changed before runtime custody."
+                )
+            transferred = tuple(pending[: len(expected)])
+            if transferred:
+                del pending[: len(expected)]
+                session.attachment_revision += 1
+            return transferred
 
     def restore_transferred_pending_attachments(
         self,
@@ -10803,8 +10828,12 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
         attachments: Sequence[PendingAttachment],
     ) -> None:
         """Prepend exact transferred objects without replacing newer staging."""
-        pending = self._session_or_raise(session_id).pending_attachments
-        pending[:0] = list(attachments)
+        restored = list(attachments)
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            if restored:
+                session.pending_attachments[:0] = restored
+                session.attachment_revision += 1
 
     def add_pending_attachment(
         self, session_id: str, attachment: PendingAttachment
@@ -10821,11 +10850,13 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
         Raises:
             KeyError: If the session is unknown.
         """
-        session = self._session_or_raise(session_id)
-        if len(session.pending_attachments) >= MAX_PENDING_ATTACHMENTS:
-            return False
-        session.pending_attachments.append(attachment)
-        return True
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            if len(session.pending_attachments) >= MAX_PENDING_ATTACHMENTS:
+                return False
+            session.pending_attachments.append(attachment)
+            session.attachment_revision += 1
+            return True
 
     def clear_pending_attachments(self, session_id: str) -> ConsoleChatSession:
         """Remove all staged attachments from a session.
@@ -10839,9 +10870,12 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
         Raises:
             KeyError: If the session is unknown.
         """
-        session = self._session_or_raise(session_id)
-        session.pending_attachments.clear()
-        return session
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            if session.pending_attachments:
+                session.pending_attachments.clear()
+                session.attachment_revision += 1
+            return session
 
     def consume_pending_attachment(self, session_id: str, attachment_id: str) -> bool:
         """Remove only the currently staged attachment with the exact identity.
@@ -10857,12 +10891,14 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
         Raises:
             KeyError: If the session is unknown.
         """
-        pending = self._session_or_raise(session_id).pending_attachments
-        for index, attachment in enumerate(pending):
-            if attachment.attachment_id == attachment_id:
-                del pending[index]
-                return True
-        return False
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            for index, attachment in enumerate(session.pending_attachments):
+                if attachment.attachment_id == attachment_id:
+                    del session.pending_attachments[index]
+                    session.attachment_revision += 1
+                    return True
+            return False
 
     def pending_attachment(self, session_id: str) -> PendingAttachment | None:
         """Return the first staged attachment (legacy single accessor).
@@ -10876,8 +10912,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
         Raises:
             KeyError: If the session is unknown.
         """
-        pending = self._session_or_raise(session_id).pending_attachments
-        return pending[0] if pending else None
+        with self._preparation_lock:
+            pending = self._session_or_raise(session_id).pending_attachments
+            return pending[0] if pending else None
 
     def set_pending_attachment(
         self,
@@ -10896,9 +10933,11 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin):
         Raises:
             KeyError: If the session is unknown.
         """
-        session = self._session_or_raise(session_id)
-        session.pending_attachments[:] = [attachment]
-        return session
+        with self._preparation_lock:
+            session = self._session_or_raise(session_id)
+            session.pending_attachments[:] = [attachment]
+            session.attachment_revision += 1
+            return session
 
     def clear_pending_attachment(self, session_id: str) -> ConsoleChatSession:
         """Alias of clear_pending_attachments (legacy name).

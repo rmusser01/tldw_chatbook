@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Callable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 
 from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicyCandidate,
@@ -56,7 +56,11 @@ class ConsoleLibraryPolicyCoordinator:
         self._holders.pop(session_id, None)
 
     async def _run_repository_call(
-        self, callback: Callable[..., T], /, *args: Any
+        self,
+        callback: Callable[..., T],
+        /,
+        *args: Any,
+        _run_native: Callable[[Callable[[], T]], Awaitable[T]] | None = None,
     ) -> T:
         """Run repository work without splitting an in-memory database.
 
@@ -77,7 +81,11 @@ class ConsoleLibraryPolicyCoordinator:
             with operation_owned_connection(db):
                 return callback(*args)
 
-        return await asyncio.to_thread(owned_call)
+        return (
+            await asyncio.to_thread(owned_call)
+            if _run_native is None
+            else await _run_native(owned_call)
+        )
 
     async def load(
         self, session_id: str, conversation_id: str
@@ -120,18 +128,35 @@ class ConsoleLibraryPolicyCoordinator:
         return result
 
     async def capture_for_execution(
-        self, session_id: str
+        self,
+        session_id: str,
+        *,
+        _run_native: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     ) -> ConsoleLibraryPolicySnapshot:
         """Perform the execution-time durable read and return frozen authority."""
         registered = self._require_session(session_id)
         if registered.conversation_id is None:
             return registered.holder.snapshot
-        result = await self._read_current_binding(session_id)
+        reader = self._read_current_binding
+        original, code = _CONSOLE_LIBRARY_EXECUTION_NATIVE_METHODS[1][1:]
+        if (
+            getattr(reader, "__self__", None) is not self
+            or getattr(reader, "__func__", None) is not original
+            or original.__code__ is not code
+        ):
+            _run_native = None
+        result = (
+            await reader(session_id)
+            if _run_native is None
+            else await reader(session_id, _run_native=_run_native)
+        )
         return result.snapshot
 
     async def _read_current_binding(
         self,
         session_id: str,
+        *,
+        _run_native: Callable[[Callable[[], Any]], Awaitable[Any]] | None = None,
     ) -> ConsoleLibraryPolicyReadResult:
         for _attempt in range(2):
             registered = self._require_session(session_id)
@@ -139,8 +164,19 @@ class ConsoleLibraryPolicyCoordinator:
             generation = registered.generation
             if conversation_id is None:
                 return normalize_policy_read(None)
-            result = await self._run_repository_call(
-                self.repository.read, conversation_id
+            reader = self._run_repository_call
+            original, code = _CONSOLE_LIBRARY_EXECUTION_NATIVE_METHODS[2][1:]
+            stock_reader = (
+                getattr(reader, "__self__", None) is self
+                and getattr(reader, "__func__", None) is original
+                and original.__code__ is code
+            )
+            result = (
+                await reader(self.repository.read, conversation_id)
+                if _run_native is None or not stock_reader
+                else await reader(
+                    self.repository.read, conversation_id, _run_native=_run_native
+                )
             )
             current = self._holders.get(session_id)
             if (
@@ -171,3 +207,23 @@ class ConsoleLibraryPolicyCoordinator:
             return self._holders[session_id]
         except KeyError:
             raise KeyError(f"Unknown Console session: {session_id}") from None
+
+
+_CONSOLE_LIBRARY_EXECUTION_CAPTURE = (
+    ConsoleLibraryPolicyCoordinator.capture_for_execution,
+    ConsoleLibraryPolicyCoordinator.capture_for_execution.__code__,
+)
+_CONSOLE_LIBRARY_EXECUTION_NATIVE_METHODS = tuple(
+    (name, method, method.__code__)
+    for name, method in (
+        (
+            "capture_for_execution",
+            ConsoleLibraryPolicyCoordinator.capture_for_execution,
+        ),
+        (
+            "_read_current_binding",
+            ConsoleLibraryPolicyCoordinator._read_current_binding,
+        ),
+        ("_run_repository_call", ConsoleLibraryPolicyCoordinator._run_repository_call),
+    )
+)

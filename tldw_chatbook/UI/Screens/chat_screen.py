@@ -1529,6 +1529,14 @@ def _console_library_rag_source_scope(screen: Any) -> tuple[str, ...]:
 CONSOLE_LIBRARY_RAG_DRAFT_PREFILL_MAX_LENGTH = 200
 
 
+def _stock_received_rag_sources(screen):
+    return _console_library_rag_source_scope(screen)
+
+
+def _stock_received_rag_top_k():
+    return _console_library_rag_profile_top_k()
+
+
 def _console_library_rag_profile_top_k() -> int:
     """Return the ACTIVE RAG profile's result count (TASK-406/TASK-3170).
 
@@ -7473,8 +7481,8 @@ class ChatScreen(BaseAppScreen):
         # documentation rather than a constraint.
         build_console_controllers(
             self,
-            rag_source_types_accessor=(lambda: _console_library_rag_source_scope(self)),
-            rag_top_k_accessor=lambda: _console_library_rag_profile_top_k(),
+            rag_source_types_accessor=partial(_stock_received_rag_sources, self),
+            rag_top_k_accessor=_stock_received_rag_top_k,
             read_trace_recovery_dispatch=lambda: dispatch_trace_call_recovery_action,
             read_trace_recovery_state=lambda: trace_call_recovery_state,
             resume_screen_is_torn_down=lambda: _console_screen_is_torn_down(self),
@@ -16597,6 +16605,7 @@ class ChatScreen(BaseAppScreen):
                     pass
             # TASK-17651: the composer is a dense-form field, not a framed
             # region — CSS owns its left-edge marker and focus treatment.
+            composer._authored_draft_observer = self._publish_console_authored_draft
             yield composer
             # In "below" mode the chips close the shell as a bottom status
             # row: the composer cluster (staged evidence, prompt queue,
@@ -19195,6 +19204,67 @@ class ChatScreen(BaseAppScreen):
         except QueryError:
             pass
 
+    def _publish_console_authored_draft(
+        self, draft: str, token: tuple[int, int]
+    ) -> None:
+        """Publish authored identity synchronously, before queued widget messages."""
+        session_id = self._console_visible_draft_session_id
+        store = self._console_chat_store
+        if session_id is None or store is None:
+            return
+        try:
+            store.set_session_draft(session_id, draft, authored_token=token)
+            self._console_visible_draft_revision = store.session_input_snapshot(
+                session_id
+            ).draft_revision
+        except KeyError:
+            pass
+
+    def _project_console_received_preparing(self, session_id: str) -> None:
+        """Paint the resident admission without running configuration selectors."""
+        if self._console_visible_draft_session_id != session_id:
+            return
+        composer = self._console_composer_or_none()
+        if composer is not None:
+            composer._authored_draft_observer = self._publish_console_authored_draft
+            composer._send_label = "Preparing..."
+            composer._send_blocked = True
+            try:
+                button = composer.query_one("#console-send-message", Button)
+                button.label = "Preparing..."
+                button.disabled = True
+            except QueryError:
+                pass
+        self._start_console_transcript_sync_timer()
+
+    def _project_console_received_finished(
+        self, session_id: str, reason: str = ""
+    ) -> None:
+        """Retire Preparing and show only bounded owner-selected refusal copy."""
+        if self._console_visible_draft_session_id != session_id:
+            return
+        self._sync_console_control_bar()
+        if reason:
+            self.app_instance.notify(reason, severity="warning")
+
+    def _project_console_received_input(self, session_id: str) -> None:
+        """Render the domain's accepted CAS without authoring another edit."""
+        if self._console_visible_draft_session_id != session_id:
+            return
+        composer = self._console_composer_or_none()
+        store = self._console_chat_store
+        if composer is None or store is None:
+            return
+        observer = composer._authored_draft_observer
+        composer._authored_draft_observer = None
+        try:
+            composer.load_draft(store.session_draft(session_id))
+            self._console_visible_draft_revision = store.session_input_snapshot(
+                session_id
+            ).draft_revision
+        finally:
+            composer._authored_draft_observer = observer
+
     async def _dispatch_console_draft_send(
         self,
         draft: str,
@@ -19215,6 +19285,31 @@ class ChatScreen(BaseAppScreen):
             if stash is None:
                 composer = self._console_composer_or_none()
                 stash = composer.capture_draft_for_send() if composer else None
+            from ..Console_Modules.wiring import receive_console_visible_intent
+
+            try:
+                received = receive_console_visible_intent(
+                    self, draft, session_id, stash
+                )
+            except (RuntimeError, ValueError):
+                self.app_instance.notify(
+                    "Draft or chat changed; Send again.", severity="warning"
+                )
+                return False
+            if received is not None:
+                if not received:
+                    return False
+                from ..Console_Modules.hooks import in_worker_task
+
+                diagnostic.outcome = "awaiting_review"
+                if in_worker_task():
+                    task = self._console_runtime()._turn_custody[received].task
+                    outcome = await asyncio.shield(task)
+                    return bool(
+                        getattr(outcome, "accepted", False)
+                        or getattr(outcome, "applied", False)
+                    )
+                return False
             result = await self._hooks.dispatch(
                 draft,
                 session_id=session_id,
@@ -25986,3 +26081,22 @@ def _sync_console_pending_display(screen):
         # This optional display fragment never replaces the original full
         # body or its errors. Malformed optional facts safely keep the retry.
         return False
+
+
+_CONSOLE_RECEIVED_SCREEN_SELECTORS = tuple(
+    (name, getattr(ChatScreen, name), getattr(ChatScreen, name).__code__)
+    for name in (
+        "_build_console_provider_selection",
+        "_build_console_provider_selection_uncached",
+        "_build_console_provider_selection_from_settings",
+        "_provider_readiness_app_config",
+        "_console_send_blocked_reason",
+        "_console_setup_blocked_reason",
+    )
+)
+_CONSOLE_RECEIVED_RAG_READERS = (
+    (_stock_received_rag_sources, _stock_received_rag_sources.__code__),
+    (_stock_received_rag_top_k, _stock_received_rag_top_k.__code__),
+    (_console_library_rag_source_scope, _console_library_rag_source_scope.__code__),
+    (_console_library_rag_profile_top_k, _console_library_rag_profile_top_k.__code__),
+)

@@ -3767,8 +3767,33 @@ class ConsoleChatController:
 
         record_send_stage("provider_resolution")
         try:
+            from .console_received_dispatch import (
+                preparation_native_runner,
+                stock_native_methods,
+            )
+            from .console_provider_gateway import (
+                _CONSOLE_PROVIDER_RESOLUTION_NATIVE_METHODS,
+            )
+
+            gateway = self.provider_gateway
+            kwargs = {}
+            if stock_native_methods(
+                gateway, _CONSOLE_PROVIDER_RESOLUTION_NATIVE_METHODS
+            ):
+                with self._active_submit_tasks_lock:
+                    session_id = self._active_submit_tasks.get(asyncio.current_task())
+
+                def current_gateway():
+                    if self.provider_gateway is not gateway or not stock_native_methods(
+                        gateway, _CONSOLE_PROVIDER_RESOLUTION_NATIVE_METHODS
+                    ):
+                        raise RuntimeError("Console provider owner changed.")
+
+                kwargs["_run_native"] = preparation_native_runner(
+                    self, session_id, require_current=current_gateway
+                )
             return await asyncio.wait_for(
-                self.provider_gateway.resolve_for_send(selection),
+                gateway.resolve_for_send(selection, **kwargs),
                 timeout=self.PROVIDER_VALIDATION_TIMEOUT_SECONDS,
             )
         except TimeoutError as exc:
@@ -6471,6 +6496,7 @@ class ConsoleChatController:
         text: str,
         expected_revision: int,
         configuration: ConsoleTurnConfigurationSnapshot | None = None,
+        _before_admission: Callable[[], None] | None = None,
     ) -> PromptQueueMutationResult:
         """Attempt atomic text-only admission behind queue-owned work."""
 
@@ -6501,6 +6527,8 @@ class ConsoleChatController:
                 self.prompt_queue_registry.snapshot(session_id),
                 detail="Queue configuration belongs to a different session.",
             )
+        if _before_admission is not None:
+            _before_admission()
         one_shot_prefill, one_shot_prefill_revision = (
             self.store.session_one_shot_prefill_snapshot(session_id)
         )
@@ -10461,7 +10489,11 @@ class ConsoleChatController:
                             git_runner=run_git_reference,
                         )
 
-                    expansion = await asyncio.to_thread(_expand)
+                    from .console_received_dispatch import preparation_native_runner
+
+                    expansion = await preparation_native_runner(self, session.id)(
+                        _expand
+                    )
                     executed_draft_text = expansion.expanded_text
                     reference_records = tuple(expansion.records)
             except Exception:  # noqa: BLE001 - references must never block a send
@@ -11000,7 +11032,8 @@ class ConsoleChatController:
                 next_trace_privacy_revision=next_trace_privacy_revision,
             )
             preparation = pause_temporary_capture_on(preparation)
-            if self._begin_submit_preparation(active_task, preparation) is None:
+            begun = self._begin_submit_preparation(active_task, preparation)
+            if begun is None:
                 if echoed_user is not None:
                     self._mark_transient_echo_blocked(echoed_user.id)
                 return ConsoleSubmitResult(
@@ -11008,6 +11041,7 @@ class ConsoleChatController:
                     False,
                     "Another send is still preparing for this conversation.",
                 )
+            preparation = begun
             if chat_start_authorization is not None:
                 chat_start_authorization.preparation_id = preparation.preparation_id
             if origin is ConsoleSubmissionOrigin.QUEUED and (
@@ -13278,8 +13312,18 @@ class ConsoleChatController:
                     continuation.prepared and continuation.prepared.preserve_composer
                 )
                 and live_session.draft == continuation.clean_draft
+                and (
+                    getattr(
+                        self._preparation_by_id(preparation_id),
+                        "input_draft_revision",
+                        None,
+                    )
+                    is None
+                    or live_session.draft_revision
+                    == self._preparation_by_id(preparation_id).input_draft_revision
+                )
             ):
-                live_session.draft = ""
+                self.store.set_session_draft(session_id, "")
 
         def queue_acknowledgement() -> None:
             self._ordinary_outcome_ids[session_id] = f"turn:{preparation_id}"
@@ -18902,9 +18946,17 @@ class ConsoleChatController:
     @property
     def is_stop_allowed(self) -> bool:
         """Project ordinary generation or exact pending Stop ownership for this tab."""
-        return self.run_state.is_stop_allowed or (
-            self.prompt_queue_coordinator.pending_continuation_stop_available(
-                self.store.active_session_id or ""
+        runtime = getattr(self, "_hooks_v2_runtime", None)
+        return (
+            bool(
+                runtime is not None
+                and runtime.has_received_intents(self.store.active_session_id)
+            )
+            or self.run_state.is_stop_allowed
+            or (
+                self.prompt_queue_coordinator.pending_continuation_stop_available(
+                    self.store.active_session_id or ""
+                )
             )
         )
 
@@ -18929,7 +18981,13 @@ class ConsoleChatController:
             True when the viewed session had an active run and it was
             stopped; False (a no-op) when it did not.
         """
+        runtime = getattr(self, "_hooks_v2_runtime", None)
         session_id = self.store.active_session_id or ""
+        received_cancelled = bool(
+            runtime is not None
+            and session_id
+            and runtime.cancel_received_intents(session_id)
+        )
         hook_read_tasks = self._hook_preparation_read_tasks(session_id)
         received = self.store.received_turn_for_session(session_id)
         if received is not None and self.store.seal_received_turn(received):
@@ -18978,13 +19036,13 @@ class ConsoleChatController:
             return True
         repair_session = self._active_citation_repair_sessions.get(session_id)
         if repair_session is not None and repair_session.selection_committed:
-            return review_stopped
+            return review_stopped or received_cancelled
         if repair_session is not None and repair_session.phase in {
             "checking",
             "repair_streaming",
         }:
             if self._active_assistant_message_ids.get(session_id) is None:
-                return review_stopped
+                return review_stopped or received_cancelled
             repair_session.cancel_reason = "user" if record_user_stop else "shutdown"
             self.prompt_queue_coordinator.pause_for_stop(session_id)
             self._signal_stop(session_id=session_id)
@@ -18996,14 +19054,14 @@ class ConsoleChatController:
         if self.run_state.status is not ConsoleRunStatus.STREAMING:
             assistant_message_id = self._active_streaming_assistant_message_id()
             if assistant_message_id is None:
-                return review_stopped
+                return review_stopped or received_cancelled
         else:
             assistant_message_id = (
                 self._active_assistant_message_ids.get(session_id)
                 or self._active_streaming_assistant_message_id()
             )
         if assistant_message_id is None:
-            return review_stopped
+            return review_stopped or received_cancelled
         self.prompt_queue_coordinator.pause_for_stop(session_id)
         self._signal_stop(session_id=session_id)
         if assistant_message_id in self._pending_dispatch_transitions:
@@ -22337,6 +22395,7 @@ class ConsoleChatController:
         session_id: str,
         *,
         context_provider: Callable[..., ConsoleTurnConfigurationSnapshot] | None = None,
+        selection: Any = None,
     ) -> ConsoleTurnConfigurationSnapshot:
         """Select loop-owned values once, then capture eligible native domain inputs."""
         import sys
@@ -22344,9 +22403,14 @@ class ConsoleChatController:
         from tldw_chatbook import config
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
-        original_provider = self._turn_context_provider
+        provided_selection = selection
+        original_provider = (
+            self._turn_context_provider if provided_selection is None else None
+        )
         provider = (
-            context_provider if context_provider is not None else original_provider
+            (context_provider if context_provider is not None else original_provider)
+            if provided_selection is None
+            else None
         )
 
         def validate(context):
@@ -22381,6 +22445,8 @@ class ConsoleChatController:
                 and provider.__func__ is _CONSOLE_TURN_CONTEXT_BUILDER
             )
         if provider is not None and not mounted:
+            if provided_selection is not None:
+                raise RecoveryRequired("console_snapshot_owner_changed")
             return synchronous_capture()
 
         from .console_configuration_preparation import (
@@ -22396,7 +22462,10 @@ class ConsoleChatController:
         app, store = self.app, self.store
         service = getattr(app, "unified_mcp_service", None)
         if not standard_console_sources(service):
-            return synchronous_capture()
+            if provided_selection is None:
+                return synchronous_capture()
+            if service is not None:
+                raise RecoveryRequired("console_snapshot_owner_changed")
         eligible_sources = standard_console_configuration_sources(
             app, store, self, session_id=session_id
         )
@@ -22419,7 +22488,13 @@ class ConsoleChatController:
         scratch_adapter = None
         scratch_runtime_accessor = None
         selector = None
-        if mounted:
+        if provided_selection is not None:
+            if not eligible_sources:
+                raise RecoveryRequired("console_snapshot_owner_changed")
+            if not isinstance(provided_selection, ConsoleTurnCaptureSelection):
+                raise TypeError("selection must be ConsoleTurnCaptureSelection")
+            selection = provided_selection
+        elif mounted:
             selector = owner._build_console_turn_capture_selection
             function, code = _CONSOLE_TURN_CAPTURE_SELECTOR
             stock_selector = (
@@ -22508,7 +22583,10 @@ class ConsoleChatController:
                 self.app is not app
                 or self.store is not store
                 or current is not session
-                or self._turn_context_provider is not original_provider
+                or (
+                    provided_selection is None
+                    and self._turn_context_provider is not original_provider
+                )
                 or self._scratch_spaces is not scratch
                 or self._provider_config is not provider_config
                 or getattr(app, "app_config", None) is not app_config
@@ -22737,7 +22815,38 @@ class ConsoleChatController:
             )
         else:
             try:
-                policy = await coordinator.capture_for_execution(session_id)
+                from .console_received_dispatch import (
+                    preparation_native_runner,
+                    stock_native_methods,
+                )
+                from .console_library_policy_coordinator import (
+                    _CONSOLE_LIBRARY_EXECUTION_NATIVE_METHODS,
+                )
+
+                kwargs = {}
+                if stock_native_methods(
+                    coordinator, _CONSOLE_LIBRARY_EXECUTION_NATIVE_METHODS
+                ):
+                    store = self.store
+                    repository = coordinator.repository
+                    database = getattr(repository, "db", None)
+
+                    def current_library():
+                        if (
+                            not stock_native_methods(
+                                coordinator, _CONSOLE_LIBRARY_EXECUTION_NATIVE_METHODS
+                            )
+                            or self.store is not store
+                            or store.library_policy_coordinator is not coordinator
+                            or coordinator.repository is not repository
+                            or getattr(repository, "db", None) is not database
+                        ):
+                            raise RuntimeError("Console Library owner changed.")
+
+                    kwargs["_run_native"] = preparation_native_runner(
+                        self, session_id, require_current=current_library
+                    )
+                policy = await coordinator.capture_for_execution(session_id, **kwargs)
             except Exception:  # noqa: BLE001 - authority always fails closed
                 policy = ConsoleLibraryPolicySnapshot(
                     auto_retrieve=ConsoleAutoRetrieve.NEVER,
@@ -30755,4 +30864,10 @@ _CONSOLE_TOOL_COMPOSITION_CHECKER = (
     _stock_console_tool_composition_current,
     _stock_console_tool_composition_current.__code__,
     _stock_console_tool_composition_current.__globals__,
+)
+
+
+_CONSOLE_RECEIVED_QUEUE_METHOD = (
+    ConsoleChatController.queue_prompt,
+    ConsoleChatController.queue_prompt.__code__,
 )

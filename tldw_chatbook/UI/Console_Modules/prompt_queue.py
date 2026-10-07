@@ -603,6 +603,7 @@ class ConsolePromptQueueUIController:
         self._note_follow_intent = note_follow_intent
         self._launch_chain = launch_chain
         self._launch_chain_async = launch_chain_async
+        self._async_launch_sync_source = launch_chain
         self._commit_captured_draft = commit_captured_draft
         self._commit_queued_draft = commit_queued_draft
         self._turn_recovery_ids = turn_recovery_ids
@@ -796,6 +797,16 @@ class ConsolePromptQueueUIController:
                 failed_turn.preview if failed_turn is not None else None
             ),
         )
+        runtime = getattr(controller, "_hooks_v2_runtime", None)
+        if runtime is not None and runtime.has_received_intents(
+            session_id, unpromoted_only=True
+        ):
+            return replace(
+                presentation,
+                send_label="Preparing...",
+                send_enabled=False,
+                send_tooltip="Preparing this turn; draft kept until acceptance.",
+            )
         if controller._chat_start.is_prepared(session_id):
             return replace(
                 presentation,
@@ -1215,7 +1226,10 @@ class ConsolePromptQueueUIController:
                 return self._refuse_queue_mutation(queued, session_id, stash)
         self._note_follow_intent()
         try:
-            if self._launch_chain_async is not None:
+            if (
+                self._launch_chain_async is not None
+                and self._launch_chain is self._async_launch_sync_source
+            ):
                 await self._launch_chain_async(draft, session_id, stash, controller)
             else:
                 self._launch_chain(draft, session_id)
