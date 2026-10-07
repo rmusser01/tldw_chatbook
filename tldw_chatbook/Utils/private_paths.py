@@ -699,6 +699,10 @@ def _native_close(fd):
     visual, state = _visual_native_scope()
     if state is not None:
         return visual.native_close(fd)
+    raw = sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants")
+    state = raw._owned_descriptor_retirement_state(fd) if raw is not None else None
+    if state is not None:
+        return raw._close_descriptor(state, fd)
     operation = _runtime_operation()
     if operation is None:
         os.close(fd)

@@ -58,6 +58,17 @@ class SendSpanObserver(CompositionCounter):
             self.monitor.events.PY_YIELD,
         )
         self.mask = self.events[0] | self.events[1]
+        self.preparation_detail = os.environ.get("TLDW_SEND_PREPARATION_DETAIL") == "1"
+        self.hook_current_code = self.raw_check_code = self.receive_code = None
+        self.sensitive_bundle_code = None
+        self.source_prefix = Path(__file__).resolve().parents[2].as_posix() + "/"
+        self.hook_entries = []
+        self.hook_active = {}
+        self.raw_active = {}
+        self.detail_overflow = self.raw_unmatched = self.hook_unmatched = 0
+        self.ancestor_overflow = 0
+        self.receive_returns = []
+        self.sensitive_bundle_returns = []
         targets = (
             (
                 AgentService,
@@ -132,6 +143,35 @@ class SendSpanObserver(CompositionCounter):
             ),
             (ConsoleProviderGateway, ("prepare_chat_request", "stream_chat")),
         )
+        if self.preparation_detail:
+            from tldw_chatbook import config
+            from tldw_chatbook.Agents import hook_permissions
+            from tldw_chatbook.Backup_Recovery import (
+                config_participants,
+                raw_participants,
+            )
+            from tldw_chatbook.UI.Console_Modules import wiring
+            from tldw_chatbook.Utils import sensitive_paths
+
+            targets += (
+                (hook_permissions.HookPermissions, ("_current",)),
+                (hook_permissions, ("default_hook_permissions_path",)),
+                (config, ("get_user_data_dir",)),
+                (config_participants, ("verified_user_data_directory",)),
+                (raw_participants, ("_check",)),
+                (wiring, ("receive_console_visible_intent",)),
+                (sensitive_paths, ("_stock_sensitive_config_bundle",)),
+            )
+            self.hook_current_code = inspect.unwrap(
+                hook_permissions.HookPermissions._current
+            ).__code__
+            self.raw_check_code = inspect.unwrap(raw_participants._check).__code__
+            self.receive_code = inspect.unwrap(
+                wiring.receive_console_visible_intent
+            ).__code__
+            self.sensitive_bundle_code = inspect.unwrap(
+                sensitive_paths._stock_sensitive_config_bundle
+            ).__code__
         effect_names = {
             "publish_identity_and_settings",
             "publish_owners",
@@ -222,15 +262,128 @@ class SendSpanObserver(CompositionCounter):
         )
         return index
 
+    def _hook_ancestor(self, frame):
+        for _ in range(64):
+            frame = frame.f_back
+            if frame is None:
+                return None
+            if frame.f_code is self.hook_current_code:
+                return id(frame), threading.get_ident()
+        self.ancestor_overflow += 1
+        return None
+
+    def _raw_caller(self, frame):
+        caller = frame.f_back
+        if caller is None:
+            return "<unknown>", "<unknown>", 0
+        filename = caller.f_code.co_filename.replace("\\", "/")
+        filename = (
+            filename[len(self.source_prefix) :]
+            if filename.casefold().startswith(self.source_prefix.casefold())
+            else "<outside-repository>"
+        )
+        return filename, caller.f_code.co_qualname, caller.f_lineno
+
     def on_start(self, code, offset):
+        if code is self.raw_check_code:
+            frame = sys._getframe(1)
+            assert frame.f_code is code
+            current = self._hook_ancestor(frame)
+            entry = self.hook_active.get(current)
+            if entry is None:
+                return
+            key = id(frame), threading.get_ident()
+            if key in self.raw_active:
+                self.raw_unmatched += 1
+                self.raw_active.pop(key)
+            if len(self.raw_active) >= 128:
+                self.detail_overflow += 1
+                return
+            summary = self.hook_entries[entry]
+            caller = self._raw_caller(frame)
+            callers = summary["raw_callers"]
+            if caller not in callers:
+                if len(callers) >= 64:
+                    summary["raw_caller_overflow"] += 1
+                    caller = None
+                else:
+                    callers[caller] = dict(started=0, returned=0, inclusive_seconds=0.0)
+            if caller is not None:
+                callers[caller]["started"] += 1
+            self.raw_active[key] = entry, time.perf_counter(), caller
+            summary["raw_started"] += 1
+            return
         index = self._record("start", code)
+        if code is self.hook_current_code and index is not None:
+            frame = sys._getframe(1)
+            assert frame.f_code is code
+            key = id(frame), threading.get_ident()
+            if key in self.hook_active:
+                self.hook_unmatched += 1
+                self.hook_active.pop(key)
+            if len(self.hook_active) >= 128 or len(self.hook_entries) >= 512:
+                self.detail_overflow += 1
+            else:
+                self.hook_active[key] = len(self.hook_entries)
+                self.hook_entries.append(
+                    dict(
+                        frame_id=key[0],
+                        thread_id=key[1],
+                        start_event_index=index,
+                        return_event_index=None,
+                        raw_started=0,
+                        raw_returned=0,
+                        raw_inclusive_seconds=0.0,
+                        raw_callers={},
+                        raw_caller_overflow=0,
+                    )
+                )
         if code is self.admission_code and index is not None:
             frame = sys._getframe(1)
             assert frame.f_code is code
             self.admission_starts[id(frame)] = index
 
     def on_return(self, code, offset, value):
-        self._record("return", code)
+        if code is self.raw_check_code:
+            frame = sys._getframe(1)
+            assert frame.f_code is code
+            current = self._hook_ancestor(frame)
+            started = self.raw_active.pop((id(frame), threading.get_ident()), None)
+            if started is not None:
+                entry, timestamp, caller = started
+                if self.hook_active.get(current) == entry:
+                    elapsed = time.perf_counter() - timestamp
+                    summary = self.hook_entries[entry]
+                    summary["raw_returned"] += 1
+                    summary["raw_inclusive_seconds"] += elapsed
+                    if caller is not None:
+                        summary["raw_callers"][caller]["returned"] += 1
+                        summary["raw_callers"][caller]["inclusive_seconds"] += elapsed
+                else:
+                    self.raw_unmatched += 1
+            return
+        index = self._record("return", code)
+        if code is self.hook_current_code:
+            frame = sys._getframe(1)
+            assert frame.f_code is code
+            entry = self.hook_active.pop((id(frame), threading.get_ident()), None)
+            if entry is not None:
+                self.hook_entries[entry]["return_event_index"] = index
+        elif code is self.receive_code and index is not None:
+            outcome = (
+                "none"
+                if value is None
+                else ("accepted" if len(value) else "refused")
+                if type(value) is str  # noqa: E721 -- avoid custom result callbacks.
+                else "unexpected"
+            )
+            self.receive_returns.append(
+                (index, self._line(code, offset), offset, outcome)
+            )
+        elif code is self.sensitive_bundle_code and index is not None:
+            self.sensitive_bundle_returns.append(
+                (index, self._line(code, offset), offset, value is None)
+            )
         if code is self.admission_code:
             frame = sys._getframe(1)
             assert frame.f_code is code
@@ -248,7 +401,7 @@ class SendSpanObserver(CompositionCounter):
             )
 
     def receipt(self):
-        return dict(
+        result = dict(
             diagnostic_only=True,
             timing_acceptance=False,
             original_bindings_and_sources_current=self.bindings_current(),
@@ -271,6 +424,57 @@ class SendSpanObserver(CompositionCounter):
             unfinished_admission_entries=len(self.admission_starts),
             no_frame_receiver_argument_or_return_objects_retained=True,
         )
+        if self.preparation_detail:
+            result["preparation_detail"] = dict(
+                enabled=True,
+                raw_checks_scoped_to_original_hook_current=True,
+                raw_checks_are_aggregated_not_event_rows=True,
+                hook_entries=[
+                    dict(
+                        entry,
+                        raw_callers=[
+                            dict(
+                                source_file=filename,
+                                caller_qualname=qualname,
+                                source_line=line,
+                                **counts,
+                            )
+                            for (filename, qualname, line), counts in entry[
+                                "raw_callers"
+                            ].items()
+                        ],
+                    )
+                    for entry in self.hook_entries
+                ],
+                raw_caller_limit_per_entry=64,
+                raw_caller_source_files="repository-relative; external paths omitted",
+                hook_entry_limit=512,
+                active_slot_limit=128,
+                ancestor_walk_limit=64,
+                overflow=self.detail_overflow,
+                ancestor_overflow=self.ancestor_overflow,
+                unmatched_raw_starts=self.raw_unmatched,
+                unmatched_hook_starts=self.hook_unmatched,
+                unfinished_raw_checks=len(self.raw_active),
+                unfinished_hook_entries=len(self.hook_active),
+                raw_elapsed_is_inclusive_not_additive=True,
+                exception_unwinds_are_unfinished_not_completed=True,
+                sensitive_bundle_returns=self.sensitive_bundle_returns,
+                sensitive_bundle_return_fields=(
+                    "event_index",
+                    "source_line",
+                    "bytecode_offset",
+                    "returned_none",
+                ),
+                receive_returns=self.receive_returns,
+                receive_return_fields=(
+                    "event_index",
+                    "source_line",
+                    "bytecode_offset",
+                    "outcome",
+                ),
+            )
+        return result
 
 
 @pytest.fixture(autouse=True)

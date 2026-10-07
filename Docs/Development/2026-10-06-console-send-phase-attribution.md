@@ -274,3 +274,136 @@ monitor. Its contained Job, native identity and pipes/monitor retired normally;
 private profile was removed, with zero identity overflow or lookup races.
 No full sweep was run. Work continues on the remaining measured preparation
 and the observed early-receipt fallback under ADR-222.
+
+### Narrow hook and receipt attribution
+
+The optional detail mode of the same observer adds six original function
+boundaries, bounded raw-check aggregates and source-line receipts. Its first
+run (`hook-receipt-detail-1`) completed 13.382601 / 8.823169 / 7.930431-second
+Sends with three linked complete traces and no checkpoints. All three calls
+returned a received-intent ID at wiring.py line 561. The prior Send-3 legacy
+fallback did not recur; a stale composer display flag remains a hypothesis,
+so neither the production gate nor the fixture was changed.
+
+Five HookPermissions._current entries occur before each adapter call. Ordinary
+warm entries observe 254 original raw._check returns, taking about .27 seconds
+in a .52-.60-second inclusive operation. One warm entry records376 checks.
+Default hook-path resolution costs about .04 seconds in ordinary warm entries;
+removing just that one resolver cannot account for the whole delay. Run-log
+setup also calls the original user-directory resolver repeatedly, about
+.036-.056 seconds per ordinary warm call. The existing sensitive-input bundle
+runs original path accessors inside one operation but still recomputes their
+shared directory; its original native test intentionally counts20 calls on a
+cold/rebuilt input bundle. This identifies actual repeated preparation beyond
+merely sharing a native scope.
+
+Source manifests/bindings and the monitor remained current. Both event and
+aggregate capacity overflow, unmatched starts and unfinished entries were zero.
+The64-frame ancestry bound was reached190 times: raw counts are scoped observed
+counts, not a complete native-work census. Raw elapsed is inclusive and must
+not be added to parent spans. The87.891-second contained run retired normally,
+removed its private profile and had zero process-history overflow/lookup races.
+A bounded caller-location refinement will distinguish repeated discovery checks
+from actual native effect validation before selecting the next change.
+
+### Original-caller refinement
+
+The 67-target opt-in diagnostic (`hook-caller-detail-1`) completed all three
+saved Sends in **10.554331 / 9.535932 / 8.773512 seconds** to adapter entry,
+with three replies, linked complete traces and no remaining checkpoints.
+All received-intent calls returned an accepted ID. Both observed stock
+sensitive-input bundles were selected, confirming that the repeated directory
+work occurs inside the existing shared operation rather than an unsupported
+fallback.
+
+Of 254 checks in an ordinary warm HookPermissions entry, 223 came from
+`raw._runtime_operation`: 71 in the config route and 152 in the hook route.
+The remaining 31 came from the existing scope/effect boundaries. These are
+immediate-caller counts; they do not distinguish open from close callers of
+runtime discovery. The targeted retirement regression supplies that ancestry
+count before implementation. The first cold entry recorded 356 checks; one
+later entry recorded 376. No new whole-Send observer is needed for this slice.
+
+The 74.735-second run retained identical source manifests and current original
+bindings. The monitor retired with no event/caller overflow, unmatched starts
+or unfinished entries. The existing 64-frame ancestry limit was reached 190
+times, so aggregate counts remain scoped observations. The contained Job and
+native identity retired without force, pipes/monitor retired and the private
+profile was removed; process-history overflow and lookup races were zero.
+Send heartbeat maxima were 949 / 159 / 183 ms and typing max was 769 ms.
+Neither the one-second Send target nor universal immediate feedback is met.
+
+### Owned handle retirement and shared-directory regressions
+
+The original owned-close regression (`raw-retirement-count-red`) closed 21
+tracked descriptors, including 15 during the original parent walk. Each close
+reentered `raw._check` (21 total). Before its intended zero-check assertion,
+the test verified actual EBADF, descriptor removal and operation retirement.
+The 5.703-second contained run retired normally. An earlier fixture-only
+attempt expected the base directory instead of its configured user subfolder;
+that setup failure is retained as `raw-retirement-red`, not counted as RED.
+
+The next directory-preparation regression (`sensitive-directory-red`) ran the
+existing actual-source sensitive-input fixture before selection changes. All
+13 expected database paths and the file/trust/container deny lists matched;
+the new count assertion failed at **20 directory resolutions versus 4**.
+This baseline, including the owned-close candidate, recorded 2,603 native opens
+and 81 raw checks. The 8.750-second contained run retired normally. The target
+retains initial/final original directory validation plus both independent RAG
+readers, and shares only directory data within the existing finite operation.
+
+### Owned retirement integrated result
+
+Task 34563.17 adds a private exact-current-operation/actor/tracked-integer-fd
+lookup, then delegates close and uncertain-outcome retention to the original
+close owner. Voice and visual precedence and ordinary untracked fallback stay
+unchanged. Source/parent/permission validation remains on every new effect.
+
+All nine new ownership controls and 11 existing source/native controls passed
+in `raw-retirement-integration`. The real count changed from 21 closes / 21
+checks to **21 closes / 0 checks**, including 15 parent-walk closes. Tests prove
+EBADF before descriptor-number reuse, ownership-map retirement, cleanup after
+source revocation, refusal of subsequent effects, closed-admission drain,
+foreign/inactive actor refusal, copied-token nonparticipation, ordinary
+untracked close and retained uncertainty without retry.
+
+That batch also retained eight failures plus one teardown error in older
+fixtures, so it is not reported as an all-green batch. Four raw uncertainty
+children failed to report readiness (then the fixture's failure-handler wait
+timed out), two alias cases required unavailable Windows symlink privilege or
+assignment to read-only WindowsOS.supports_dir_fd, and two loose-voice cases
+failed before their target operation because their HOME-only setup inherited
+USERPROFILE and reused the enclosing profile. A separate exact-HEAD comparison
+of five representative cases reproduced the raw-before, both alias and both
+voice failures. The other three raw variants remain unqualified, not claimed
+as individually baseline-reproduced. Candidate source bytes were restored
+exactly in finally. No fixture deadlines or product guards were relaxed.
+
+The existing native Windows junction-refusal and pinned-directory-publication
+controls both passed separately (`raw-retirement-windows`, 3.828 seconds).
+Four passing original config uncertainty cases cover close-before/after at
+lock/final-parent boundaries. Voice-specific failed-fixture evidence remains a
+limitation; unrelated fixture repair is outside this preparation change.
+The 98.641-second integration Job retired normally without force; its bounded
+PID history recorded 67 overflow events. The separate baseline and Windows
+runs also retired normally with their private profiles removed.
+
+The final unchanged 67-target Send probe (`raw-retirement-spans-1`) returned
+**9.197429 / 5.789172 / 4.819775 seconds** versus the immediately preceding
+10.554331 / 9.535932 / 8.773512-second samples. A typical hook read now makes
+**150** raw checks instead of **254**; ordinary late warm entries take about
+.30-.32 seconds. All replies and three linked traces completed; no dispatch
+checkpoints remained. This single sequential comparison is an observed
+improvement, not a distribution or the subsecond acceptance result.
+
+All source manifests and original bindings remained current. No event/caller
+capacity overflow, unfinished entry or unmatched start was observed; the
+bounded ancestry walk missed 122 times. The 58.843-second contained run retired
+its Job, native identity, pipes and monitor without force and removed its
+private profile, with no PID-history overflow or lookup race. Send heartbeat
+maxima were 258 / 131 / 134 ms and typing max was 571 ms; responsiveness remains
+above the target. Scoped review found no new lint issues; raw_participants.py
+has unchanged whole-file formatting debt and private_paths.py retains its
+existing E721 at line 132. The new helper and test file pass formatting.
+Existing ADR-222 and ADR-126 govern the change. Work continues under task
+34563.18 on the measured repeated directory inputs; no full suite was run.

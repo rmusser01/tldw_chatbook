@@ -501,6 +501,29 @@ def _check(operation, path=None, *, writing=False):
     return state
 
 
+def _owned_descriptor_retirement_state(fd: int) -> _State | None:
+    """Find exact creator custody for cleanup without re-admitting an effect."""
+    operation = getattr(_local, "operation", None)
+    if operation is None:
+        return None
+    with storage._lock:
+        if type(operation) is not _RawOperation or operation not in _states:
+            return None
+        state = _states[operation]
+        if (
+            not state.active
+            or operation not in storage._raw_operations
+            or state.pid != os.getpid()
+            or state.thread is not threading.current_thread()
+            or state.task is not storage._task_identity()
+        ):
+            raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+        # Source/path revocation must not prevent exact owned cleanup. An
+        # uncertain close still follows _close_descriptor's retained outcome.
+        descriptor_type = type(fd)
+        return state if descriptor_type is int and fd in state.descriptors else None
+
+
 def _close_descriptor(state, fd):
     state.descriptors.add(fd)
     if state.uncertain:
