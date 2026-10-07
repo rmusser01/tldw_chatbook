@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-07 16:45'
+updated_date: '2026-10-07 16:56'
 labels: []
 dependencies: []
 ---
@@ -381,6 +381,8 @@ The three original-native maintenance lifetime controls fail before the scoped f
 The coordinating implementation owner confirmed injected controllers without a Hook host remain supported under ADR-222. Therefore restore the original parking fixture unchanged and repair the new disposal accesses instead: guard an absent optional host/callback, and capture the exact retirement reader once so replacement cannot redirect an in-flight drain. Keep real original-host cancellation and retirement controls. The ten observed original parking failures establish this compatibility regression; no fake Hook host or weakened native guard will be introduced.
 
 Integration build and platform follow-up: regenerate remote_worker_bundle.py only through its unchanged deterministic builder after CI run37650785035 reproduces stale source output. Add the new trace-maintenance lifetime and original parking/Hook-host controls as a separate targeted step in the existing three-platform workflow, preserving all existing budgets. ADR required:no; ADR path:N/A; routine generated-artifact synchronization and regression coverage.
+
+Original Hook-review fixture cleanup: CI37650785035 reproduces two unchanged failure-cleanup assertions. The helper uses bare modal.dismiss(None), which now removes only a disposable presentation while its resident review request stays live and remounts. Route only that helper cleanup through the existing request_safe_cancel action, as the real Not now/Escape actions do, retaining every assertion, delay, callback fallback and production remount behavior. Re-run both original cleanup failures and original declined-send routes. ADR required:no; existing ADR-222 applies; test-helper alignment with the existing resident review contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -519,6 +521,8 @@ Saved the user-authorized current-dev checkpoint as 85962f52d4. Integrated the r
 Trace-maintenance cancellation now retains each of its four finite database callbacks through actual completion before cancellation propagates. Three original native controls fail before this fix and pass after it. The combined29 targeted lifetime, unchanged parking and real Hook-review controls pass96.69s with stable source, normal process retirement and zero forced cleanup/identity overflow/races. Optional Hook hosts remain supported; the original parking fixture is unchanged. The original pending-close journey still fails after the repair and remains open; no whole-performance acceptance is claimed.
 
 The exact original pending-close follow-up now reports only its pending-round arming assertion; the preceding active Characters-database cleanup error did not recur. This is one observed secondary cleanup result, not acceptance of the still-failing primary journey. The official remote-worker builder regenerated two source-provenance constants and its checksum; a fresh --check passes. Runtime and new proof have zero Ruff findings, the proof formatting passes, and the original parking test is byte-identical to HEAD. The existing Windows/macOS/Linux workflow now includes the29 focused maintenance/Hook controls with unchanged budgets; remote execution qualification awaits that CI.
+
+The two original failed-open Hook-review cleanup cases pass23.19s after routing only _release through the real safe-cancel action. Runtime-backed review dismissal intentionally releases a disposable view, so the prior bare dismiss(None) left resident custody live and caused remount; no production behavior or acceptance timing was changed. Source/HEAD remain unchanged during the test, cleanup is normal with zero forced retirement/overflow/races, and Ruff passes. New CI37654560531 confirms the maintenance/Hook step succeeds on Windows and macOS and remote-bundle controls now pass; the Linux maintenance/Hook group reports a failure whose detailed artifact is pending.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up

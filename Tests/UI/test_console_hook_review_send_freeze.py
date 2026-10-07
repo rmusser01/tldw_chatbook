@@ -232,7 +232,8 @@ async def _release(host, modal, requester) -> None:
     if host._exit:
         return
     if host.screen is modal:
-        modal.dismiss(None)
+        # Cancel the resident request, not only its disposable presentation.
+        await modal.request_safe_cancel(source="test-cleanup")
     await asyncio.sleep(0.2)
     if not await _pump_runs(requester, 0.5):
         await requester._flush_next_callbacks()
