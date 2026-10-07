@@ -1847,7 +1847,6 @@ class ServiceWiringMixin:
         registry = getattr(self, "workspace_registry_service", None)
         persona_service = getattr(self, "local_character_persona_service", None)
         unified_service = getattr(self, "unified_mcp_service", None)
-        permission_store = getattr(unified_service, "permission_store", None)
         if registry is not None:
             guard = registry.tool_profile_guard
             if (
@@ -1858,6 +1857,7 @@ class ServiceWiringMixin:
                 # bound. The create dialog or eligible startup backfill awaits
                 # the existing Tool Pack composition before retrying wiring.
                 return
+        permission_store = getattr(unified_service, "permission_store", None)
         # Lazy import (boot budget, ADR-097): this wiring runs on a
         # post-ready timer, and importing at module scope would make
         # `Workspaces.agent_provisioning` resident at `_ui_ready`.
@@ -3654,7 +3654,7 @@ class ServiceWiringMixin:
 
     def apply_briefing_schedules_enabled(self, enabled: bool) -> Any:
         """Apply the persisted global briefing gate to existing runtime owners."""
-        if type(enabled) is not bool:
+        if type(enabled) is not bool:  # noqa: E721 -- persisted briefing gate requires an exact bool.
             raise TypeError("enabled must be a bool")
         projection = BriefingProjection(self.subscriptions_db) if enabled else None
         self.scheduling_service.briefing_projection = projection
