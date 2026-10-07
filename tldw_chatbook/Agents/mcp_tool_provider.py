@@ -103,6 +103,7 @@ from .tool_refusals import TOOL_KILL_SWITCH_REFUSAL
 # so the module stays off the UI-ready census path.
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
+    from tldw_chatbook.MCP.console_tool_preparation import ConsoleToolPreparation
 
 @dataclass(frozen=True)
 class MCPBridgeObservation:
@@ -783,6 +784,67 @@ class MCPToolProvider:
             )
         )
         require_current()
+        self._install_console_catalog(hub_tools, effective, require_current)
+
+    def adopt_console_preparation(
+        self,
+        preparation: "ConsoleToolPreparation",
+        *,
+        _controller_composition: "_ControllerCatalogComposition",
+    ) -> None:
+        """Install source-owned composition data on this provider's owning loop.
+
+        The shared observation supplies catalog data only. Invocation retains
+        its existing fresh policy checks.
+        """
+        from tldw_chatbook.MCP import console_tool_preparation as preparation_source
+
+        composition = _controller_composition
+        if (
+            type(preparation) is not preparation_source.ConsoleToolPreparation
+            or type(composition) is not _ControllerCatalogComposition
+            or composition not in _CONTROLLER_COMPOSITIONS
+            or asyncio.get_running_loop() is not self._main_loop
+        ):
+            raise PermissionError("mcp_catalog_source_changed")
+        composition.require_current(type(self), self)
+        if not _console_preparation_pipeline_current(preparation_source):
+            raise PermissionError("mcp_catalog_source_changed")
+        preparation.require_current(self._service)
+        if preparation.profile_id != self._profile_id():
+            raise PermissionError("mcp_catalog_profile_changed")
+        if (
+            preparation._builtin_raw_name_exclusions != self._builtin_raw_name_exclusions
+            or preparation._owned_profile_ids != self._owned_profile_ids
+        ):
+            raise PermissionError("mcp_catalog_consumer_changed")
+        previous = _PREPARATION_COMPOSITIONS.get(preparation)
+        if previous is not None and previous != (composition, self):
+            raise PermissionError("mcp_catalog_operation_changed")
+        _PREPARATION_COMPOSITIONS[preparation] = (composition, self)
+
+        def require_current():
+            composition.require_current(type(self), self)
+            preparation.require_current(self._service)
+            if preparation.profile_id != self._profile_id():
+                raise PermissionError("mcp_catalog_profile_changed")
+
+        with self._decisions_lock:
+            self._stamped_decisions.clear()
+        if preparation.kill_switch:
+            self._catalog = []
+            self._entry_by_llm_name = {}
+            self._not_connected_count = 0
+            return
+        tools = [tool.to_hub_tool() for tool in preparation.tools]
+        effective = {
+            (tool.server_key, tool.name): tool.effective
+            for tool in preparation.tools
+        }
+        self._install_console_catalog(tools, effective, require_current)
+
+    def _install_console_catalog(self, hub_tools, effective, require_current):
+        """Apply the ordinary narrowing, naming and run-owned cache contract."""
         from tldw_chatbook.MCP.permission_store import definition_hash
 
         eligible = [
@@ -2079,6 +2141,7 @@ def _controller_inputs_checker_current():
 _CONTROLLER_COMPOSE_MODULE = sys.modules[__name__]
 _CONTROLLER_COMPOSE_FACTORY = MCPToolProvider
 _CONTROLLER_COMPOSITIONS = weakref.WeakSet()
+_PREPARATION_COMPOSITIONS = weakref.WeakKeyDictionary()
 _CONTROLLER_COMPOSE_METHODS = tuple(
     (
         name,
@@ -2092,6 +2155,8 @@ _CONTROLLER_COMPOSE_METHODS = tuple(
         "_init_decision_state",
         "compose_catalog",
         "_compose_catalog",
+        "adopt_console_preparation",
+        "_install_console_catalog",
         "list_catalog",
     )
     for function in (vars(MCPToolProvider)[name],)
@@ -2146,6 +2211,24 @@ def _controller_factory_current(factory) -> bool:
         and getter.__globals__ is namespace
         and namespace is vars(_CONTROLLER_COMPOSE_MODULE)
         and _controller_inputs_current(getter, inputs)
+    )
+
+
+def _console_preparation_pipeline_current(preparation_source, binding=None):
+    """Qualify detached-data methods before executing a supplied result callback."""
+    binding = binding or preparation_source._CONSOLE_PREPARATION_CHECK
+    checker, code, namespace, inputs = binding
+    return (
+        sys.modules.get(preparation_source.__name__) is preparation_source
+        and preparation_source._CONSOLE_PREPARATION_CHECK is binding
+        and preparation_source.preparation_pipeline_current is checker
+        and type(checker) is FunctionType
+        and checker.__code__ is code
+        and checker.__globals__ is namespace
+        and namespace is vars(preparation_source)
+        and _controller_inputs_checker_current()
+        and _controller_inputs_current(checker, inputs)
+        and checker()
     )
 
 
@@ -2256,6 +2339,7 @@ _CONTROLLER_COMPOSE_HELPERS = tuple(
         (_CONTROLLER_COMPOSE_MODULE, "_controller_inputs_current"),
         (_CONTROLLER_COMPOSE_MODULE, "_controller_inputs_checker_current"),
         (_CONTROLLER_COMPOSE_MODULE, "_controller_factory_current"),
+        (_CONTROLLER_COMPOSE_MODULE, "_console_preparation_pipeline_current"),
         (_CONTROLLER_COMPOSE_MODULE, "capture_standard_controller_composition"),
         (_ControllerCatalogComposition, "__init__"),
         (_ControllerCatalogComposition, "require_current"),

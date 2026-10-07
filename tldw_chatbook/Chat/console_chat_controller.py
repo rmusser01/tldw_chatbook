@@ -15913,6 +15913,17 @@ class ConsoleChatController:
             )
         ):
             mcp_profile_kwargs["plugin_maximum"] = turn_context.skill_context_maximum
+        shared = await self._compose_shared_tool_providers(
+            session_id=session_id,
+            project_selection=project_selection,
+            project_authority_guard=project_authority_guard,
+            turn_context=turn_context,
+            publish_mcp_counts=publish_mcp_counts,
+            admitted_roots=admitted_roots,
+            mcp_profile_kwargs=mcp_profile_kwargs,
+        )
+        if shared is not None:
+            return shared
         mcp_provider = await self._compose_mcp_provider(
             session_id,
             publish_counts=publish_mcp_counts,
@@ -15951,6 +15962,152 @@ class ConsoleChatController:
             admitted_roots=admitted_roots,
         )
         return mcp_provider, builtin_gate, local_provider, local_review_hook
+
+    async def _compose_shared_tool_providers(
+        self,
+        *,
+        session_id,
+        project_selection,
+        project_authority_guard,
+        turn_context,
+        publish_mcp_counts,
+        admitted_roots,
+        mcp_profile_kwargs,
+    ):
+        """Prepare one stock MCP/local composition; None preserves custom routes."""
+        import sys
+
+        from tldw_chatbook import config
+        from tldw_chatbook.Agents import mcp_tool_provider as provider_source
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+        from tldw_chatbook.MCP import console_tool_preparation as preparation_source
+
+        checker, checker_code, checker_globals = _CONSOLE_TOOL_COMPOSITION_CHECKER
+        if (
+            _stock_console_tool_composition_current is not checker
+            or checker.__code__ is not checker_code
+            or checker.__globals__ is not checker_globals
+            or checker_globals is not globals()
+            or not checker(self)
+            or "plugin_maximum" in mcp_profile_kwargs
+            or not provider_source._controller_factory_current(MCPToolProvider)
+        ):
+            return None
+        preparation_check = preparation_source._CONSOLE_PREPARATION_CHECK
+        if not provider_source._console_preparation_pipeline_current(
+            preparation_source, preparation_check
+        ):
+            return None
+        app = self.app
+        service = getattr(app, "unified_mcp_service", None)
+        if service is None:
+            return None
+        maximum = turn_context.mcp_tool_maximum if turn_context is not None else None
+        include_mcp = not (type(maximum) is frozenset and not maximum)
+        enabled = (
+            turn_context.tool_configuration.get(
+                "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+            if turn_context is not None
+            else get_cli_setting("console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED)
+        )
+        need_local = coerce_bool_setting(enabled, LOCAL_TOOLS_DEFAULT_ENABLED)
+        profile_id = turn_context.tool_policy_profile_id if turn_context is not None else "default"
+        app_config = getattr(app, "app_config", None)
+        store = self.store
+        session = next((item for item in store.sessions() if item.id == session_id), None)
+        revision = store.session_settings_revision(session_id) if session is not None else None
+        scratch = self._scratch_spaces
+        identity = config.current_config_identity()
+
+        def require_current():
+            if (
+                _stock_console_tool_composition_current is not checker
+                or checker.__code__ is not checker_code
+                or checker.__globals__ is not checker_globals
+                or not checker(self)
+                or not provider_source._controller_factory_current(MCPToolProvider)
+                or not provider_source._console_preparation_pipeline_current(
+                    preparation_source, preparation_check
+                )
+                or self.app is not app
+                or getattr(app, "app_config", None) is not app_config
+                or self.store is not store
+                or self._scratch_spaces is not scratch
+                or getattr(app, "unified_mcp_service", None) is not service
+                or sys.modules.get("tldw_chatbook.config") is not config
+                or config.current_config_identity() != identity
+                or next((item for item in store.sessions() if item.id == session_id), None) is not session
+                or (session is not None and store.session_settings_revision(session_id) != revision)
+                or (project_authority_guard is not None and not project_authority_guard())
+            ):
+                raise RecoveryRequired("console_snapshot_owner_changed")
+
+        preparation = await preparation_source.prepare_console_tools(
+            service,
+            profile_id=profile_id,
+            include_mcp_catalog=include_mcp,
+            need_local_switch=need_local,
+            builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+            owned_profile_ids=frozenset(),
+        )
+        if preparation is None:
+            require_current()
+            return None
+        require_current()
+        preparation.require_current(service)
+        provider = None
+        if include_mcp and not preparation.kill_switch:
+            # Recapture after the domain operation's permitted lazy initialization.
+            # Both captures refer to the same current sources; neither is a lease.
+            composition = provider_source.capture_standard_controller_composition(
+                MCPToolProvider, service
+            )
+            if composition is None:
+                raise RecoveryRequired("mcp_source_selection_changed")
+            provider = MCPToolProvider(
+                service=service,
+                main_loop=asyncio.get_running_loop(),
+                approval_callback=functools.partial(self.request_mcp_approvals, session_id=session_id),
+                builtin_raw_name_exclusions=CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS,
+                profile_id_provider=mcp_profile_kwargs.get("profile_id_provider"),
+                persona_policy_provider=mcp_profile_kwargs.get("persona_policy_provider"),
+                runtime_source_provider=functools.partial(self._session_runtime_source, session_id),
+                maximum_tool_ids=maximum,
+                maximum_definition_hashes=(
+                    turn_context.mcp_definition_maximum if turn_context is not None else None
+                ),
+            )
+            provider.adopt_console_preparation(preparation, _controller_composition=composition)
+            if not provider.list_catalog():
+                provider = None
+        builtin_gate = build_builtin_gate(service, profile_id=profile_id)
+        if admitted_roots is None:
+            admitted_roots = capture_run_admitted_workspace_roots(
+                session=session,
+                registry=getattr(app, "workspace_registry_service", None),
+                project_selection=project_selection,
+                project_authority_guard=project_authority_guard,
+            )
+        local_provider, local_review = self._compose_local_provider(
+            session_id=session_id,
+            turn_context=turn_context,
+            project_root=(project_selection.root if project_selection else None),
+            allow_write=(project_selection.allow_write if project_selection else True),
+            project_root_identity=(project_selection.root_identity if project_selection else None),
+            project_root_guard=project_authority_guard,
+            admitted_roots=admitted_roots,
+            _captured_service=service,
+            _captured_kill_switch=preparation.kill_switch,
+        )
+        require_current()
+        preparation.require_current(service)
+        if publish_mcp_counts:
+            self._publish_mcp_inspector_counts(
+                len(provider.list_catalog()) if provider is not None else None,
+                provider.not_connected_count if provider is not None else None,
+            )
+        return provider, builtin_gate, local_provider, local_review
 
     async def _compose_local_provider_async(self, **kwargs):
         """Prepare only a standard blocking switch read before loop composition."""
@@ -29814,3 +29971,49 @@ _CONSOLE_PENDING_FACTS_CALLBACK_CODES = {
     )
     for attribute in ("_pending_approvals", "_pending_round_kinds")
 }
+
+
+# Stock preparation may share data only while the original supported wrappers
+# retain their method bindings and call inputs. Custom wrappers keep late lookup.
+_CONSOLE_TOOL_COMPOSITION_METHODS = tuple(
+    (name, method, method.__code__, method.__globals__,
+     method.__defaults__, method.__kwdefaults__,
+     tuple((method.__kwdefaults__ or {}).items()), method.__closure__)
+    for name in (
+        "_compose_mcp_provider", "_compose_local_provider_async",
+        "_compose_local_provider", "_compose_shared_tool_providers",
+        "_publish_mcp_inspector_counts",
+    )
+    for method in (vars(ConsoleChatController)[name],)
+)
+
+
+def _stock_console_tool_composition_current(controller):
+    for name, original, code, namespace, defaults, keyword_defaults, keyword_items, closure in _CONSOLE_TOOL_COMPOSITION_METHODS:
+        # Examine descriptors without running custom getters during qualification.
+        descriptor = inspect.getattr_static(controller, name, None)
+        if descriptor is not original:
+            return False
+        callback = getattr(controller, name, None)
+        if not (
+            getattr(callback, "__self__", None) is controller
+            and getattr(callback, "__func__", None) is original
+            and vars(ConsoleChatController).get(name) is original
+            and original.__code__ is code
+            and original.__globals__ is namespace
+            and namespace is globals()
+            and original.__defaults__ is defaults
+            and original.__kwdefaults__ is keyword_defaults
+            and len(original.__kwdefaults__ or {}) == len(keyword_items)
+            and all((original.__kwdefaults__ or {}).get(key) is value for key, value in keyword_items)
+            and original.__closure__ is closure
+        ):
+            return False
+    return True
+
+
+_CONSOLE_TOOL_COMPOSITION_CHECKER = (
+    _stock_console_tool_composition_current,
+    _stock_console_tool_composition_current.__code__,
+    _stock_console_tool_composition_current.__globals__,
+)
