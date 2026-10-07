@@ -12425,6 +12425,8 @@ class ChatScreen(BaseAppScreen):
                 monochrome=bool(getattr(self.app, "no_color", False)),
                 mode=spec.get("mode", "pixels"),
                 id="console-character-avatar-image",
+                decode_identity=spec.get("decode_identity"),
+                fallback_decode_identity=spec.get("animation_fallback_identity"),
             )
         if not spec or (
             spec.get("pil") is None

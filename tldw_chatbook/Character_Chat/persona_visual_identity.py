@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import threading
+import weakref
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +15,25 @@ from . import visual_identity as _shared
 
 
 _MAX_PORTRAIT_BYTES = 25 * 1024 * 1024
+
+# Linked-portrait version-token memo (task-16/F13). The portrait content hash
+# (version token) is computed once per (service, character_id, card row
+# version) PLUS byte-equal portrait data: revalidation still refetches the
+# persona and character rows (that is the authority check), but an unchanged
+# card reuses the token via a memcmp instead of re-hashing up to 25 MB per
+# check. The data-equality guard on lookup is what makes this sound -- a
+# portrait mutated without a row-version bump (the ABA case
+# ``test_authority_revalidation_detects_revision_aba_and_linked_portrait_change``
+# pins) misses the memo and is re-hashed, so unversioned changes are still
+# detected exactly as before. The weak service reference guards against
+# ``id()`` reuse by a later service object at the same address.
+_PORTRAIT_MEMO_ENTRY_LIMIT = 4
+_PORTRAIT_MEMO_BYTES_LIMIT = 64 * 1024 * 1024
+_portrait_memo: OrderedDict[
+    tuple[int, int, int],
+    tuple[weakref.ReferenceType[Any] | None, LocalPersonaVisualIdentityPortrait],
+] = OrderedDict()
+_PORTRAIT_MEMO_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,7 +289,9 @@ def resolve_persona_visual_identity(
                 source_kind=str(candidate["pack_source_kind"]),
                 user_data_dir=user_data_dir,
             )
-            _shared._validate_image_bytes(loaded, decoded_pixels_before=0)
+            _shared._validate_image_bytes(
+                loaded, decoded_pixels_before=0, retain_decoded=True
+            )
         except (TypeError, ValueError, OverflowError):
             continue
         if not local_persona_visual_identity_is_current(local_service, authority):
@@ -319,6 +343,7 @@ def resolve_persona_visual_identity(
                 asset_sha256=str(candidate["asset_sha256"]),
             ),
             image_bytes=loaded.data,
+            decode_identity=loaded.decode_identity or None,
         )
 
     if not local_persona_visual_identity_is_current(local_service, authority):
@@ -330,7 +355,9 @@ def resolve_persona_visual_identity(
             "actor_unavailable",
         )
     validated_portrait = _shared._validate_fallback_image(
-        authority.portrait.data if authority.portrait is not None else None
+        authority.portrait.data if authority.portrait is not None else None,
+        digest=authority.portrait.sha256 if authority.portrait is not None else None,
+        retain_decoded=True,
     )
     if not local_persona_visual_identity_is_current(local_service, authority):
         return _shared._placeholder_resolution(
@@ -348,7 +375,7 @@ def resolve_persona_visual_identity(
             manual_key,
             "portrait_unavailable",
         )
-    data, content_type, is_animated = validated_portrait
+    data, content_type, is_animated, portrait_digest = validated_portrait
     return _shared.VisualIdentityResolution(
         actor_kind="persona",
         actor_id=authority.persona_id,
@@ -372,6 +399,7 @@ def resolve_persona_visual_identity(
             resolution_source="persona_portrait",
         ),
         image_bytes=data,
+        decode_identity=("vi-decode-v1", "content", portrait_digest),
     )
 
 
@@ -415,6 +443,73 @@ def _persona_cache_identity(
     )
 
 
+def _reset_portrait_memo() -> None:
+    """Forget every memoized linked portrait (test isolation only)."""
+
+    with _PORTRAIT_MEMO_LOCK:
+        _portrait_memo.clear()
+
+
+def _memoized_portrait(
+    local_service: object,
+    character_id: int,
+    revision: int,
+    data: bytes,
+) -> LocalPersonaVisualIdentityPortrait | None:
+    key = (id(local_service), character_id, revision)
+    with _PORTRAIT_MEMO_LOCK:
+        entry = _portrait_memo.get(key)
+        if entry is not None:
+            _portrait_memo.move_to_end(key)
+    if entry is None:
+        return None
+    reference, portrait = entry
+    if reference is not None and reference() is not local_service:
+        # Service died (or id() was reused); the entry is stale.
+        with _PORTRAIT_MEMO_LOCK:
+            _portrait_memo.pop(key, None)
+        return None
+    if portrait.data != data:
+        # Portrait mutated without a row-version bump: treat as a miss so the
+        # caller re-hashes and the change is detected.
+        return None
+    return portrait
+
+
+def _remember_portrait(
+    local_service: object,
+    character_id: int,
+    revision: int,
+    portrait: LocalPersonaVisualIdentityPortrait,
+) -> None:
+    try:
+        reference: weakref.ReferenceType[Any] | None = weakref.ref(local_service)
+    except TypeError:
+        return
+    key = (id(local_service), character_id, revision)
+    with _PORTRAIT_MEMO_LOCK:
+        existing = _portrait_memo.get(key)
+        if existing is not None:
+            if existing[1].data == portrait.data:
+                _portrait_memo.move_to_end(key)
+                return
+            del _portrait_memo[key]
+        retained = sum(len(entry[1].data) for entry in _portrait_memo.values())
+        size = len(portrait.data)
+        while _portrait_memo and (
+            len(_portrait_memo) + 1 > _PORTRAIT_MEMO_ENTRY_LIMIT
+            or retained + size > _PORTRAIT_MEMO_BYTES_LIMIT
+        ):
+            _, evicted = _portrait_memo.popitem(last=False)
+            retained -= len(evicted.data)
+        if (
+            len(_portrait_memo) + 1 > _PORTRAIT_MEMO_ENTRY_LIMIT
+            or retained + size > _PORTRAIT_MEMO_BYTES_LIMIT
+        ):
+            return
+        _portrait_memo[key] = (reference, portrait)
+
+
 def _linked_portrait(
     local_service: object,
     persona_record: Mapping[str, Any],
@@ -430,28 +525,36 @@ def _linked_portrait(
     if type(character) is not dict:
         return None
     revision = character.get("version")
-    data = character.get("image")
     if (
         type(character.get("id")) is not int
         or character.get("id") != character_id
         or type(revision) is not int
         or revision < 0
         or character.get("deleted", False) is not False
-        or type(data) is not bytes
+    ):
+        return None
+    data = character.get("image")
+    if (
+        type(data) is not bytes
         or not data
         or len(data) > _MAX_PORTRAIT_BYTES
     ):
         return None
+    memoized = _memoized_portrait(local_service, character_id, revision, data)
+    if memoized is not None:
+        return memoized
     content_type = _portrait_content_type(data)
     if content_type is None:
         return None
-    return LocalPersonaVisualIdentityPortrait(
+    portrait = LocalPersonaVisualIdentityPortrait(
         portrait_id=f"local-character:{character_id}",
         revision=revision,
         content_type=content_type,
         sha256=hashlib.sha256(data).hexdigest(),
         data=data,
     )
+    _remember_portrait(local_service, character_id, revision, portrait)
+    return portrait
 
 
 def _portrait_content_type(data: bytes) -> str | None:

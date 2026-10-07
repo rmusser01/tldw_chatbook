@@ -32,6 +32,8 @@ class CharacterExpressionAvatar(Widget):
         mode: str,
         id: str,
         fallback_data: bytes = b"",
+        decode_identity: tuple[str, ...] | None = None,
+        fallback_decode_identity: tuple[str, ...] | None = None,
     ) -> None:
         super().__init__(id=id)
         self._data = data
@@ -41,6 +43,8 @@ class CharacterExpressionAvatar(Widget):
         self._is_current = is_current
         self._monochrome = monochrome
         self._mode = mode
+        self._decode_identity = decode_identity
+        self._fallback_decode_identity = fallback_decode_identity
         self._prepared: PreparedExpression | None = None
         self._job: asyncio.Task | None = None
         self._timer = None
@@ -118,6 +122,7 @@ class CharacterExpressionAvatar(Widget):
                     self._data,
                     (self._box[0] * scale_x, self._box[1] * scale_y),
                     animate=self._animate,
+                    identity=self._decode_identity,
                 )
             except (ValueError, OSError):
                 if not self._fallback_data or not self._current():
@@ -127,6 +132,7 @@ class CharacterExpressionAvatar(Widget):
                     self._fallback_data,
                     (self._box[0] * scale_x, self._box[1] * scale_y),
                     animate=False,
+                    identity=self._fallback_decode_identity,
                 )
                 prepared.fallback_reason = (
                     "Expression unavailable; showing the neutral portrait."
@@ -152,6 +158,8 @@ class CharacterExpressionAvatar(Widget):
         finally:
             self._data = b""
             self._fallback_data = b""
+            self._decode_identity = None
+            self._fallback_decode_identity = None
 
     async def _paint(self, index: int) -> None:
         if self._prepared is None or not self._current() or self._painting:

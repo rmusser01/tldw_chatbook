@@ -1805,3 +1805,39 @@ def _fleet_chat_scripts_fully_consumed():
         problems.extend(chat.harness_errors)
         problems.extend(chat.unconsumed())
     assert not problems, "FleetChat scripting fault(s): " + "; ".join(problems)
+
+
+@pytest.fixture(autouse=True)
+def reset_visual_identity_decode_memos():
+    """Clear the process-global visual-identity decode memos around each test.
+
+    task-16/F13 memoizes image-inspection facts, retained shared decodes, and
+    linked-portrait version tokens at module scope (they exist precisely to
+    survive across production calls). Tests that monkeypatch decode limits or
+    count decode passes must not observe -- or seed -- state from an earlier
+    test in the same process, so the memos are cleared before and after every
+    test. Looked up through sys.modules rather than imported so the thousands
+    of tests that never touch these modules pay nothing and gain no import
+    side effects.
+    """
+    resets = []
+    for module_name, reset_name in (
+        ("tldw_chatbook.Character_Chat.visual_identity", "_reset_inspection_memo"),
+        (
+            "tldw_chatbook.Chat.character_expression_playback",
+            "_reset_shared_decode_state",
+        ),
+        (
+            "tldw_chatbook.Character_Chat.persona_visual_identity",
+            "_reset_portrait_memo",
+        ),
+    ):
+        module = sys.modules.get(module_name)
+        reset = getattr(module, reset_name, None) if module is not None else None
+        if callable(reset):
+            resets.append(reset)
+    for reset in resets:
+        reset()
+    yield
+    for reset in resets:
+        reset()
