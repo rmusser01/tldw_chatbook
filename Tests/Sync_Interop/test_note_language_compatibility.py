@@ -823,3 +823,109 @@ def test_advertised_v2_does_not_upgrade_unknown_language():
         note_id="known", title="T", body=SOURCE, content_language=None
     )
     assert complete.adapter_version == complete.schema_version == 2
+
+
+@pytest.mark.asyncio
+async def test_restore_failed_enqueue_keeps_exact_origin_snapshot_after_restart(
+    tmp_path,
+):
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
+    from tldw_chatbook.Sync_Interop.notes_organization_sync_service import (
+        NotesOrganizationSyncService,
+    )
+
+    path = tmp_path / "restored-notes.db"
+    store = CharactersRAGDB(path, "restore-test")
+    note_id = store.add_note("Exact", SOURCE, content_language=LANGUAGE)
+    assert store.soft_delete_note(note_id, 1)
+    repo = SyncStateRepository(tmp_path / "restore-state.db")
+    repo.set_sync_v2_profile_state(
+        **SCOPE,
+        profile_mode="local_first",
+        dataset_id="dataset-1",
+        device_id="device-1",
+    )
+    producer = NotesSyncV2OutboxProducer(
+        state_repository=repo, notes_db=store, dataset_keys={"dataset-1": KEY}
+    )
+    failures = []
+
+    def fail(**kwargs):
+        failures.append(kwargs)
+        raise RuntimeError("interrupted after restore capture")
+
+    producer.enqueue_note_upsert = fail
+
+    class LocalNotes:
+        def note_transaction(self, user_id):
+            return store.transaction(immediate=True)
+
+        def restore_note(self, user_id, note_id, version):
+            return store.restore_note(note_id, version)
+
+        def get_note_by_id(self, user_id, note_id):
+            return store.get_note_by_id(note_id)
+
+        def get_keywords_for_note(self, user_id, note_id):
+            return store.get_keywords_for_note(note_id)
+
+    service = NotesScopeService(
+        local_notes_service=LocalNotes(),
+        server_service=None,
+        sync_v2_notes_producer=producer,
+    )
+    restored = await service.restore_note(
+        scope="local_note",
+        note_id=note_id,
+        version=2,
+        user_id="u",
+        sync_v2_profile=SCOPE,
+    )
+    assert restored["version"] == 3
+    assert len(failures) == 1
+    store.close_connection()
+    store = CharactersRAGDB(path, "restore-test")
+    repo = SyncStateRepository(tmp_path / "restore-state.db")
+    rows = store.list_latest_dispatchable_note_sync_entries(
+        server_profile_id="server-a", dataset_id="dataset-1"
+    )
+    snapshots = [
+        json.loads(row["payload"])
+        for row in rows
+        if "_source_scope" in json.loads(row["payload"])
+    ]
+    assert len(snapshots) == 1
+    payload = snapshots[0]
+    assert (payload["content"], payload["content_language"], payload["version"]) == (
+        SOURCE,
+        LANGUAGE,
+        3,
+    )
+    assert payload["_source_scope"] == {
+        "authenticated_principal_id": "user-a",
+        "workspace_scope": None,
+    }
+    canonical = store.get_note_by_id(note_id)
+    assert (
+        canonical["content"],
+        canonical["content_language"],
+        canonical["version"],
+        canonical["deleted"],
+    ) == (SOURCE, LANGUAGE, 3, 0)
+    producer = NotesSyncV2OutboxProducer(
+        state_repository=repo, notes_db=store, dataset_keys={"dataset-1": KEY}
+    )
+    drain = NotesOrganizationSyncService(
+        notes_repository=SimpleNamespace(db=store),
+        state_repository=repo,
+        notes_producer=producer,
+    )
+    drain.finalize_pending_note_organization_receipts = lambda **kwargs: None
+    assert drain.drain_pending_note_intents(**SCOPE)["copied"] == 1
+    envelope = repo.list_pending_sync_v2_outbox_envelopes(
+        **SCOPE, dataset_id="dataset-1"
+    )[0]
+    assert envelope["last_error"]["error_code"] == "notes_language_upgrade_required"
+    store.close_connection()

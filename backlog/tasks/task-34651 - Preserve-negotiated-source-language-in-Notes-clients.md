@@ -67,3 +67,5 @@ F4 local immutable intent scope proof: capture exact server_profile/principal/wo
 ## Implementation Notes
 
 Implemented negotiated complete language snapshots, authenticated publication guards and exact omission/null preservation. Existing local mutation/outbox owners retain unsupported intent; scoped immutable origin proof prevents cross-account drain. Fresh probes and scoped mirror/current-authority injection are documented corrections under ADR194/065. Verification and limitations: task-4-report.md in the controller SDD directory. Status remains In Progress pending independent review.
+
+Review preparation evidence: a runtime-only origin-guard mutation reproduced two foreign-scope-copy failures; intact guard plus real SQLite restore/failed-enqueue/reopen/drain control passed4 targeted tests. Initial fingerprint CHECK failures are fixture failures, not TDD scope evidence. Production unchanged; report corrected and task remains In Progress.
