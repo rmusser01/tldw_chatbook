@@ -58,6 +58,7 @@ dependencies = [
     # accessor the renderer needs did not exist until 10.4).
     "pillow>=10.4",
     "PyYAML",
+    "ruamel.yaml==0.19.1",  # qualified source/event parser: ADR-194, TASK-34654
     "pydantic>=2.4,<3",
     "jsonschema>=4.26,<5",  # H3 offline validation is a base runtime boundary
     "referencing>=0.37,<1",  # explicit no-retrieval schema registry

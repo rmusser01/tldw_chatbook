@@ -111,3 +111,26 @@ conversation-only Canvas remains 3.0. Readers 1.0–3.0 remain available, withou
 claiming their Markdown carriers retain recoverable original boundary whitespace.
 Approval/effects fingerprints include supplied mode, preserving the historical
 fingerprint for legacy omission. No new transport, store or import service.
+
+### Python source-engine qualification (E2 / TASK-34654)
+
+Accept `ruamel.yaml==0.19.1` (MIT, pure Python, no default transitive dependencies)
+as a base-install parser for the structured editor. Qualification is recorded in
+[the Python engine report](../../Docs/superpowers/reviews/2026-09-27-document-engine-python.md)
+before packaging adoption. Use only lazily imported instance scan/parse APIs,
+without application constructors, alias expansion, or load/dump formatting.
+The candidate's generic round-trip output demonstrably changed negative zero,
+overflow exponents, and high-precision decimal spelling, so it is not adopted.
+
+JSON uses bounded source lexing and strict stdlib validation. YAML edits source
+whitespace and verifies raw tokens, comments, and the symbolic event graph.
+Default YAML 1.2 Core resolution and explicit consistent 1.1/1.2 versions govern
+scalar-key identity. Mixed versions, custom/unqualified tags, complex/alias keys,
+indentless sequences, unqualified merge targets, and multiline-scalar layouts
+requiring scalar-token edits explicitly decline. Nontrivial commented streams,
+anchors/merges, block scalars, and indented sequences format successfully.
+
+The pure engine enforces source/depth/diagnostic bounds and cooperative deadline
+checks only; it has no heap ceiling or hard interruption. The existing planned
+worker boundary still owns process termination and lifecycle. No UI, persistence,
+network, filesystem authority, or new store is introduced by this dependency.

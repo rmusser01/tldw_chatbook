@@ -19705,3 +19705,17 @@ ordinary-save/queue POST and PUT, and mode-baseline errors. Pause the actual
 coordinator's storage boundary or hook's request, edit or navigate while paused,
 then release it and assert both the editor identity/revision and queued source.
 Checking only the acknowledgement status would have missed the cross-note write.
+
+
+## A round-trip parser label is not proof of source preservation
+
+During E2 / TASK-34654 qualification (2026-10-07), ruamel.yaml 0.19.1's actual
+round-trip load/dump changed `-0` to `0`, `1e400` to `.inf`, and a high-precision
+decimal's digits. The accepted engine instead compares raw scalar tokens,
+comments, and symbolic parse events after whitespace edits. A separate nested
+sequence probe caught zero-width EOF tokens inserting indentation after the final
+newline, breaking idempotence. Keep real numeric/comment/graph positive controls,
+explicit refusal cases, and exact EOF/idempotence checks when qualifying a formatter;
+plain object equality or a library's “round-trip” description misses these losses.
+See `Docs/superpowers/reviews/2026-09-27-document-engine-python.md` for the fixture
+outcomes and resource observations.
