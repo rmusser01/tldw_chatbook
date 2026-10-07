@@ -8,6 +8,9 @@ No complex error handling - just let exceptions propagate.
 import asyncio
 from collections.abc import Mapping
 import math
+from pathlib import Path
+import tempfile
+import threading
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -623,6 +626,114 @@ def deduplicate_results(results: List[SearchResult]) -> List[SearchResult]:
     return list(seen.values())
 
 
+# ==============================================================================
+# FlashRank ranker singleton
+# ==============================================================================
+# The default-enabled rerank step used to construct a fresh torch/ORT
+# ``Ranker`` (cold model load, ~hundreds of ms) on EVERY query,
+# synchronously on the event loop -- freezing the UI on each RAG chat send.
+# The ranker is now a lazy, thread-safe, process-wide singleton, and the
+# model work runs off the event loop (see ``rerank_results_async`` and the
+# builder's process step). Same cold-load pattern previously fixed for the
+# vector-store query in simplified/rag_service.py (TASK-32804.9).
+
+#: FlashRank model the pipeline reranks with.
+_FLASHRANK_MODEL_NAME = "ms-marco-MiniLM-L-12-v2"
+
+#: Guards ranker construction only -- rerank calls themselves run
+#: concurrently on the shared instance (onnxruntime sessions are
+#: thread-safe for ``run``).
+_RANKER_LOCK = threading.Lock()
+#: ``None`` until first construction (see ``get_flashrank_ranker``).
+_CACHED_RANKER: Any = None
+
+#: Test seam: when set, ``get_flashrank_ranker`` constructs via this
+#: factory instead of importing the real ``flashrank.Ranker``. Stays
+#: ``None`` in production so the optional dependency is imported lazily
+#: on first rerank, never at module import.
+_RANKER_FACTORY: Any = None
+
+
+def _real_flashrank_ranker_factory() -> Any:
+    """Resolve the real ``flashrank.Ranker`` class.
+
+    Imported per construction attempt (a cached ``sys.modules`` lookup
+    after the first), so a test that swaps ``sys.modules["flashrank"]``
+    controls what gets constructed.
+
+    Raises:
+        ImportError: flashrank is not installed (handled by
+            ``rerank_results``' existing fallback).
+    """
+    from flashrank import Ranker
+
+    return Ranker
+
+
+def _flashrank_cache_dir() -> str:
+    """Directory FlashRank model weights are cached in.
+
+    Lives under the app's user data dir (same home as the model-catalog
+    cache) so weights survive a reboot instead of being re-downloaded
+    into ``/tmp`` every cold start. Falls back to the system temp dir
+    only if the app data dir cannot be resolved.
+    """
+    try:
+        from ..Utils.paths import get_user_data_dir
+
+        return str(Path(get_user_data_dir()) / "cache" / "flashrank")
+    except Exception:
+        logger.warning(
+            "FlashRank cache dir fell back to the system temp dir; "
+            "model weights will not survive a reboot"
+        )
+        return tempfile.gettempdir()
+
+
+def get_flashrank_ranker() -> Any:
+    """Return the process-wide FlashRank ``Ranker`` singleton.
+
+    Constructs on first use (model load) and never again; the lock is
+    held around construction only, so concurrent reranks share the
+    instance without serializing.
+
+    Returns:
+        The shared ranker instance (real or injected via
+        ``_RANKER_FACTORY``).
+
+    Raises:
+        ImportError: flashrank is not installed.
+        Exception: Whatever the factory raises on construction failure
+            (handled by ``rerank_results``' existing fallback).
+    """
+    global _CACHED_RANKER
+    if _CACHED_RANKER is not None:
+        return _CACHED_RANKER
+    if _RANKER_FACTORY is not None:
+        factory = _RANKER_FACTORY
+    else:
+        factory = _real_flashrank_ranker_factory()
+    with _RANKER_LOCK:
+        if _CACHED_RANKER is None:
+            _CACHED_RANKER = factory(
+                model_name=_FLASHRANK_MODEL_NAME,
+                cache_dir=_flashrank_cache_dir(),
+            )
+        return _CACHED_RANKER
+
+
+def _reset_flashrank_ranker_for_tests() -> None:
+    """Drop the cached ranker so the next call reconstructs it.
+
+    Test-only: suites that swap the flashrank backend (via
+    ``sys.modules`` or ``_RANKER_FACTORY``) must reset the singleton
+    between tests or they would keep reusing the previous test's ranker.
+    """
+    global _CACHED_RANKER
+    with _RANKER_LOCK:
+        _CACHED_RANKER = None
+
+
 def rerank_results(
     results: List[SearchResult], query: str, model: str = "flashrank", top_k: int = 10
 ) -> List[SearchResult]:
@@ -632,10 +743,10 @@ def rerank_results(
 
     if model == "flashrank":
         try:
-            from flashrank import RerankRequest, Ranker
+            from flashrank import RerankRequest
 
-            # Initialize ranker
-            ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2", cache_dir="/tmp")
+            # Shared, constructed-once ranker (see get_flashrank_ranker).
+            ranker = get_flashrank_ranker()
 
             # Prepare passages
             passages = []
@@ -697,6 +808,27 @@ def rerank_results(
     # Default: just sort by score and limit
     sorted_results = sorted(results, key=lambda x: x.score, reverse=True)
     return sorted_results[:top_k]
+
+
+async def rerank_results_async(
+    results: List[SearchResult], query: str, model: str = "flashrank", top_k: int = 10
+) -> List[SearchResult]:
+    """Rerank results off the event loop.
+
+    Thin ``asyncio.to_thread`` wrapper around ``rerank_results``: rerank
+    (cold model load included) must never run on the Textual event loop.
+    ``rerank_results`` itself stays synchronous for non-async callers.
+
+    Args:
+        results: Results to rerank.
+        query: The search query to score against.
+        model: Rerank model name (``"flashrank"`` for the local ranker).
+        top_k: Maximum number of results to return.
+
+    Returns:
+        The reranked results (or the sync fallback order on failure).
+    """
+    return await asyncio.to_thread(rerank_results, results, query, model, top_k)
 
 
 def filter_by_score(
