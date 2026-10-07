@@ -510,6 +510,37 @@ Only an actual host-issued Interrupt/SessionEnd delivery can carry this scope ac
 Retire this scope/view at the bounded notification boundary without confusing that retirement with actual request/process cleanup. Unresolved resource custody stays with its existing owners. Repeated close must neither issue new authority nor extend deadlines. Qualify actual Console close after a completed turn, preserved ordinary post-seal refusal, a denying nested guard, stale/dependency/context refusal, and real notification/cleanup timing. Best-effort omission remains correct whenever ordinary current authority or the exact original deadline no longer permits dispatch.
 
 
+#### TASK-33648: saved standalone SessionEnd during host disposal
+
+Host disposal closes ordinary Console and HookPermissions admission immediately.
+An already-live lifecycle may retain its one host-issued, effect-free SessionEnd
+notification through that closure. The exception belongs to its exact existing
+engine-issued execution state, event identity, session and original notification
+deadline; event labels, public teardown booleans, copied events and ordinary calls
+cannot acquire it. Repeated sealing or disposal cannot issue another notification
+or extend the window. Managed-plugin authority and ordinary MCP dispatch retain
+their existing boundaries.
+
+The standalone command still needs its original exact saved definition and grant.
+At actual process creation, the existing permission owner reads canonical config
+and local consent under their existing launch locks, compares the original
+config/profile path and section identity, definition fingerprint and grant epoch,
+and rechecks the authentic bounded delivery. Changed, revoked, reapproved,
+disabled, locally sealed, refresh-pending, missing or unavailable state refuses.
+This private teardown validation does not republish ordinary targets, reopen the
+closed owner, create a grant, accept effects, prompt, reconnect or start a model
+turn. Existing command launch, ticket, process and physical reaping custody remain
+responsible through cancelled disposal callers and the unchanged cleanup allowance.
+
+This is a narrow implementation of H2/R73 and
+[ADR-197's standalone v2 consent](197-console-hook-configuration-review.md#current-dev-integration-standalone-v2-consent-task-32679),
+recorded prospectively for
+[TASK-33648](../tasks/task-33648%20-%20Preserve-authorized-SessionEnd-notification-during-Console-host-disposal.md).
+No new permission owner, persistence schema, dependency or general post-disposal
+authority is introduced. Qualification requires real saved/granted exact-close
+and disposal controls, changed/revoked/forged negative controls and cancellation
+with actual process, ticket and physical cleanup evidence.
+
 ### H6 integration and operational handoff
 
 `MCPHookExecutor` consumes the ordinary `ToolCatalogRegistry`/`MCPToolProvider` path and the existing `ToolHookRun` preparation, guard and post-checkpoint owners. Original typed result capture is request-local and qualifies only the exact final returned `ToolResult`; display output grants no native effects. Current profile/persona/kill/schema/automatic-work and exact owned MCP authority remain in their existing owners, including checks after waits. Already-connected-only policy reaches both actual standalone and owned connection boundaries.

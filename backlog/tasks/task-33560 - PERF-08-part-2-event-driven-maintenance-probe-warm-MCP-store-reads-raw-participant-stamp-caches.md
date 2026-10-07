@@ -1,15 +1,19 @@
 ---
 id: TASK-33560
-title: 'PERF-08 part 2: event-driven maintenance probe, warm MCP store reads, raw-participant
-  stamp caches'
-status: To Do
-created_date: 2026-09-29 20:29
-dependencies:
-- TASK-33267
+title: >-
+  PERF-08 part 2: event-driven maintenance probe, warm MCP store reads,
+  raw-participant stamp caches
+status: In Progress
+assignee:
+  - '@codex'
+created_date: '2026-09-29 20:29'
+updated_date: '2026-10-07 01:10'
 labels:
-- performance
-- backup-recovery
-- perf-audit-2026-09
+  - performance
+  - backup-recovery
+  - perf-audit-2026-09
+dependencies:
+  - TASK-33267
 priority: medium
 ---
 
@@ -27,15 +31,33 @@ Split out of PERF-08 (TASK-33267). Part 1 reuses confirmed admission evidence in
 - [ ] #4 Idle open() calls per second fall by at least a further 50% on the boot/idle probe
 <!-- AC:END -->
 
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes (assessment/amendment of existing reusable-evidence boundary)
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: extend the existing process-local, stamp-validated allowed-evidence reuse to the remaining guarded paths without changing native permission or drain ownership.
+1. Trace the actual 1 Hz maintenance probe, MCP/raw/config companion callers and prior owner approval. Measure the current idle/admission cost and pause latency before changing source.
+2. Specify the smallest shared reuse path and complete mutation dependencies under ADR-126; document any required amendment before implementation.
+3. Add failing warm-path and reuse-versus-full-derivation controls, then implement cache reuse with per-call gates, complete stamps, settle margin, epoch invalidation, exact physical pins and unchanged fallback reasons.
+4. Measure a further >=50% reduction in actual idle opens and owner-approved pause latency without changing work, caps or census ceilings. Run targeted security/completeness/cleanup checks and independent review; close only after all criteria are evidenced.
+<!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+<!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+<!-- SECTION:FINAL_SUMMARY:END -->
+
+<!-- SECTION:FINAL_SUMMARY:END -->
 
 <!-- SECTION:FINAL_SUMMARY:END -->
 
