@@ -1,6 +1,6 @@
 # Shared Console tool preparation implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Execution is inline; the user has already selected no subagents. Every task requires its own verification and commit.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. The user subsequently authorized three parallel lanes: shared preparation, controller/provider integration, and baseline verification. Each lane owns distinct files; root is the sole integration owner. Run final integrated checks after both implementations are ready and keep native timing runs sequential. Every task requires its own verification and commit.
 
 **Goal:** Remove duplicate permission loads and worker handoffs from ordinary MCP/local provider composition while preserving enabled tools, source ownership, policy effects and live invocation gates.
 
@@ -53,7 +53,7 @@ Measured current composition performs a permission load for MCP's switch, anothe
 
 ## Execution preflight before Task 1
 
-Verify the exact checkout/branch and initial clean staged/working tree. Establish a checkout-specific Python 3.12 interpreter and the existing private-root/contained test runner before any fixture import or test execution; this is a prerequisite, not work deferred until qualification. Confirm the package, Tests and profile_core resolve from this checkout. Run the existing snapshot/catalog controls on unchanged source and record baseline failures and original composition counts. No new code is written until that evidence and its private/native ownership are understood. The new plan is not authorized for execution until the user reviews it.
+Verify the exact checkout/branch and initial clean staged/working tree. Establish a checkout-specific Python 3.12 interpreter and the existing private-root/contained test runner before any fixture import or test execution; this is a prerequisite, not work deferred until qualification. Confirm the package, Tests and profile_core resolve from this checkout. Run the existing snapshot/catalog controls on unchanged source and record baseline failures and original composition counts. No new code is written until that evidence and its private/native ownership are understood. The user reviewed this plan and authorized execution before implementation began.
 
 ## Task 1: Source-owned preparation result and one ordinary policy observation
 
@@ -106,7 +106,7 @@ Keep compose_catalog() and all existing controller wrappers' supported signature
 
 This first plan deliberately removes a demonstrated duplicate read chain under current custody and durability. It does not attempt early received-intent promotion, a new global approval state, background history persistence, database synchronization changes or storage-format migration. These contracts remain in the accepted architecture and receive separate dependency-ordered plans after measured results.
 
-The implementation plan must be reviewed before product changes. Inline execution remains selected; do not ask for an execution-method choice again. During execution, convert the three delivery tasks into atomic Backlog tasks with fresh IDs, measurable criteria, plans and final notes, and read those task files before edits.
+The implementation plan was reviewed before product changes. The latest user instruction selects the three parallel lanes described above. Delivery tasks are TASK-34563.2, TASK-34563.3 and TASK-34563.4; each was created, planned and read before its implementation. Do not reopen the execution-method decision.
 
 
 ## Exact scoped commands and plan checks
@@ -124,3 +124,10 @@ Expected acceptance is no new candidate-only failures, unchanged original assert
 Run the configured Ruff binary with --no-cache on the modified Python files and format-check newly created modules. Compare pre-existing lint/format findings on existing large modules; do not reformat unrelated source or raise size/boot ratchets. `git diff --check` must succeed before every commit.
 
 Self-review: this plan has one shared type/API consumed by the integration, no undeclared helper or future task reference, and concrete negative cases for every Review Focus line. Runtime and performance checks are planned requirements, not claimed passing results. The one-load normal observation does not encompass mutations, initial maxima, resumed approval or execution. Full-source compatibility and actual latency remain independent of count improvement.
+
+
+## Execution result
+
+The shared preparation and controller/provider lanes are implemented and reviewed. Root ran the final integrated checks after both lanes were ready: 187 targeted checks passed. All four matched native timing runs ran sequentially. The full-app count diagnostic confirms one permission load in each of three stock compositions.
+
+Latency acceptance remains open: candidate Send-to-adapter samples span 7.374–11.669 seconds, the original native regression is red, actual 100 ms terminal feedback is unqualified, and candidate Linux/macOS native checks are missing. Unchecked qualification items above remain requirements, not inferred passes. See [the verification report](../../Development/2026-10-06-console-shared-preparation-verification.md) for results and limitations. Tasks remain In Progress.
