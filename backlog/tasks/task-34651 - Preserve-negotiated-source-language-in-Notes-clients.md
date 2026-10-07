@@ -1,7 +1,7 @@
 ---
 id: TASK-34651
 title: Preserve negotiated source language in Notes clients
-status: In Progress
+status: Done
 created_date: 2026-10-07 03:07
 dependencies:
 - TASK-34571
@@ -12,7 +12,7 @@ labels:
 - structured-editing
 documentation:
 - backlog/decisions/194-structured-note-language-and-local-editor-validation.md
-updated_date: 2026-10-07 05:30
+updated_date: 2026-10-07 06:50
 ---
 
 ## Description
@@ -23,11 +23,11 @@ Keep language intent and exact source safe when clients and servers support diff
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Clients require explicit authenticated language capability and isolate or invalidate capability state on server/profile changes.
-- [ ] #3 Old or unavailable peers leave actionable durable pending intent; a body-only acknowledgement never clears pending language.
-- [ ] #4 Targeted compatibility tests and scoped static/security evidence cover publication rechecks and account isolation.
-- [ ] #5 Relevant governing ADR is assessed/linked and repo-local completion notes name actual evidence and remaining limitations.
-- [ ] #5 Clear Notes round trips and compatible private builder/receiver fixtures preserve exact source, language and lineage; unavailable private server transport retains ciphertext-backed local pending intent.
+- [x] #1 Clients require explicit authenticated language capability and isolate or invalidate capability state on server/profile changes.
+- [x] #2 Old or unavailable peers leave actionable durable pending intent; a body-only acknowledgement never clears pending language.
+- [x] #3 Targeted compatibility tests and scoped static/security evidence cover publication rechecks and account isolation.
+- [x] #4 Relevant governing ADR is assessed/linked and repo-local completion notes name actual evidence and remaining limitations.
+- [x] #5 Clear Notes round trips and compatible private builder/receiver fixtures preserve exact source, language and lineage; unavailable private server transport retains ciphertext-backed local pending intent.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -51,27 +51,15 @@ F4 local immutable intent scope proof: capture exact server_profile/principal/wo
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Implemented complete source/language capture and negotiation through existing Notes clients, immutable intents and scoped receivers. Authenticated provider-owned client, principal and dataset/workspace proof remains current through publication/application/acknowledgement; expected proof-read failures persist bounded pending state. New receipts bind supplied origin in immutable request metadata; historical unproved origins remain pending. Complete backlinks are validated/forwarded and unsupported canonical values refuse before writes. ADR194 and ADR065 govern the contract.
+Verification: original compatibility and actual-store coverage plus final affected-owner196 and focused seam3; fix2 final authority/preflight selection156 passed, genuine RED8fail then GREEN14. Scoped Ruff/Bandit introduced none; formatter debt unchanged; git diff --check passed. Fresh task review and both scoped fix reviews complete, latest verdict clean.
+Limits: actual server private transport unavailable (ciphertext-backed intent retained); non-null canonical backlinks unsupported; actual Library compound-save caller supplies no remote origin, so no production receipt binding claimed. UI pending-reason consumption and application materializer qualification belong to I2/I3/I5.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-
+Exact source and language remain bound to durable scoped intent. Final authority/preflight156 passed and fresh scoped review cleared both remaining defects. Unsupported/unproved paths retain pending state; later UI qualification remains explicit.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
-
-## Implementation Notes
-
-Implemented negotiated complete language snapshots, authenticated publication guards and exact omission/null preservation. Existing local mutation/outbox owners retain unsupported intent; scoped immutable origin proof prevents cross-account drain. Fresh probes and scoped mirror/current-authority injection are documented corrections under ADR194/065. Verification and limitations: task-4-report.md in the controller SDD directory. Status remains In Progress pending independent review.
-
-Review preparation evidence: a runtime-only origin-guard mutation reproduced two foreign-scope-copy failures; intact guard plus real SQLite restore/failed-enqueue/reopen/drain control passed4 targeted tests. Initial fingerprint CHECK failures are fixture failures, not TDD scope evidence. Production unchanged; report corrected and task remains In Progress.
-
-Fix round1: bind Notes target/principal/dataset/workspace through existing provider + authenticated Sync profile/manifest; refuse missing capture/provider or malformed proof with durable pending reason. Capture optional immutable organization origin in fingerprint/request/ready intent/finalizer and report blocked historical origins. Validate/forward complete backlinks and refuse unsupported canonical non-null materialization before writes/mirror. ADR194 updated; named owner verification196passed, followed by focused seam controls after type-exception lint adjustment. Tasks remain In Progress for independent review.
-
-- Actual receipt-owner limitation: Library._save_note supplies no remote/source scope, and NotesScopeService has no organization-save call. The optional captured-scope API is fixture-qualified; no production origin binding is inferred. Unproved affected publication intents remain durably pending.
-
-- Fix round2 (ADR194 / existing Rulings21 and25): Notes authority now requires the proving provider to produce the pinned client; mixed fixed-client/provider construction refuses. Cleanup/publication checks also reject provider replacement, fixed takeover, and provider client changes. Expected SDK proof-read connection/auth/response failures retain bounded durable authority-unavailable state; cancellation and programming RuntimeError propagate. No new owner/schema or browser change.
