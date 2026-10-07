@@ -120,6 +120,7 @@ jobs:
             Tests/Library/test_library_note_autosave_max_wait.py \
             Tests/Library/test_library_file_export.py \
             Tests/Architecture/test_notes_sync_snapshot_construction.py \
+            Tests/Architecture/test_notes_sync_version_proxy_sites.py \
             Tests/Agents/test_mcp_unavailable_builtin_tools.py \
             Tests/Chat/test_console_arrival_vocabulary.py \
             Tests/Chat/test_console_trace_missing_revision_diagnostic.py \
@@ -148,6 +149,7 @@ jobs:
             Tests/Chat/test_console_chat_create_integration.py \
             Tests/Notes/test_notes_sync_tail_edit.py \
             Tests/Notes/test_notes_sync_delete_restore_signal.py \
+            Tests/Notes/test_notes_sync_version_only_move.py \
             Tests/Notes/test_notes_sync_resave_window.py \
             Tests/Notes/test_notes_sync_attention_fence.py \
             Tests/Agents/test_first_request_window_honest_plan.py \

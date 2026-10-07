@@ -888,13 +888,16 @@ profile at the moment you restore, the folder waits for your next change to
 one of its notes, or for **Check changes**. And **Ctrl+Q** right after a
 restore waits up to five seconds for the folder to be checked; on a folder
 that takes longer, the next session opens with it still held.)
-One known gap remains after that: the first edit you make to that file *on
-disk* is refused by the folder — "⚠ Needs attention" with nothing to review —
-until TASK-34000.49 lands; editing the note in Chatbook first turns it into an
-ordinary "Both file and note changed" review you can resolve. Before this,
-deleting a synced note left the row at "✓ Up to date" with the file still on
-disk and nothing to say the folder had anything to decide (TASK-32633 slice,
-N-03).
+The folder keeps syncing both ways after that: the first edit you make to
+that file *on disk* flows into the restored note on the next automatic pass,
+exactly as it did before the delete. (The same holds after a keywords-only
+save or a rename of the note in Chatbook — none of those count as a change to
+the note's text, and none of them stop the next file edit from landing.) If
+you edited the note's text in Chatbook *and* the file on disk, the folder
+stops for the ordinary "Both file and note changed" review instead; nothing
+is chosen for you. Before this, deleting a synced note left the row at "✓ Up
+to date" with the file still on disk and nothing to say the folder had
+anything to decide (TASK-32633 slice, N-03).
 
 **What this covers, exactly: editing an existing synced note in the Library
 note editor, and deleting or restoring one through the Library.** Those are
