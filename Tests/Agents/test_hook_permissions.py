@@ -419,7 +419,11 @@ def test_consent_survives_a_new_owner_and_state_contains_no_commands(hook_file):
     assert state["schema_version"] == 1
     assert "pass" not in current.store_path.read_text()
     assert "command" not in current.store_path.read_text()
-    assert current.store_path.stat().st_mode & 0o777 == 0o600
+    # The platform adapter derives these bits from the actual Windows DACL;
+    # stdlib Path.stat reports synthetic writable bits on Windows.
+    from tldw_chatbook.Utils.platform_files import os as platform_os
+
+    assert platform_os.stat(current.store_path, follow_symlinks=False).st_mode & 0o777 == 0o600
 
 
 def test_deleting_an_approved_legacy_duplicate_cannot_transfer_grant(hook_file):

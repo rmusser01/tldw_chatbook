@@ -49,7 +49,8 @@ def test_seeded_permission_read_avoids_owner_only_generation_queries(
     for name, value in counts.items():
         record_property(name, value)
     assert counts["native_opens"] > 0 and counts["native_security"] > 0
-    assert counts["full_raw_checks"] >= 7
+    # Outer and two nested entries, then the source-operation and file checks.
+    assert counts["full_raw_checks"] >= 5
     assert counts["fresh_witnesses"] >= counts["full_raw_checks"]
     assert counts["source_selections"] <= 13
     assert counts["fresh_witnesses"] <= 14

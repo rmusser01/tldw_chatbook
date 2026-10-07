@@ -1,5 +1,7 @@
 """Config companion paths share admission without enlarging native scope."""
 
+import os
+
 import pytest
 
 from Tests.Backup_Recovery.test_bootstrap import local_scope  # noqa: F401
@@ -112,7 +114,16 @@ def test_related_path_moved_outside_enrollment_is_rechecked_after_acquisition(
         calls += 1
         if calls == 2:
             directory.rename(data / "original-copies")
-            directory.symlink_to(outside, target_is_directory=True)
+            if os.name == "nt":
+                # A real directory junction exercises the same retarget race
+                # without requiring the Windows symlink privilege.
+                import _winapi
+
+                _winapi.CreateJunction(str(outside), str(directory))
+                assert directory.is_junction()
+            else:
+                directory.symlink_to(outside, target_is_directory=True)
+            assert directory.resolve() == outside.resolve()
         return original(selector, selected_root)
 
     monkeypatch.setattr(bootstrap, "startup_permission", permission)

@@ -596,6 +596,54 @@ def _selection(source, route, template, user_template, selected_read):
     return lexical_path(emoji_picker._recent_emojis_path()), True, False
 
 
+def _related_member_acquirer():
+    """Use only the original acquisition callback for installed member batches."""
+    binding = storage._RAW_MEMBER_ACQUIRE_BINDING
+    acquire, code, defining, defaults, keywords, items = binding
+    if (
+        storage.acquire_storage is not acquire
+        or acquire.__code__ is not code
+        or acquire.__globals__ is not defining
+        or defining is not vars(storage)
+        or acquire.__defaults__ is not defaults
+        or acquire.__kwdefaults__ is not keywords
+        or (
+            keywords is not None
+            and (
+                len(keywords) != len(items)
+                or any(
+                    key not in keywords or keywords[key] is not value
+                    for key, value in items
+                )
+            )
+        )
+    ):
+        return None
+    return acquire
+
+
+def _nested_installed_mcp_state(source, route, previous):
+    """Inspect issued MCP custody without repeating its native source proof."""
+    if route != mcp_sources.ROUTE or type(previous) is not _RawOperation:
+        return None
+    with storage._lock:
+        state = _states.get(previous)
+        if (
+            state is None
+            or state.source is not source
+            or state.route != mcp_sources.ROUTE
+            or state.participant is None
+        ):
+            return None
+        state = _live_state(previous, None, False)
+        participant = _participant_identity(state.participant)
+        if participant.source() is not source:
+            raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+        if not participant.owner.startswith("mcp."):
+            return None
+        return state
+
+
 def _pin_parent(state, anchor):
     """Reuse a complete parent proof; each operation still owns its fresh FD."""
     from tldw_chatbook.Utils import private_paths
@@ -664,6 +712,15 @@ def _scope(
 ):
     previous = getattr(_local, "operation", None)
     if previous is not None:
+        nested_mcp = (
+            _nested_installed_mcp_state(source, route, previous)
+            if selected_read is None
+            else None
+        )
+        if nested_mcp is not None:
+            _check(previous, nested_mcp.selected, writing=writing)
+            yield previous
+            return
         previous_state = _check(previous)
         if previous_state.source is source and route in {
             "service",
@@ -932,6 +989,19 @@ def _scope(
                 admission_paths[0], related_paths=admission_paths[1:]
             ))
             state.holds.append(storage._holds.get(state.leases[-1]._key))
+            attempt.check()
+        elif (
+            installed
+            and route in {"hook_permissions", mcp_sources.ROUTE}
+            and (acquire_members := _related_member_acquirer()) is not None
+        ):
+            attempt.check()
+            state.leases.append(
+                acquire_members(admission_paths[0], related_paths=admission_paths[1:])
+            )
+            state.holds.append(storage._holds.get(state.leases[-1]._key))
+            if _related_member_acquirer() is not acquire_members:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
             attempt.check()
         else:
             for path in admission_paths:

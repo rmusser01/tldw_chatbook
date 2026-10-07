@@ -486,3 +486,169 @@ In Progress because inherited whole-file static debt and earlier platform
 qualification gaps remain explicitly unresolved. This is a local checkpoint,
 not completion of the Console responsiveness work. Existing ADR-222 and
 ADR-126 remain the governing decisions.
+
+
+### Related-member preparation: verification and unresolved timing
+
+Task 34563.20 uses the existing related-path admission for one installed MCP
+or hook operation. Primary-only borrowed authority, separate recovered canonical
+custody, every member check and all effect/reconciliation ordering remain intact.
+Custom or changed acquisition callbacks retain the original positional route;
+a late callback change refuses only after the issued lease has an owner for
+cleanup. Independent source review found no correctness blocker.
+
+The original three count controls failed only their final acquisition-count
+assertions, after real output, complete member order and physical retirement
+passed: permission 3, catalog 2 and hook 4 acquisitions. Candidate counts are
+one each. The first integrated run had 48 passes and one unsupported fixture
+expectation: a malformed changed keyword default did not reject in its unbound
+namespace. The corrected control directly verifies that three ordinary calls
+consume the changed default, without replacing it through batch keywords. All
+ten new controls then passed. The 39 existing integration controls passed on
+unchanged product, and the restored canonical permission update passed separately.
+Those checks cover consent reconciliation, source drift, enrollment, pause,
+provider preparation/cancellation, and uncertain native retirement.
+
+The source-frozen 78-target `related-source-spans-1` run completed three saved
+replies with complete linked traces and zero checkpoints, but adapter latency
+was **12.199708 / 8.840663 / 9.037641 seconds**, versus the previous
+**9.943307 / 5.684903 / 5.117334 seconds**. This is not a speed success.
+Several unchanged bodies also slowed, while hook raw entry became cheaper;
+the samples do not isolate causality. Send heartbeat maxima were .505/.295/.209
+seconds, typing .566 seconds and idle 3.130 seconds. Both latency goals remain
+unmet. The driver completed in 90.937 seconds (pytest 84.54), source hashes and
+bindings remained current, and monitoring retired with no event/detail overflow
+or unfinished entries. The bounded ancestor walk recorded 122 limit misses.
+
+A sequential original-source/candidate comparison therefore added passive
+original Windows `_Native.open_handle` entry counts on the measured read thread.
+These include the surrounding configuration work for a hook read, but are not
+a process-wide syscall census. Both exact product files were preserved by hash,
+staged to a627620e43 for the original run, and restored byte-for-byte only after
+native retirement. Ordinary source counts were permission **1581 -> 2199**,
+catalog **1348 -> 1262**, hook **1599 -> 1341**. With actual enrolled profiles
+and confirmed selector/primary evidence, counts were permission **1785 -> 1541**,
+catalog **1508 -> 1386**, hook **2289 -> 2071**. The existing one-second settling
+policy remained unchanged and random hook temporaries were never pre-admitted.
+Original six cases reached only the final count assertion; all thirteen candidate
+count/compatibility cases passed. With the 39 unchanged controls and restored
+canonical case, the verified union now contains 53 distinct cases.
+
+A further exact-source permission-only pair records actual evidence state and
+reuse outcomes. Both reads entered with confirmed unbound selector evidence and
+returned the original reused lease. Original native entries were **1581**, with
+**168** inside three acquisitions (56 each) and **1413** outside; candidate was
+**1409**, with **56** inside its one acquisition and **1353** outside. Original
+failed only the final one-acquisition assertion; candidate passed. Every earlier
+output/member/retirement assertion passed, detail overflow was zero, and both
+runners retired normally with no PID overflow or lookup race. The latest test
+source hash is c9fac7c395d2feec19c95409545c2299d05daaf1d4a02848acdaa8087db7d4ed.
+
+The earlier 2199-entry permission observation did not reproduce and lacked reuse
+metadata, so its cause remains unproven. For bound profiles, a member without
+confirmed evidence can still send a grouped acquisition through full derivation;
+for an unbound profile, confirmed selector evidence alone permits reuse. No
+settling policy changed. These counts justify retaining the small related-member
+consolidation, but establish neither uniformly lower cold-read cost nor faster
+whole-Send latency. Most remaining native entries are outside the directly counted member
+acquisition. Source tracing finds additional canonical acquisitions beneath
+source selection before the raw operation is active; the next observer separates
+those from actual file access and nested validation. No additional cache
+or weakened permission boundary follows from these measurements.
+
+All listed runners reached an empty contained Job at normal parent exit, released
+native identity and retired pipes/monitoring without force; private profiles were
+removed. The first integration, whole-Send and final native comparison each
+recorded one PID lookup race, with zero history overflow; the final ten controls,
+restored canonical case and original native comparison recorded neither. These
+are bounded diagnostic cleanup receipts, not universal production-cleanup proof.
+Scoped syntax/new-test formatting and lint pass; raw-participant lint stays clean
+and storage-admission retains the same eight pre-existing diagnostics. Existing
+whole-file format debt and prior platform gaps remain qualified. Task 34563.20
+and the larger responsiveness work remain In Progress under ADR-222/ADR-126.
+
+
+### Original source-read ancestry after related-member batching
+
+The bounded observer now distinguishes every original acquisition from only the
+direct member batch, and attributes native opens to their exact raw-check or
+acquisition caller. The first run reached all behavior and retirement checks but
+failed the permission diagnostic: redundant caller dimensions exhausted 64 buckets
+(35 opens aggregated), while walking past the measured read into pytest incorrectly
+marked every ancestry as truncated. The observer was corrected to stop at that
+exact measured-read frame and to merge redundant helper dimensions when the owning
+check/acquisition is already identified. Neither limit nor product code changed.
+
+The corrected `related-read-ancestry-2` passed both original installed permission
+and hook reads in 22.625 driver seconds (14.51 pytest). Counts/exits reconcile,
+there were zero bucket/active/detail overflows and zero depth misses, and original
+function bindings remained installed. Permission: 1409 native opens, seven actual
+acquisitions (six canonical observations plus one direct member batch). The six
+canonical acquisitions account for 336 opens. Seven full raw checks each account
+for 73 opens; two initial nested checks and two final nested checks each account
+for 146. Between each initial/final nested MCP pair, the stock source path is read
+from the existing operation and compared lexically; there is no intermediate
+native effect or selector callback. The two initial checks took .350909 seconds
+under this observer; the retained final pair took .353530 seconds. These are
+instrumented overlapping timings, not expected whole-Send savings.
+
+Hook: 1341 native opens and three actual acquisitions, including surrounding config
+admission. Runtime-operation discovery invokes 50 hook checks (400 native opens)
+and 27 config checks (162 opens). These checks repeat parent identity validation;
+the hook source body itself remains small. Source review is evaluating whether
+read-only parent preparation can share a finite proof while retaining actual leaf
+and publication gates. No parent-walk optimization or lock durability change has
+been implemented. Six canonical acquisitions can separately share one finite
+pending source owner only if all fresh generation observations and refusal points
+remain; that larger change is also not implemented from this diagnostic.
+
+Both runs reached an empty contained Job at normal parent exit, released native
+identity and pipes, and removed their private profiles without forced termination
+or PID history overflow/race. Observer source after correction:
+a7c9c963f946f00fc5dbc339dc169d7578c31efa48ec05f2bee63d710e62723d.
+Task20 product hashes remained unchanged. The next smallest measured contraction
+is duplicate nested installed MCP validation, under existing ADR-222/ADR-126.
+
+
+### Nested installed MCP validation contraction (task 34563.21)
+
+The stock same-source installed MCP nesting now inspects issued actor, source and
+participant metadata, then retains one original full source/path check immediately
+before its body. Explicit selected-read values, non-MCP routes and custom sources
+retain the original branch. No permission result, file witness or lifetime is
+cached. Existing ADR-222 and ADR-126 govern this contraction.
+
+The sequential original count control reached all payload/member/retirement
+assertions and failed only the final expected nesting count: five scope checks
+and seven full checks. Candidate scope checks are three and full checks five;
+actual native opens fell from 1409 to 1263, with seven acquisitions unchanged.
+The bounded ancestry observer recorded zero overflow and depth misses. These are
+operation counts on a seeded permission read, not a whole-Send speed claim.
+
+The integrated run passed 51 cases and failed one new test fixture: it expected
+__fspath__ conversion, while the unchanged lexical_path contract uses str(value).
+The fixture now observes __str__ ordering and explicitly rejects unexpected
+__fspath__ use; production was unchanged. The four final controls passed both
+explicit-path cases, the count test and restored canonical permission update.
+Together the runs verify 53 distinct cases: late source/selector/custody/participant
+drift, foreign actors and unissued tokens, custom/non-MCP compatibility, accepted
+pause, corruption, cancellation and actual native retirement.
+
+Integrated timing was 210.563 driver / 203.80 pytest seconds; final controls took
+45.703 / 39.22 seconds. Both runners reached an empty contained Job at normal
+parent exit, released identity, retired pipes/monitoring and removed private
+profiles without force. PID history overflow was zero; the integrated run had one
+lookup race and final controls none. These receipts qualify diagnostic cleanup,
+not universal ordinary-app native cleanup.
+
+Product SHA256: 78aca0d9d602054f762949b0e3b719d111ff11a6403a66278e80eb50cde5519d.
+Final integration test SHA256:
+349b587e120dfb7fbeb8ea6bbe1db5626b725438b2d479a245b4749a7dbc43ce.
+The product and three affected test files pass scoped Ruff checks; test formatting
+and syntax pass. Existing whole-product format debt and platform qualification
+remain. No full suite was run. Task 34563.21 remains In Progress under the broader
+DoD; the last whole-Send measurement still misses both responsiveness targets.
+
+Next diagnosis measures only full runtime checks made inside the original
+read-only parent walk, separating that subset from leaf allocation, append/atomic
+bookkeeping and other trusted-directory helpers before any further contraction.

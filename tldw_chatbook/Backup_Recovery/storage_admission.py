@@ -1672,6 +1672,18 @@ def acquire_storage(
         attempt.close()
 
 
+# Direct callable inputs for the installed raw-member batch only. These are
+# source bindings, never permission or retained native admission evidence.
+_RAW_MEMBER_ACQUIRE_BINDING = (
+    acquire_storage,
+    acquire_storage.__code__,
+    acquire_storage.__globals__,
+    acquire_storage.__defaults__,
+    acquire_storage.__kwdefaults__,
+    tuple((acquire_storage.__kwdefaults__ or {}).items()),
+)
+
+
 def _acquire_storage(
     path: Path | None, attempt: _Acquisition, *, related_paths: tuple[Path, ...] = ()
 ) -> StorageLease:
