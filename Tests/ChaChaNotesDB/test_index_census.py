@@ -301,6 +301,9 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_conversation_world_books_conv": IndexPin(
         "conversation_world_books", False, ("conversation_id",)
     ),
+    "idx_conversations_archived_browse_order": IndexPin(
+        "conversations", False, ("archived", "last_modified", "id")
+    ),
     "idx_conversations_assistant_identity": IndexPin(
         "conversations", False, ("assistant_kind", "assistant_id")
     ),
@@ -310,10 +313,12 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_conversations_discovery_owner": IndexPin(
         "conversations", False, ("discovery_owner",)
     ),
+    "idx_conversations_last_modified": IndexPin(
+        "conversations", False, ("last_modified", "id")
+    ),
     "idx_conversations_parent": IndexPin(
         "conversations", False, ("parent_conversation_id",)
-    ),
-    "idx_conversations_root": IndexPin("conversations", False, ("root_id",)),
+    ),    "idx_conversations_root": IndexPin("conversations", False, ("root_id",)),
     "idx_conversations_runtime_backend": IndexPin(
         "conversations", False, ("runtime_backend",)
     ),

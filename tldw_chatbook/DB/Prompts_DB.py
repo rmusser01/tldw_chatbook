@@ -4007,10 +4007,16 @@ class PromptsDatabase:
                 paginated_params = tuple(params + [results_per_page, offset])
                 results_cursor = self.execute_query(results_sql, paginated_params)
                 results_list = [dict(row) for row in results_cursor.fetchall()]
-                # Attach keywords to each result
+                # Attach keywords to each result with ONE batched query
+                # (the per-row fetch_keywords_for_prompt loop made page
+                # cost O(page_size) queries; this matches
+                # list_library_prompts_page).
+                keywords_by_prompt = self._library_keywords_for_prompts(
+                    self.get_connection(), [res["id"] for res in results_list]
+                )
                 for res_dict in results_list:
-                    res_dict["keywords"] = self.fetch_keywords_for_prompt(
-                        res_dict["id"], include_deleted=False
+                    res_dict["keywords"] = keywords_by_prompt.get(
+                        res_dict["id"], []
                     )
 
             # Log success metrics
@@ -4467,7 +4473,11 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed to fetch all keywords: {e}") from e
 
     def search_prompts_by_keyword(
-        self, keyword: str, include_deleted: bool = False
+        self,
+        keyword: str,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
     ) -> List[Dict]:
         """
         Search for prompts that have a specific keyword.
@@ -4475,6 +4485,9 @@ class PromptsDatabase:
         Args:
             keyword: The keyword to search for
             include_deleted: Whether to include soft-deleted prompts
+            limit: Maximum number of prompts to return (page size, matching
+                ``search_prompts``' default).
+            offset: Number of matching prompts to skip before the page.
 
         Returns:
             List of prompt dictionaries that have the keyword
@@ -4487,7 +4500,7 @@ class PromptsDatabase:
         normalized_keyword = self._normalize_keyword(keyword)
 
         query = """
-            SELECT DISTINCT p.* 
+            SELECT DISTINCT p.*
             FROM Prompts p
             JOIN PromptKeywordLinks pkl ON p.id = pkl.prompt_id
             JOIN PromptKeywordsTable pkw ON pkl.keyword_id = pkw.id
@@ -4498,17 +4511,21 @@ class PromptsDatabase:
         if not include_deleted:
             query += " AND p.deleted = 0 AND pkw.deleted = 0"
 
-        query += " ORDER BY p.name COLLATE NOCASE"
+        query += " ORDER BY p.name COLLATE NOCASE LIMIT ? OFFSET ?"
+        params.extend((limit, offset))
 
         try:
-            cursor = self.execute_query(query, tuple(params))
+            conn = self.get_connection()
+            cursor = conn.execute(query, tuple(params))
             results = [dict(row) for row in cursor.fetchall()]
 
-            # Attach keywords to each result
+            # Attach keywords to each result with ONE batched query (the
+            # per-row fetch_keywords_for_prompt loop was N+1 per search).
+            keywords_by_prompt = self._library_keywords_for_prompts(
+                conn, [res["id"] for res in results]
+            )
             for res_dict in results:
-                res_dict["keywords"] = self.fetch_keywords_for_prompt(
-                    res_dict["id"], include_deleted=False
-                )
+                res_dict["keywords"] = keywords_by_prompt.get(res_dict["id"], [])
 
             # Log success metrics
             duration = time.time() - start_time
@@ -4554,7 +4571,11 @@ class PromptsDatabase:
             raise DatabaseError(f"Failed to search prompts by keyword: {e}") from e
 
     def search_prompts_by_text(
-        self, search_text: str, include_deleted: bool = False
+        self,
+        search_text: str,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
     ) -> List[Dict]:
         """
         Full-text search across prompt content.
@@ -4566,6 +4587,9 @@ class PromptsDatabase:
                 of them must appear but they need not be adjacent -- NOT a
                 phrase, and FTS5 operators in it are inert.
             include_deleted: Whether to include soft-deleted prompts
+            limit: Maximum number of prompts to return (page size, matching
+                ``search_prompts``' default).
+            offset: Number of matching prompts to skip before the page.
 
         Returns:
             List of prompt dictionaries matching the search
@@ -4574,7 +4598,6 @@ class PromptsDatabase:
             return []
 
         try:
-            # Use FTS to find matching prompt IDs
             # TASK-19558: `search_text` is plain user text; quote each of
             # its tokens and AND them rather than binding it as an FTS5
             # expression (and rather than one whole-query phrase, which
@@ -4582,33 +4605,34 @@ class PromptsDatabase:
             match_expression = build_and_match_query(search_text)
             if not match_expression:
                 return []
-            cursor = self.execute_query(
-                "SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?",
-                (match_expression,),
+
+            # TASK-32804.10 (same shape as `search_prompts`): keep the
+            # matching-id set in SQLite instead of materialising every
+            # matching rowid in Python and binding them as one
+            # `id IN (?,?,...)` list.
+            conn = self.get_connection()
+            query = (
+                "SELECT * FROM Prompts WHERE id IN "
+                "(SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)"
             )
-            matching_ids = [row["rowid"] for row in cursor.fetchall()]
-
-            if not matching_ids:
-                return []
-
-            # Build query for full prompt data
-            placeholders = ",".join("?" * len(matching_ids))
-            query = f"SELECT * FROM Prompts WHERE id IN ({placeholders})"
-            params = list(matching_ids)
+            params: List[Any] = [match_expression]
 
             if not include_deleted:
                 query += " AND deleted = 0"
 
-            query += " ORDER BY name COLLATE NOCASE"
+            query += " ORDER BY name COLLATE NOCASE LIMIT ? OFFSET ?"
+            params.extend((limit, offset))
 
-            cursor = self.execute_query(query, tuple(params))
+            cursor = conn.execute(query, tuple(params))
             results = [dict(row) for row in cursor.fetchall()]
 
-            # Attach keywords to each result
+            # Attach keywords to each result with ONE batched query (the
+            # per-row fetch_keywords_for_prompt loop was N+1 per search).
+            keywords_by_prompt = self._library_keywords_for_prompts(
+                conn, [res["id"] for res in results]
+            )
             for res_dict in results:
-                res_dict["keywords"] = self.fetch_keywords_for_prompt(
-                    res_dict["id"], include_deleted=False
-                )
+                res_dict["keywords"] = keywords_by_prompt.get(res_dict["id"], [])
 
             return results
         except (DatabaseError, sqlite3.Error) as e:
