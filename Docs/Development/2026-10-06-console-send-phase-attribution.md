@@ -407,3 +407,82 @@ has unchanged whole-file formatting debt and private_paths.py retains its
 existing E721 at line 132. The new helper and test file pass formatting.
 Existing ADR-222 and ADR-126 govern the change. Work continues under task
 34563.18 on the measured repeated directory inputs; no full suite was run.
+
+### Shared directory preparation integration
+
+Task 34563.18 centralizes the 13 sensitive database selectors in config's
+private `_database_path` helper while preserving every public signature and
+annotation. Default paths may use the directory already verified by the
+current sensitive-input operation; explicit custom paths retain their original
+validation, short-circuit and scheduled-task expansion rules. Stock file,
+skill-trust and container projections receive the same explicit directory.
+Both independent RAG readers and the original initial/final directory reads
+remain. No new owner, registry, cache or native lifetime is introduced.
+
+Definition-time function and defaults checks qualify the prepared route.
+Custom functions or changed default values use their ordinary public readers;
+source/reader changes during a stock build refuse its publication. Observed
+environment/CWD changes use ordinary readers without changing the additive
+error contract. Their sticky invalidation is checked again at publication,
+including after a changed value returns to its original value. Review caught
+that this flag must be checked after final admission as well as when computing
+eligibility; two real-body mutation controls verify that correction.
+
+The final integrated run (`sensitive-directory-integration`) passed **46/46**
+targeted cases in 236.95 seconds (240.562 seconds including the driver).
+This includes original custom/failure/source/body/guarded-body/tuple controls,
+nine new parity/default/helper/late-invalidation cases, run-log path preparation
+and the original ordinary scoped run-log admission. Cold directory calls fall
+from **20 to 4**; the warm hit still makes one directory call and two raw
+checks. All 13 default and explicitly overridden database selections, reset
+behavior, scheduled validation, file/trust coverage and database sidecar denial
+match the ordinary readers. Source changes and failed preparation never
+publish the raw-input memo. Required physical resource retirement passed.
+
+The contained Job was empty at normal parent exit; its native identity,
+pipes and monitor retired and the private profile was removed without force.
+The bounded historical PID recorder overflowed 1,262 times (zero lookup races),
+so this is not a complete process-history census. Independent Job emptiness
+and the tests' native retirement assertions passed. No deadlines or diagnostic
+capacities were widened and no full sweep was run.
+
+Both product diffs received root and independent API review without remaining
+findings. AST checks and all 13 public signature comparisons pass. Changed
+functions and the test file pass formatting. Config's 56 existing Ruff findings
+are unchanged; sensitive_paths.py has no lint findings and retains two existing
+whole-file wrapping differences. The helper is also included in the existing
+run-log source qualification records. ADR-222 and ADR-126 continue to apply.
+
+The separate two-case count run (`sensitive-directory-counts`, 14.078 seconds
+including the driver) passed with successful original-body stdout retained.
+Cold native opens fall from **2,603 to 1,003**, raw checks from **81 to 17**,
+and user-directory calls from **20 to 4**. The warm hit remains **356 opens,
+two raw checks and one user-directory call**. Both final operation censuses
+were zero; the existing startup owner lasts until process exit. The contained
+Job retired normally, its private profile was removed, and PID history had
+no overflow or lookup race.
+
+The original three-Send probe (`sensitive-directory-spans-1`) measured
+**9.002798 / 8.157567 / 7.945963 seconds** to the adapter. Against task 17's
+9.197429 / 5.789172 / 4.819775-second sample, this establishes **no overall
+latency improvement**. All three saved turns completed, with three replies,
+three linked traces and zero dispatch checkpoints. Both sensitive-input
+bundles selected the qualified prepared route; all received intents were
+accepted. Config capture still took 1.335 / 1.412 / 1.283 seconds, and provider
+composition 1.074 / .760 / .904 seconds. Typical hook reads still performed
+150 raw checks. Local operation-count savings are established independently
+of the variable whole-Send samples; the subsecond target remains unmet.
+
+Send heartbeat maxima were **364 / 128 / 192 ms**, typing max **587 ms**,
+and idle max **2.386 seconds**. The source stayed unchanged throughout the
+68.640-second driver run. No span or caller capacity overflow, unmatched
+start or unfinished entry occurred; the bounded ancestor walk recorded 122
+misses, so scoped call ancestry is not a complete global census. The Job,
+native identity, pipes and monitor retired without force, the private profile
+was removed, and PID history recorded no overflow or lookup race.
+
+Task 18's four acceptance criteria are verified, but its status remains
+In Progress because inherited whole-file static debt and earlier platform
+qualification gaps remain explicitly unresolved. This is a local checkpoint,
+not completion of the Console responsiveness work. Existing ADR-222 and
+ADR-126 remain the governing decisions.

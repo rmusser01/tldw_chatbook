@@ -11018,6 +11018,36 @@ def _get_custom_database_path(
     return lexical_path(validated)
 
 
+def _database_path(
+    setting_name: str,
+    *,
+    ignore_override: bool = False,
+    expand_before_validation: bool = True,
+    _user_data_dir: Path | None = None,
+) -> Path:
+    """Select a database path, optionally using an already verified directory.
+
+    Args:
+        setting_name: The existing database setting and default leaf selector.
+        ignore_override: Skip custom settings when selecting a default path.
+        expand_before_validation: Preserve the setting's custom-path expansion.
+        _user_data_dir: Directory supplied by finite sensitive-path preparation.
+
+    Returns:
+        The custom path or the database's default path beneath the directory.
+    """
+    if not ignore_override:
+        custom_path = (
+            _get_custom_database_path(setting_name)
+            if expand_before_validation
+            else _get_custom_database_path(setting_name, expand_before_validation=False)
+        )
+        if custom_path:
+            return custom_path
+    user_data_dir = get_user_data_dir() if _user_data_dir is None else _user_data_dir
+    return user_data_dir / profile_paths.database_leaf(setting_name)
+
+
 def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
     """Get the resolved path for the ChaChaNotes database.
 
@@ -11032,11 +11062,7 @@ def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
         (unless ``ignore_override``) or the default filename under the
         current profile's user data directory.
     """
-    if ignore_override:
-        return get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
-    return _get_custom_database_path(
-        "chachanotes_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
+    return _database_path("chachanotes_db_path", ignore_override=ignore_override)
 
 
 def get_tts_profiles_db_path() -> Path:
@@ -11195,11 +11221,7 @@ def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
         (unless ``ignore_override``) or the default filename under the
         current profile's user data directory.
     """
-    if ignore_override:
-        return get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
-    return _get_custom_database_path(
-        "prompts_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
+    return _database_path("prompts_db_path", ignore_override=ignore_override)
 
 
 def get_media_db_path(*, ignore_override: bool = False) -> Path:
@@ -11216,19 +11238,11 @@ def get_media_db_path(*, ignore_override: bool = False) -> Path:
         (unless ``ignore_override``) or the default filename under the
         current profile's user data directory.
     """
-    if ignore_override:
-        return get_user_data_dir() / profile_paths.database_leaf("media_db_path")
-    return _get_custom_database_path(
-        "media_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
+    return _database_path("media_db_path", ignore_override=ignore_override)
 
 
 def get_library_collections_db_path() -> Path:
-    return _get_custom_database_path(
-        "library_collections_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf(
-        "library_collections_db_path"
-    )
+    return _database_path("library_collections_db_path")
 
 
 def get_dreams_db_path() -> Path:
@@ -11240,49 +11254,33 @@ def get_dreams_db_path() -> Path:
 
 
 def get_library_ingest_jobs_db_path() -> Path:
-    return _get_custom_database_path(
-        "library_ingest_jobs_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf(
-        "library_ingest_jobs_db_path"
-    )
+    return _database_path("library_ingest_jobs_db_path")
 
 
 def get_workspaces_db_path() -> Path:
-    return _get_custom_database_path(
-        "workspaces_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
+    return _database_path("workspaces_db_path")
 
 
 def get_subscriptions_db_path() -> Path:
-    return _get_custom_database_path(
-        "subscriptions_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
+    return _database_path("subscriptions_db_path")
 
 
 def get_evals_db_path() -> Path:
     """Return the canonical path for the Evals database."""
-    return _get_custom_database_path(
-        "evals_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
+    return _database_path("evals_db_path")
 
 
 def get_rag_indexing_db_path() -> Path:
     """Return the canonical path for the RAG indexing-state database."""
-    return _get_custom_database_path(
-        "rag_indexing_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
+    return _database_path("rag_indexing_db_path")
 
 
 def get_notifications_db_path() -> Path:
-    return _get_custom_database_path(
-        "notifications_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
+    return _database_path("notifications_db_path")
 
 
 def get_research_db_path() -> Path:
-    return _get_custom_database_path(
-        "research_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
+    return _database_path("research_db_path")
 
 
 def get_workflows_db_path() -> Path:
@@ -11294,16 +11292,11 @@ def get_workflows_db_path() -> Path:
 
 
 def get_writing_db_path() -> Path:
-    return _get_custom_database_path(
-        "writing_db_path"
-    ) or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
+    return _database_path("writing_db_path")
 
 
 def get_scheduled_tasks_db_path() -> Path:
-    return _get_custom_database_path(
-        "scheduled_tasks_db_path",
-        expand_before_validation=False,
-    ) or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
+    return _database_path("scheduled_tasks_db_path", expand_before_validation=False)
 
 
 def get_cli_log_file_path() -> Path:
@@ -11683,6 +11676,7 @@ _SENSITIVE_INPUT_ORIGINALS = (
         for name in (
             "get_user_data_dir",
             "_get_effective_config_path",
+            "_database_path",
             "_get_custom_database_path",
             "get_cli_setting",
             "load_cli_config_and_ensure_existence",
@@ -11717,6 +11711,34 @@ _SENSITIVE_INPUT_ORIGINALS = (
         ),
         ("profile_paths", profile_paths, profile_paths.__dict__, None),
     ),
+)
+
+# Capture default values before lazy sensitive-path readers can be replaced.
+# The tuple of keyword items remains independent of an in-place dict edit.
+_SENSITIVE_INPUT_DEFAULTS = tuple(
+    (
+        name,
+        globals()[name],
+        globals()[name].__defaults__,
+        globals()[name].__kwdefaults__,
+        tuple((globals()[name].__kwdefaults__ or {}).items()),
+    )
+    for name in (
+        "get_chachanotes_db_path",
+        "get_prompts_db_path",
+        "get_media_db_path",
+        "get_library_collections_db_path",
+        "get_library_ingest_jobs_db_path",
+        "get_workspaces_db_path",
+        "get_subscriptions_db_path",
+        "get_notifications_db_path",
+        "get_research_db_path",
+        "get_writing_db_path",
+        "get_scheduled_tasks_db_path",
+        "get_evals_db_path",
+        "get_rag_indexing_db_path",
+        "_database_path",
+    )
 )
 
 _SENSITIVE_INPUT_OWNERS = (
@@ -11794,6 +11816,7 @@ _RUN_LOG_PROBE_SOURCE = (
             (globals(), name, globals()[name])
             for name in (
                 "get_workspaces_db_path",
+                "_database_path",
                 "_get_custom_database_path",
                 "get_user_data_dir",
                 "get_cli_setting",
@@ -11817,6 +11840,7 @@ _RUN_LOG_PROBE_SOURCE = (
                 (globals(), name, globals()[name])
                 for name in (
                     "get_workspaces_db_path",
+                    "_database_path",
                     "_get_custom_database_path",
                     "get_user_data_dir",
                     "get_cli_setting",

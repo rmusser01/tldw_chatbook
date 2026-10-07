@@ -18,12 +18,34 @@ real_profile_guard.install()
 from loguru import logger
 logger.remove()
 route, outcome = sys.argv[1:]
+DB_DEFAULTS = (
+    ('chachanotes_db_path', 'tldw_chatbook_ChaChaNotes.db'),
+    ('prompts_db_path', 'tldw_chatbook_prompts.db'),
+    ('media_db_path', 'tldw_chatbook_media_v2.db'),
+    ('library_collections_db_path', 'tldw_chatbook_library_collections.db'),
+    ('library_ingest_jobs_db_path', 'tldw_chatbook_library_ingest_jobs.db'),
+    ('workspaces_db_path', 'tldw_chatbook_workspaces.db'),
+    ('subscriptions_db_path', 'tldw_chatbook_subscriptions.db'),
+    ('notifications_db_path', 'tldw_chatbook_notifications.db'),
+    ('research_db_path', 'tldw_chatbook_research.db'),
+    ('writing_db_path', 'tldw_chatbook_writing.db'),
+    ('scheduled_tasks_db_path', 'tldw_chatbook_scheduled_tasks.db'),
+    ('evals_db_path', 'evals.db'),
+    ('rag_indexing_db_path', 'rag_indexing.db'),
+)
 
 
 def main():
     root = Path(os.environ['XDG_DATA_HOME']).absolute()
     selector = Path(os.environ['TLDW_CONFIG_PATH']).absolute()
     extra = '\n[database]\nscheduled_tasks_db_path="relative/scheduled.db"\n' if route == 'cwd' else ''
+    override_root = root / 'db-overrides'
+    if route == 'parity' and outcome == 'overrides':
+        extra = '\n[database]\n' + ''.join(
+            name + '="' + (override_root / (name + '.sqlite')).as_posix() + '"\n'
+            for name, _ in DB_DEFAULTS)
+    elif route == 'defaults':
+        extra = '\n[database]\nprompts_db_path="' + (override_root / 'prompts.sqlite').as_posix() + '"\n'
     selector.write_text('[general]\nusers_name="qualifier"\n[paths]\ndata_dir="'
                         + root.as_posix() + '"\n' + extra, encoding='utf-8')
     selector.chmod(0o600)
@@ -33,6 +55,11 @@ def main():
     from tldw_chatbook.Utils import windows_files
     original_prompts = config.get_prompts_db_path
     custom_entries = []
+    custom_database_calls = []
+    saved_prompt_defaults = original_prompts.__kwdefaults__
+    saved_prompt_default_values = dict(saved_prompt_defaults)
+    prompt_entries = []
+    validation_flags = {}
 
     def custom_prompts():
         custom_entries.append(getattr(raw._local, 'operation', None))
@@ -93,6 +120,14 @@ def main():
                 custom_entries.append(getattr(raw._local, 'operation', None))
                 return original_builder()
             sensitive._sensitive_db_paths = builder
+        elif outcome == 'database_helper':
+            original_database = config._database_path
+            def database_path(setting_name, **kwargs):
+                custom_entries.append(getattr(raw._local, 'operation', None))
+                custom_database_calls.append((setting_name, dict(kwargs)))
+                assert '_user_data_dir' not in kwargs, 'custom helper received prepared input'
+                return original_database(setting_name, **kwargs)
+            config._database_path = database_path
     if route == 'failure':
         def failing_prompts():
             custom_entries.append(getattr(raw._local, 'operation', None))
@@ -103,9 +138,13 @@ def main():
     native_code = windows_files._Native.open_handle.__code__
     user_code = inspect.unwrap(config.get_user_data_dir).__code__
     check_code = raw._check.__code__
+    custom_db_code = config._get_custom_database_path.__code__
+    prompt_code = original_prompts.__code__
     first_builder_code = sensitive._sensitive_single_file_paths.__code__
     same_key_code = sensitive._same_key.__code__
     inputs_code = sensitive._raw_inputs.__code__
+    bundle_check_code = sensitive._SensitiveConfigInputBundle.check.__code__
+    admitted_code = sensitive._SensitiveConfigInputBundle.check_admitted.__code__
     phase = 'cold'
     counts = {}
     getter_operations = {}
@@ -182,6 +221,11 @@ def main():
             os.environ['RAG_PERSIST_DIR'] = str(alternate)
         elif route == 'cwd':
             os.chdir(alternate)
+        elif route == 'defaults':
+            if outcome.endswith('_replace'):
+                original_prompts.__kwdefaults__ = {'ignore_override': True}
+            else:
+                original_prompts.__kwdefaults__['ignore_override'] = True
 
     def returned(frame, event, arg):
         if event != 'return':
@@ -193,6 +237,17 @@ def main():
                 assert state.source is config
                 assert state.thread is threading.current_thread()
                 getter_operations.setdefault(phase, set()).add(active)
+        elif route == 'late_aba' and frame.f_code is bundle_check_code:
+            if changed == ['changed'] and arg is False:
+                assert frame.f_locals['self'].prepared_inputs_changed
+                if outcome == 'environment':
+                    if previous_rag is None:
+                        os.environ.pop('RAG_PERSIST_DIR', None)
+                    else:
+                        os.environ['RAG_PERSIST_DIR'] = previous_rag
+                else:
+                    os.chdir(cwd)
+                changed.append('restored')
         elif not changed:
             if route == 'final_pause' and frame.f_code is same_key_code:
                 caller = frame.f_back
@@ -204,7 +259,7 @@ def main():
                     assert state.active and state.source is config
                     assert state.thread is threading.current_thread()
                     mutate()
-            elif route in {'source', 'pause', 'callback', 'helper', 'environment', 'cwd'}:
+            elif route in {'source', 'pause', 'callback', 'helper', 'environment', 'cwd', 'defaults'}:
                 if frame.f_code is first_builder_code:
                     mutate()
         return None
@@ -212,6 +267,19 @@ def main():
     def selected(frame, event, arg):
         if event != 'call':
             return None
+        if route == 'late_aba' and frame.f_code is admitted_code and not changed:
+            caller = frame.f_back
+            if caller.f_code is inputs_code and caller.f_locals.get('eligible') is True:
+                changed.append('changed')
+                if outcome == 'environment':
+                    os.environ['RAG_PERSIST_DIR'] = str(alternate)
+                else:
+                    os.chdir(alternate)
+        if frame.f_code is custom_db_code:
+            validation_flags.setdefault(phase, []).append((
+                frame.f_locals['setting_name'], frame.f_locals['expand_before_validation']))
+        if route == 'defaults' and frame.f_code is prompt_code:
+            prompt_entries.append(getattr(raw._local, 'operation', None))
         label = ('native' if frame.f_code is native_code else
                  'user_dir' if frame.f_code is user_code else
                  'raw_check' if frame.f_code is check_code else None)
@@ -223,17 +291,32 @@ def main():
                 counter[label] = counter.get(label, 0) + 1
                 actor = threading.current_thread()
                 actor_objects[id(actor)] = actor
-        if frame.f_code not in {user_code, first_builder_code, same_key_code}:
+        if frame.f_code not in {user_code, first_builder_code, same_key_code, bundle_check_code}:
             return None
         frame.f_trace_lines = False
         frame.f_trace_opcodes = False
         return returned
 
+    if route == 'defaults' and outcome.startswith('before_'):
+        mutate()
     census()
     assert sys.gettrace() is None and threading.gettrace() is None
     threading.settrace_all_threads(selected)
     refused = None
     try:
+        if route == 'parity':
+            phase = 'public'
+            ordinary = {name: getattr(config, 'get_' + name)() for name, _ in DB_DEFAULTS}
+            expected = {name: (override_root / (name + '.sqlite')
+                              if outcome == 'overrides' else root / 'qualifier' / leaf)
+                        for name, leaf in DB_DEFAULTS}
+            assert ordinary == expected, (ordinary, expected)
+            for name, leaf in DB_DEFAULTS[:3]:
+                getter = getattr(config, 'get_' + name)
+                assert getter(ignore_override=True) == root / 'qualifier' / leaf
+                assert getter(ignore_override=False) == expected[name]
+            assert not override_root.exists(), 'selection created a custom database parent'
+            phase = 'cold'
         try:
             context = sensitive.resolve_sensitive_context()
         except bootstrap.RecoveryRequired as error:
@@ -257,6 +340,50 @@ def main():
             else:
                 assert alternate / 'relative' / 'scheduled.db' in fresh.db_paths
                 assert Path(cwd) / 'relative' / 'scheduled.db' not in fresh.db_paths
+        elif route == 'late_aba':
+            assert changed == ['changed', 'restored'], 'late original check did not observe ABA'
+            assert refused is None, 'environment/cwd drift changed the additive contract'
+            assert_context(context)
+            assert sensitive._RAW_INPUTS_MEMO is None, 'late observed drift published an obsolete memo'
+            fresh = sensitive.resolve_sensitive_context()
+            assert fresh == context
+            assert sensitive._RAW_INPUTS_MEMO is not None
+        elif route == 'defaults':
+            assert changed, 'defaults mutation barrier was not reached'
+            if outcome.startswith('during_'):
+                assert refused is not None, 'mid-build defaults drift was accepted'
+                assert sensitive._RAW_INPUTS_MEMO is None, 'obsolete defaults published a memo'
+                assert not prompt_entries, 'changed getter entered the qualified route'
+            else:
+                assert refused is None
+                assert_context(context)
+                assert prompt_entries == [None], 'changed defaults bypassed the ordinary getter'
+                assert (override_root / 'prompts.sqlite') not in context.db_paths
+        elif route == 'parity':
+            assert refused is None
+            assert len(ordinary) == len(context.db_paths) == 13
+            assert set(context.db_paths) == set(ordinary.values())
+            assert sensitive._RAW_INPUTS_MEMO is not None
+            assert counts['cold']['user_dir'] == 4, counts
+            for observed_phase in ('public', 'cold'):
+                flags = validation_flags[observed_phase]
+                assert {name for name, _ in flags} == {name for name, _ in DB_DEFAULTS}
+                assert all(expand is (name != 'scheduled_tasks_db_path')
+                           for name, expand in flags), flags
+            if outcome == 'defaults':
+                assert_context(context)
+            else:
+                user = root / 'qualifier'
+                assert context.user_data_dir == user.resolve()
+                assert set(context.files) == {
+                    selector.resolve(), user / 'mcp_permissions.json',
+                    user / 'local_mcp_store.json', user / 'mcp_execution_log.jsonl',
+                }
+                assert user / 'skills' / 'trust' in context.dirs
+                for selected in expected.values():
+                    assert sensitive.is_sensitive_path(selected, context=context)
+                    assert sensitive.is_sensitive_path(str(selected) + '-wal', context=context)
+                assert not override_root.exists()
         elif route == 'failure':
             assert refused is None
             assert len(context.db_paths) == 12
@@ -269,13 +396,22 @@ def main():
             assert_context(context)
             assert sensitive._RAW_INPUTS_MEMO is not None
             if route == 'cold':
-                assert counts['cold']['user_dir'] == 20, counts
+                assert counts['cold']['user_dir'] == 4, counts
                 assert len(getter_operations['cold']) <= 2, 'cold getters independently reacquired config'
                 if os.name == 'nt':
                     assert counts['cold']['native'] <= 5000, counts
             elif route == 'custom':
-                assert len(custom_entries) == 1
-                assert custom_entries[0] is None, 'custom callback acquired the added standard scope'
+                if outcome == 'database_helper':
+                    assert [name for name, _ in custom_database_calls] == [name for name, _ in DB_DEFAULTS]
+                    assert len(custom_entries) == 13 and all(item is None for item in custom_entries)
+                    for name, kwargs in custom_database_calls:
+                        expected_kwargs = ({'ignore_override': False} if name in {
+                            'chachanotes_db_path', 'prompts_db_path', 'media_db_path'} else
+                            {'expand_before_validation': False} if name == 'scheduled_tasks_db_path' else {})
+                        assert kwargs == expected_kwargs, (name, kwargs)
+                else:
+                    assert len(custom_entries) == 1
+                    assert custom_entries[0] is None, 'custom callback acquired the added standard scope'
             elif route == 'warm':
                 census()
                 phase = 'warm'
@@ -294,6 +430,11 @@ def main():
         else:
             os.environ['RAG_PERSIST_DIR'] = previous_rag
         os.chdir(cwd)
+        if route == 'custom' and outcome == 'database_helper':
+            config._database_path = original_database
+        saved_prompt_defaults.clear()
+        saved_prompt_defaults.update(saved_prompt_default_values)
+        original_prompts.__kwdefaults__ = saved_prompt_defaults
         database.close()
         final_census = census()
     assert sys.gettrace() is None and threading.gettrace() is None
@@ -309,7 +450,7 @@ def main():
                'native_counts': counts, 'finite_resources_retired': True,
                'final_census': final_census,
                'startup_owners_until_process_exit': len(storage._startups),
-               'source_hashes': hashes}
+               'source_hashes': hashes, 'validation_flags': validation_flags}
     (selector.parent.parent / 'sensitive-bundle-receipt.json').write_text(
         json.dumps(receipt, sort_keys=True), encoding='utf-8')
     print(json.dumps(receipt, sort_keys=True))
@@ -343,7 +484,7 @@ def _run_bundle(tmp_path, route, outcome):
     )
 
 
-def test_cold_sensitive_input_build_retains_all_getters_with_one_finite_config_scope(
+def test_cold_sensitive_input_build_reuses_verified_directory_with_one_finite_config_scope(
     tmp_path,
 ):
     _run_bundle(tmp_path, "cold", "success")
@@ -354,7 +495,8 @@ def test_warm_sensitive_input_hit_retains_original_one_getter_two_checks(tmp_pat
 
 
 @pytest.mark.parametrize(
-    "outcome", ["before_import", "after_import", "bound", "proxy", "helper"]
+    "outcome",
+    ["before_import", "after_import", "bound", "proxy", "helper", "database_helper"],
 )
 def test_custom_sensitive_input_callbacks_keep_original_unscoped_contract(
     tmp_path, outcome
@@ -378,3 +520,21 @@ def test_changed_raw_input_environment_or_cwd_is_never_memoized(tmp_path, route)
 
 def test_accessor_failure_remains_additive_and_is_retried_without_memo(tmp_path):
     _run_bundle(tmp_path, "failure", "preserved")
+
+
+@pytest.mark.parametrize("outcome", ["defaults", "overrides"])
+def test_shared_database_paths_match_all_thirteen_public_getters(tmp_path, outcome):
+    _run_bundle(tmp_path, "parity", outcome)
+
+
+@pytest.mark.parametrize("point", ["before", "during"])
+@pytest.mark.parametrize("mutation", ["replace", "inplace"])
+def test_getter_default_changes_keep_ordinary_fallback_or_refuse_midbuild(
+    tmp_path, point, mutation
+):
+    _run_bundle(tmp_path, "defaults", point + "_" + mutation)
+
+
+@pytest.mark.parametrize("outcome", ["environment", "cwd"])
+def test_late_observed_input_aba_never_publishes_sensitive_memo(tmp_path, outcome):
+    _run_bundle(tmp_path, "late_aba", outcome)

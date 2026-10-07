@@ -363,7 +363,9 @@ def _resolved(path_str: str) -> Path | None:
         return None
 
 
-def _sensitive_db_paths(checkpoint=None) -> tuple[Path, ...]:
+def _sensitive_db_paths(
+    checkpoint=None, *, _user_data_dir: Path | None = None
+) -> tuple[Path, ...]:
     """Resolve this app's own SQLite database paths, lazily.
 
     These databases live under ``config.get_user_data_dir()`` -- by default
@@ -382,22 +384,38 @@ def _sensitive_db_paths(checkpoint=None) -> tuple[Path, ...]:
     from .. import config as _config
 
     resolved: list[Path] = []
+    projector = _config._database_path if _user_data_dir is not None else None
     for accessor_name in _DB_PATH_ACCESSOR_NAMES:
         if checkpoint is not None:
             checkpoint()
         accessor = getattr(_config, accessor_name, None)
-        if checkpoint is not None:
-            checkpoint(accessor_name, accessor)
+        prepared_directory = _user_data_dir
+        if checkpoint is not None and checkpoint(accessor_name, accessor) is False:
+            prepared_directory = None
         if accessor is None:
             continue
         try:
-            resolved.append(accessor())
+            if prepared_directory is None:
+                selected = accessor()
+            elif accessor_name == "get_scheduled_tasks_db_path":
+                selected = projector(
+                    accessor_name[4:],
+                    expand_before_validation=False,
+                    _user_data_dir=prepared_directory,
+                )
+            else:
+                selected = projector(
+                    accessor_name[4:], _user_data_dir=prepared_directory
+                )
+            resolved.append(selected)
         except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
             _debug(f"sensitive_paths: could not resolve {accessor_name}: {exc}")
     return tuple(resolved)
 
 
-def _sensitive_single_file_paths() -> tuple[Path, ...]:
+def _sensitive_single_file_paths(
+    *, _user_data_dir: Path | None = None
+) -> tuple[Path, ...]:
     """Resolve this app's own non-DB sensitive single files, lazily.
 
     Two families, each resolved through the same accessor the app itself
@@ -439,7 +457,9 @@ def _sensitive_single_file_paths() -> tuple[Path, ...]:
         _debug(f"sensitive_paths: could not resolve config.toml path: {exc}")
 
     try:
-        user_data_dir = _config.get_user_data_dir()
+        user_data_dir = (
+            _config.get_user_data_dir() if _user_data_dir is None else _user_data_dir
+        )
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
         _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
     else:
@@ -450,7 +470,7 @@ def _sensitive_single_file_paths() -> tuple[Path, ...]:
     return tuple(resolved)
 
 
-def _sensitive_skill_trust_dir() -> Path | None:
+def _sensitive_skill_trust_dir(*, _user_data_dir: Path | None = None) -> Path | None:
     """Resolve this app's skill trust/grant store directory, lazily.
 
     ``get_user_data_dir() / "skills"`` is one of the existing-directory
@@ -492,7 +512,9 @@ def _sensitive_skill_trust_dir() -> Path | None:
     from ..Skills_Interop.skill_trust_store import default_trust_store_dir
 
     try:
-        user_data_dir = _config.get_user_data_dir()
+        user_data_dir = (
+            _config.get_user_data_dir() if _user_data_dir is None else _user_data_dir
+        )
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
         _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
         return None
@@ -501,7 +523,9 @@ def _sensitive_skill_trust_dir() -> Path | None:
     return default_trust_store_dir(local_skills_store_dir)
 
 
-def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
+def _direct_child_rule_container_dirs(
+    *, _user_data_dir: Path | None = None
+) -> tuple[Path, ...]:
     """Resolve every directory whose direct (non-recursive) child FILES are refused, lazily.
 
     Each of these is a directory this app treats as a bounded container for
@@ -548,7 +572,9 @@ def _direct_child_rule_container_dirs() -> tuple[Path, ...]:
     resolved: list[Path] = []
 
     try:
-        resolved.append(_config.get_user_data_dir())
+        resolved.append(
+            _config.get_user_data_dir() if _user_data_dir is None else _user_data_dir
+        )
     except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
         _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
 
@@ -631,11 +657,47 @@ _RAW_INPUTS_MEMO: tuple | None = None
 _RAW_INPUTS_LOCK = threading.Lock()
 
 
+def _sensitive_reader_defaults_current(module, records):
+    """Check definition-time defaults before bypassing stock reader bodies."""
+    if (
+        type(records) is not tuple
+        or module.__dict__.get("_SENSITIVE_INPUT_DEFAULTS") is not records
+    ):
+        return False
+    for name, function, defaults, keywords, items in records:
+        if (
+            module.__dict__.get(name) is not function
+            or type(function) is not _SensitiveFunctionType
+            or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not keywords
+            or (
+                keywords is not None
+                and (
+                    type(keywords) is not dict  # noqa: E721 -- only stock default maps qualify.
+                    or len(keywords) != len(items)
+                    or any(
+                        key not in keywords or keywords[key] is not value
+                        for key, value in items
+                    )
+                )
+            )
+        ):
+            return False
+    return True
+
+
 def _sensitive_reader_bindings(module):
     """Read definition-time callback metadata without invoking custom accessors."""
     if type(module) is not _SensitiveModuleType:
         return None
     if sys.modules.get(module.__name__) is not module:
+        return None
+    if module.__name__ in (
+        "tldw_chatbook.config",
+        "tldw_chatbook.Utils.sensitive_paths",
+    ) and not _sensitive_reader_defaults_current(
+        module, module.__dict__.get("_SENSITIVE_INPUT_DEFAULTS")
+    ):
         return None
     originals = module.__dict__.get("_SENSITIVE_INPUT_ORIGINALS")
     if type(originals) is not tuple or len(originals) != 2:
@@ -751,6 +813,11 @@ class _SensitiveConfigInputBundle:
         self.source = source
         self.key = key
         self.bindings = bindings
+        self.reader_defaults = tuple(
+            (module, module.__dict__.get("_SENSITIVE_INPUT_DEFAULTS"))
+            for module in (source, local)
+        )
+        self.prepared_inputs_changed = False
         self.cached_bindings = cached_bindings
         self.guarded_readers = guarded_readers
         self.operation = operation
@@ -815,6 +882,11 @@ class _SensitiveConfigInputBundle:
                 or original.__dict__ is not defining_globals
             ):
                 raise self.error("sensitive_input_reader_changed")
+        for module, defaults in self.reader_defaults:
+            if not self.builders["_sensitive_reader_defaults_current"](
+                module, defaults
+            ):
+                raise self.error("sensitive_input_reader_changed")
         for (
             source,
             name,
@@ -855,6 +927,16 @@ class _SensitiveConfigInputBundle:
             or source.get(accessor_name) is not accessor
         ):
             raise self.error("sensitive_input_reader_changed")
+        # Startup metadata has a four-field key and never builds these inputs.
+        if len(self.key) < 7:
+            return True
+        try:
+            current = os.environ.copy() == self.key[5] and os.getcwd() == self.key[6]
+        except OSError:
+            current = False
+        if not current:
+            self.prepared_inputs_changed = True
+        return current
 
     def check_admitted(self, active):
         self.check()
@@ -878,10 +960,13 @@ class _SensitiveConfigInputBundle:
             "_sensitive_db_paths",
             "_direct_child_rule_container_dirs",
         ):
-            self.check()
+            prepared = self.check()
             callback = self.builders[name]
+            kwargs = {"_user_data_dir": user_data_dir} if prepared else {}
             values.append(
-                callback(self.check) if name == "_sensitive_db_paths" else callback()
+                callback(self.check, **kwargs)
+                if name == "_sensitive_db_paths"
+                else callback(**kwargs)
             )
             self.check()
         return tuple(values)
@@ -1040,6 +1125,7 @@ def _raw_inputs() -> tuple:
                 and config_path is not None
                 and getattr(_failures, "count", 0) == failures
                 and _same_key(key, _raw_inputs_key()[2])
+                and not bundle.prepared_inputs_changed
             )
             bundle.check_admitted(active)
         # Config rollback cannot own this memo. Never publish inside the
@@ -1051,9 +1137,16 @@ def _raw_inputs() -> tuple:
         with bundle.publication_owner[-1]:
             bundle.check(observe_path=False)
             bundle.check_publication(bundle.source, bundle.publication_owner)
-            if eligible and _sensitive_memo_inputs_current(key, failures):
+            if (
+                eligible
+                and not bundle.prepared_inputs_changed
+                and _sensitive_memo_inputs_current(key, failures)
+            ):
                 with _RAW_INPUTS_LOCK:
-                    if _sensitive_memo_inputs_current(key, failures):
+                    if (
+                        not bundle.prepared_inputs_changed
+                        and _sensitive_memo_inputs_current(key, failures)
+                    ):
                         _RAW_INPUTS_MEMO = (key, inputs)
         return inputs
     inputs = (
@@ -1806,6 +1899,24 @@ def is_git_metadata_write(path: Path) -> bool:
     return any(part.casefold() == folded for part in path.parts)
 
 
+# Definition-time defaults for the four stock prepared-input projections.
+_SENSITIVE_INPUT_DEFAULTS = tuple(
+    (
+        name,
+        globals()[name],
+        globals()[name].__defaults__,
+        globals()[name].__kwdefaults__,
+        tuple((globals()[name].__kwdefaults__ or {}).items()),
+    )
+    for name in (
+        "_sensitive_single_file_paths",
+        "_sensitive_skill_trust_dir",
+        "_sensitive_db_paths",
+        "_direct_child_rule_container_dirs",
+    )
+)
+
+
 # TASK-34404: defining-module originals, retained before helper lazy import.
 _SENSITIVE_INPUT_DB_NAMES = _DB_PATH_ACCESSOR_NAMES
 _SENSITIVE_INPUT_ORIGINALS = (
@@ -1814,6 +1925,7 @@ _SENSITIVE_INPUT_ORIGINALS = (
         (name, globals()[name], globals()[name].__globals__, globals()[name].__code__)
         for name in (
             "_sensitive_guarded_readers_current",
+            "_sensitive_reader_defaults_current",
             "_raw_inputs",
             "_raw_inputs_key",
             "_same_key",
