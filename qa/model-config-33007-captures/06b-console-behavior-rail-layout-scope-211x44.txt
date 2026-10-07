@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Console Behavior
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Changes affect global Console fallbacks after save.                                          │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │ │ │                                                                                                               │ │ │  │  │  │                                         │
+│  category search             │  │  │ │ │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │  │  │  │ Selected category: Console Behavior     │
+│                              │  │  │ │ │                                                                                                                   │ │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ │  Conversation Auto: template checked on next send                                                                 │ │  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │ │ │  Conversation context and memory ↓                                                                                │ │▅ │  │  │  Save (s) — no changes                  │
+│      Providers & Models      │  │  │ │ │  Also in this category: rail presentation, paste handling, images, agent limits, selection side chat, and         │ │  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │ │ │  generation defaults.                                                                                             │ │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │ │                                                                                                                   │ │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │ │  Exchange capture                                                                                                 │ │  │  │  │ Control guide                           │
+│      Appearance              │  │  │ │ │ ▐X▌ Capture future exchanges                                                                                      │ │  │  │  │  Default chat display name: Speaker     │
+│      Theme                   │  │  │ │ │ ▐X▌ Mask PII in future traces                                                                                     │ │▆ │  │  │  label and trusted character-template   │
+│      Splash Screen           │  │  │ │ │ Trace viewer            │ Safe                                                                                 ▼  │ │  │  │  │  human name                             │
+│    > Console Behavior        │  │  │ │ │ Capture, PII masking, and viewing are separate. PII masking is irreversible for provider-only trace data but      │ │  │  │  │  Streaming: Show the reply as it is     │
+│  Data & Privacy              │  │  │ │ │ never rewrites the saved conversation. New traces reference saved messages instead of copying the transcript.     │ │  │  │  │  generated.                             │
+│      Storage                 │  │  │ │ │ Safe and Full view the same trace; credentials stay blocked in both, and older trace formats remain readable.     │ │  │  │  │  Temperature: How varied replies are:   │
+│      Workspaces              │  │  │ │ │  Apply exchange capture                                                                                           │ │  │  │  │  lower is focused, higher is more       │
+│      Tool Profiles           │  │  │ │ │  Global exchange capture settings are active.                                                                     │ │  │  │  │  varied.                              ▆ │
+│      Privacy & Security      │  │  │ │ │                                                                                                                   │ │  │  │  │  Top P: Sample only from the            │
+│      Network                 │  │  │ │ │  Rail presentation                                                                                                │ │  │  │  │  likeliest tokens whose chances add     │
+│      My Profile              │  │  │ │ │ Rail layout scope       │ Global                                                                               ▼  │ │  │  │  │  up to P.                               │
+│  Troubleshooting             │  │  │ │ │ Global keeps one arrangement everywhere. Per workspace restores and keeps each workspace's saved arrangement.     │ │  │  │  │  Max tokens: Longest reply the model    │
+│      Diagnostics (view)      │  │  │ │ │ ▐X▌ Stack collapsed rail labels                                                                                   │ │  │  │  │  may write, in tokens.                  │
+│      About (view)            │  │  │ │ │ Saved style: Horizontal                                                                                           │ │  │  │  │  Paste collapse: Only pasted chunks     │
+│      Agents                  │  │  │ │ │ Uses narrower 3-column handles by stacking upright letters. Direction glyphs are omitted.                         │ │  │  │  │  over the threshold become compact      │
+│  Expert                      │  │  │ │ │                                                                                                                   │ │  │  │  │  placeholders; typed text stays         │
+│      Hooks                   │  │  │ │ │  Status row placement                                                                                             │ │  │  │  │  literal                                │
+│      Internal Prompts        │  │  │ │ │ Where the Console status chips sit relative to the composer.                                                      │ │  │  │  │  Threshold: Minimum pasted chunk size   │
+│      Advanced Config         │  │  │ │ │  Above composer                                                                                                   │ │  │  │  │  before collapse                        │
+│   Domain Defaults ▸ (11)     │  │  │ │ │ Above keeps the chips directly under the conversation; below closes the shell as a bottom status row.             │ │  │  │  │ Focused field guide                     │
+│                              │  │  │ │ │                                                                                                                   │ │  │  │  │  Purpose: Focus a Console Behavior      │
+│                              │  │  │ │ │  Composer paste handling                                                                                          │ │  │  │  │  field for setting-specific guidance.   │
+│                              │  │  │ │ │ Collapse large pasted chunks only when they exceed the threshold.                                                 │ │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
