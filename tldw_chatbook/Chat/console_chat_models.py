@@ -1006,6 +1006,8 @@ class ConsoleProviderSelection:
     #: Internal routed-run snapshot authority; ordinary sessions follow live
     #: registry edits. Never populated from model-provided spawn arguments.
     base_url_is_pinned: bool = field(default=False, kw_only=True)
+    #: Internal routed-run execution snapshot; raw provider still owns credentials.
+    execution_provider: str = field(default="", kw_only=True)
     #: False only for a live session policy that must never fall back to a
     #: configured endpoint (notably a failed endpoint-adoption rollback).
     configured_endpoint_fallback_allowed: bool = True

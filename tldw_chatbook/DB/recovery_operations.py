@@ -271,6 +271,7 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
             (
                 (18, 21, _AGENT_RUNS_MIGRATION_18_21),
                 (21, 22, _AGENT_RUNS_MIGRATION_21_22),
+                (22, 23, _AGENT_RUNS_MIGRATION_22_23),
             ),
         )
 
@@ -1300,7 +1301,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21, 22),
+            (18, 21, 22, 23),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1406,6 +1407,8 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS:
+        return ((78,),)
     if schema in _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS:
         return ((77,),)
     if schema in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS:
@@ -1443,4 +1446,90 @@ _AGENT_RUNS_MIGRATION_21_22 = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_automatic_chat_start_conversation_active\n    ON automatic_chat_start_attempts(conversation_id) WHERE state IN ('prepared', 'accepted')",
     "CREATE TRIGGER IF NOT EXISTS automatic_chat_start_identity_immutable\nBEFORE UPDATE OF id, source_run_id, source_chain_id, chain_id, conversation_id,\n    session_id, session_incarnation, owner_id, draft_revision, context_epoch,\n    request_fingerprint, generation_reservation_id ON automatic_chat_start_attempts\nWHEN OLD.id IS NOT NEW.id OR OLD.source_run_id IS NOT NEW.source_run_id\n  OR OLD.source_chain_id IS NOT NEW.source_chain_id OR OLD.chain_id IS NOT NEW.chain_id\n  OR OLD.conversation_id IS NOT NEW.conversation_id OR OLD.session_id IS NOT NEW.session_id\n  OR OLD.session_incarnation IS NOT NEW.session_incarnation OR OLD.owner_id IS NOT NEW.owner_id\n  OR OLD.draft_revision IS NOT NEW.draft_revision OR OLD.context_epoch IS NOT NEW.context_epoch\n  OR OLD.request_fingerprint IS NOT NEW.request_fingerprint\n  OR OLD.generation_reservation_id IS NOT NEW.generation_reservation_id\nBEGIN SELECT RAISE(ABORT, 'chat start identity is immutable'); END",
     "INSERT OR IGNORE INTO schema_version (version) VALUES (22)",
+)
+
+
+# ADR-199/200 follow exact shipped native v22, including its fresh-chain variant.
+_AGENT_RUNS_V23_WAKE_TABLES = (
+    "CREATE TABLE automatic_wake_attempts (\n    id TEXT PRIMARY KEY,\n    chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),\n    conversation_id TEXT NOT NULL,\n    session_id TEXT NOT NULL,\n    owner_id TEXT NOT NULL,\n    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),\n    run_ids_json TEXT NOT NULL,\n    cause TEXT NOT NULL DEFAULT 'completion' CHECK (cause IN ('completion', 'progress', 'mixed')),\n    message_ids_json TEXT NOT NULL DEFAULT '[]',\n    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),\n    created_at REAL NOT NULL,\n    accepted_at REAL,\n    completed_at REAL\n)",
+    "CREATE TABLE automatic_wake_attempts (\n    id TEXT PRIMARY KEY,\n    chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),\n    conversation_id TEXT NOT NULL,\n    session_id TEXT NOT NULL,\n    owner_id TEXT NOT NULL,\n    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),\n    run_ids_json TEXT NOT NULL,\n    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),\n    created_at REAL NOT NULL,\n    accepted_at REAL,\n    completed_at REAL\n, cause TEXT NOT NULL DEFAULT 'completion' CHECK (cause IN ('completion', 'progress', 'mixed')), message_ids_json TEXT NOT NULL DEFAULT '[]')",
+)
+_AGENT_RUNS_V23_PROGRESS_TABLE = "CREATE TABLE automatic_progress_wake_claims (\n    message_id TEXT PRIMARY KEY,\n    source_run_id TEXT NOT NULL REFERENCES agent_runs(id),\n    attempt_id TEXT NOT NULL REFERENCES automatic_wake_attempts(id)\n)"
+_AGENT_RUNS_V23_PROGRESS_INDEX = "CREATE INDEX idx_automatic_progress_claims_attempt\n    ON automatic_progress_wake_claims(attempt_id)"
+_AGENT_RUNS_V23_FRESH_TABLES = (
+    "CREATE TABLE agent_definitions (\n                    id TEXT PRIMARY KEY,\n                    name TEXT NOT NULL,\n                    description TEXT NOT NULL DEFAULT '',\n                    instructions TEXT NOT NULL DEFAULT '',\n                    tool_allowlist TEXT NOT NULL DEFAULT '[]',\n                    model TEXT NOT NULL DEFAULT '',\n                    -- v21 (ADR-147, TASK-32477): preset routing -- the\n                    -- provider this definition pins ('' = inherit the\n                    -- caller's provider at spawn) and its sampling-param\n                    -- overrides as a JSON object string ('{}' = none).\n                    provider TEXT NOT NULL DEFAULT '',\n                    params_json TEXT NOT NULL DEFAULT '{}',\n                    fallback_models_json TEXT NOT NULL DEFAULT '[]',\n                    enabled INTEGER NOT NULL DEFAULT 1,\n                    max_wall_seconds REAL,\n                    deleted INTEGER NOT NULL DEFAULT 0,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL\n                )",
+    "CREATE TABLE agent_runs (\n                    id TEXT PRIMARY KEY,\n                    conversation_id TEXT NOT NULL,\n                    parent_run_id TEXT,\n                    agent_kind TEXT NOT NULL,\n                    task TEXT,\n                    status TEXT NOT NULL,\n                    steps TEXT NOT NULL DEFAULT '[]',\n                    result TEXT,\n                    budget TEXT,\n                    created_at TEXT NOT NULL,\n                    updated_at TEXT NOT NULL,\n                    assistant_message_id TEXT,\n                    agent_definition TEXT,\n                    definition_fingerprint TEXT,\n                    wake_delivered_at TEXT,\n                    -- v11 (fleet PR3b Task 4, spec SS6): when this run is\n                    -- a CONTINUATION of a finished sub-agent -- a NEW run\n                    -- seeded from the old one's retained in-memory\n                    -- transcript via send_to_agent -- this records the\n                    -- run it resumed from. NULL for every ordinary run.\n                    -- Lineage only: parent_run_id still points at the\n                    -- RESUMING turn's primary, never at the old run.\n                    resumed_from_run_id TEXT,\n                    -- v14 (ADR-080): the stable parent Trace event that\n                    -- caused this run to exist. NULL for primary and\n                    -- legacy runs whose precise cause was not captured.\n                    spawn_event_id TEXT,\n                    budget_tokens INTEGER CHECK (\n                        budget_tokens IS NULL OR\n                        (typeof(budget_tokens) = 'integer' AND budget_tokens >= 0)\n                    ),\n                    -- v21 (ADR-147, TASK-32477; planned as v16, renumbered\n                    -- past dev's v16-v20 via #2641 and #2665): the\n                    -- resolved-target snapshot -- where this run's agent\n                    -- ACTUALLY went after preset routing resolved\n                    -- (provider, model, base_url, and the merged params as\n                    -- a raw JSON object string). Written once at spawn\n                    -- (Task 6); read back verbatim on resume/continuation\n                    -- (Task 8). NULL for every pre-v21 row and for runs\n                    -- spawned without routing resolution.\n                    resolved_provider TEXT,\n                    resolved_model TEXT,\n                    resolved_base_url TEXT,\n                    resolved_params_json TEXT,\n                    fallback_targets_json TEXT,\n                    active_fallback_index INTEGER NOT NULL DEFAULT 0\n                , work_chain_id TEXT REFERENCES automatic_work_chains(id))",
+)
+
+
+def _agent_runs_v23_catalog(catalog):
+    """Freeze the installed ALTER deltas without changing native v22 objects."""
+    rows = []
+    for item in catalog:
+        if item.startswith("CREATE TABLE agent_definitions "):
+            rows.append(
+                item[:-1] + ", fallback_models_json TEXT NOT NULL DEFAULT '[]')"
+            )
+        elif item.startswith("CREATE TABLE agent_runs "):
+            rows.append(
+                item[:-1]
+                + ", fallback_targets_json TEXT, active_fallback_index INTEGER NOT NULL DEFAULT 0)"
+            )
+        elif item.startswith("CREATE TABLE automatic_wake_attempts "):
+            rows.extend(
+                (_AGENT_RUNS_V23_PROGRESS_TABLE, _AGENT_RUNS_V23_WAKE_TABLES[1])
+            )
+        else:
+            rows.append(item)
+            if item.startswith("CREATE INDEX idx_automatic_claims_attempt"):
+                rows.append(_AGENT_RUNS_V23_PROGRESS_INDEX)
+    return tuple(rows)
+
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (23, _agent_runs_v23_catalog(catalog))
+    for version, catalog in _AGENT_RUNS_SCHEMA
+    if version == 22
+)
+_AGENT_RUNS_SCHEMA += (
+    (
+        23,
+        tuple(
+            _AGENT_RUNS_V23_FRESH_TABLES[0]
+            if item.startswith("CREATE TABLE agent_definitions ")
+            else _AGENT_RUNS_V23_FRESH_TABLES[1]
+            if item.startswith("CREATE TABLE agent_runs ")
+            else _AGENT_RUNS_V23_WAKE_TABLES[0]
+            if item.startswith("CREATE TABLE automatic_wake_attempts ")
+            else item
+            for item in _agent_runs_v23_catalog(
+                next(
+                    catalog
+                    for version, catalog in _AGENT_RUNS_SCHEMA
+                    if version == 22 and _AGENT_RUNS_V22_FRESH_CHAIN in catalog
+                )
+            )
+        ),
+    ),
+)
+_AGENT_RUNS_MIGRATION_22_23 = (
+    "ALTER TABLE agent_definitions ADD COLUMN fallback_models_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE agent_runs ADD COLUMN fallback_targets_json TEXT",
+    "ALTER TABLE agent_runs ADD COLUMN active_fallback_index INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE automatic_wake_attempts ADD COLUMN cause TEXT NOT NULL DEFAULT 'completion' CHECK (cause IN ('completion', 'progress', 'mixed'))",
+    "ALTER TABLE automatic_wake_attempts ADD COLUMN message_ids_json TEXT NOT NULL DEFAULT '[]'",
+    _AGENT_RUNS_V23_PROGRESS_TABLE,
+    _AGENT_RUNS_V23_PROGRESS_INDEX,
+    "INSERT INTO schema_version (version) VALUES (23)",
+)
+
+from .recovery_core_schema import _fleet_progress_catalog
+
+_SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS = tuple(
+    _fleet_progress_catalog(schema)
+    for schema in _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS
+    + _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
+)
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (2, schema) for schema in _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS
 )

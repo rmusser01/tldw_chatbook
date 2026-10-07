@@ -1,9 +1,10 @@
 ---
 id: TASK-399.7.1
 title: B1a1 Pair recovery storage and acquire writable ownership
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 15:35'
+updated_date: '2026-10-04'
 labels:
   - notes
   - filesystem
@@ -35,3 +36,15 @@ Establish the fail-closed recovery pairing, packaged capability admission, lease
 - [ ] #6 Storage files, sidecars, markers, lease metadata, and temporary recovery artifacts use the specified owner-only permissions and fixed runtime namespace, with startup diagnostics that expose no note content or absolute main-database path.
 - [ ] #7 This child exposes no writable control or read/write mode transition.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Closed superseded, not implemented as written. Every substrate this child was
+to pair — installed APFS capability-manifest admission, coordinator election,
+exclusive mutation leases, and reserved recovery capacity — is ADR-021
+machinery that ADR-029 rejected; no manifest, lease, or fixed recovery store
+was ever built. Recovery under the shipped design is the root-namespaced
+SQLite replica's current bytes plus protected-path checkpoints
+(`tldw_chatbook/Notes/file_notes_replica.py`; TASK-969, PR #992).
+
+Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).

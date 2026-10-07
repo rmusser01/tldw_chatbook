@@ -759,6 +759,7 @@ async def hydrate_console_session(
         character_system_template=roleplay_context.character_system_template,
         **({"prepared_data": prepared_data} if prepared_data is not None else {}),
         activate=False,
+        prepare_progress=False,
     )
     session.persona_system_template = roleplay_context.persona_system_template
     # Opening a saved chat is not a use of it. Keep the row's last change as
@@ -768,6 +769,12 @@ async def hydrate_console_session(
     if stored_updated_at is not None:
         session.updated_at = stored_updated_at.isoformat()
     try:
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        try:
+            await store.prepare_progress_inbox_owned(session.id)
+        except MessageError:
+            pass  # Saved report refusal does not invalidate the native chat.
         await store.hydrate_session_library_policy(session.id)
         await store.reconcile_pending_workspace_projection(session.id)
         if activate:

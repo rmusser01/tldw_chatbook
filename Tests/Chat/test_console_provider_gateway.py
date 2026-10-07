@@ -5712,7 +5712,7 @@ async def test_stream_bad_request_names_model_and_offers_picker_recovery() -> No
         )
     )
 
-    with pytest.raises(ChatProviderError) as exc_info:
+    with pytest.raises(ChatBadRequestError) as exc_info:
         _ = [
             chunk
             async for chunk in gateway.stream_chat(
@@ -5721,7 +5721,9 @@ async def test_stream_bad_request_names_model_and_offers_picker_recovery() -> No
             )
         ]
 
-    message = str(exc_info.value)
+    assert type(exc_info.value) is ChatBadRequestError
+    assert str(exc_info.value) == str(ChatBadRequestError())
+    message = exc_info.value.console_copy
     assert "Provider error from Anthropic" in message
     assert "claude-3-haiku-20240307" in message
     assert "Confirm the model is still available" in message
@@ -9242,6 +9244,7 @@ async def test_auxiliary_adapter_transport_failure_keeps_bounded_category(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_auxiliary_status_less_local_failure_is_a_bad_request_not_an_outage() -> (
     None
 ):

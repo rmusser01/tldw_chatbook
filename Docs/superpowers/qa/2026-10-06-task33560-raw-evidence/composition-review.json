@@ -1,0 +1,151 @@
+{
+  "reviewer": "/root/final_ui34353_evidence",
+  "reviewed_at_utc": "2026-10-07T02:02:28.217365+00:00",
+  "status": "Ready",
+  "scope": "Final read-only combined composition/document review. This is not another independent deep performance review or domain replay; that review belongs to the hook peer. No tests, source/task/plan/CLI/git/provider/publication/automation changes; only this receipt written.",
+  "repository": "/Users/macbook-dev/.codex/worktrees/agent-recovery-error/tldw_chatbook",
+  "parent_reported_hook_commit": "f9370f51c6",
+  "hook_source_manifest": "/private/tmp/hooks33648-projection-frozen-8rhts8jx/manifest.json",
+  "hook_source_manifest_sha256": "ecabf47de0c0ffd7c4e34b026ae67a9e42be4c1ad9ae0c776354ce2044c78429",
+  "hook_current_files": {
+    "tldw_chatbook/Agents/hook_permissions.py": {
+      "sha256": "4324d1e9ee43ab26265a74bd24a25947f3e2b21987cbfa51dcd9aab0e56c3c39",
+      "current_authenticated": true
+    },
+    "tldw_chatbook/Agents/hooks_v2/engine.py": {
+      "sha256": "ed93d1db254044b9132fad8454ff9fa10b797c73ba15d785233e5cefd1e4d3c9",
+      "current_authenticated": true
+    },
+    "tldw_chatbook/Agents/hooks_v2/lifecycle.py": {
+      "sha256": "9ab6bf838bf70ea001e0de6e8a368f64102095782a6d6e368ccecd1c7fdecf27",
+      "current_authenticated": true
+    },
+    "tldw_chatbook/Chat/console_runtime.py": {
+      "sha256": "385f93e71b9bf5ea50750e2217338386ab768c2a7682b2927f918e43f87f03e4",
+      "current_authenticated": true
+    },
+    "Tests/Chat/test_hooks_v2_lifecycle.py": {
+      "sha256": "447b0e408a5b64404439cdeea41831f569e64b5ed5a64b38f4cbe89961237813",
+      "current_authenticated": true
+    },
+    "Tests/Chat/test_hooks_v2_teardown.py": {
+      "sha256": "a810afbd9cabb5e3249d73249e37b00659eb376186ca21203a2baec391e43f01",
+      "current_authenticated": true
+    },
+    "backlog/decisions/163-expanded-console-hook-runtime.md": {
+      "sha256": "84705b74c12ab4ee833c0907782e927d5f27bfd93d23c69a947374e6dd204d88",
+      "current_authenticated": true
+    },
+    "backlog/decisions/197-console-hook-configuration-review.md": {
+      "sha256": "fe111c2231e7d1378b855b94934deb7ac942557b4314c3f4b3f5ca4423c5382e",
+      "current_authenticated": true
+    }
+  },
+  "perf_manifest": "/Users/macbook-dev/.codex/worktrees/agent-recovery-error/tldw_chatbook/Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/manifest.json",
+  "perf_manifest_sha256": "06a1a9ab2533bc8d4e3b81d5ad5f1427292b57893e70c941a5ef5f3b836d8bfd",
+  "perf_manifest_authenticated": true,
+  "perf_report_sha256": "3839fd0a8dec346dbc5511b73d869f3ba0d9b2d41df347b4b3caaa9a9f76327c",
+  "perf_report_authenticated": true,
+  "perf_zip_sha256": "a3769948918a501c4a1f008dad379f9ef570c78bfb5be0d8bd50ae849b9b695a",
+  "perf_zip_authenticated": true,
+  "perf_current_files": {
+    "tldw_chatbook/Backup_Recovery/admission.py": {
+      "sha256": "5b46849c05aff1a918935e9ff75918ab179fe69329fd91490d03e484f72eeab8",
+      "current_authenticated": true
+    },
+    "tldw_chatbook/Backup_Recovery/config_participants.py": {
+      "sha256": "c2a35fc5d6253eb722e07162f2f8899815d8671a13ab3f4f821f1f96a80ebabc",
+      "current_authenticated": true
+    },
+    "tldw_chatbook/Backup_Recovery/generation_witnesses.py": {
+      "sha256": "4d9628a910879142f627f0cd1c55b23eb6bd8aa2e7aab3365b03d94c1d69c8c6",
+      "current_authenticated": true
+    },
+    "tldw_chatbook/Backup_Recovery/raw_participants.py": {
+      "sha256": "4ad0c84c992069c235a2cae540e4e207f4b31bdfda92da556762939276f62f17",
+      "current_authenticated": true
+    },
+    "tldw_chatbook/Backup_Recovery/storage_admission.py": {
+      "sha256": "d2b6be5f4223323a70b56998287d385b71308b3534784bde6f2291d792e33aa3",
+      "current_authenticated": true
+    },
+    "Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py": {
+      "sha256": "12cb16163df30e4134352ad1cb47b472a2b20f7f669ef2439798e39d34c0b49f",
+      "current_authenticated": true
+    },
+    "backlog/decisions/126-complete-local-backup-and-recovery.md": {
+      "sha256": "c0058ebf357b064afd9f4f83849be2e7d762566f8746013411e0e00e8f029caf",
+      "current_authenticated": true
+    },
+    "Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/boot_idle_probe.py": {
+      "sha256": "a454db126a6cf368b91f87bfc6f8d5551b325f8db36fcfe3badd70dff0ea4212",
+      "current_authenticated": true
+    },
+    "Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/paired_probe_source.txt": {
+      "sha256": "da5ba790b5d59549bab2345f2418a98dc47a24fa6c77ab58e251039c4d94539f",
+      "current_authenticated": true
+    },
+    "Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/raw-evidence.zip": {
+      "sha256": "a3769948918a501c4a1f008dad379f9ef570c78bfb5be0d8bd50ae849b9b695a",
+      "current_authenticated": true
+    },
+    "Docs/superpowers/qa/2026-10-06-task33560-raw-evidence/report.md": {
+      "sha256": "3839fd0a8dec346dbc5511b73d869f3ba0d9b2d41df347b4b3caaa9a9f76327c",
+      "current_authenticated": true
+    }
+  },
+  "perf_archived_entries_count": 87,
+  "perf_archived_entries_authenticated": true,
+  "findings": [],
+  "composition_conclusion": "No new authority/cache coupling or uncovered behavioral concern found at the hook/storage seam. No additional targeted check warranted.",
+  "composition_trace": [
+    {
+      "path": "tldw_chatbook/Agents/hook_permissions.py:416",
+      "observation": "Every private hook launch calls _current, enters canonical config writer scope, original owner authority lock and actual consent-store lock. It freshly reads config and consent bytes and compares exact section/spec/fingerprint/config/profile/store/grant epoch plus local seal/refresh/current delivery. Metadata reuse cannot serve stale grant content."
+    },
+    {
+      "path": "tldw_chatbook/config.py:7391",
+      "observation": "Canonical hook config snapshot parses tomllib from newly opened private config bytes while actual writer locks are retained. Permission store _read_state similarly opens/reads/validates actual bytes."
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/config_participants.py:158",
+      "observation": "Companion optimization borrows only confirmed profile/registry metadata under actual retained registry SH lock; fresh source binding, selected profile, independent parent FD/posture, member inode/type/nlink and foreign overlap checks still run."
+    },
+    {
+      "path": "tldw_chatbook/Backup_Recovery/admission.py:782",
+      "observation": "Native pause optimization skips only parsed grouping. Actual native registry lock and every gate open/identity and nonblocking flock remain per-call; cached false cannot replace actual contention. Raw pins remain separately owned fresh FDs."
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py:3274",
+      "observation": "Special private hook gate still admits only the authentic bounded effect-free standalone SessionEnd command. Ordinary closed targets, native managed authority, effects, MCP and model admission are unchanged. Existing62 affected hook selection was reported by parent as running with performance implementation active; later performance corrections do not change grant or hook authority."
+    }
+  ],
+  "documentation_review": {
+    "files_sha256": {
+      "Docs/superpowers/plans/2026-10-06-agent-orchestration-final-followups.md": "8fd2f6c5ac344509b736bb4e8951af1cd6b83ff1f3d6aa43bbc57c64c13d5c4f",
+      "Docs/superpowers/qa/2026-10-06-task33648-session-end/report.md": "4edf03a92e4eb5d44b92da2799dd78193cf67a198fed1827d62936218cf8b98f",
+      "Docs/superpowers/qa/2026-10-06-task33648-session-end/manifest.json": "0c839a612b2952011c381f2b2a0e602b9b2a16a5a52d965cb93f2a995731717e",
+      "backlog/docs/lessons-hook-teardown.md": "84217d1e05bd3ba123637a552605a6e5fc688a98e89bd275a583c505b891c6e6",
+      "backlog/tasks/task-34353 - Shard-the-UI-Fast-Lane-so-the-gated-Tests-UI-census-fits-its-time-cap.md": "41d5be5fbb48d1988da6f7bab6480036b750431e03bdcb475c6a477c6999924d",
+      "backlog/tasks/task-33640 - Live-capture-every-engine-preset-against-its-real-API.md": "c446804fef4969bcd2110542474bcfc5c7dc54aa42a50f02190bf093c066118d",
+      "backlog/tasks/task-33648 - Preserve-authorized-SessionEnd-notification-during-Console-host-disposal.md": "7f5a134f8572f2073fc6118fc88005393abd65864b806b08f17142bf504163ed",
+      "backlog/tasks/task-33560 - PERF-08-part-2-event-driven-maintenance-probe-warm-MCP-store-reads-raw-participant-stamp-caches.md": "4d4a611d3c6b97f2a36983913e5834f2b3f6ac220063f7d76c1daf956757ea69"
+    },
+    "draft_perf_notes": {
+      "path": "/private/tmp/final-followups-perf-notes.txt",
+      "sha256": "0347d55525e378f9a70626b96935c1a576051bab717331d97314a90f497c45c2"
+    },
+    "draft_pr_body": {
+      "path": "/private/tmp/final-followups-pr-body.md",
+      "sha256": "0255c6472f78375471f43548462fa78a1e5904610844023ff8ff83f0a7e0ec27"
+    },
+    "draft_precision_followup": null,
+    "hygiene": "34353/33640/33648 are Done with checked ACs and preserved implementation/evidence history.33560 remains In Progress with unchecked ACs pending its separate independent deep source review and parent CLI closure; draft close language is prospective. Combined plan remaining checkboxes correctly remain pending completion/delivery.",
+    "honest_limits": "Portable QA reports distinguish meaningful RED from setup failures, retain every failed/intermediate/raw/XML checkpoint, and separate all selections. Both broader non-green runs/refusals remain recorded; no renewed original PR budgets, full-suite/platform/resource, startup-speed or merge certificate. New hook lesson records the actual mixed-projection incident and correction. Performance app pair has no configured hooks; private projection change does not affect that idle workload."
+  },
+  "limits": [
+    "This Ready is narrow composition/document qualification and does not replace the peer performance review.",
+    "No new tests or replays justified/performed.",
+    "Pending task/plan final closure and PR publication are parent actions, not claimed complete by this review."
+  ]
+}

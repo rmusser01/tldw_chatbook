@@ -90,6 +90,8 @@ from .run_log_search import (
 if TYPE_CHECKING:
     from .fleet_message_tools import (
         READ_AGENT_MESSAGES_SCHEMA as READ_AGENT_MESSAGES_SCHEMA,
+        LIST_PEER_AGENTS_SCHEMA as LIST_PEER_AGENTS_SCHEMA,  # noqa: PLC0414
+        SEND_TO_PEER_SCHEMA as SEND_TO_PEER_SCHEMA,  # noqa: PLC0414
         REPORT_TO_SUPERVISOR_SCHEMA as REPORT_TO_SUPERVISOR_SCHEMA,
     )
     from .run_tool_policy import RunToolPolicy
@@ -2480,7 +2482,10 @@ def probe_initial_catalog(
 
 def __getattr__(name: str):
     """Keep the public progress-schema exports lazy until explicitly requested."""
-    if name in {"READ_AGENT_MESSAGES_SCHEMA", "REPORT_TO_SUPERVISOR_SCHEMA"}:
+    if name in {
+        "READ_AGENT_MESSAGES_SCHEMA", "REPORT_TO_SUPERVISOR_SCHEMA",
+        "LIST_PEER_AGENTS_SCHEMA", "SEND_TO_PEER_SCHEMA",
+    }:
         from . import fleet_message_tools
 
         return getattr(fleet_message_tools, name)

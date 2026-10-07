@@ -1,9 +1,10 @@
 ---
 id: TASK-399.11
 title: B3b Add coalesced history and safe restore choices
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 14:24'
+updated_date: '2026-10-04'
 labels:
   - notes
   - recovery
@@ -38,3 +39,15 @@ Provide minimal per-note recovery history without turning every autosave into a 
 - [ ] #9 Forget preserves guaranteed deletion payloads through expiry, removes protection pins, makes ordinary current replicas/checkpoints pruning-eligible, and reports retained logical bytes before confirmation.
 - [ ] #10 Clean app shutdown crosses the save/attention barrier and seals at most one distinct checkpoint for each open protected editing session after its current replica is verified; it does not duplicate an already sealed boundary, while crash recovery continues to rely on the exact current replica and operation journal rather than promising a final checkpoint.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Closed superseded with reslice. Coalescing holds by construction under
+ADR-029: a protected editing session seals at most its session checkpoints
+while ordinary autosaves update only the current replica (TASK-969, PR #992),
+so the checkpoint-spam problem this task guards against cannot arise in the
+shipped design. The per-note history read-path, verify/export, and the
+50-checkpoint/30-day retention enforcement were not built as written.
+
+Resliced 2026-10-04 — the missing read-path now lives in TASK-34381 and
+retention in TASK-34382. Superseded by ADR-029 (backlog/decisions/029-file-notes-disk-authority.md).

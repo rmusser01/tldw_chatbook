@@ -2118,6 +2118,10 @@ def build_console_controllers(
             lambda: screen._ensure_console_chat_controller()
         ),
         current_chat_controller_accessor=(lambda: screen._console_chat_controller),
+        generation_refusal_copy=lambda controller, session_id: (
+            controller.send_refusal_copy(session_id)
+            or screen._console_provider_blocker_copy()
+        ),
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         # Session <-> message seam (design spec: "a named callable
         # between them; design it deliberately, never a back-door

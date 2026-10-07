@@ -10,7 +10,7 @@ from Tests.Chat.test_console_trace_runtime import (
     make_database as _make_database_fixture,
 )
 from Tests.Chat.test_console_trace_runtime import make_gateway as _make_gateway_fixture
-from tldw_chatbook.Chat.Chat_Deps import ChatProviderError, ChatRateLimitError
+from tldw_chatbook.Chat.Chat_Deps import ChatRateLimitError
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
@@ -133,8 +133,10 @@ async def test_failed_retry_rejects_python_equal_json_changes(
             )
         ]
 
-    with pytest.raises(ChatProviderError) as rejection:
+    with pytest.raises(ChatRateLimitError) as rejection:
         await send(ConsoleRequestRoute.AGENT_FIRST)
+    assert type(rejection.value) is ChatRateLimitError
+    assert rejection.value.provider == provider
     assert rejection.value.status_code == 429
     assert len(calls) == 1
     submitted = calls[0][setting_name]

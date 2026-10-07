@@ -12,7 +12,7 @@ from Tests.Chat.test_console_trace_runtime import (
     make_database as _make_database_fixture,
 )
 from Tests.Chat.test_console_trace_runtime import make_gateway as _make_gateway_fixture
-from tldw_chatbook.Chat.Chat_Deps import ChatProviderError
+from tldw_chatbook.Chat.Chat_Deps import ChatRateLimitError
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
 from tldw_chatbook.Chat.console_trace_models import FrozenTracePolicy, new_opaque_id
@@ -143,8 +143,10 @@ async def test_json_schema_retry_fence_precedes_actual_http(
                 )
             ]
 
-    with pytest.raises(ChatProviderError) as rejected:
+    with pytest.raises(ChatRateLimitError) as rejected:
         await send(ConsoleRequestRoute.AGENT_FIRST, True)
+    assert type(rejected.value) is ChatRateLimitError
+    assert rejected.value.provider == provider
     assert rejected.value.status_code == 429
     assert len(posts) == 1
     schema = posts[0][1]["response_format"]["json_schema"]["schema"]

@@ -146,3 +146,9 @@ Future cost reductions must independently preserve these observations, grants,
 queued epochs, current source/owner boundaries and cancellation cleanup. Keep
 the original full/custom/v2/launch/revoke routes and responsiveness limits.
 ADR-126 custody, ADR-148 execution and ADR-162/163 v2 behavior remain unchanged.
+
+The [TASK-33648 bounded disposal policy](163-expanded-console-hook-runtime.md#task-33648-saved-standalone-sessionend-during-host-disposal)
+retains only an authentic host-issued, effect-free SessionEnd command notification
+after ordinary admission closes. Its original grant is re-read and serialized
+with actual process creation by this same permission owner; changed or revoked
+authority still refuses, and no ordinary target or model authority reopens.

@@ -16,6 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Agents.test_hook_permissions import _approve, _edit, hook_file as _hook_file
 from Tests.Chat.test_console_dispatch_recovery import (
     _acceptance,
     _database,
@@ -52,6 +53,8 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 # Drives the real controller and store (lessons-testing-evidence.md).
 pytestmark = pytest.mark.bootstrap_profile
+
+hook_file = _hook_file
 
 USER = ConsoleMessageRole.USER
 ASSISTANT = ConsoleMessageRole.ASSISTANT
@@ -1119,3 +1122,313 @@ async def test_resend_refuses_while_a_dispatch_recovery_is_unresolved(
     assert not result.accepted
     assert result.visible_copy.startswith("Finish or discard the pending response")
     assert console.gateway.seen == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["failed", "stopped", "retry", "continue"])
+async def test_replay_refuses_hook_review_before_touching_rows(
+    tmp_path, databases, route
+):
+    console = _console(tmp_path, databases, "error")
+    if route in {"stopped", "continue"}:
+        await _stopped_empty_turn(console)
+    else:
+        await console.controller.submit_draft("hello there")
+    user = _user(console)
+    reply = next(row for row in _path(console) if row.role is ASSISTANT)
+    rows = _all_db_rows(console), _path_snapshot(console)
+    calls = len(console.gateway.seen)
+    reason = "Hook review required"
+    console.controller._hook_permissions_accessor = lambda: SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(blocked_reason=reason)
+    )
+    console.gateway.mode = "ok"
+    sent = await console.controller.submit_draft("must refuse")
+    assert not sent.accepted and sent.visible_copy == reason
+    if route == "retry":
+        result = await console.controller.retry_message(reply.id)
+    elif route == "continue":
+        result = await console.controller.continue_from_message(user.id)
+    else:
+        result = await resend_turn(console.controller, user.id)
+    assert not result.accepted and result.visible_copy == reason
+    assert (_all_db_rows(console), _path_snapshot(console)) == rows
+    assert len(console.gateway.seen) == calls
+    console.controller._hook_permissions_accessor = lambda: SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(blocked_reason=None)
+    )
+    assert (await resend_turn(console.controller, user.id)).accepted
+    _assert_resent_in_place(console, user.id)
+    assert len(console.gateway.seen) == calls + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["failed", "stopped"])
+@pytest.mark.parametrize("event", ["SessionStart", "UserPromptSubmit"])
+async def test_resend_runs_granted_required_hooks_before_clear(
+    tmp_path, databases, hook_file, shape, event
+):
+    from Tests.hooks_v2_process_support import child_argv
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    _edit(hook_file, lambda section: section.clear())
+    console = _console(tmp_path, databases, "error")
+    if shape == "stopped":
+        await _stopped_empty_turn(console)
+    else:
+        await console.controller.submit_draft("hello there")
+    user = _user(console)
+    rows = _all_db_rows(console), _path_snapshot(console)
+    calls = len(console.gateway.seen)
+    marker = tmp_path / "required-hook-ran"
+    handler = {
+        "id": "required-replay",
+        "event": event,
+        "type": "command",
+        "required": True,
+        "effects": [],
+        "argv": child_argv(
+            "from pathlib import Path;"
+            f"Path({str(marker)!r}).write_text('ran');raise SystemExit(1)"
+        ),
+    }
+    _edit(hook_file, lambda section: section.update(handler=[handler]))
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(console.store)
+    runtime.set_chat_controller(console.controller)
+    permissions = runtime.ensure_hook_permissions()
+    console.controller._hook_permissions_accessor = lambda: permissions
+    assert _approve(permissions).ready
+    console.gateway.mode = "ok"
+    try:
+        result = await resend_turn(console.controller, user.id)
+        assert not result.accepted
+        assert result.visible_copy == (
+            "Required hook initialization failed."
+            if event == "SessionStart"
+            else "Required hook input failed."
+        )
+        assert marker.read_text() == "ran"
+        assert (_all_db_rows(console), _path_snapshot(console)) == rows
+        assert len(console.gateway.seen) == calls
+        assert not console.controller._submit_tasks_snapshot()
+        assert not console.controller._hooks_v2_submissions
+        lifecycle = runtime._hooks_v2_lifecycles.get(console.session_id)
+        assert lifecycle is None or lifecycle.turn_scope is None
+        handler["argv"] = child_argv("pass")
+        _edit(hook_file, lambda section: section.update(handler=[handler]))
+        assert _approve(permissions).ready
+        assert (await resend_turn(console.controller, user.id)).accepted
+        _assert_resent_in_place(console, user.id)
+        assert len(console.gateway.seen) == calls + 1
+        assert not console.controller._submit_tasks_snapshot()
+        assert not console.controller._hooks_v2_submissions
+        assert runtime._hooks_v2_lifecycles[console.session_id].turn_scope is None
+    finally:
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_resend_delivers_granted_hook_context_once(
+    tmp_path, databases, hook_file
+):
+    from Tests.hooks_v2_process_support import child_argv
+    from tldw_chatbook.Agents.agent_models import PluginContextText
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    _edit(hook_file, lambda section: section.clear())
+    console = _console(tmp_path, databases, "error")
+    await console.controller.submit_draft("hello there")
+    user = _user(console)
+    handler = {
+        "id": "replay-context",
+        "event": "UserPromptSubmit",
+        "type": "command",
+        "required": True,
+        "require_context": True,
+        "effects": ["context"],
+        "argv": child_argv(
+            'print(\'{"version":2,"decision":"pass","context":[{"text":"replay context","lifetime":"turn"}]}\')'
+        ),
+    }
+    _edit(hook_file, lambda section: section.update(handler=[handler]))
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(console.store)
+    runtime.set_chat_controller(console.controller)
+    permissions = runtime.ensure_hook_permissions()
+    console.controller._hook_permissions_accessor = lambda: permissions
+    assert _approve(permissions).ready
+    console.gateway.mode = "ok"
+    try:
+        assert (await resend_turn(console.controller, user.id)).accepted
+        _assert_resent_in_place(console, user.id)
+        contexts = [
+            row["content"]
+            for row in console.gateway.seen[-1]
+            if isinstance(row["content"], PluginContextText)
+        ]
+        import json
+
+        assert len(contexts) == 1
+        assert str(contexts[0]).startswith("<untrusted-hook-context>\n")
+        projected = json.loads(str(contexts[0]).split("\n")[1])
+        assert projected["instructions"] == "replay context"
+        assert projected["handler_id"] == "replay-context"
+        assert contexts[0].checked_hook_origins()
+        assert not console.controller._hooks_v2_submissions
+        assert not console.controller._submit_tasks_snapshot()
+    finally:
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["cancel", "switch", "configuration"])
+async def test_resend_hook_wait_retains_rows_and_retires_its_owner(
+    tmp_path, databases, hook_file, change
+):
+    from Tests.hooks_v2_process_support import child_argv
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    _edit(hook_file, lambda section: section.clear())
+    console = _console(tmp_path, databases, "error")
+    await console.controller.submit_draft("hello there")
+    user = _user(console)
+    rows = _all_db_rows(console), _path_snapshot(console)
+    calls = len(console.gateway.seen)
+    entered, release = tmp_path / "entered", tmp_path / "release"
+    handler = {
+        "id": "replay-wait",
+        "event": "UserPromptSubmit",
+        "type": "command",
+        "required": True,
+        "effects": [],
+        "argv": child_argv(
+            "from pathlib import Path;import time;"
+            f"Path({str(entered)!r}).write_text('entered');"
+            f"exec({f'while not Path({str(release)!r}).exists(): time.sleep(0.01)'!r})"
+        ),
+    }
+    _edit(hook_file, lambda section: section.update(handler=[handler]))
+    runtime = ConsoleRuntime(app=None)
+    runtime.set_chat_store(console.store)
+    runtime.set_chat_controller(console.controller)
+    permissions = runtime.ensure_hook_permissions()
+    console.controller._hook_permissions_accessor = lambda: permissions
+    assert _approve(permissions).ready
+    console.gateway.mode = "ok"
+    task = asyncio.create_task(resend_turn(console.controller, user.id))
+    try:
+        for _ in range(400):
+            if entered.exists():
+                break
+            await asyncio.sleep(0.005)
+        assert entered.exists()
+        assert (
+            console.controller._submit_tasks_snapshot().get(task) == console.session_id
+        )
+        concurrent = await resend_turn(console.controller, user.id)
+        assert not concurrent.accepted
+        if change == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            if change == "switch":
+                console.store.create_session(title="Other")
+            else:
+                _edit(hook_file, lambda section: section.clear())
+            release.write_text("allow")
+            assert not (await asyncio.wait_for(task, 5)).accepted
+        assert (_all_db_rows(console), _path_snapshot(console)) == rows
+        assert len(console.gateway.seen) == calls
+        assert not console.controller._submit_tasks_snapshot()
+        assert not console.controller._hooks_v2_submissions
+        assert runtime._hooks_v2_lifecycles[console.session_id].turn_scope is None
+    finally:
+        release.write_text("allow")
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_bound_queued_retry_keeps_scheduled_hook_semantics(tmp_path, hook_file):
+    from Tests.Chat.test_console_prompt_queue_coordinator import (
+        SequencedGateway,
+        _durable_controller,
+        _queue,
+        _release_all,
+    )
+    from Tests.hooks_v2_process_support import child_argv
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    _edit(hook_file, lambda section: section.clear())
+    first = SequencedGateway(fail_call=0)
+    database, store, controller, session_id = _durable_controller(tmp_path, first)
+    initial = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    runtime = None
+    try:
+        await asyncio.wait_for(first.started[0].wait(), 5)
+        await _queue(controller, session_id, "two")
+        first.release[0].set()
+        await asyncio.wait_for(initial, 5)
+        failed = next(
+            row
+            for row in store.messages_for_session(session_id)
+            if row.role is ConsoleMessageRole.ASSISTANT and row.status == "failed"
+        )
+        marker = tmp_path / "scheduled-start"
+        input_marker = tmp_path / "manual-input"
+        handlers = [
+            {
+                "id": "start",
+                "event": "SessionStart",
+                "type": "command",
+                "required": True,
+                "effects": [],
+                "argv": child_argv(
+                    "import json,sys;from pathlib import Path;e=json.load(sys.stdin);"
+                    f"Path({str(marker)!r}).write_text(e['initiator'])"
+                ),
+            },
+            {
+                "id": "input",
+                "event": "UserPromptSubmit",
+                "type": "command",
+                "required": True,
+                "effects": [],
+                "argv": child_argv(
+                    "from pathlib import Path;"
+                    f"Path({str(input_marker)!r}).write_text('manual');raise SystemExit(1)"
+                ),
+            },
+        ]
+        _edit(hook_file, lambda section: section.update(handler=handlers))
+        runtime = ConsoleRuntime(app=None)
+        runtime.set_chat_store(store)
+        runtime.set_chat_controller(controller)
+        permissions = runtime.ensure_hook_permissions()
+        controller._hook_permissions_accessor = lambda: permissions
+        assert _approve(permissions).ready
+        gateway = SequencedGateway()
+        controller.provider_gateway = gateway
+        for event in gateway.release:
+            event.set()
+        result = await asyncio.wait_for(
+            controller.retry_failed_queue_turn(failed.id), 10
+        )
+        assert result.applied
+        assert gateway.user_turns == ["one", "two"]
+        assert marker.read_text() == "scheduled"
+        assert not input_marker.exists()
+        assert controller.prompt_queue_registry.snapshot(session_id).total_count == 0
+        assert not controller._submit_tasks_snapshot()
+        assert not controller._hooks_v2_submissions
+    finally:
+        await _release_all(first, initial)
+        if runtime is not None:
+            await runtime.dispose()
+        database.close()

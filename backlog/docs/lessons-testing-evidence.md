@@ -18727,3 +18727,281 @@ Evidence: `audit-composer-v3-body-leaves.py`, rejected `composer-history-private
 ### Record stock callbacks in their defining module (Console count query, 2026-10-06)
 
 The Console count fix first captured the DB callback when the Bridge imported it. A DB override installed before that import was therefore recorded as stock. The same draft indexed `AgentRunsDB.__dict__["__dict__"]`, although the instance dictionary descriptor belongs to `BaseDB`. Actual source-header controls exposed both errors before installation. Record the callback at its own definition, and use static MRO lookup for inherited descriptors. The corrected fix passed seven real-SQLite regressions and the existing 39 cadence, TTL, ownership and cancellation controls. Custom callbacks must remain the callable selected for the pending read; recheck that semantic identity before publishing.
+
+## First-step publication can be too late for a live child target
+
+**TASK-32497, 2026-09-29.** Reading an inline child's persisted target from its
+first step hook passed the finished-summary check, but a snapshot observed
+inside the child's first provider call still had `(None, None)`. Moving the
+read and primary-summary publication into the existing run-model scope made
+that same observation pass. For state promised during a provider call, pin
+the observation at the provider boundary; an eventual step publication is
+not evidence that the state was available before the call.
+
+
+## Same wire bytes can hide a different execution family
+
+**TASK-32508, 2026-09-29.** A real fallback adapter test changed a saved custom
+endpoint from OpenAI-compatible to Ollama between attempts. Both adapters accepted
+the local server's OpenAI stream, so URL/model/parameter assertions passed even
+though the gateway changed execution families. Observing the actual resolved key
+made the test fail (`custom-hosted` → `ollama`). Freezing the execution key through
+the existing routed selection seam made the same test pass. When a run promises a
+frozen target, verify execution identity as well as successful request bytes.
+
+Independent review then exposed three gaps in the same task: a deleted frozen
+registry target still sent a `/health` probe through a family credential; a
+built-in `custom` alternate followed a later `api_url` edit; and a resumed
+handle displayed the original target while its model call used the alternate.
+The regressions now observe the actual gateway transport, both real HTTP
+adapter dispatches (fallback and persisted continuation), and each retained
+child's coordinator finish metadata. Registry-only URL fixtures and final
+output success did not prove these boundaries.
+
+## Checked SQLite columns need exact migration validation
+
+**TASK-33432, 2026-09-29.** AgentRuns v23's checked wake-cause column passed
+ordinary SQLite migration while restricted backup import returned
+`sqlite_validation_unavailable`. Tracing the private v21 fixture found SQLite's
+implicit `PRAGMA quick_check(automatic_wake_attempts)` during `ADD COLUMN ...
+CHECK`; only that named table under the installed AgentRuns migration needed
+a new authorizer allowance. The next import failed `unsupported_schema` even
+with a zero set difference: the complete frozen catalog also had to retain
+SQLite's type/name ordering. Real frozen v18, v21 and v22 migrations and fresh
+v23 parity now exercise both contracts in `Tests/DB/test_progress_wake_schema.py`.
+Compare ordered catalogs and run the actual restricted importer when adding
+checked columns; fresh construction and object-set equality miss these gates.
+
+
+## Wake fairness is observed at admission
+
+**TASK-33432, 2026-09-29.** A mixed wake regression expected the waiting
+conversation's provider payload before a busy producer's next payload. Under
+load, asynchronous provider preparation reversed that arrival even though
+persisted `accepted_at` recorded the waiter before the producer. The corrected
+regression compares each exact child's durable acceptance and still requires
+both provider notices exactly once. Provider arrival order does not measure
+scheduler reservation fairness. The same run exposed healthy provider
+preparation exceeding fixture polling deadlines; extend only those harness
+waits with observed unfinished work, leaving production budgets unchanged.
+
+
+## Save changes native identity without rewriting causal work
+
+**TASK-33432, 2026-09-29.** Independent review found that progress intake reused
+the first inbox owner's temporary conversation bucket after Save. A new saved
+manual chain's report stayed readable but never woke because its source metadata
+was queried under the old conversation. Resolving the existing immutable source
+run/chain conversation repaired admission. The stronger surviving-child test then
+exposed a second boundary: carrying the old causal ID into the controller's
+generic conversation variable also broke the real native Canvas authority. The
+regression now binds Canvas to the saved chat, exercises plain and agent provider
+paths, and checks old late progress plus terminal survival, new saved progress,
+and one automatic delivery per native session. Keep causal run identity separate
+from current chat-data identity, and test both identities through actual native
+authorities after Save.
+
+
+## New persistent state needs the existing repository guards
+
+**PR #2918 / TASK-33430–33432, 2026-10-01.** Targeted behavioral tests were
+green, but first PR CI found the peer runtime's exact tool inventory stale,
+two new indexes absent from the plan census and the durable progress writer
+using offset-form timestamps. The expanded derived sweep also found the Chat
+table missing from the existing SQL allowlist. The repair reused the canonical
+timestamp helper and exercised actual populated repository SQL without statistics
+before registering its plan pins. Run the existing inventory, timestamp, schema
+allowlist and query-plan guards whenever a feature adds persistent state or tools;
+behavioral coverage alone did not detect these repository contracts.
+
+
+## Token and bundle checks do not price aggregate boot CSS
+
+**PR #2918 / TASK-32508, 2026-10-01.** Token governance and bundle reproduction
+passed, but the aggregate boot CSS guard failed at 608118/608090 B. The latest
+dev had only two bytes spare; the fallback editor's second ID selector added 30 B.
+A shared scoped class for the two identical editor rules removed those30 B while
+actual mounted paint checks at 120/70 columns retained their original assertions
+and added fallback content. Run the existing aggregate byte guard alongside
+bundle/token checks when touching boot stylesheet sources; do not raise its pin
+to conceal a small but real contribution.
+
+
+## A coalesced UI sync is not a publication receipt (PR #2918 final rebase)
+
+**What happened.** The final readiness-rebase selection passed 138 checks but reported seven mounted failures before being stopped for diagnosis. The off-viewed wake test alternately failed its initial Running glyph and its terminal glyph: awaiting `_sync_native_console_chat_ui()` can return after requesting a coalesced pass, and a fixed 1.2s sleep does not acknowledge that publication. Observing the actual glyph with the existing bounded settle helper passes; freezing only terminal tab publication fails at the settled-glyph assertion after real streaming and ledger completion. Disabling the delivery hook alone passed because a coalesced tail could still repaint, so that experiment does not prove the hook itself necessary.
+
+The held Stop fixture separately expired its 5s first-chunk precondition during provider validation. An observation-only private-profile plugin recorded actual dispatch at 9.578s and first yield 4.6ms later, with normal durable commit and cleanup. Giving only preparation a 15s bound preserves all subsequent 5s action checks; wake entry uses the same preparation bound while its paint, ledger and timer checks retain 8s.
+
+**What to do.** Wait for the actual asynchronous state a test needs, and distinguish preparation from the action being measured. A negative control must reach valid admission and streaming before its intended publication assertion fails; an earlier setup failure is not evidence that the oracle catches the bug. Keep production deadlines, profile admission, caps and authority unchanged.
+
+
+## Immutable recovery candidates must be staged from a live WAL source
+
+During PR #2918's schema-75 rebase, a new shared-Subscriptions test passed a live Chat WAL database directly to `validate_candidate`. The ordinary adapter saw 584 committed SQL objects, while immutable recovery validation saw the old 533-object main file and correctly refused `unsupported_schema`. Recovery's documented input is a disposable staged candidate, not the live destination. Using the existing `backup_database` API produced exact 584-object candidates; independent comparison also matched all 715 catalog rows and 523 metadata entries. A second staged copy with Chat stamp 74 correctly failed the version-75 gate. The final affected selection passed 31 cases after this and a separate test-only read-only owner correction.
+
+Stage through the existing owned SQLite backup before testing immutable recovery. Do not weaken or normalize catalog checks to accommodate WAL fixture mistakes. Check the Chat-only gate before adding shared subscription tables; afterward the core owner correctly refuses the extra schema before inspecting its stamp.
+
+
+## A whole maintenance census can miss an extra cold-path admission
+
+**TASK-33647, PR #2918, 2026-10-02.** Incoming PERF-10 added a read-only completion probe before legacy normalization's immediate transaction. The eight-callback census passed in one local before-fix run but CI measured 17 storage admissions, breaching its ceiling of 16. A separate real file-backed legacy row on a fresh finite-worker connection deterministically counted three admissions instead of two. Reusing the existing repository operation across the separate read and write transactions brought the cold callback to two, while retaining idle read-only checks, write-locked rechecks and physical worker retirement. The whole census and its ceilings were unchanged. Pin cold and completed paths explicitly when an aggregate budget can include borrowed resources; a passing average is not proof of a cold callback's cost.
+
+
+## An outer maintenance refusal bypassed exact preacceptance wake cleanup
+
+**TASK-33432 / PR #2918, 2026-10-02.** Independent rebase review forced native maintenance close after a real SQLite progress/completion claim but before actual ConsoleRuntime submit. The outer controller decorator returned before lifecycle refusal marking, leaving a prepared attempt, reserved generation and interrupted-work review fence despite zero provider dispatch; resume could not retry. The new two-source regression fails at the exact refusal flag before the repair and proves refund, retained pending input, one resumed delivery and no replay afterward. Mark proven refusal only for the exact live token and session before either acceptance flag; manual/copied/foreign-session/accepted authority must remain excluded. A passing readiness or hook-refusal test cannot establish cleanup for a decorator that bypasses those paths.
+
+
+### October2 orchestration integration: retained work is a new admission
+
+Expanded-hooks integration reproduced a completed child resumed under a new parent with no second SubagentStart; a now-denying required handler still allowed the resumed row/provider. The prospective hook inventory also omitted peers, so a pass-only hook removed tools the actual child would otherwise receive. Shared existing initialization at both physical admissions, actual prospective runtime capabilities, required-deny and empty-tool provider controls caught and repaired both. Retained history does not substitute for current requirements. Evidence: pr2918-expanded-child-red.log, pr2918-expanded-root-repairs-green.log and immutable independent runtime review. No new lifecycle owner was needed.
+
+
+## Replay preflight must precede clearing, and its worker can be live before run state
+
+**TASK-33663 integration, October 2.** Independent PR2918 review found persisted Resend skipped normal Send hook review and granted required initialization before deleting broken-turn rows. Sharing the existing submit lifecycle fixed that, then real queued recovery exposed a HELD-slot refusal and a mounted held hook-read exposed the transcript timer stopping before incremental text appeared: the replay worker was unfinished, but no run status or dispatch task existed yet. The durable queue and mounted regressions were both RED before the narrow coordinator-recovery and worker-liveness fixes.
+
+Incoming shared provider evidence exposed another gap: exact connection-refused evidence disabled Send but transcript Resend still changed failed rows. Corrected probes failed on both the candidate and exact incoming dev; the permanent mounted test failed at row equality. Existing activity plus provider-readiness callable wiring now refuses before text workers, while image/video use their separate gates. Real refused/restored and sibling controls pass; fixture-only scratch failures remain separately recorded. Trace the full normal submission boundary before treating a controller activity check as complete admission, and observe existing worker liveness across awaited preflight rather than inventing run state to keep presentation alive.
+
+
+## Admission-count fixtures must allow the existing elapsed-time yield
+
+**PR #2918 known-work integration, October 2.** After incoming TASK-33801 skipped the idle probe on known-work passes, the owned fresh-worker admission case returned an admitted zero-row/incomplete batch and failed its first-row assertion: the targeted selection was 53 passes/one failure (154.235s). The unchanged case then passed in isolation (5.280s). Production deliberately starts its unchanged 100ms clock before the immediate transaction and permits yielding before the first row; an external real-clock observation of a passing cold worker spent 72.919ms opening its connection and reached the row guard at 74.083ms. The original failing run did not record its clock, so these observations do not establish its exact timing or a deterministic host-load cause.
+
+The admission-count fixture now uses the existing injected clock seam while preserving every admission, normalization and physical-retirement assertion. A separate real private-profile cold-worker case advances the clock past the bound, verifies zero processing with the row/checkpoint preserved, then retries once within the same admission budget and retires both worker handles. An external ignore-time mutation fails at the intended zero-row assertion; all29 affected legacy/parking cases pass (37.151s). Production and all original Performance guard sources, time limits and workloads remain exact. Retain the initial non-green evidence; do not change a production deadline or retry an assertion until it passes to certify an admission count.
+
+
+## HTTP error doubles must keep the real response JSON contract
+
+**PR #2918 / PR #2970 integration, October 3.** The unmodified incoming display-name/404-copy module passed seven cases and failed four in 2.057s because its HTTP response double lacked json(). The preserved structured400/404 classifier calls requests.Response.json before the ordinary labelled HTTP fallback; a real empty response raises JSONDecodeError, a ValueError. Adding only json() raising ValueError for the scripted empty body retained every original assertion and marker; all eleven original cases passed in 1.666s. Production classification, retries, ownership, status and label mapping were unchanged. Keep response doubles faithful to methods the composed path actually calls, retain the original non-green result, and repair the double instead of deleting structured classification or weakening the error-copy assertions.
+
+
+## October 3 — typed provider diagnostics and Console presentation need separate custody
+
+PR2918's preserving rebase onto dev420b retained the incoming display-name/400/404 model-recovery copy and the prior content-free typed fallback projection. Immutable762a source preservation was independently approved, but the original gateway selection was8PASS/1FAIL2.642s: its typed payload bypassed the sanitized queue text. Direct Console displayed only default diagnostics, and the default primary-agent path persisted/returned only its diagnostic STEP_ERROR. A generic wrapper or replacement exception message would erase fallback semantics or move presentation into audit custody.
+
+Prospective TASK33664 AC4 and ADR211 document the repair. New fixture attempts first stopped at hook admission: RED6FAIL1.563s and first-green6FAIL1.735s are retained and are NOT actual-display evidence. The four owned production changes were discarded before correcting only the NEW fixtures to the existing bootstrap_profile admission contract with a real HookPermissions owner; no live profile retarget, old marker/config/fixture override or source masking occurred. The admitted-profile RED6FAIL2.019s then reached the real direct Console and proved missing copy for400/401/404/429; its audit case proved the missing transient field. First admitted GREEN4PASS/2FAIL2.973s exposed a wrong literal in the new404 oracle; only that oracle was corrected to exact incoming recovery text, with production copy unchanged.
+
+The gateway now carries only already-sanitized queue text separately from exception str/message/type/status/provider/retry_after. The existing diagnostic helper remains exact, while Console visible surfaces use its narrow companion. Default-agent RED2FAIL2.383s proved400/404 presentation was lost after AgentService containment. A keyword-only repr/equality-excluded transient RunOutcome field carries only the current typed failure presentation to the failed Console projection; SQL, run logs/manifests, assistant content, child histories and fallback policy do not consume it. Actual agent400/404 GREEN2PASS2.140s authenticates the safe system row and content-free real SQLite/error-step and run-log files.
+
+Final presentation selection12PASS, fallback45PASS, causal persistence5PASS and diagnostic/stuck-copy6PASS all complete; raw/XML receipts preserve exact times and hashes. Earlier gateway9PASS, transport15PASS, provider735PASS and response-copy11PASS are separately retained, never summed with overlapping selections. Original controller neighbors2PASS/2 hook-admissionFAIL1.989s remain pre-delivery fixture limits; old fixtures/markers were not changed. Original incoming response7PASS/4 missing-jsonFAIL2.057s and faithful-double11PASS1.666s remain. Independent review and ORIGINAL five budget cases are still pending at this lesson commit; no final readiness, full-suite, live-provider, wider-audit or release claim follows.
+
+
+### PR2918 provider presentation evidence duration erratum (October 3, 2026)
+
+The independently authenticated actual primary-agent RED XML is two failures in 2.377 seconds, correcting the earlier 2.383-second transcription. Its first GREEN XML is two passes in 2.137 seconds, correcting the earlier 2.140-second transcription. The final d9f315 head confirmation remains two passes in 1.883 seconds. The raw logs and XML were never changed; every prior lesson byte remains. These transcription corrections change neither behavior nor any timing-cause inference, performance limit or qualification claim.
+
+
+## Bounded consumer selections can install a wheel through an imported fixture
+
+**PR2918 / TASK34200 integration, October4,2026.** The changed identity/selected-owner modules completed18PASS in53.924s XML. A broader178-case admission/binding/replacement/rollback/startup selection was interrupted with exit130 after its native_package fixture was discovered: it had built a local wheel and used pip --no-index --no-deps --target in pytest-9200/f9-native-package0/installed, with3064 installed files recorded by the fixture. The raw output has88 progress dots, including the first mapped-source wheel case; the second wheel case was in progress. There is no completed XML for that selection and no packaging, native-release or installed-behavior certificate. No prefix case or wheel fixture was rerun, and no fixture, marker, readiness, runtime or config guard was changed.
+
+The89 remaining source-only nodes then completed89PASS in64.314s XML, exit0, zero failures/errors/skips. These and the separate18-case result are not summed with interrupted progress or historical incoming sweeps. Inspect imported fixtures and their subprocess commands before choosing a bounded module selection; a module can invoke build/install work without an install command in the root launcher. Preserve interrupted raw output and the actual task-owned side effect, and continue only the required untouched source controls. Late pytest rm_rf warnings remain; no foreign cleanup occurred.
+
+Read-only evidence readers also stopped on three wrong expectations: incoming whitespace was assumed zero despite one exact incoming blank EOF line; collection was guessed180 before the actual178 receipt; and both wheel cases were assumed within the observed88-dot prefix although the second was in progress. Corrected metadata preserves the original raw artifacts without source repair or replay. Separately, an older review authenticated generic followups-published-tree.json at SHA256bc2f969247a2b3367d430addf53fbb84a368016ad35118875f7376841f180ceb against the a303 tree; that generic scratch path now contains the later cac tree at SHA2565ac095107bfae0e4f6f5b09c82e156183eaee4d3baf496ef5b972cf4bc2b3103. Its exact old serialization has not been recovered. Retain this replacement disclosure and the unchanged historical review/raw/XML; current Git/tree/source authenticity is independently verified rather than calling every scratch artifact unchanged. Final independent approval and original budgets are pending at this lesson commit.
+
+
+## October 4 — current schema numbers and Close probes must follow their owners
+
+PR2918's approved latest-dev integration found that landed Notes-FTS and earlier unmerged fleet-progress work both used schema76. The landed notes75→76 method and executed SQL remain exact; fleet progress composes as76→77 with the same SQL/CAS, and Chat/core/shared current-only recovery gates move to77. Genuine released/landed predecessor chains passed the 71-case real SQLite/migration/recovery selection (84.820s XML). A new real SQLite control refuses an earlier unmerged progress catalog at private76 without changing its stamp/catalog/data; automatic conversion/recovery of that private shape remains unqualified. Frozen AgentRuns histories remain unchanged.
+
+Independent Close review requested a second-fence acquisition control. Original new controls were RED4PASS/3FAIL15.670s: the second acquisition raised outside the existing rollback handler, leaving the first fence unrolled back. Moving only the existing acquisition loop under that handler preserved the authored failed-generation refusal and reverse attempts for every acquired native/saved fence. The initial controller selection was136PASS/1FAIL277.518s, with all seven new controls passing; its older persisted-only cancellation oracle was exact prior/incoming source but stale against the preserved native+saved cancellation contract. The prospectively strengthened owning selection passed11 in14.622s, including delegated observations of real wake, scratch-close and queue-close methods, a success control proving those probes live, and exact surviving-fence/retry-latch assertions.
+
+The incoming mounted Close fixture patched close_progress, but this PR's preferred boundary is begin_close_progress. Its original1FAIL78.683s never injected that intended failure. Retargeting only this fixture and requiring both causal fences reached failure/retry, then exposed another stale oracle:1FAIL65.547s expected all terminal fences empty although ADR199 permanently retires the native ID and releases only the drained saved ID. The final node requires exact retained native generations in both fleet and wake maps after successful retry and stale-incarnation refusal; all notification/privacy/draft/usage/retry assertions remain. It passed1 in87.699s through the real mounted journeys. Runtime close controls separately passed41 in10.972s. These selections overlap and are never summed.
+
+Encryption was NON-GREEN100PASS/11FAIL24.534s. Exact incoming f800 failed the same eleven nodes in4.665s; four messages are byte-exact and seven differ only in hexadecimal function-object memory addresses. This is bounded inherited-failure evidence, not a cause or blocked-behavior certificate. Settings/wizard/full worker-checker recall passed430 in124.817s; startup-unlock/encryption-card controls passed35 in26.297s. The initial settings launcher used a nonexistent Architecture checker path and stopped exit4 before tests; the corrected Scripts path executed once, with the original zero-test receipt retained. Full-process task-owned profiles cover teardown; 27 late pytest rm_rf warning lines per completed selection and actual PyAudio mentions remain in raw evidence. No foreign cleanup, optional-audio installation/masking, user keys, live providers, physical keys/relaunch or wider qualification occurred.
+
+Static review also removed only an unused Sequence import introduced by the rebase's import union; every non-import Resend module AST and the three deferred controller imports remain exact. The preliminary218-file Ruff receipt retained that F401 before cleanup; inherited whole-file style/format debt remains. The new regression's import order was corrected before final source approval. Preserve all original failures, changed-oracle receipts and metadata limitations; passing a corrected test cannot erase the earlier evidence or expand its scope.
+
+
+## PR2918 schema-column expectation gap — October 4, 2026
+
+The fresh prepublication owner comment about the v76/v77 collision also named the hand-maintained expected_table_columns.py. The independently approved sequential migration/recovery selection passed71 cases, but that literal still omitted fleet_progress_messages. The existing real-SQLite historical-bootstrap stop76 case failed once in2.306s at the intended fresh-template unexpected-table assertion. Adding only its ten hand-reviewed column names preserved all other declarations; the changed76 replay and actual fresh-constructor recovery-catalog equality then passed2cases in3.109s. No runtime SQL, schema stamp, migration authority or guard changed. Both logs retain27 late rm_rf warnings; PyAudio appears only in RED, no pydub. No cleanup, full historical sweep or original-budget rerun occurred. The completed original5PASS96.382s qualification is carried only by exact unchanged application/guard/MAX/profile/raw/XML identities, not claimed as a new measurement.
+
+Incident: a migration's runtime and recovery catalog can be qualified while the separate independent table-column oracle remains stale. Include that hand-maintained declaration in schema integration review, then verify it against actual construction and the affected replay path; do not derive its expected values from the production builder. Publication had stopped before any push/body/merge, so the gap was repaired prospectively under reopened AC3. Retain the original Ready reports and passing measurements with their scope; later review must authenticate the narrow test-only follow-through rather than rewriting earlier evidence.
+
+
+### October 4: a new durable locator must join the voice reconciliation census
+
+PR2918's preserving integration on exact dev7446 retained both sides' function ASTs, but the actual schema catalog exposed a cross-owner omission. The original persistence selection was NON-GREEN: 139 passed/1 failed in81.809s XML. The failed inventory named two hook-continuation message columns already disclosed in incoming TASK33628.12 and this PR's additional fleet-progress message ID. The upstream note was not an exact baseline certificate for the extra fleet reference.
+
+The catalog is runtime safety policy, not just a test inventory: completed voice reconciliation consults the forbidden locator set before accepting an uncertain commit or creating the proposed IDs. Hook receipts retain admitted parent/assistant lineage; progress rows retain separately owned pending reports. Normal progress senders use a different UUID spelling, but the durable owner does not enforce a disjoint namespace. Missing classification allowed a conflicting ID to be silently adopted.
+
+Prospective TASK33664 AC3 remained In Progress/unchecked and plan af2319 preceded the repair. Twelve new real-SQLite cases use schema-valid rows with foreign keys enabled: nine actual ID collisions, plus three unrelated-row controls. Unchanged production was RED: 3 passed/9 failed in8.116s XML, all nine at the intended missing RuntimeError. Parent-hook collisions use the already committed assistant; the non-FK hook-assistant and fleet locators also cover residue before pair creation. Only three table/column entries were added to the existing forbidden-message set. All production function ASTs, SQL/migrations, exemptions, fixtures and original test bytes remain unchanged. GREEN: the new cases, catalog census and bounded commit/reconcile/archive/root-fork controls pass54 in33.039s XML with unchanged full persistence and explicit sidecar snapshots on refusal. Unrelated ownership still permits normal commit and idempotent retry.
+
+The separate incoming MCP selection passes77 in24.396s; quit/video passes162 in267.704s. Selections overlap and are never summed. Quit's actual FD warning14→282/growth268>200 remains cause-unqualified and supplies no aggregate-resource certificate. All five logs retain27 late pytest rm_rf warnings against preexisting garbage; only RED emitted PyAudio-unavailable, and none mentioned pydub. No install, mask, cleanup or live voice/physical-key certification followed. Whole-file production formatting debt remains inherited; only the new test tail was formatted, with old tests preserved byte-for-byte and zero new Ruff signatures/fatal findings. Read-only guessed-path failures, the interrupted broad scratch inventory and corrected quiet-summary reader are metadata limits, not application failures. Every previous lesson byte and historical positive/NON-GREEN/baseline/interrupted/unexecuted/style/size/FD/optional/physical/wider limitation is retained.
+
+
+## October 6 — bill real native polling within its census phase
+
+PR2918's published bb79 hosted storage step failed tested credential opens10.125 against Linux6.75×unchanged1.05. The failing Linux job did not record open stacks. A bounded local attribution on darwin observed74 real native-pause opens over8credential ticks9.25/tick; that does not prove the Linux cause. Wall-clock maintenance polling was still active while a fixed-workload census settled its phases. Capture the production probe before app construction, hold its serial wall-clock caller, and await the first held call to drain any in-flight probe before billing. Execute the retained real probe twice at its existing one-second cadence across the unchanged eight0.25-second ticks; count the actual opens and check the actual result.
+
+The new probe regression retained RED1FAIL then GREEN1PASS0.501XML. After preserving dev76d, both affected private-profile storage variants passed2 in59.193XML on darwin with9.25credential opens/tick, unchanged24keys/8ticks/canaries/counter seams/all13MAX/eightkeystrokeMAX/slack/default temporary depth/cwd/PYTHONPATH/outer private profile. A deliberate extra-I/O control made two real config reads per tick and failed once1FAIL30.499XML at config2>1 and storage4>2. It is expected negative evidence, not a green selection. The original fb14FIVE5PASS112.657 launcher was never replayed; the original raw/XML and all earlier NON-GREEN/warning/FD/platform limits remain.
+
+The same integration exposed independent schema composition hazards: two Chat76→77 methods shadowed each other, AgentRuns23 was derived before the complete landed native22 catalog, and a SQL sorter mishandled quoted FTS names/VIEW entries. Complete exact-catalog migration controls and native dispatch reached their actual boundaries after repair. Initial214cases/45FAIL98.900XML, then44PASS28.706XML migration controls; native4PASS11.281XML and separate159PASS111.357XML retain their own scopes. A later8case selection had one stale current77 oracle; corrected backup1PASS3.406XML. Provider/replay/mounted30cases had4failures59.376XML: two stale diagnostic-period literals, a stale wrapper-exception expectation, and an assertion racing the real discard worker. Correct the narrow typed/presentation oracles and await worker completion while retaining credential/audit/committed deletion assertions; the affected failures plus two progress controls passed6 in21.339XML. No failed receipt is erased or summed into later passes. Immutable independent final review remains pending at this source record.
+
+
+## TASK-33664.2: retire captured Console owners before their prepared profile
+
+PR2918 final-head UI shard3 failed with `OSError: [Errno 39] Directory not empty`
+when `_pending_close_app` removed its `TemporaryDirectory` while a separately
+captured Console runtime still owned the registered Chat/AgentRuns databases.
+The raw job log shows runtime writes/disposal after helper cleanup. A real delayed
+SQLite write after helper return reproduced `unsafe_parent: missing_parent`.
+Keeping the directory under pytest's private `tmp_path` and letting existing
+`owned_console_apps` drain the exact runtime before closing registered databases
+made the mounted pending/race/fleet journey pass. The focused regression also
+passes after checking AgentRuns' held cache, rather than its caller-owned one-off
+`_get_connection()` result, and retiring the worker thread's own caches. The first
+oracle failure remains NON-GREEN. Helper return is not the captured owner's
+retirement boundary; reuse that fixture lifetime rather than racing deletion or
+ignoring cleanup errors. This is test evidence, not a new production/resource or
+physical-platform certificate. Receipts: `/private/tmp/pr2918-oct06-close-profile-local-proof.json`.
+
+
+## TASK-33664.3: recheck view attachment after each awaited tab mutation
+
+PR2918 repair-head UI1 terminated the app with a detached ConsoleSessionTabStrip
+MountError during a pending-decision journey. sync_sessions holds a serialization
+lock, but that lock cannot keep the Textual view attached across child removal or
+mount awaits. A real-removal regression found a lock-resumed NoMatches plus four
+post-detach mount attempts; shared liveness checks stop those attempts while both
+failed hosted journeys and the live tab controls pass locally. The first control
+selection also exposed a separate harness error: ConsoleTranscript's real config
+getter refused raw_source_selection_changed after per-test paths moved the
+collection-admitted participant. The existing bootstrap_profile marker keeps that
+private selection intact; it does not bypass recovery or replace the real getter.
+Retain the initial setup/control failures and the separate hosted headless barrier
+timeout, whose cause is still unqualified. Serialized UI work still needs attachment
+checks after awaits, and real config consumers must retain their admitted profile.
+Receipts: /private/tmp/pr2918-oct06-tabs-local-proof.json; no original budgets or
+completed passing cases were replayed.
+
+## Captured model retries need the real controller and the actual provider parser
+
+**TASK-34367 / TASK-34368, 2026-10-04.** Live DeepSeek setup received HTTP 200,
+but the strict parser rejected the documented choice-level `logprobs: null`.
+The adapter wrapped that as a retryable provider failure. The agent bridge
+classified the next attempt as TOOL_LOOP while the first trace remained
+DISPATCH_STARTED: the store deferred its ERROR handoff until the one assistant
+owning both attempts became terminal. The next call therefore refused with
+`trace_tool_chain_unavailable`. Isolated ownership fixes and gateway tests did
+not exercise this ordering.
+
+Use a real controller, gateway, store and SQLite trace ledger for a typed
+429/500 -> successful retry, both before and after a real tool response. Also
+feed documented complete/SSE envelopes through the actual provider adapter;
+mocking parsed reply strings misses the trigger. Assert ordered durable call
+states and the mounted recovery/composer surfaces. Fault sealing, cancel its
+await and later save a real assistant owner to test custody and settlement
+fingerprints. Retry negatives must include changed system content in both
+single-preamble and distinct-role formats, because unchanged message rows alone
+do not prove unchanged provider input.
+
+
+## A static tool schema can be only the gated base
+
+PR2995 Qodo finding4182699992 claimed that agents could never request provider/model/preset because NEW_CHAT_TOOL_SCHEMA listed only five fields. An independent review traced the actual Console first-request plan: build_chat_create_schema adds routed presets and opted-in overrides, and native/text serializers retain those dynamic properties. Unconditionally adding the fields would violate ADR147/219 disclosure gates.
+
+For a tool-discovery claim, inspect the runtime schema builder, its live call-site inputs and the provider serializer before editing a static constant. The false-positive disposition and source links are recorded in https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4183161209 and the final Task27 review. No executed provider matrix or new test run was claimed.

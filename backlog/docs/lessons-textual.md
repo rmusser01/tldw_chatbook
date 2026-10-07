@@ -1575,3 +1575,24 @@ For removal claims, mount a real widget and hold the unrelated operation across
 `await widget.remove()`; assert actual attachment and the original state
 identity. A fake `is_attached` flag or an already-finished controller read cannot
 establish that Textual retired its own message pump.
+
+---
+
+## `self.log` raises NoActiveAppError once the app has exited — shutdown paths must use the module logger
+
+**PR #3016 review round, 2026-10-06.** Surfacing an ignored retention result
+in `LibraryFileNotesWorkspace.shutdown()` (Qodo finding 10) added
+`self.log.warning(...)` on the result-failure path. Sixteen workspace tests
+that end with `await workspace.shutdown()` AFTER `run_test()` exits (e.g.
+`test_folder_files_save_copy_keeps_editor_editable`) failed with
+`textual._context.NoActiveAppError` from `message_pump.py`: the DOM logger
+resolves the `active_app` ContextVar, which no longer exists once the app
+unmounted. The pre-existing exception branch had the same latent hazard but
+only fired on thrown errors; a result-level failure (`replica-error` from
+`replica=None`) is routine, so the trap fired on every such test. Confirmed
+by file-swap A/B (HEAD pass, fixed fail, bisected to the workspace file).
+Fixed by logging through the module-level loguru `logger`, which needs no
+app context. **What to do:** any code that can run during or after app
+teardown (shutdown, workers outliving the app, `call_from_thread` stragglers)
+must not use `self.log` / DOM logging — use the module logger, and treat
+"16 tests suddenly fail with NoActiveAppError" as this exact signature.

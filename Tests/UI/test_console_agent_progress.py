@@ -7,6 +7,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, SelectionList
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -319,7 +320,7 @@ async def test_console_progress_navigation_pruned_access_and_actual_paint(
         modal.query_one(SelectionList).select(inbox.snapshot()[0].message_id)
         await pilot.pause()
         paint = _compositor_text(host.export_screenshot())
-        assert "Queued progress (this session)" in paint
+        assert "Queued progress" in paint
         assert "Sample report:" in paint
         assert "Discard selected (1)" in paint
         host.save_screenshot(
@@ -382,8 +383,9 @@ async def test_console_progress_navigation_pruned_access_and_actual_paint(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_real_live_report_save_preserves_open_selection_and_navigation(
-    tmp_path, monkeypatch
+    tmp_path, request, monkeypatch
 ):
     import asyncio
     import threading

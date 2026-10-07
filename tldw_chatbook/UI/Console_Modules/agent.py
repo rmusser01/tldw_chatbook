@@ -750,7 +750,13 @@ def _fleet_row_from_handle(
         elapsed = _format_fleet_elapsed(max(0.0, end - handle.started_at))
         if elapsed:
             primary = f"{primary} · {elapsed}"
-    secondary = (handle.error or handle.result or handle.task or "").strip()
+    target = (
+        f"{handle.resolved_provider} · {handle.resolved_model}"
+        if handle.resolved_provider and handle.resolved_model
+        else "Target unavailable"
+    )
+    detail = (handle.error or handle.result or handle.task or "").strip()
+    secondary = f"{target} · {detail}" if detail else target
     usage_segment = ""
     if status not in TERMINAL_RUN_STATUSES:
         usage_segment = _live_usage_label(getattr(live_snapshot, "turn_usage", None))
@@ -789,9 +795,7 @@ def _fleet_row_from_handle(
         row_id=handle.handle_id,
         primary_text=primary,
         secondary_text=secondary,
-        wrap_secondary=bool(
-            usage_segment or (unread and status in TERMINAL_RUN_STATUSES)
-        ),
+        wrap_secondary=True,
         status=status,
         clickable=bool(handle.run_id),
         cancellable=status not in TERMINAL_RUN_STATUSES,
@@ -836,11 +840,18 @@ def _fleet_row_from_summary(
         f"{glyph} ~{elapsed} · {summary.text}" if elapsed else f"{glyph} {summary.text}"
     )
     budget = _budget_token_label(summary.budget_tokens)
-    secondary = f"{summary.detail} · {budget}" if summary.detail else budget
+    target = (
+        f"{summary.resolved_provider} · {summary.resolved_model}"
+        if summary.resolved_provider and summary.resolved_model
+        else "Target unavailable"
+    )
+    detail = f"{summary.detail} · {budget}" if summary.detail else budget
+    secondary = f"{target} · {detail}"
     return InspectorSectionRow(
         row_id=row_id,
         primary_text=primary.strip(),
         secondary_text=secondary,
+        wrap_secondary=True,
         status=status,
         clickable=bool(summary.run_id),
     )
@@ -1646,17 +1657,35 @@ class ConsoleAgentController:
         )
 
         bridge = self._ensure_console_agent_bridge()
-        conversation_id = self._progress_owner_id()
-        native_session_id = self._console_chat_controller.store.active_session_id
-        store = getattr(bridge, "message_store", None)
-        inbox = store.get_inbox(conversation_id) if store and conversation_id else None
+        controller = self._console_chat_controller
+        if controller is None:
+            return
+        native = controller.store
+        native_session_id = native.active_session_id
+        conversation_id = (
+            native.progress_owner_id(native_session_id) if native_session_id else None
+        )
+        store = None
+        inbox = None
+
+        def prepare() -> None:
+            nonlocal inbox, store
+            store = getattr(bridge, "message_store", None)
+            native.prepare_progress_inbox(native_session_id, message_store=store)
+            with native.progress_owner_scope(
+                native_session_id, message_store=store
+            ) as owner:
+                if owner != conversation_id:
+                    raise MessageError("unavailable")
+                inbox = store.get_inbox(owner) if store and owner else None
 
         def require_current_owner() -> None:
             if (
                 inbox is None
                 or not self._screen.is_mounted
-                or self._console_chat_controller.store.active_session_id
-                != native_session_id
+                or self._console_chat_controller is None
+                or self._console_chat_controller.store is not native
+                or native.active_session_id != native_session_id
                 or self._progress_owner_id() != conversation_id
                 or store.get_inbox(conversation_id) is not inbox
             ):
@@ -1676,6 +1705,7 @@ class ConsoleAgentController:
                     conversation_id=conversation_id,
                     load=load,
                     discard=discard,
+                    prepare=prepare,
                 )
             )
 

@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from Tests.private_profile import private_profile_test
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -187,7 +188,7 @@ def _caller(unit: str) -> str:
         if frame.filename.startswith(_APP_PACKAGE)
     ][-6:]
     where = " <- ".join(
-        f"{frame.filename[len(_APP_PACKAGE):]}:{frame.lineno} {frame.name}"
+        f"{frame.filename[len(_APP_PACKAGE) :]}:{frame.lineno} {frame.name}"
         for frame in reversed(frames)
     )
     return f"{unit} on {threading.current_thread().name}: {where or '(no app frame)'}"
@@ -359,6 +360,123 @@ async def test_media_cleanup_capture_holds_only_its_timer(monkeypatch) -> None:
         assert not cleanup_calls
         await callbacks[0]()
         assert len(cleanup_calls) == 1
+
+
+def _capture_native_pause_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Any, threading.Event]:
+    """Hold wall-clock probes; retain the real callable and a drain barrier."""
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    real_probe = storage_admission._local_pause_requested
+    held = threading.Event()
+
+    def held_probe() -> bool:
+        held.set()
+        return False
+
+    monkeypatch.setattr(storage_admission, "_local_pause_requested", held_probe)
+    return real_probe, held
+
+
+async def _census_credential_ticks(
+    console: Any, native_probe: Any, credential_interval: float
+) -> None:
+    """Drive the actual idle work at its configured cadence, without a clock."""
+    from tldw_chatbook.Backup_Recovery.runtime_maintenance import (
+        MAINTENANCE_PROBE_INTERVAL_SECONDS,
+    )
+
+    elapsed = 0.0
+    for _ in range(IDLE_TICKS):
+        console._poll_console_credential_readiness()
+        elapsed += credential_interval
+        while elapsed >= MAINTENANCE_PROBE_INTERVAL_SECONDS:
+            assert not await asyncio.to_thread(native_probe), (
+                "native maintenance requested"
+            )
+            elapsed -= MAINTENANCE_PROBE_INTERVAL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_native_pause_capture_drains_and_bills_real_probes(monkeypatch, tmp_path):
+    """Elapsed monitor time cannot leak opens; driven probes retain cost/result."""
+    from tldw_chatbook.Backup_Recovery import runtime_maintenance, storage_admission
+
+    entered, release = threading.Event(), threading.Event()
+    probe_calls: list[None] = []
+    requested = {"paused": False}
+    path = tmp_path / "probe"
+    path.write_bytes(b"probe")
+
+    def probe() -> bool:
+        if not probe_calls:
+            entered.set()
+            assert release.wait(5), "in-flight probe was not released"
+        probe_calls.append(None)
+        descriptor = os.open(path, os.O_RDONLY)
+        os.close(descriptor)
+        return requested["paused"]
+
+    class Console:
+        ticks = 0
+
+        def _poll_console_credential_readiness(self) -> None:
+            self.ticks += 1
+
+    counts: dict[str, int] = {}
+    counting = {"on": False}
+    storage_observer = _count_storage_units(monkeypatch, counts, counting)
+    monitor = None
+    try:
+        monkeypatch.setattr(storage_admission, "_local_pause_requested", probe)
+        interval = runtime_maintenance.MAINTENANCE_PROBE_INTERVAL_SECONDS
+        monkeypatch.setattr(
+            runtime_maintenance, "MAINTENANCE_PROBE_INTERVAL_SECONDS", 0.01
+        )
+        monitor = asyncio.create_task(runtime_maintenance.monitor_app(object()))
+        assert await asyncio.to_thread(entered.wait, 5)
+        real_probe, held = _capture_native_pause_probe(monkeypatch)
+        assert not held.is_set(), "hold completed before the in-flight probe"
+        release.set()
+        assert await asyncio.to_thread(held.wait, 5)
+        assert len(probe_calls) == 1
+        counting["on"] = True
+        await asyncio.sleep(0.05)  # Several real monitor ticks remain held.
+        assert counts["os_opens"] == 0
+        monkeypatch.setattr(
+            runtime_maintenance, "MAINTENANCE_PROBE_INTERVAL_SECONDS", interval
+        )
+        console = Console()
+        await _census_credential_ticks(console, real_probe, interval / 4)
+        assert console.ticks == IDLE_TICKS
+        assert len(probe_calls) == 3
+        assert counts["os_opens"] == 2
+        requested["paused"] = True
+        with pytest.raises(AssertionError, match="native maintenance requested"):
+            await _census_credential_ticks(console, real_probe, interval / 4)
+        assert counts["os_opens"] == 3
+    finally:
+        original_error = sys.exc_info()[1]
+        try:
+            counting["on"] = False
+            release.set()
+            if monitor is not None:
+                monitor.cancel()
+                await asyncio.gather(monitor, return_exceptions=True)
+        finally:
+            receipt = storage_observer.close()
+            _STORAGE_UNIT_OBSERVER_RECEIPTS.append(receipt)
+            if not receipt["complete"]:
+                if original_error is not None:
+                    original_error.add_note(
+                        "Original storage-unit observer evidence is incomplete."
+                    )
+                else:
+                    raise AssertionError(
+                        "Original storage-unit observer evidence is incomplete: "
+                        + json.dumps(receipt)
+                    )
 
 
 async def _census(
@@ -537,6 +655,7 @@ async def _census(
         trace_maintenance: list[tuple[Any, Any]] = []
         media_cleanup: list[Any] = []
         if storage_units:
+            native_probe, probe_held = _capture_native_pause_probe(monkeypatch)
             storage_observer = _count_storage_units(monkeypatch, counts, counting)
             media_cleanup = _capture_media_cleanup_timer(monkeypatch, TldwCli)
             # The 1 Hz legacy trace-maintenance loop (armed 5 s after ready,
@@ -569,6 +688,11 @@ async def _census(
             )
         async with app.run_test(size=(170, 48)) as pilot:
             await _settle(pilot)
+            if storage_units:
+                # The serial monitor's held call drains an earlier native probe.
+                assert await asyncio.to_thread(probe_held.wait, 5), (
+                    "native probe never held"
+                )
 
             store = pilot.app.screen._ensure_console_chat_store()
             workspace_id = store.workspace_context.active_workspace_id
@@ -615,6 +739,8 @@ async def _census(
             # is above. The 0.25 s credential poll builds readiness each tick
             # (billed per tick by the ``idle`` phase): left running, the slower
             # 400-message run billed more ticks to typing (34 vs 39 builds).
+            if storage_units:
+                credential_interval = screen._console_credential_poll_timer._interval
             screen._stop_console_credential_poll_timer()
             if storage_units:
                 # The 0.2 s trailing draft-spend refresh, which a loaded machine
@@ -639,6 +765,8 @@ async def _census(
                     trace_maintenance,
                     monkeypatch,
                     media_cleanup,
+                    native_probe,
+                    credential_interval,
                 )
 
         return counts
@@ -720,21 +848,24 @@ async def _census_idle_and_visit(
     trace_maintenance: list[tuple[Any, Any, Any, Any]],
     monkeypatch: pytest.MonkeyPatch,
     media_cleanup: list[Any],
+    native_probe: Any,
+    credential_interval: float,
 ) -> None:
     """Census the typing pause, idle ticks and a warm visit in storage units.
 
     Every phase counts every thread from its start until its own timers
     settled and every worker it started finished, so nothing a phase begins
     lands in the next one. The wall-clock loops (credential poll, trace
-    maintenance) are stopped/captured by ``_census``, so no phase depends on
-    how many ticks a loaded machine fires.
+    maintenance, native backup probe) are stopped/captured by ``_census``,
+    so no phase depends on how many ticks a loaded machine fires.
 
     * ``pause:`` -- what the typing burst leaves behind once the user stops:
       the trailing draft-spend refresh (held off during the burst by
       ``_census``, fired once here) and every worker it and the burst's own
       trailing work started (the audit's 250-415 ms stall per typing pause).
     * ``idle:`` -- the 0.25 s credential poll, driven directly (per tick; the
-      audit's 4 config admissions/s at rest).
+      audit's 4 config admissions/s at rest), including real native backup
+      probes at their production cadence (two per eight credential ticks).
     * ``trace:`` -- the 1 Hz legacy trace-maintenance batch, driven exactly
       as its loop does (per tick; a helper spawn/s, via
       ``run_owned_db_call``'s owned connection).
@@ -760,11 +891,11 @@ async def _census_idle_and_visit(
             runtime would have started its maintenance loop with, the runtime
             itself and the real ``_schedule_legacy_trace_maintenance`` that
             ``gc_pass`` uses to start that loop.
-        monkeypatch: pytest fixture that owns every patch the GC pass makes
-            (owned-call wrapper, ready delay, held backup probe). The pass
-            puts the wrapper and the probe back when it ends; the fixture
-            undoes the rest at teardown.
+        monkeypatch: pytest fixture that owns the GC owned-call wrapper and
+            ready delay; the pass restores the wrapper before it ends.
         media_cleanup: the captured real startup cleanup callback.
+        native_probe: the real held native-pause callable, billed during idle.
+        credential_interval: the captured real credential timer interval.
     """
     from textual import worker_manager
 
@@ -825,8 +956,7 @@ async def _census_idle_and_visit(
         spend_refresh.refresh()
 
     async def credential_ticks() -> None:
-        for _ in range(IDLE_TICKS):
-            console._poll_console_credential_readiness()
+        await _census_credential_ticks(console, native_probe, credential_interval)
 
     assert trace_maintenance, "the Console never armed legacy trace maintenance"
     database, normalizer_factory, runtime, real_schedule = trace_maintenance[0]
@@ -856,18 +986,12 @@ async def _census_idle_and_visit(
         the collection is unusable. The 1 Hz backup-maintenance probe is held
         still for the whole phase: it walks every registered root (~37 opens)
         on its own thread, and landing inside the short billed window it
-        doubled the pass's opens about one run in ten.
+        doubled the pass's opens about one run in ten. The hold now covers
+        every census phase; the idle phase pays the real native probe cost.
         """
-        from tldw_chatbook.Backup_Recovery import storage_admission
         from tldw_chatbook.Chat import console_runtime as runtime_module
 
         real_owned = runtime_module.run_owned_db_call
-        real_probe = storage_admission._local_pause_requested
-        probe_held = threading.Event()
-
-        def held_probe() -> bool:
-            probe_held.set()
-            return False
 
         _GC_PASS_FAILURES.clear()
         window: dict[str, Any] = {"calls": [], "error": None}
@@ -926,11 +1050,6 @@ async def _census_idle_and_visit(
                 billed.set()
             return result
 
-        monkeypatch.setattr(storage_admission, "_local_pause_requested", held_probe)
-        # The monitor probes one at a time, so its first held call means a
-        # probe that started before the hold has finished (within a second;
-        # an app without the monitor has none in flight).
-        await asyncio.to_thread(probe_held.wait, 5)
         monkeypatch.setattr(runtime_module, "run_owned_db_call", owned)
         monkeypatch.setattr(
             runtime_module, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 0.0
@@ -951,7 +1070,6 @@ async def _census_idle_and_visit(
             if in_flight:
                 await asyncio.wait(set(in_flight), timeout=GC_PASS_WAIT_SECONDS)
             monkeypatch.setattr(runtime_module, "run_owned_db_call", real_owned)
-            monkeypatch.setattr(storage_admission, "_local_pause_requested", real_probe)
         late = [
             f"{name} then raised {type(call.exception()).__name__}"
             for name, call in orphaned
@@ -1120,9 +1238,9 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
         "cost_projection_estimate_rows",
         "context_rows",
     ):
-        assert (
-            loaded[key] == 0
-        ), f"typing traversed settled transcript in {key}: {loaded[key]} rows"
+        assert loaded[key] == 0, (
+            f"typing traversed settled transcript in {key}: {loaded[key]} rows"
+        )
     assert loaded["context_estimate_max_rows"] <= 1
 
 
@@ -1195,7 +1313,9 @@ async def test_typing_does_not_rebuild_the_provider_derivation(
 #: (one extra path walk) between runs with identical admission counts --
 #: timing-dependent; TASK-33644 traced one such walk to the 1 Hz backup-
 #: maintenance probe (``_local_pause_requested``) -- so its pins are the observed
-#: maxima checked with ``OS_OPENS_JITTER_SLACK`` on top; the admission
+#: maxima checked with ``OS_OPENS_JITTER_SLACK`` on top. TASK-33664.1 now
+#: holds native wall-clock probes across all phases and bills their real cost
+#: in idle at the production cadence, retaining these ceiling values; admission
 #: counts are the exact signal. ``os_opens`` scales with
 #: the depth of the profile path (one open per component): pinned on macOS's
 #: ~11-component private-profile tmp path; Linux CI paths read lower.

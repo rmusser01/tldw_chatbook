@@ -8,16 +8,33 @@ from .activation import ActivationStore, _private, _source_scope_admitted_from_r
 
 def _witnesses(path, lease):
     """Check paired generations against this actual admitted storage group."""
+    from . import storage_admission as storage
+
     root, names = lease.execution_context(path)
     selected = bootstrap.effective_config_path()
+    hold = storage._ordinary_hold(lease=lease)
+    key = ("witness", str(selected), str(path))
+    before = storage._derived_before(hold, key)
+    reused, value = storage._derived_reuse(hold, key, before)
+    if reused:
+        return value
     with bootstrap._control_observation(root) as (records, registry):
         if path is not None and not _source_scope_admitted_from_records(
             names or (), path, records, registry
         ):
             raise ValueError("projection_source_scope_unavailable")
-        return _paired_witnesses_from_records(
+        result = _paired_witnesses_from_records(
             path, root, names, selected, records, registry
         )
+        evidence = storage._metadata_evidence(
+            hold,
+            (() if path is None else (path,)),
+            registry=registry,
+            records=records,
+        )
+    # Publish only after the final ancestry and native cleanup checks succeed.
+    storage._note_derived(hold, key, evidence, result, before)
+    return result
 
 
 def _paired_witnesses(path, root, names, selected):

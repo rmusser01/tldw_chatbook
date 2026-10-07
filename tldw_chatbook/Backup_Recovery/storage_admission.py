@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import copy
 import sqlite3
 import stat
 import sys
@@ -561,7 +562,8 @@ class _Hold:
         # PERF-07/08 (ADR-126 amendment 2026-09-29): process-local admission
         # evidence, discarded with this hold. Guarded by _lock.
         self.evidence: dict[str, _Evidence] = {}
-        self.path_evidence: OrderedDict[tuple[str, str], _Evidence] = OrderedDict()
+        self.path_evidence: OrderedDict[tuple, _Evidence] = OrderedDict()
+        self.derived_evidence: OrderedDict[tuple, tuple[_Evidence, object]] = OrderedDict()
         self.thread = threading.Thread(
             target=self._run,
             args=(authority,),
@@ -1104,6 +1106,176 @@ def _selected_paths(path, related_paths) -> tuple[Path, ...]:
     )
 
 
+def _ordinary_hold(authority=None, lease=None):
+    """Select only an actual serving ordinary owner; never create authority."""
+    with _lock:
+        if (
+            not _EVIDENCE_REUSE
+            or os.name == "nt"
+            or _pause is not None
+            or getattr(_local, "admitted", False)
+        ):
+            return None
+        if lease is not None:
+            if lease not in _live_leases:
+                return None
+            hold = _holds.get(lease._key)
+        else:
+            hold = next((h for h in _holds.values() if h.authority is authority), None)
+        return hold if _hold_serving(hold) and hold.key[0] == os.getpid() else None
+
+
+def _derived_before(hold, key):
+    """Observe existing complete inputs before their next original derivation."""
+    epoch = bootstrap._admission_epoch
+    with _lock:
+        item = hold.derived_evidence.get(key) if hold is not None else None
+    if item is None:
+        return epoch, None
+    entry, _ = item
+    try:
+        return epoch, (entry, entry.observe(), time.time_ns())
+    except OSError:
+        return epoch, None
+
+
+def _derived_reuse(hold, key, before):
+    """Borrow a defensive copy only after current full stamps and owner checks."""
+    epoch, observed = before
+    if hold is None or observed is None or _mount_read_only(Path(hold.key[1]).parent):
+        return False, None
+    entry, stamps, _ = observed
+    with _lock:
+        item = hold.derived_evidence.get(key)
+        if (
+            item is None
+            or item[0] is not entry
+            or not entry.confirmed
+            or entry.names != hold.names
+            or stamps != entry.stamps()
+            or epoch != entry.epoch
+            or epoch != bootstrap._admission_epoch
+            or _ordinary_hold(hold.authority) is not hold
+        ):
+            return False, None
+        hold.derived_evidence.move_to_end(key)
+        return True, copy.deepcopy(item[1])
+
+
+def _note_derived(hold, key, entry, value, before):
+    """Keep existing evidence bounded and confirm two bracketed positive reads."""
+    if hold is None:
+        return
+    epoch, observed = before
+    with _lock:
+        if _ordinary_hold(hold.authority) is not hold:
+            return
+        if entry is None:
+            hold.derived_evidence.pop(key, None)
+            return
+        current = hold.derived_evidence.get(key)
+        if (
+            current is not None
+            and current[0].confirmed
+            and current[0].epoch == entry.epoch
+            and current[0].names == entry.names
+            and current[0].dependencies() == entry.dependencies()
+            and current[0].stamps() == entry.stamps()
+        ):
+            # A concurrent cold reader cannot demote already-confirmed inputs.
+            hold.derived_evidence.move_to_end(key)
+            return
+        previous, stamps, when = observed or (None, None, 0)
+        entry.confirmed = (
+            previous is not None
+            and previous.names == entry.names
+            and previous.dependencies() == entry.dependencies()
+            and previous.stamps() == stamps == entry.stamps()
+            and epoch == entry.epoch == bootstrap._admission_epoch
+            and entry.settled_before(when)
+        )
+        hold.derived_evidence[key] = entry, copy.deepcopy(value)
+        hold.derived_evidence.move_to_end(key)
+        while len(hold.derived_evidence) > _EVIDENCE_PATHS_MAX:
+            hold.derived_evidence.popitem(last=False)
+
+
+def _metadata_evidence(hold, paths=(), *, registry=None, records=None):
+    """Complete ordinary metadata inputs, including foreign and historical roots.
+
+    Unknown/absent/aliased dependencies deliberately keep the original path fresh.
+    This collector never proves admission: callers supply a positive derivation.
+    """
+    if hold is None:
+        return None
+    root, selector = Path(hold.key[1]), effective_config_path()
+    try:
+        registry = bootstrap._registry(root) if registry is None else registry
+        pending, profiles, associations = (
+            bootstrap._control_records(root) if records is None else records
+        )
+        if (
+            pending
+            or registry is None
+            or any(
+                row.get("pending") or row.get("proposed") for row in registry.values()
+            )
+        ):
+            return None
+        roots = {Path(p) for row in registry.values() for p in row["roots"]}
+        roots.update(
+            Path(p) for row in profiles + associations for p in row.get("roots", ())
+        )
+        historical = {
+            Path(token[5:])
+            for row in registry.values()
+            for token in row.get("historical", ())
+            if token.startswith("path:")
+        }
+        # Resolution is consulted by source-scope admission even with unchanged
+        # registry bytes. Complete no-link chains, or no reusable evidence.
+        walked = roots | historical | {Path(p) for p in paths}
+        content = []
+        for row in profiles + associations:
+            witness = row.get("activation")
+            if witness:
+                from .activation import ActivationStore
+
+                store = ActivationStore(Path(witness["store_root"]))
+                generation = store._generation(witness["generation"])
+                walked.update((store.root, generation))
+                content.append(generation / "required.json")
+        if not all(os.path.lexists(p) for p in roots | historical):
+            return None
+        base = _selector_evidence(root, selector, hold.names, tuple(roots))
+        if base is None:
+            return None
+        posture = sorted(
+            {p for target in walked for p in _chain(target)}
+            | {p for p, _ in base.posture}
+        )
+        evidence = _Evidence(
+            hold.names, posture, tuple(p for p, _ in base.content) + tuple(content)
+        )
+        # A selected source can have an absent leaf, but no missing ancestor or
+        # historical chain may be silently omitted from the complete inputs.
+        optional = {Path(p) for p in paths}
+        if any(
+            s is None and p not in optional or s is not None and stat.S_ISLNK(s[2])
+            for p, s in evidence.posture
+        ):
+            return None
+        if any(
+            stamp is None
+            for dependency, stamp in evidence.content
+            if dependency != selector
+        ):
+            return None
+        return evidence
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def _reuse_evidence(
     root, selector, path, related_paths, check, execution_selection, check_state
 ):
@@ -1130,6 +1302,8 @@ def _reuse_evidence(
         epoch = evidence.epoch
         bound = evidence.names != (UNBOUND_NAMESPACE,)
         per_path = []
+        retained_paths = []
+        fresh_children = []
         for item in selected if bound else ():
             entry = hold.path_evidence.get((str(selector), str(item)))
             if (
@@ -1137,9 +1311,33 @@ def _reuse_evidence(
                 or not entry.confirmed
                 or entry.epoch != bootstrap._admission_epoch
             ):
-                return None
-            hold.path_evidence.move_to_end((str(selector), str(item)))
-            per_path.append(entry)
+                # A new history temporary (or another fresh child) may borrow
+                # ONLY a twice-derived directory containment proof. Its own
+                # full current chain/leaf is observed again after counting.
+                directory_key = ("directory", str(selector), str(item.parent))
+                directory = hold.path_evidence.get(directory_key)
+                if (
+                    directory is None
+                    or not directory.confirmed
+                    or directory.epoch != bootstrap._admission_epoch
+                ):
+                    return None
+                hold.path_evidence.move_to_end(directory_key)
+                per_path.append(directory)
+                retained_paths.append((directory_key, directory))
+                fresh_children.append(item)
+            else:
+                path_key = (str(selector), str(item))
+                hold.path_evidence.move_to_end(path_key)
+                per_path.append(entry)
+                retained_paths.append((path_key, entry))
+    # Snapshot only under _lock. New child stamps, like final observations,
+    # perform filesystem work outside the coordinator lock.
+    for item in fresh_children:
+        entry = _path_evidence(hold.names, item)
+        if entry is None:
+            return None
+        per_path.append(entry)
     if _mount_read_only(root.parent):
         return None
     proof = check()
@@ -1180,10 +1378,8 @@ def _reuse_evidence(
                 and evidence.epoch == epoch == bootstrap._admission_epoch
                 and evidence.names == hold.names
                 and all(
-                    hold.path_evidence.get((str(selector), str(item))) is entry
-                    for item, entry in zip(
-                        selected if bound else (), per_path, strict=True
-                    )
+                    hold.path_evidence.get(path_key) is entry
+                    for path_key, entry in retained_paths
                 )
             )
     except (OSError, ValueError) as error:
@@ -1213,6 +1409,8 @@ def _observe_candidates(root, selector, path, related_paths):
             wanted[(str(selector), str(item))] = hold.path_evidence.get(
                 (str(selector), str(item))
             )
+            directory_key = ("directory", str(selector), str(item.parent))
+            wanted[directory_key] = hold.path_evidence.get(directory_key)
     now = time.time_ns()
     observations = {}
     for name, entry in wanted.items():
@@ -1231,8 +1429,17 @@ def _note_evidence(hold, root, selector, path, related_paths, names, roots, befo
     epoch_before, observations = before
     fresh = {str(selector): _selector_evidence(root, selector, names, roots)}
     if names != (UNBOUND_NAMESPACE,):
-        for item in _selected_paths(path, related_paths):
+        items = _selected_paths(path, related_paths)
+        for item in items:
             fresh[(str(selector), str(item))] = _path_evidence(names, item)
+        if roots is not None:
+            for parent in {item.parent for item in items}:
+                # This is a separate original containment derivation for the
+                # directory itself, never inference from a file-only root.
+                if _contains_capture_path((*roots, selector), parent):
+                    fresh[("directory", str(selector), str(parent))] = _path_evidence(
+                        names, parent
+                    )
     with _lock:
         if _holds.get(hold.key) is not hold or hold.names != names:
             return

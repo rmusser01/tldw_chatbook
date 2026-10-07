@@ -714,6 +714,7 @@ class ConsoleSessionSurface(Vertical):
         """Check that an awaited tab update still owns the attached strip."""
         if (
             not self.is_attached
+            or self.app._exit
             or not tab_strip.is_attached
             or self._closing
             or self._closed
@@ -758,7 +759,13 @@ class ConsoleSessionSurface(Vertical):
         )
         self.set_session_title(active_session.title if active_session else None)
         async with self._session_sync_lock:
-            if not self.is_attached or self._closing or self._closed or self._pruning:
+            if (
+                not self.is_attached
+                or self.app._exit
+                or self._closing
+                or self._closed
+                or self._pruning
+            ):
                 return
             try:
                 tab_strip = self.query_one(
@@ -816,6 +823,7 @@ class ConsoleSessionSurface(Vertical):
 
             removed_count = len(tab_strip.children)
             mounted_count = (len(sessions) * 2) + 2
+            # Each removal or mount can yield to navigation or app shutdown.
             for child in list(tab_strip.children):
                 await child.remove()
                 if not self._session_strip_is_attached(tab_strip):

@@ -2,8 +2,10 @@ from tldw_chatbook.Chat.sampling_params import (
     KNOWN_SAMPLING_PARAM_KEYS,
     params_to_dict,
     params_to_tuple,
+    parse_params_text,
     validate_sampling_params,
 )
+
 
 def test_known_keys_accepted():
     assert validate_sampling_params(
@@ -68,3 +70,9 @@ def test_enum_membership_enforced():
         "reasoning_effort": "xhigh", "reasoning_summary": "concise",
         "verbosity": "medium", "thinking_effort": "max",
     }) == []
+
+
+def test_shared_params_editor_parser_preserves_numeric_and_invalid_literals():
+    params, errors = parse_params_text("top_k=40\ntop_p=0.37\nreasoning_effort=high\nseed=nan\nbroken")
+    assert params == {"top_k": 40, "top_p": 0.37, "reasoning_effort": "high", "seed": "nan"}
+    assert errors == ["params line 5: expected 'key = value'"]

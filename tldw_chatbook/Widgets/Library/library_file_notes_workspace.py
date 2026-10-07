@@ -13,6 +13,7 @@ from time import monotonic
 from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
 
+from loguru import logger
 from rich.cells import cell_len
 from rich.text import Text
 from textual import on
@@ -25,7 +26,8 @@ from textual.screen import ModalScreen
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.worker import Worker
-from textual.widgets import Button, Input, ListView, Static, TextArea, Tree
+from textual.widgets import Button, Input, ListView, OptionList, Static, TextArea, Tree
+from textual.widgets.option_list import Option
 
 from tldw_chatbook.config import (
     apply_settings_mutation_to_cli_config,
@@ -78,7 +80,10 @@ from tldw_chatbook.Notes.file_notes_git_push import (
     PushReviewHandle,
     PushRecoveryProjection,
 )
-from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica
+from tldw_chatbook.Notes.file_notes_replica import (
+    FileNotesReplica,
+    ReplicaRevisionInfo,
+)
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
     FileNotesSessionSnapshot,
@@ -472,6 +477,26 @@ class _ConflictCompareRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class _HistoryActionRequest:
+    """One revision action chosen in the protected-file History dialog.
+
+    The request carries the exact revision-row identity and the service and
+    root generation that supplied the dialog's listing, so a dismissed
+    dialog's worker can never act on a different root's same-named revision
+    (PR #3016 review findings 2 and 13).
+    """
+
+    action: Literal["verify", "export", "restore"]
+    relative_path: str
+    kind: str
+    session_key: str | None
+    service: FileNotesService
+    root_generation: int
+    revision_id: int
+    destination_path: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class _CommitDraftState:
     """Literal commit message retained only for one exact binding key."""
 
@@ -684,6 +709,243 @@ class FileNotesRootDetailsDialog(SafeModalDismissMixin, ModalScreen[None]):
     def _close(self, event: Button.Pressed) -> None:
         event.stop()
         self.dismiss_safe_once(None)
+
+
+class FileNotesHistoryDialog(
+    SafeModalDismissMixin,
+    ModalScreen[_HistoryActionRequest | None],
+):
+    """Browse one protected file's bounded revision history and act on it.
+
+    task-34381: the dialog only PRESENTS the bounded listing and collects a
+    chosen action; every service call runs in the workspace under the same
+    transition guards as its other file actions, so a dialog opened against
+    one root can never publish into a root that changed beneath it.
+    """
+
+    BINDINGS = [("escape", "request_safe_cancel", "Close")]
+    SAFE_MODAL_CONTENT = "#file-notes-history-dialog"
+
+    DEFAULT_CSS = """
+    FileNotesHistoryDialog {
+        align: center middle;
+    }
+
+    #file-notes-history-dialog {
+        width: 90;
+        max-width: 95%;
+        height: auto;
+        max-height: 85%;
+        border: round $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #file-notes-history-title {
+        height: 1;
+        text-style: bold;
+    }
+
+    #file-notes-history-list {
+        height: auto;
+        max-height: 10;
+        min-height: 1;
+        margin-top: 1;
+    }
+
+    #file-notes-history-destination-label {
+        height: 1;
+        margin-top: 1;
+    }
+
+    #file-notes-history-destination {
+        height: 1;
+    }
+
+    #file-notes-history-actions {
+        height: 1;
+        margin-top: 1;
+    }
+
+    #file-notes-history-status {
+        height: 1;
+        margin-top: 1;
+    }
+    """
+
+    def __init__(
+        self,
+        relative_path: str,
+        revisions: tuple[ReplicaRevisionInfo, ...],
+        suggested_destination: str,
+        service: FileNotesService,
+        root_generation: int,
+    ) -> None:
+        """Initialize the dialog with one file's bounded revision listing.
+
+        Args:
+            relative_path: Protected file path relative to the notes root.
+            revisions: Bounded listing entries, most recent first.
+            suggested_destination: Pre-filled absent destination suggestion.
+            service: Service that supplied the listing; carried onto every
+                action request so a root change cannot redirect it (PR
+                #3016 review finding 13).
+            root_generation: Root generation that supplied the listing.
+        """
+        super().__init__(id="file-notes-history-dialog-screen")
+        self._relative_path = relative_path
+        self._revisions = revisions
+        self._suggested_destination = suggested_destination
+        self._service = service
+        self._root_generation = root_generation
+
+    def compose(self) -> ComposeResult:
+        """Compose the bounded listing, destination field, and actions."""
+        with Vertical(id="file-notes-history-dialog"):
+            yield Static(
+                f"Revision history: {self._relative_path}",
+                id="file-notes-history-title",
+                markup=False,
+            )
+            yield OptionList(id="file-notes-history-list")
+            yield Static(
+                "New path for Export/Restore (never replaces a file)",
+                id="file-notes-history-destination-label",
+                markup=False,
+            )
+            yield Input(
+                self._suggested_destination,
+                id="file-notes-history-destination",
+            )
+            with Horizontal(id="file-notes-history-actions"):
+                yield Button(
+                    "Verify", id="file-notes-history-verify", compact=True
+                )
+                yield Button(
+                    "Export", id="file-notes-history-export", compact=True
+                )
+                yield Button(
+                    "Restore", id="file-notes-history-restore", compact=True
+                )
+                yield Button(
+                    "Close", id="file-notes-history-close", compact=True
+                )
+            yield Static("", id="file-notes-history-status", markup=False)
+
+    def on_mount(self) -> None:
+        """Populate the bounded listing and focus it for keyboard selection."""
+        option_list = self.query_one("#file-notes-history-list", OptionList)
+        option_list.add_options(
+            Option(_history_option_label(revision)) for revision in self._revisions
+        )
+        option_list.focus()
+
+    def _selected_revision(self) -> ReplicaRevisionInfo | None:
+        """Return the highlighted revision, or ``None`` with a reason shown."""
+        option_list = self.query_one("#file-notes-history-list", OptionList)
+        highlighted = option_list.highlighted
+        if highlighted is None or not 0 <= highlighted < len(self._revisions):
+            self._set_status("Select a revision first.")
+            return None
+        return self._revisions[highlighted]
+
+    def _set_status(self, text: str) -> None:
+        self.query_one("#file-notes-history-status", Static).update(text)
+
+    def _destination(self) -> str | None:
+        """Return the validated destination, or ``None`` with a reason.
+
+        PR #3016 review finding 4: the destination passes the workspace's
+        shared text validator (the same check ``#file-notes-path`` input
+        gets) before it is carried onto an export or restore request; the
+        service's own path-safety checks still apply afterwards.
+        """
+        raw_value = self.query_one("#file-notes-history-destination", Input).value
+        destination = raw_value.strip()
+        if not destination:
+            self._set_status("Name a new path for this action.")
+            return None
+        if not validate_text_input(raw_value, max_length=4096, allow_html=True):
+            self._set_status("Destination text is not supported.")
+            return None
+        return destination
+
+    @on(Button.Pressed, "#file-notes-history-close")
+    def _close(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.dismiss_safe_once(None)
+
+    @on(Button.Pressed, "#file-notes-history-verify")
+    def _verify(self, event: Button.Pressed) -> None:
+        event.stop()
+        revision = self._selected_revision()
+        if revision is None:
+            return
+        self.dismiss_safe_once(
+            _HistoryActionRequest(
+                action="verify",
+                relative_path=self._relative_path,
+                kind=revision.kind,
+                session_key=revision.session_key,
+                service=self._service,
+                root_generation=self._root_generation,
+                revision_id=revision.revision_id,
+            )
+        )
+
+    @on(Button.Pressed, "#file-notes-history-export")
+    def _export(self, event: Button.Pressed) -> None:
+        event.stop()
+        revision = self._selected_revision()
+        if revision is None:
+            return
+        destination = self._destination()
+        if destination is None:
+            return
+        self.dismiss_safe_once(
+            _HistoryActionRequest(
+                action="export",
+                relative_path=self._relative_path,
+                kind=revision.kind,
+                session_key=revision.session_key,
+                service=self._service,
+                root_generation=self._root_generation,
+                revision_id=revision.revision_id,
+                destination_path=destination,
+            )
+        )
+
+    @on(Button.Pressed, "#file-notes-history-restore")
+    def _restore(self, event: Button.Pressed) -> None:
+        event.stop()
+        revision = self._selected_revision()
+        if revision is None:
+            return
+        destination = self._destination()
+        if destination is None:
+            return
+        self.dismiss_safe_once(
+            _HistoryActionRequest(
+                action="restore",
+                relative_path=self._relative_path,
+                kind=revision.kind,
+                session_key=revision.session_key,
+                service=self._service,
+                root_generation=self._root_generation,
+                revision_id=revision.revision_id,
+                destination_path=destination,
+            )
+        )
+
+
+def _history_option_label(revision: ReplicaRevisionInfo) -> str:
+    """Return the bounded one-line label for one revision listing entry."""
+    session = revision.session_key if revision.session_key else "deletion"
+    stamp = revision.created_at[:16]
+    return (
+        f"{stamp}  {revision.kind}  {session}  {revision.size}B  "
+        f"{revision.content_hash[:8]}"
+    )
 
 
 class FileNotesConflictCompareDialog(SafeModalDismissMixin, ModalScreen[None]):
@@ -1339,6 +1601,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._opened: OpenedFileNote | None = None
         self._current_path = ""
         self._selected_deleted_path = ""
+        # task-34383: the tombstone whose restore was refused (occupied or
+        # missing parent) and whose exact bytes the Export deleted copy
+        # fallback can still publish to a new path.
+        self._restore_refusal_path = ""
         self._session_key = ""
         self._save_state: SaveState = "idle"
         self._save_detail = ""
@@ -1587,6 +1853,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._editor_widget,
                 Horizontal(
                     Button("Restore", id="file-notes-restore", compact=True),
+                    Button(
+                        "Export deleted copy",
+                        id="file-notes-export-deleted",
+                        compact=True,
+                    ),
                     Button("Compare", id="file-notes-compare", compact=True),
                     Button(
                         "Resolve conflict",
@@ -1660,6 +1931,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 ),
                 Horizontal(
                     Button("Protect", id="file-notes-protect", compact=True),
+                    Button("History", id="file-notes-history", compact=True),
                     Button("Refresh", id="file-notes-refresh", compact=True),
                     id="file-notes-maintenance-actions",
                     classes="file-notes-toolbar",
@@ -2453,6 +2725,25 @@ class LibraryFileNotesWorkspace(Vertical):
                 await asyncio.shield(save_task)
             except (asyncio.CancelledError, Exception):
                 pass
+        # task-34382 (ADR-218): the session-end retention pass, after any
+        # in-flight save settles and before the owner/replica retire.
+        # PR #3016 review finding 10: the service reports replica cleanup
+        # failures as results, so the result is inspected too -- a failed
+        # session-end sweep must not leave zero trace. Both paths log via
+        # the module logger: shutdown routinely runs after the Textual app
+        # has exited, where the DOM ``self.log`` raises NoActiveAppError.
+        service = self._service
+        if service is not None:
+            try:
+                retention = await asyncio.to_thread(service.enforce_retention)
+            except Exception as error:
+                logger.warning(f"File Notes retention cleanup failed: {error}")
+            else:
+                if not retention.succeeded:
+                    logger.warning(
+                        "File Notes retention cleanup failed: {}",
+                        retention.message or retention.status,
+                    )
         if self._owns_session_owner:
             await asyncio.to_thread(self._session_owner.shutdown)
         elif self._owns_replica:
@@ -2701,6 +2992,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._root = root
                 self._session_binding = binding
                 self._service = service
+                # PR #3016 review finding 8: the export-deleted fallback
+                # belongs to THIS root's tombstone refusals only. A newly
+                # adopted root never inherits the marker -- not even when
+                # it carries a same-named tombstone.
+                self._restore_refusal_path = ""
                 self._clear_open_document(
                     announce_identity_cleared=previous_root == root
                 )
@@ -2724,6 +3020,30 @@ class LibraryFileNotesWorkspace(Vertical):
             return True
         finally:
             reservation.release()
+
+    async def _enforce_retention(
+        self,
+        service: FileNotesService,
+        generation: int,
+    ) -> str | None:
+        """Run one ADR-218 retention pass for a scanned root (task-34382).
+
+        Args:
+            service: Service bound to the root candidate just scanned.
+            generation: Root generation the candidate belongs to.
+
+        Returns:
+            A warning to surface, or ``None`` when cleanup ran clean.
+        """
+        try:
+            result = await asyncio.to_thread(service.enforce_retention)
+        except Exception as error:
+            return f"Retention cleanup failed: {error}"
+        if self._path_result_is_stale(service, generation):
+            return None
+        if not result.succeeded:
+            return f"Retention cleanup failed: {result.message or result.status}"
+        return None
 
     async def _load_deleted_paths(
         self,
@@ -5415,12 +5735,14 @@ class LibraryFileNotesWorkspace(Vertical):
                 "file-notes-move",
                 "file-notes-delete",
                 "file-notes-restore",
+                "file-notes-export-deleted",
                 "file-notes-compare",
                 "file-notes-resolve-conflict",
                 "file-notes-resolution-keep",
                 "file-notes-resolution-save-new",
                 "file-notes-resolution-discard",
                 "file-notes-protect",
+                "file-notes-history",
                 "file-notes-reload",
                 "file-notes-save-copy",
                 "file-notes-recovery-save-copy",
@@ -5443,6 +5765,12 @@ class LibraryFileNotesWorkspace(Vertical):
             )
         self.query_one("#file-notes-protect", Button).disabled = not (
             has_document and structurally_available
+        )
+        self.query_one("#file-notes-history", Button).disabled = not (
+            has_document
+            and structurally_available
+            and self._opened is not None
+            and self._opened.protected
         )
         self.query_one("#file-notes-compare", Button).disabled = not (
             has_document and structurally_available and self._save_state == "conflict"
@@ -5499,6 +5827,11 @@ class LibraryFileNotesWorkspace(Vertical):
         recovery_copy.tooltip = copy_disabled_reason
         self.query_one("#file-notes-restore", Button).disabled = (
             not has_service or not has_deleted or not structurally_available
+        )
+        self.query_one("#file-notes-export-deleted", Button).disabled = (
+            not has_service
+            or not structurally_available
+            or not self._restore_refusal_path
         )
         self.query_one("#file-notes-refresh", Button).disabled = (
             self._service is None or not structurally_available
@@ -5626,6 +5959,9 @@ class LibraryFileNotesWorkspace(Vertical):
             "file-notes-move": has_document,
             "file-notes-delete": has_document and not resolving_conflict,
             "file-notes-restore": has_deleted,
+            "file-notes-export-deleted": (
+                has_deleted and bool(self._restore_refusal_path)
+            ),
             "file-notes-compare": (has_document and self._save_state == "conflict"),
             "file-notes-resolve-conflict": (
                 has_document
@@ -5633,6 +5969,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 and not resolving_conflict
             ),
             "file-notes-protect": has_document,
+            "file-notes-history": (
+                has_document
+                and self._opened is not None
+                and self._opened.protected
+            ),
             "file-notes-reload": has_document,
             "file-notes-save-copy": (
                 has_document
@@ -5655,6 +5996,7 @@ class LibraryFileNotesWorkspace(Vertical):
         }
         maintenance_ids = {
             "file-notes-protect",
+            "file-notes-history",
             "file-notes-reload",
             "file-notes-refresh",
         }
@@ -5996,6 +6338,20 @@ class LibraryFileNotesWorkspace(Vertical):
                 if generation == self._root_generation:
                     self._report_root_change_reason(ROOT_CHANGE_TIMEOUT_COPY)
                 return False
+            # task-34382 (ADR-218): retention runs after the scan adopts the
+            # candidate and BEFORE Recently-deleted is read, so the listing
+            # never names entries the policy just expired. Failure warns; it
+            # never blocks the root change.
+            retention_warning = await self._enforce_retention(service, generation)
+            if not self._active or generation != self._root_generation:
+                return False
+            if retention_warning:
+                merged = "; ".join(
+                    warning
+                    for warning in (result.replica_warning, retention_warning)
+                    if warning
+                )
+                result = replace(result, replica_warning=merged or None)
             deleted = await self._load_deleted_paths(
                 replica=self._replica,
                 service=service,
@@ -6150,6 +6506,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._work_mode = "edit"
         self._sync_work_mode()
         self._selected_deleted_path = relative_path
+        # task-34383: the export fallback belongs to the tombstone whose
+        # restore was refused; a different selection retires it.
+        if self._restore_refusal_path and self._restore_refusal_path != relative_path:
+            self._restore_refusal_path = ""
         self._clear_open_document(keep_restore_path=True)
         self.query_one("#file-notes-path", Input).value = relative_path
         self._fit_path_surfaces()
@@ -8444,6 +8804,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 return
             deleted_path = opened.relative_path
             self._selected_deleted_path = deleted_path
+            # A fresh tombstone is restorable; no refusal is pending for it.
+            self._restore_refusal_path = ""
             self._work_mode = "edit"
             self._sync_work_mode()
             self._clear_open_document(keep_restore_path=True)
@@ -8456,6 +8818,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     @on(Button.Pressed, "#file-notes-restore")
     async def _restore_file(self, event: Button.Pressed) -> None:
+        """Restore tombstoned bytes, naming each refusal (task-34383)."""
         event.stop()
         service = self._service
         if service is None:
@@ -8465,11 +8828,85 @@ class LibraryFileNotesWorkspace(Vertical):
             relative_path = self._validated_path_input("Restore")
             if relative_path is None:
                 return
-        await self._complete_path_action(
-            "Restore",
-            relative_path,
-            service.restore_file,
-            relative_path,
+        with self._hold_path_transition() as transition:
+            if transition is None:
+                return
+            service, generation = transition
+            result = await asyncio.to_thread(service.restore_file, relative_path)
+            if self._path_result_is_stale(service, generation):
+                return
+            if not result.succeeded:
+                if result.status in {"exists", "missing"}:
+                    # task-34383: both no-replace refusals name their reason
+                    # and offer the exact-export fallback for these bytes.
+                    self._restore_refusal_path = relative_path
+                    reason = result.message or result.status
+                    self._set_action_status(
+                        f"Restore refused: {reason}. Export deleted copy can "
+                        "write the exact bytes to a new path instead."
+                    )
+                    self._update_controls()
+                    return
+                self._operation_error("Restore", result)
+                return
+            self._restore_refusal_path = ""
+            if not await self._rescan_after_action():
+                return
+            try:
+                opened = await asyncio.to_thread(service.open_file, relative_path)
+            except Exception as error:
+                self._set_action_status(f"Open failed: {error}")
+                return
+            if self._path_result_is_stale(service, generation):
+                return
+            self._apply_opened_document(opened, announce_editable=True)
+            self._update_controls()
+
+    @on(Button.Pressed, "#file-notes-export-deleted")
+    async def _export_deleted_copy(self, event: Button.Pressed) -> None:
+        """Exact-export refused-restore bytes to a new absent path."""
+        event.stop()
+        service = self._service
+        deleted_path = self._restore_refusal_path
+        if service is None or not deleted_path:
+            return
+        destination = self._validated_path_input("Export deleted copy")
+        if destination is None:
+            return
+        with self._hold_path_transition() as transition:
+            if transition is None:
+                return
+            service, generation = transition
+            result = await asyncio.to_thread(
+                service.export_revision_file,
+                deleted_path,
+                destination,
+                kind="delete",
+                session_key=None,
+            )
+            if self._path_result_is_stale(service, generation):
+                return
+            if not result.succeeded:
+                self._action_refusal("Export deleted copy", result)
+                return
+            self._restore_refusal_path = ""
+            if not await self._rescan_after_action():
+                return
+            receipt = f"Exported the deleted bytes exactly to {destination}."
+            if result.replica_warning:
+                receipt = f"{receipt} {result.replica_warning}"
+            self._set_action_status(receipt)
+            self._update_controls()
+
+    def _action_refusal(self, action: str, result: OperationResult) -> None:
+        """Report a non-editor action refusal without touching save state.
+
+        Recovery actions (history, deleted-copy export) never touch the open
+        document, so a refusal is an action-line fact -- never an editor
+        conflict the way ``_operation_error`` paints disk-changing failures.
+        """
+        self._set_action_status(
+            f"{action} failed: {result.message or result.status}"
         )
 
     @on(Button.Pressed, "#file-notes-protect")
@@ -8494,6 +8931,133 @@ class LibraryFileNotesWorkspace(Vertical):
         self._opened = replace(current, protected=target)
         self._set_action_status("Protected." if target else "Unprotected.")
         self._update_controls()
+
+    @on(Button.Pressed, "#file-notes-history")
+    async def _show_history(self, event: Button.Pressed) -> None:
+        """Open the bounded revision-history dialog for a protected file."""
+        event.stop()
+        opened = self._opened
+        service = self._service
+        generation = self._root_generation
+        if service is None or opened is None or not opened.protected:
+            return
+        history = await asyncio.to_thread(
+            service.list_revision_history,
+            opened.relative_path,
+        )
+        # PR #3016 review finding 13: the dialog belongs to the exact file
+        # and root whose listing it awaited -- not whatever is open now.
+        if (
+            self._path_result_is_stale(service, generation)
+            or self._opened is not opened
+        ):
+            return
+        if not history.entries:
+            detail = history.replica_warning or "no revisions are stored yet"
+            self._set_action_status(
+                f"History unavailable for {opened.relative_path}: {detail}."
+            )
+            return
+        self.app.push_screen(
+            FileNotesHistoryDialog(
+                opened.relative_path,
+                history.entries,
+                self._history_destination_suggestion(opened.relative_path),
+                service,
+                generation,
+            ),
+            self._history_action_requested,
+        )
+
+    @staticmethod
+    def _history_destination_suggestion(relative_path: str) -> str:
+        """Return one absent-path suggestion derived from the note's name."""
+        path = PurePosixPath(relative_path)
+        return str(path.with_name(f"{path.stem}-recovered{path.suffix}"))
+
+    def _history_action_requested(
+        self,
+        request: _HistoryActionRequest | None,
+    ) -> None:
+        """Receive the History dialog's chosen action after it dismisses."""
+        if request is None or not self._active or self._shutdown:
+            return
+        self.run_worker(
+            self._execute_history_action(request),
+            name="file-notes-history-action",
+            group="file-notes-history-action",
+            exclusive=True,
+        )
+
+    async def _execute_history_action(
+        self,
+        request: _HistoryActionRequest,
+    ) -> None:
+        """Run one History dialog action under the workspace's file guards."""
+        if (
+            self._service is not request.service
+            or self._root_generation != request.root_generation
+        ):
+            # PR #3016 review finding 13: the root that supplied the listed
+            # revision is gone; acting now would target another root's
+            # same-named revision.
+            self._set_action_status(
+                "History action stopped: the File Notes root changed. "
+                "Reopen History for the current root."
+            )
+            return
+        with self._hold_path_transition() as transition:
+            if transition is None:
+                return
+            service, generation = transition
+            if request.action == "verify":
+                result = await asyncio.to_thread(
+                    service.verify_revision,
+                    request.relative_path,
+                    kind=request.kind,
+                    session_key=request.session_key,
+                    revision_id=request.revision_id,
+                )
+                if self._path_result_is_stale(service, generation):
+                    return
+                if result.succeeded:
+                    self._set_action_status(
+                        "Revision verified: stored bytes match the recorded hash."
+                    )
+                else:
+                    self._action_refusal("History verify", result)
+                return
+            operation = (
+                service.export_revision_file
+                if request.action == "export"
+                else service.restore_revision
+            )
+            result = await asyncio.to_thread(
+                operation,
+                request.relative_path,
+                request.destination_path,
+                kind=request.kind,
+                session_key=request.session_key,
+                revision_id=request.revision_id,
+            )
+            if self._path_result_is_stale(service, generation):
+                return
+            action = (
+                "History export" if request.action == "export" else "History restore"
+            )
+            if not result.succeeded:
+                self._action_refusal(action, result)
+                return
+            if not await self._rescan_after_action():
+                return
+            receipt = (
+                f"{action} succeeded: {request.destination_path} now holds the "
+                "exact revision bytes."
+            )
+            if result.replica_warning:
+                receipt = f"{receipt} {result.replica_warning}"
+            self._set_action_status(receipt)
+            self._update_controls()
 
     @on(Button.Pressed, "#file-notes-reload")
     async def _reload_file(self, event: Button.Pressed) -> None:

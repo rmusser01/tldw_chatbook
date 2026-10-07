@@ -15,6 +15,8 @@ from Tests.Chat.test_console_fleet_wake import (
     _terminal_subagent_run,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def rig(tmp_path):

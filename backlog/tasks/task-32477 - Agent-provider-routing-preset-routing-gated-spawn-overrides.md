@@ -1,10 +1,11 @@
 ---
 id: TASK-32477
 title: 'Agent provider routing: preset routing + gated spawn overrides'
-status: In Progress
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-09-12 00:57'
-updated_date: '2026-09-13 19:31'
+updated_date: '2026-09-29 19:35'
 labels:
   - agents
   - console
@@ -72,4 +73,8 @@ Task left at To Do / not marked Done per the verification brief — DoD review b
 PR #2651 recovery (2026-09-13): integrated published head 1de64e158b with dev 8a6ba98c0d in isolated codex/pr-2651-resume. Preserved landed orchestration ownership/recovery, definition caps, live usage and Settings presets; routing migration is now v21. Fixed review-confirmed child sampling leakage and frozen endpoint URL precedence through the real gateway. Retained both documentation additions and corrected stale allowlist/rail claims. Existing ADR-147 applies (no new ADR); schema and delivered-scope notes updated there.
 
 Verification: combined targeted run 1687 passed / 3 failed; Settings paint synchronization repaired and 38-test rerun passed; two remaining unchanged session-settings failures reproduce identically on clean current dev. Joined adapter/real-gateway regressions 2 passed; catalog/endpoint tests 40 passed; boot census 4 passed at 975/975; all derived checks and critical Ruff/whitespace checks pass. Independent review and scoped re-review have no outstanding findings. Full suite not run; broad lint/formatter cleanliness not claimed. Detailed evidence: Docs/superpowers/reviews/2026-09-13-pr-2651-recovery.md. Task remains In Progress pending PR publication/final closeout rather than declaring every repository DoD gate globally green.
+
+2026-09-29 closeout: PR #2651 is merged into dev (2026-09-13T20:07:55Z, merge 392ce191fd28953550f85154ea1f8e4eda4ab7f3); the publication hold is stale. Current adjacent routing/sampling checks passed 76, custom endpoint identity/adapter checks 9, and Settings routing/sampling checks 20. Existing six criteria and independent PR recovery review remain valid. Later requested fallback behavior is separately governed by ADR-200 and TASK-32508; it does not change this original no-silent-fallback completion. No full-suite result claimed. Final task hygiene pending combined review.
+
+Final disposition 2026-09-29: This is a status reconciliation for already merged PR #2651 (392ce191fd28953550f85154ea1f8e4eda4ab7f3). Current routing and selection semantics were included in the independently approved repair and fallback reviews. The former publication hold is superseded; no implementation remains on this ticket. All acceptance criteria are checked; scoped tests, changed-code static checks, documentation and independent review are complete. Task is Done. Inherited source formatting debt is preserved; no full-suite/live-provider result is claimed. This disposition supersedes earlier pending-review notes.
 <!-- SECTION:NOTES:END -->

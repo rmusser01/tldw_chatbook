@@ -571,6 +571,61 @@ def _selection(source, route, template, user_template, selected_read):
     return lexical_path(emoji_picker._recent_emojis_path()), True, False
 
 
+def _pin_parent(state, anchor):
+    """Reuse a complete parent proof; each operation still owns its fresh FD."""
+    from tldw_chatbook.Utils import private_paths
+
+    hold = next((h for h in state.holds if h is not None), None)
+    key = ("raw-pin", str(anchor))
+    before = storage._derived_before(hold, key)
+    reused, posture = storage._derived_reuse(hold, key, before)
+    close = lambda fd: _close_descriptor(state, fd)
+    if reused:
+        fd = private_paths._native_open(
+            anchor, private_paths._DIRECTORY_OPEN_FLAGS | private_paths._NOFOLLOW
+        )
+        try:
+            info = os.fstat(fd)
+            current = (
+                info.st_dev,
+                info.st_ino,
+                stat.S_IFMT(info.st_mode),
+                stat.S_IMODE(info.st_mode),
+                info.st_uid,
+            )
+            # Complete pathname ancestry must still match AFTER acquisition.
+            after = storage._derived_before(hold, key)
+            valid, _ = storage._derived_reuse(hold, key, after)
+            if valid and current == posture:
+                return fd
+        except BaseException:
+            close(fd)
+            raise
+        close(fd)
+    fd, _ = _open_verified_parent(
+        anchor / ".raw-pin", missing_leaf_allowed=True, _close=close
+    )
+    try:
+        evidence = (
+            storage._path_evidence(hold.names, anchor) if hold is not None else None
+        )
+        info = os.fstat(fd)
+        posture = (
+            info.st_dev,
+            info.st_ino,
+            stat.S_IFMT(info.st_mode),
+            stat.S_IMODE(info.st_mode),
+            info.st_uid,
+        )
+        if evidence is not None and evidence.posture[-1][1] != posture:
+            evidence = None
+        storage._note_derived(hold, key, evidence, posture, before)
+        return fd
+    except BaseException:
+        close(fd)
+        raise
+
+
 @contextmanager
 def _scope(
     source,
@@ -864,11 +919,7 @@ def _scope(
                 state.holds.append(storage._holds.get(state.leases[-1]._key))
                 attempt.check()
         if pinned:
-            fd, _ = _open_verified_parent(
-                anchor / ".raw-pin",
-                missing_leaf_allowed=True,
-                _close=lambda fd: _close_descriptor(state, fd),
-            )
+            fd = _pin_parent(state, anchor)
             state.pins[anchor] = fd
             pinned_info = os.fstat(fd)
             if (pinned_info.st_dev, pinned_info.st_ino) != anchor_identity:

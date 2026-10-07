@@ -1212,6 +1212,61 @@ oversize entry with a note and keeps your draft so you can shorten it.
 The **primary** agent has no steering input — you steer it by talking to
 it — and inline (non-fleet) sub-agents cannot be steered at all.
 
+#### Queued child progress
+
+Children can report findings for the supervisor to collect. **Read progress**
+shows complete reports without consuming them; navigation shows pending counts
+without report bodies. Discard removes only the selected report IDs and does
+not stop a child or erase copies already collected into a conversation.
+While discard saves its change, inspection and navigation keep showing the
+last committed queue. Closing the progress view does not cancel that discard.
+Closing the chat revokes child sending immediately. A discard already in
+progress can finish during chat close; other saved reports remain available
+when the chat is reopened. Navigation remains responsive while a saved report
+change finishes during chat close, restore or app shutdown.
+
+Saved chats retain pending reports across close, reopen, and app restart.
+Reports belong to that chat's local database, including when detailed trace
+capture is off. Reopening restores the queue and grants a fresh supervisor
+reader; it never restores child send authority. Automatic collection includes
+only reports from the current work chain. A manual reader may collect older
+reports explicitly.
+
+Temporary chats keep reports in memory. **Save** commits the chat and its
+pending reports together; cancelling or failing Save keeps the original queue.
+Closing an unsaved chat or restarting the app loses its reports. Existing queue
+limits apply without evicting older reports. When the live cache is full, saved
+reports stay in the database and navigation still shows their count. Close
+another chat to free capacity, then reopen **Read progress** to load them.
+If a collection checkpoint becomes
+uncertain, collection stops instead of replaying reports automatically.
+
+When automatic wakes are enabled, pending child progress can request a
+supervisor turn after the current primary finishes. Progress and completed
+results share the same finite automatic-work budget, coalescing window,
+manual-send priority and run slots. The notice lists report IDs and asks the
+supervisor to call `read_agent_messages`; it never includes report bodies or
+grants approval. Reading or discarding before admission cancels that report's
+wake request. An accepted report can wake once while remaining manually
+readable, and interrupted attempts wait for review after restart. After saving
+a temporary chat that already received a progress wake, a restart also requires
+review before that chain can wake again. Its saved reports remain readable.
+
+#### Messages between live siblings
+
+A fleet child can use `list_peer_agents` to discover attached live siblings
+from its exact parent and work chain, then `send_to_peer(handle_id, message)`
+to share a finding. A message is limited to 2,000 characters. Peer sends and
+supervisor reports share the child's 32-message lifetime allowance, and a
+full recipient steering queue refuses new messages without dropping old ones.
+
+The receipt says **queued**, not consumed. The sibling receives the message
+at its next model boundary, after any pending tool results. Peer messages are
+untrusted context and grant no approvals or tool access. Only generated source
+IDs and delivery metadata appear in steps and run logs; the body is provider
+context. Cancellation or owner replacement revokes the channel. Peer sending
+never starts or resumes a finished child.
+
 #### Continuing a finished sub-agent
 
 Once a child has **finished**, steering is over — but the supervisor can
@@ -1867,17 +1922,38 @@ session-tweaked values.
 In the running example the Kimi parent plans and reviews, and only the
 implementation children drop to `custom-ep:qwen-local` / `qwen3.8-27b`.
 
-**Resume pins the target.** The resolved provider, model, base URL, and
-merged params are frozen onto the child's run row at spawn time, and
-[continuing a finished sub-agent](#continuing-a-finished-sub-agent)
-reuses that snapshot — editing the preset, the endpoint entry, or the
-config defaults afterwards retargets *new* spawns only, never a resumed
-child (the snapshot is not re-validated, so an edit to something invalid
-cannot break a continuation). The one boundary: children spawned before
-this feature shipped carry no snapshot, so their continuations keep the
-old behavior — the parent's provider with the preset's *live* model — and
-never acquire a snapshot. Only fresh spawns and snapshotted continuations
-honor routing.
+**Preset fallback.** In **Settings ▸ Agents**, the preset's **Fallback models**
+field accepts one explicit `provider/model` pair per line, in attempt order:
+
+```text
+openai/alternate-model
+custom-ep:qwen-local/qwen3.8-27b
+```
+
+Leave it empty to disable fallback; at most eight alternates are allowed.
+The same provider with a different model is valid. Each alternate uses its
+own configured or default endpoint and rebuilt sampling params. A fresh child
+may switch on typed rate-limit, overload, timeout, or unavailable-model
+failures before any proposed tool batch, including a refused batch. Authentication
+errors, arbitrary HTTP 400/404 responses, and diagnostic text do not authorize a
+switch. Attempts share the child's existing token, model-call, wall-time and
+automatic-work budgets and fleet slot.
+
+**Resume pins the target.** Preset fallback freezes each target's provider,
+model, configured/default base URL, execution family and merged params before
+admission. The active target is saved before its first dispatch; the original
+resolved target remains audit history. [Continuing a finished
+sub-agent](#continuing-a-finished-sub-agent) reuses the saved active target and
+does not reopen the preset fallback chain. Editing the preset, endpoint URL,
+execution family or config defaults cannot redirect that saved target.
+Credentials are not persisted in this snapshot. When the gateway resolves a
+routed send, it checks the current credential and readiness settings; a deleted
+`custom-ep:` entry is refused before a readiness probe or family credential
+lookup. Existing owned Console resolutions retain their normal call-local
+credential semantics. Children spawned before routing shipped carry no snapshot,
+so their continuations keep the old behavior — the parent's provider with the
+preset's *live* model — and never acquire a snapshot. Only fresh spawns and
+snapshotted continuations honor routing.
 
 **Headless boundary.** Routing to a `custom-ep:` target requires Console
 — the headless `chat_api_call` path raises on `custom-ep:` ids. Routing
@@ -1889,15 +1965,18 @@ the configured default and reports each one's resolved provider/model
 and readiness — it catches config rot (deleted endpoint slugs, missing
 credentials) before a run does. It reads the *saved* configuration, not
 unsaved form edits — save first, then test. At spawn time a refusal is
-loud: the supervisor model gets a tool error of the form `[code]
-message`, no fleet slot is consumed, and there is no automatic fallback
+loud: the supervisor model gets a tool error of the form `[code] (level)
+message`, for example `[unknown_endpoint_slug] (preset) ...`; no fleet slot is consumed, and there is no automatic fallback
 to another provider. The codes: `override_disabled` (ad-hoc args while
 the flag is off), `provider_not_allowlisted`, `unknown_endpoint_slug` (a
 deleted `custom-ep:` slug), `unknown_provider`, `no_model_resolved`
 (routed to a provider with no model anywhere in the chain), and
 `provider_not_ready` (missing credential or incomplete provider config).
-The resolved target is stored on the run row. Displaying that target in
-the Agent rail is tracked separately in TASK-32497.
+The Agent rail shows each child's frozen provider and model, for example
+`custom-ep:qwen-local · qwen3.8-27b`, during and after the run. Reopened
+runs use the saved target. If an explicit fallback is selected before tools
+run, the rail follows that selected target. Legacy rows without a snapshot show
+**Target unavailable** rather than infer a target from the current preset.
 
 ### Project instructions before tools run
 

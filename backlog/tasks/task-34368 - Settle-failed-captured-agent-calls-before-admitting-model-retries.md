@@ -50,6 +50,11 @@ Review follow-up (2026-10-04): Python mapping equality admitted true/1, false/0 
 Actual Together HTTP qualification exposed a separate cross-platform defect: gateway endpoint/continuation forwarding for registry engines was absent from independent expected reconstruction, so the first capture stored alignment_mismatch and an unchanged retry correctly refused. Mirror existing registry-derived endpoint and exact continuation semantics independently; retain mismatch refusal. Actual HTTP controls require a verified request header, saved revision and no omission before retry; Groq/Together/OpenAI each pass unchanged and changed-type cases with only HTTP mocked. The final focused run passed 620 tests in 74.42s with normal exit: 330 registry-engine matrix cases, six real gateway/adapter HTTP cases, final-value, handler-mapping and documented adapter controls. Earlier diagnostic fixture/observer runs are not GREEN qualification. Existing ADR-097 clarified; no new boundary/schema. New three test modules Ruff check/format and whitespace checks pass, independent reviewer found no Important issue. Final native performance, live UAT and combined PR qualification remain pending with the parent task; no full-suite or paid-provider/live claim.
 <!-- SECTION:NOTES:END -->
 
+Integration status: the original five criteria were marked Done in the earlier
+dev implementation. This task remains In Progress for the added criteria #6/#7
+and their combined integration/final UAT. The earlier completion evidence and
+all seven criteria are retained.
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->

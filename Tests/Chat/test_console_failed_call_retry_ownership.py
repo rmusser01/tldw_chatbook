@@ -15,7 +15,7 @@ from Tests.Chat.test_console_trace_runtime import (
 from Tests.Chat.test_console_trace_runtime import (
     make_gateway as _make_gateway_fixture,
 )
-from tldw_chatbook.Chat.Chat_Deps import ChatProviderError, ChatRateLimitError
+from tldw_chatbook.Chat.Chat_Deps import ChatRateLimitError
 from tldw_chatbook.Chat.console_prepared_request import prepare_provider_request
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_trace_errors import TraceCallPersistenceError
@@ -154,12 +154,14 @@ async def test_failed_call_retry_requires_exact_durable_chain(
     if scenario == "updated_system":
         assert await send(ConsoleRequestRoute.AGENT_FIRST) == ["recovered"]
         messages[0] = {"role": "system", "content": "Updated after successful call"}
-    with pytest.raises(ChatProviderError) as failure:
+    with pytest.raises(ChatRateLimitError) as failure:
         await send(
             ConsoleRequestRoute.TOOL_LOOP
             if scenario == "updated_system"
             else ConsoleRequestRoute.AGENT_FIRST
         )
+    assert type(failure.value) is ChatRateLimitError
+    assert failure.value.provider == "deepseek"
     assert failure.value.status_code == 429, errors
     failed_attempts = 2 if scenario == "updated_system" else 1
     assert len(calls) == failed_attempts

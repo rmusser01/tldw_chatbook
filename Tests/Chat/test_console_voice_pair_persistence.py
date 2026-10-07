@@ -1290,3 +1290,114 @@ def test_a_root_fork_destination_refuses_a_parent():
             capture_eligible_at_dispatch=True,
             user_root_fork=1,
         )
+
+
+@pytest.mark.parametrize(
+    "locator,scenario,message_role",
+    [
+        ("hook_assistant", "pending", "user"),
+        ("hook_assistant", "pending", "assistant"),
+        ("hook_assistant", "committed", "user"),
+        ("hook_assistant", "committed", "assistant"),
+        ("hook_parent", "committed", "assistant"),
+        ("fleet", "pending", "user"),
+        ("fleet", "pending", "assistant"),
+        ("fleet", "committed", "user"),
+        ("fleet", "committed", "assistant"),
+        ("hook_assistant", "unrelated", "assistant"),
+        ("hook_parent", "unrelated", "assistant"),
+        ("fleet", "unrelated", "assistant"),
+    ],
+)
+def test_voice_promotion_refuses_foreign_locator_ownership_without_mutation(
+    db_instance, locator, scenario, message_role
+):
+    conversation_id, root_id, destination, context = _voice_promotion_case(db_instance)
+    service = ChatPersistenceService(db_instance)
+    identities = derive_voice_promotion_identities(context.promotion_id)
+    if scenario == "committed":
+        service.commit_completed_voice_pair(destination=destination, context=context)
+    message_id = (
+        identities.user_message_id
+        if message_role == "user"
+        else identities.assistant_message_id
+    )
+    if scenario == "unrelated":
+        message_id = root_id if locator == "hook_parent" else "unrelated-owned-id"
+
+    # Every row obeys the actual SQLite constraints, including the hook parent FK.
+    connection = db_instance.get_connection()
+    assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    with db_instance.transaction() as cursor:
+        if locator == "fleet":
+            table = "fleet_progress_messages"
+            cursor.execute(
+                "INSERT INTO fleet_progress_messages "
+                "(message_id, conversation_id, handle_id, run_id, parent_run_id, "
+                "chain_id, agent, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    message_id,
+                    conversation_id,
+                    "owned-handle",
+                    "owned-run",
+                    "owned-parent-run",
+                    "owned-chain",
+                    "owned-agent",
+                    "pending report",
+                ),
+            )
+        else:
+            table = "console_hook_continuation_receipts"
+            parent_id = message_id if locator == "hook_parent" else root_id
+            assistant_id = message_id if locator == "hook_assistant" else "hook-child"
+            cursor.execute(
+                "INSERT INTO console_hook_continuation_receipts "
+                "(parent_turn_id, stop_event_id, conversation_id, "
+                "parent_assistant_message_id, assistant_message_id, chain_id, "
+                "admitted_turns, initiator) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+                (
+                    "owned-parent-turn",
+                    "owned-stop-event",
+                    conversation_id,
+                    parent_id,
+                    assistant_id,
+                    "owned-chain",
+                    "hook_continuation",
+                ),
+            )
+    owned_rows = tuple(
+        tuple(row) for row in connection.execute(f'SELECT * FROM "{table}"').fetchall()
+    )
+    before = _promotion_persistence_snapshot(
+        db_instance, conversation_id=conversation_id, promotion_id=context.promotion_id
+    )
+
+    if scenario == "unrelated":
+        first = service.commit_completed_voice_pair(
+            destination=destination, context=context
+        )
+        second = service.commit_completed_voice_pair(
+            destination=destination, context=context
+        )
+        assert first.already_committed is False
+        assert second.already_committed is True
+    else:
+        with pytest.raises(RuntimeError, match="conflict"):
+            service.commit_completed_voice_pair(
+                destination=destination, context=context
+            )
+        assert (
+            _promotion_persistence_snapshot(
+                db_instance,
+                conversation_id=conversation_id,
+                promotion_id=context.promotion_id,
+            )
+            == before
+        )
+    assert (
+        tuple(
+            tuple(row)
+            for row in connection.execute(f'SELECT * FROM "{table}"').fetchall()
+        )
+        == owned_rows
+    )

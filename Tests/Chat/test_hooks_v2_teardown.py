@@ -306,10 +306,10 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
     interrupts = []
     notify = engine.notify_teardown
 
-    def capture_interrupt(event):
+    def capture_interrupt(event, **kwargs):
         if event.event == "Interrupt":
             interrupts.append((event.event, event.turn_id))
-        return notify(event)
+        return notify(event, **kwargs)
 
     engine.notify_teardown = capture_interrupt
 

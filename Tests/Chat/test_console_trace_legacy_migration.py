@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 import json
+from pathlib import Path
 import zlib
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
@@ -476,3 +479,123 @@ def test_complete_check_without_new_rows_takes_no_write_transaction(
 
     assert reopened.processed_rows == 1
     assert True in immediate_calls, "new rows must still be normalized under the write lock"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_fresh_worker_batches_share_one_repository_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """The cold write fallback and warm read each keep the two-admission budget.
+
+    Args:
+        tmp_path: Private file-backed database directory.
+        monkeypatch: Counts the real admission seam without replacing its behavior.
+        request: Retains the selected profile in the existing child-test helper.
+    """
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.DB.base_db import run_owned_db_call
+
+    database = CharactersRAGDB(tmp_path / "trace-admissions.db", "trace-admissions")
+    try:
+        conversation_id = database.add_conversation({"title": "cold trace batch"})
+        assert conversation_id is not None
+        message_id = _message(database, conversation_id, "answer")
+        _insert_exchange(database, message_id=message_id, capture=_capture(0))
+        database.close_connection()
+        assert database.registered_connection_count() == 0
+        # This case counts admission; the elapsed-yield case controls time separately.
+        maintenance = LegacyTraceMaintenance(database, clock=lambda: 0.0)
+        admissions: list[int] = []
+        acquire = storage_admission._acquire_storage
+
+        def counted_acquire(
+            *args: object, **kwargs: object
+        ) -> storage_admission.StorageLease:
+            admissions.append(1)
+            return acquire(*args, **kwargs)
+
+        monkeypatch.setattr(storage_admission, "_acquire_storage", counted_acquire)
+        first = await run_owned_db_call(database, maintenance.run_batch)
+        assert first.processed_rows == 1 and first.logical_complete
+        assert database.registered_connection_count() == 0
+        assert 1 <= len(admissions) <= 2, "cold normalization pays duplicate admission"
+
+        admissions.clear()
+        idle = await run_owned_db_call(database, maintenance.run_batch)
+        assert idle.processed_rows == 0 and idle.logical_complete
+        assert database.registered_connection_count() == 0
+        assert 1 <= len(admissions) <= 2, (
+            "idle completion exceeded its admission budget"
+        )
+    finally:
+        database.close_connection()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_fresh_worker_time_yield_preserves_row_and_retries_within_admission_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """A cold worker's legal zero-row yield retains work and physical cleanup.
+
+    Args:
+        tmp_path: Private file-backed database directory.
+        monkeypatch: Counts actual storage admission without replacing behavior.
+        request: Selects the private-profile child for the real worker case.
+    """
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.DB.base_db import run_owned_db_call
+
+    database = CharactersRAGDB(tmp_path / "trace-yield.db", "trace-yield")
+    try:
+        conversation_id = database.add_conversation({"title": "cold trace yield"})
+        assert conversation_id is not None
+        message_id = _message(database, conversation_id, "answer")
+        _insert_exchange(database, message_id=message_id, capture=_capture(0))
+        database.close_connection()
+        assert database.registered_connection_count() == 0
+        ticks = iter((0.0, 0.101, 0.0, 0.0))
+        maintenance = LegacyTraceMaintenance(database, clock=lambda: next(ticks))
+        admissions: list[int] = []
+        acquire = storage_admission._acquire_storage
+
+        def counted_acquire(
+            *args: object, **kwargs: object
+        ) -> storage_admission.StorageLease:
+            admissions.append(1)
+            return acquire(*args, **kwargs)
+
+        monkeypatch.setattr(storage_admission, "_acquire_storage", counted_acquire)
+        yielded = await run_owned_db_call(database, maintenance.run_batch)
+        assert yielded.admitted and yielded.processed_rows == 0
+        assert yielded.logical_complete is False
+        assert database.registered_connection_count() == 0
+        assert 1 <= len(admissions) <= 2
+        with database.transaction() as cursor:
+            assert (
+                cursor.execute("SELECT COUNT(*) FROM message_exchanges").fetchone()[0]
+                == 1
+            )
+            assert (
+                cursor.execute("SELECT COUNT(*) FROM console_trace_calls").fetchone()[0]
+                == 0
+            )
+            state = cursor.execute(
+                "SELECT status, last_exchange_id, processed_rows "
+                "FROM console_trace_migration_state WHERE migration_name = ?",
+                ("legacy_exchange_normalization",),
+            ).fetchone()
+            assert tuple(state) == ("running", None, 0)
+        database.close_connection()
+        assert database.registered_connection_count() == 0
+
+        admissions.clear()
+        retried = await run_owned_db_call(database, maintenance.run_batch)
+        assert retried.admitted and retried.processed_rows == 1
+        assert retried.logical_complete is True
+        assert database.registered_connection_count() == 0
+        assert 1 <= len(admissions) <= 2
+        assert LegacyTraceNormalizer(database).read_calls(message_id)
+    finally:
+        database.close_connection()

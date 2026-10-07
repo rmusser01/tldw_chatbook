@@ -25,6 +25,7 @@ from urllib3.util import Retry
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
+    model_unavailable_error,
     ChatBadRequestError,
     ChatConfigurationError,
     ChatProviderError,
@@ -838,6 +839,14 @@ def owned_json_post(
                         time.sleep(delay)
                     continue
                 if status >= 400:
+                    if status in {400, 404}:
+                        try:
+                            error_payload = response.json()
+                        except ValueError:
+                            error_payload = None
+                        unavailable = model_unavailable_error(config.provider, status, error_payload)
+                        if unavailable is not None:
+                            raise unavailable
                     _raise_http_error(
                         config.provider,
                         status,

@@ -746,7 +746,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 77  # Native agent-chat-start dispatch receipts.
+    _CURRENT_SCHEMA_VERSION = 78  # Native receipts, then saved fleet progress.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -7795,6 +7795,10 @@ DELETE FROM keywords
     def _migrate_from_v76_to_v77(self, conn: sqlite3.Connection) -> None:
         """Preserve checkpoint owners while adding native chat-start receipts."""
         self._require_migration_entry_version(conn, 76, "V76→V77")
+        if conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='fleet_progress_messages'"
+        ).fetchone() is not None:
+            raise SchemaError("V76 to V77 unsupported native receipt catalog (progress predecessor)")
         migration = (
             Path(__file__).parent
             / "migrations"
@@ -8013,6 +8017,32 @@ DELETE FROM keywords
                 f"Migration from V75 to V76 failed for '{self._SCHEMA_NAME}': "
                 f"{type(exc).__name__}"
             ) from exc
+
+    def _migrate_from_v77_to_v78(self, conn: sqlite3.Connection) -> None:
+        """Add chat-owned pending progress without restoring live authority."""
+        self._require_migration_entry_version(conn, 77, "V77→V78")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v77_to_v78_fleet_progress.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), "V77→V78"
+                )
+                result = cursor.execute(
+                    "UPDATE db_schema_version SET version = 78 WHERE schema_name = ? AND version = 77",
+                    (self._SCHEMA_NAME,),
+                )
+                if result.rowcount != 1:
+                    raise SchemaError(
+                        "Migration V77 to V78 version update was not applied."
+                    )
+            if self._get_db_version(conn) != 78:
+                raise SchemaError("Migration V77 to V78 version check failed.")
+        except (OSError, sqlite3.Error) as exc:
+            raise SchemaError("Migration from V77 to V78 failed.") from exc
 
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
@@ -8269,6 +8299,7 @@ DELETE FROM keywords
                     74: self._migrate_from_v74_to_v75,
                     75: self._migrate_from_v75_to_v76,
                     76: self._migrate_from_v76_to_v77,
+                    77: self._migrate_from_v77_to_v78,
                 }
 
                 if current_db_version == 0:

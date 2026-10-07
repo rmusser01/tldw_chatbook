@@ -212,19 +212,32 @@ def companion_guard(operation, attempt):
     guard = ExitStack()
     try:
         parent = guard.enter_context(hold.authority._directory())
-        guard.enter_context(hold.authority._lock(
-            parent, "registry.lock", fcntl.LOCK_SH, cancel=attempt.cancel
-        ))
+        guard.enter_context(
+            hold.authority._lock(
+                parent, "registry.lock", fcntl.LOCK_SH, cancel=attempt.cancel
+            )
+        )
         attempt.check()
-        pending, profiles = bootstrap._records(root)
-        record = next((row for row in profiles if row["selector"] == str(selected)), None)
+        key = ("companions", str(selected))
+        before = storage._derived_before(hold, key)
+        reused, metadata = storage._derived_reuse(hold, key, before)
+        if reused:
+            record, registry = metadata
+            pending = ()
+        else:
+            pending, profiles = bootstrap._records(root)
+            record = next(
+                (row for row in profiles if row["selector"] == str(selected)), None
+            )
         if record is None or tuple(record["namespaces"]) != hold.names:
             guard.close()
             return None
         if (
             pending
             or hold.authority.control_root != root / "admission"
-            or storage._scope(root, selected, selected, authority=hold.authority) != hold.names
+            or not reused
+            and storage._scope(root, selected, selected, authority=hold.authority)
+            != hold.names
             or (
                 sibling_selector(state.source, state.route, state.selected) != selected
                 if state.config_anchor is not None
@@ -234,7 +247,8 @@ def companion_guard(operation, attempt):
             or not state.pinned
         ):
             raise bootstrap.RecoveryRequired("config_companion_scope_changed")
-        registry = bootstrap._registry(root)
+        if not reused:
+            registry = bootstrap._registry(root)
         directory = guard.enter_context(pinned_directory(selected.parent))
         info = os.fstat(directory)
         if info.st_uid != os.geteuid() or info.st_mode & 0o077:
@@ -257,10 +271,13 @@ def companion_guard(operation, attempt):
                 tokens.add(bootstrap.inode_token(member_info))
             if any(
                 tokens.intersection(bootstrap.identity_view(entry["historical"]))
-                or any(bootstrap._overlap(member, Path(path)) for path in entry["roots"])
+                or any(
+                    bootstrap._overlap(member, Path(path)) for path in entry["roots"]
+                )
                 or any(
                     bootstrap._overlap(member, Path(token[5:]))
-                    for token in entry["historical"] if token.startswith("path:")
+                    for token in entry["historical"]
+                    if token.startswith("path:")
                 )
                 for entry in foreign
             ):
@@ -268,6 +285,11 @@ def companion_guard(operation, attempt):
         # Existing parent posture is verified, never delegated for creation.
         state.directories = ()
         state.companion_roots = tuple(Path(path) for path in record["roots"])
+        if not reused:
+            evidence = storage._metadata_evidence(
+                hold, (selected, selected.parent), registry=registry
+            )
+            storage._note_derived(hold, key, evidence, (record, registry), before)
         return guard
     except BaseException:
         guard.close()
