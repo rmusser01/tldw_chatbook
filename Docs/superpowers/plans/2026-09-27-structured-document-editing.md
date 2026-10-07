@@ -26,12 +26,13 @@
 ## Ownership, status, and execution prerequisites
 
 Design owner: [TASK-33096](../../../backlog/tasks/task-33096%20-%20Design-structured-document-validation-and-formatting-across-Chatbook-and-server-Notes.md).
-Status: planned; no implementation steps executed.
+Status: in progress; implementation and verification are tracked in repo-local Backlog tasks.
 
 ADR required: yes
 ADR path: [ADR-194](../../../backlog/decisions/194-structured-note-language-and-local-editor-validation.md)
 Reason: portable storage/sync metadata and bounded local editor processing.
 Server governing ADR: `Docs/ADR/031-notes-capability-sync-domains.md` in the server repository. Before server implementation, record an extension under that repository's ADR assessment workflow for the new payload version; do not rewrite accepted ADR-031 rationale.
+Server extension allocated during F2: `S/Docs/ADR/065-portable-note-language-and-negotiated-structured-editing.md` extends locked ADR-031 and governs the additive field and negotiated clear/private snapshots.
 
 Paths in the subplans use these roots, with no implication of a shared Git index:
 

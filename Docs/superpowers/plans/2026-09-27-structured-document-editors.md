@@ -14,7 +14,8 @@
 - "Syntax errors never add a save veto."
 - "Run targeted checks only unless the user explicitly authorizes a full suite."
 - ADR required: yes. ADR path: `C/backlog/decisions/194-structured-note-language-and-local-editor-validation.md`; server ADR-031 and the F3 extension govern metadata transport.
-- Status: Not Started. No whole-editor replacement is approved. A failed history qualification returns a concrete proposal for review before adopting a replacement widget.
+- Server extension allocated during F2: `S/Docs/ADR/065-portable-note-language-and-negotiated-structured-editing.md` extends locked ADR-031 and governs the additive field and negotiated clear/private snapshots.
+- Status: In Progress. No whole-editor replacement is approved. A failed history qualification returns a concrete proposal for review before adopting a replacement widget.
 
 ## I1: Qualify formatting in native undo history
 

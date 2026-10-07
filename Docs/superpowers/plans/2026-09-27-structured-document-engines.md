@@ -14,7 +14,7 @@
 - "Do not implement formatting as a generic object parse followed by serialization."
 - "Formatting is deterministic and idempotent within each engine; identical whitespace between the two engines is not required."
 - ADR required: yes. ADR path: `C/backlog/decisions/194-structured-note-language-and-local-editor-validation.md`. Dependency adoption must include its qualification evidence and repository-local ADR assessment before integration.
-- Status: Not Started. Qualification may proceed before foundations land; it does not authorize production UI wiring.
+- Status: In Progress. Qualification may proceed before foundations land; it does not authorize production UI wiring.
 
 ## E1: Shared fixtures and pure contracts
 
