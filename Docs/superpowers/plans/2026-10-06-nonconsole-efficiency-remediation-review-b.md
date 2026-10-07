@@ -275,7 +275,7 @@ def test_lru_eviction_and_dedupe(tmp_store):
 **Interfaces:**
 - Produces: `get_semantic_embedding_model() -> "SentenceTransformer"` and `_reset_semantic_model_for_tests() -> None` in `eval_runner.py`. All existing callers of `calculate_semantic_similarity` keep working unchanged (the `embedding_model=None` default stays).
 
-- [ ] **Step 1: Failing test**:
+- [x] **Step 1: Failing test**:
 
 ```python
 """B4: the semantic-similarity model is constructed once per process."""
@@ -310,10 +310,10 @@ def test_model_constructed_once(monkeypatch):
         eval_runner._reset_semantic_model_for_tests()
 ```
 
-- [ ] **Step 2: Run, expect FAIL** (instances == 2).
-- [ ] **Step 3: Implement.** Module state `_SEMANTIC_MODEL = None`, `_SEMANTIC_MODEL_LOCK = threading.Lock()`; `get_semantic_embedding_model()` double-checked-locks the construction with the exact current args (`SentenceTransformer("all-MiniLM-L6-v2", local_files_only=True)`). Replace the in-function construction with `embedding_model = get_semantic_embedding_model()` when the arg is None. `_reset_semantic_model_for_tests()` clears both. Do not change the similarity math.
-- [ ] **Step 4: Run** — `pytest Tests/Evals/test_semantic_model_singleton.py Tests/Evals -k "semantic or metric or similarity" -q`.
-- [ ] **Step 5: Evidence** — record: 3 consecutive `calculate_semantic_similarity` calls → `SentenceTransformer` constructions before (3) vs after (1).
+- [x] **Step 2: Run, expect FAIL** (instances == 2).
+- [x] **Step 3: Implement.** Module state `_SEMANTIC_MODEL = None`, `_SEMANTIC_MODEL_LOCK = threading.Lock()`; `get_semantic_embedding_model()` double-checked-locks the construction with the exact current args (`SentenceTransformer("all-MiniLM-L6-v2", local_files_only=True)`). Replace the in-function construction with `embedding_model = get_semantic_embedding_model()` when the arg is None. `_reset_semantic_model_for_tests()` clears both. Do not change the similarity math.
+- [x] **Step 4: Run** — `pytest Tests/Evals/test_semantic_model_singleton.py Tests/Evals -k "semantic or metric or similarity" -q`.
+- [x] **Step 5: Evidence** — record: 3 consecutive `calculate_semantic_similarity` calls → `SentenceTransformer` constructions before (3) vs after (1).
 
 **Acceptance criteria:** one construction per process under concurrency (spawn two threads in a test variant if cheap); all existing eval metric tests green.
 
@@ -327,7 +327,7 @@ def test_model_constructed_once(monkeypatch):
 
 **Interfaces:** none new.
 
-- [ ] **Step 1: Failing test** — drive one sample completion through the orchestrator with a fake `db` whose `store_result` records `threading.current_thread()`; assert it is not the thread running the event loop, and that the awaited wrapper still propagates db exceptions:
+- [x] **Step 1: Failing test** — drive one sample completion through the orchestrator with a fake `db` whose `store_result` records `threading.current_thread()`; assert it is not the thread running the event loop, and that the awaited wrapper still propagates db exceptions:
 
 ```python
 """B5: per-sample result persistence hops off the event loop."""
@@ -347,10 +347,10 @@ async def test_store_result_runs_off_loop(orchestrator_with_fake_db):
     assert seen_threads and seen_threads[0] is not threading.main_thread()
 ```
 
-- [ ] **Step 2: Run, expect FAIL** (same thread).
-- [ ] **Step 3: Implement.** Check whether the repo's `run_db_off_loop` helper (grep `def run_db_off_loop`) is importable here without an import cycle; if yes reuse it, else `await asyncio.to_thread(self.db.store_result, ...)`. Preserve the exact call arguments and error handling around the write.
-- [ ] **Step 4: Run** — `pytest Tests/Evals/test_orchestrator_offloop_writes.py Tests/Evals -k "orchestrator" -q`.
-- [ ] **Step 5: Evidence** — record blocking-write-per-sample count before (n on loop) vs after (0 on loop).
+- [x] **Step 2: Run, expect FAIL** (same thread).
+- [x] **Step 3: Implement.** Check whether the repo's `run_db_off_loop` helper (grep `def run_db_off_loop`) is importable here without an import cycle; if yes reuse it, else `await asyncio.to_thread(self.db.store_result, ...)`. Preserve the exact call arguments and error handling around the write.
+- [x] **Step 4: Run** — `pytest Tests/Evals/test_orchestrator_offloop_writes.py Tests/Evals -k "orchestrator" -q`.
+- [x] **Step 5: Evidence** — record blocking-write-per-sample count before (n on loop) vs after (0 on loop).
 
 **Acceptance criteria:** no sqlite statements execute on the event loop during sample completion; failure in `store_result` still surfaces to the run's error path.
 
@@ -365,11 +365,11 @@ async def test_store_result_runs_off_loop(orchestrator_with_fake_db):
 **Interfaces:**
 - Produces: `EvalsDB.invalidate_run_group_failure_cache() -> None` (public; called by every mutation path of `eval_results`).
 
-- [ ] **Step 1: Failing test** — seed runs/results; call `run_group_cell_failure_counts` twice with a trace-callback counting `SELECT`s against `eval_results`; assert second call issues 0; call `store_result` (the real mutator — grep `def store_result` in this file); assert the next call re-scans and reflects the new row.
-- [ ] **Step 2: Run, expect FAIL.**
-- [ ] **Step 3: Implement.** Instance-level cache `self._rg_failure_counts: dict | None = None`; the method returns the memo when set; `store_result` (and any other `eval_results` writer — grep `INSERT INTO eval_results` / `DELETE FROM eval_results`) sets it to None. Cache lives per DB instance; no cross-process pretensions. Size is naturally bounded by run-group count.
-- [ ] **Step 4: Run** — `pytest Tests/Evals/test_failure_count_cache.py Tests/Evals -k "failure or run_group or view_model" -q`.
-- [ ] **Step 5: Evidence** — record `json_extract` scans per compose before (1 per selection change) vs after (0 until next mutation).
+- [x] **Step 1: Failing test** — seed runs/results; call `run_group_cell_failure_counts` twice with a trace-callback counting `SELECT`s against `eval_results`; assert second call issues 0; call `store_result` (the real mutator — grep `def store_result` in this file); assert the next call re-scans and reflects the new row.
+- [x] **Step 2: Run, expect FAIL.**
+- [x] **Step 3: Implement.** Instance-level cache `self._rg_failure_counts: dict | None = None`; the method returns the memo when set; `store_result` (and any other `eval_results` writer — grep `INSERT INTO eval_results` / `DELETE FROM eval_results`) sets it to None. Cache lives per DB instance; no cross-process pretensions. Size is naturally bounded by run-group count.
+- [x] **Step 4: Run** — `pytest Tests/Evals/test_failure_count_cache.py Tests/Evals -k "failure or run_group or view_model" -q`.
+- [x] **Step 5: Evidence** — record `json_extract` scans per compose before (1 per selection change) vs after (0 until next mutation).
 
 **Acceptance criteria:** idle rail composes are O(1); counts never stale after a mutation; existing Evals DB tests green.
 
@@ -384,8 +384,8 @@ async def test_store_result_runs_off_loop(orchestrator_with_fake_db):
 
 **Interfaces:** none (pure index).
 
-- [ ] **Step 1: Investigate the established index-addition pattern FIRST.** `git log --oneline -S "idx_notes_last_modified" -- tldw_chatbook/DB/ChaChaNotes_DB.py` and read the surrounding commit: determine whether new indices reach existing DBs via (a) the schema script re-run on every open (`CREATE INDEX IF NOT EXISTS`), or (b) a versioned migration step. Follow whichever pattern (a)/(b) the repo uses for indices; if (b), add the migration step in the same style as the most recent index migration and note the exact next schema version used (sibling PR may also bump versions — record yours in the PR description for conflict resolution).
-- [ ] **Step 2: Write failing test**:
+- [x] **Step 1: Investigate the established index-addition pattern FIRST.** `git log --oneline -S "idx_notes_last_modified" -- tldw_chatbook/DB/ChaChaNotes_DB.py` and read the surrounding commit: determine whether new indices reach existing DBs via (a) the schema script re-run on every open (`CREATE INDEX IF NOT EXISTS`), or (b) a versioned migration step. Follow whichever pattern (a)/(b) the repo uses for indices; if (b), add the migration step in the same style as the most recent index migration and note the exact next schema version used (sibling PR may also bump versions — record yours in the PR description for conflict resolution).
+- [x] **Step 2: Write failing test**:
 
 ```python
 """B7: browse ordering is index-served (no temp B-tree per page)."""
@@ -406,9 +406,9 @@ def test_browse_order_uses_index(tmp_path):
 ```
 
   (Adapt connection access + the exact WHERE to match `search_conversations_page`'s scope filter; the assertion that matters is "no TEMP B-TREE FOR ORDER BY".)
-- [ ] **Step 3: Run, expect FAIL.** Add `CREATE INDEX IF NOT EXISTS idx_conversations_last_modified ON conversations(last_modified DESC, id DESC);` next to its sibling conversation indices (match their formatting), plus the pattern-appropriate migration wiring from Step 1.
-- [ ] **Step 4: Run** — `pytest Tests/ChaChaNotesDB/test_conversations_browse_index.py Tests/ChaChaNotesDB -k "conversation or page or browse" -q`.
-- [ ] **Step 5: Evidence + ADR.** Write `backlog/decisions/216-conversations-browse-order-index.md` (context: browse pages sort the full filtered set; decision: covering DESC index; alternatives: covering index incl. scope columns rejected because scope filters vary — record whatever EXPLAIN shows). Record rows-sorted before (n) vs after (page size) via EXPLAIN + trace on a 5k-conversation fixture.
+- [x] **Step 3: Run, expect FAIL.** Add `CREATE INDEX IF NOT EXISTS idx_conversations_last_modified ON conversations(last_modified DESC, id DESC);` next to its sibling conversation indices (match their formatting), plus the pattern-appropriate migration wiring from Step 1.
+- [x] **Step 4: Run** — `pytest Tests/ChaChaNotesDB/test_conversations_browse_index.py Tests/ChaChaNotesDB -k "conversation or page or browse" -q`.
+- [x] **Step 5: Evidence + ADR.** Write `backlog/decisions/216-conversations-browse-order-index.md` (context: browse pages sort the full filtered set; decision: covering DESC index; alternatives: covering index incl. scope columns rejected because scope filters vary — record whatever EXPLAIN shows). Record rows-sorted before (n) vs after (page size) via EXPLAIN + trace on a 5k-conversation fixture.
 
 **Acceptance criteria:** `EXPLAIN QUERY PLAN` shows the index serving the default browse ordering (no ORDER BY temp B-tree) for the page query; existing conversation tests green; ADR-216 written.
 
@@ -422,12 +422,12 @@ def test_browse_order_uses_index(tmp_path):
 
 **Interfaces:** none — same signatures and return shapes.
 
-- [ ] **Step 1: Golden equivalence tests on CURRENT code** (run before changing anything): seed ≥ 30 prompts with keywords + FTS-indexed text (find the fixture helpers neighboring prompt-search tests use — grep `Tests/` for `search_prompts`); capture result tuples (id, name, keywords) for: content match, keyword match, combined, empty result. Save as the golden baseline (inline expected values or a snapshot dict in the test).
-- [ ] **Step 2: Port `search_prompts_by_text`.** Replace the fetch-all-rowids + `IN ({placeholders})` with the subquery shape already shipped in `search_prompts` (~:3977-3981): `WHERE p.id IN (SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)`. Add LIMIT/OFFSET parameters (default the existing search page size — grep what `search_prompts` defaults to; keep backward-compatible defaults so existing callers see unchanged page sizes). Replace the per-row `fetch_keywords_for_prompt` loop with the batch helper `_library_keywords_for_prompts` (anchor `def _library_keywords_for_prompts`).
-- [ ] **Step 3: Port `search_prompts_by_keyword`.** Same two changes: LIMIT/OFFSET (same defaults) + batch keyword attach.
-- [ ] **Step 4: Port `search_prompts` page attach.** Swap its per-row keyword loop (~:4011-4014) for `_library_keywords_for_prompts` (as `list_library_prompts_page` already does).
-- [ ] **Step 5: Run equivalence + new tests.** New test additions: with a trace callback, `search_prompts_by_text` on a page of 20 issues exactly 1 keywords query (not 20); LIMIT honored. `pytest Tests/PromptsDB/test_legacy_prompt_search_ports.py Tests/PromptsDB -q` plus any existing prompt-search test dirs (grep `Tests/ -name "*prompt*" -type d`).
-- [ ] **Step 6: Evidence** — record per-search SQL statement counts before/after on the fixture (before: 1 + page-size or 1 + n_matches; after: constant).
+- [x] **Step 1: Golden equivalence tests on CURRENT code** (run before changing anything): seed ≥ 30 prompts with keywords + FTS-indexed text (find the fixture helpers neighboring prompt-search tests use — grep `Tests/` for `search_prompts`); capture result tuples (id, name, keywords) for: content match, keyword match, combined, empty result. Save as the golden baseline (inline expected values or a snapshot dict in the test).
+- [x] **Step 2: Port `search_prompts_by_text`.** Replace the fetch-all-rowids + `IN ({placeholders})` with the subquery shape already shipped in `search_prompts` (~:3977-3981): `WHERE p.id IN (SELECT rowid FROM prompts_fts WHERE prompts_fts MATCH ?)`. Add LIMIT/OFFSET parameters (default the existing search page size — grep what `search_prompts` defaults to; keep backward-compatible defaults so existing callers see unchanged page sizes). Replace the per-row `fetch_keywords_for_prompt` loop with the batch helper `_library_keywords_for_prompts` (anchor `def _library_keywords_for_prompts`).
+- [x] **Step 3: Port `search_prompts_by_keyword`.** Same two changes: LIMIT/OFFSET (same defaults) + batch keyword attach.
+- [x] **Step 4: Port `search_prompts` page attach.** Swap its per-row keyword loop (~:4011-4014) for `_library_keywords_for_prompts` (as `list_library_prompts_page` already does).
+- [x] **Step 5: Run equivalence + new tests.** New test additions: with a trace callback, `search_prompts_by_text` on a page of 20 issues exactly 1 keywords query (not 20); LIMIT honored. `pytest Tests/PromptsDB/test_legacy_prompt_search_ports.py Tests/PromptsDB -q` plus any existing prompt-search test dirs (grep `Tests/ -name "*prompt*" -type d`).
+- [x] **Step 6: Evidence** — record per-search SQL statement counts before/after on the fixture (before: 1 + page-size or 1 + n_matches; after: constant).
 
 **Acceptance criteria:** golden results identical for all fixture cases; statement counts bounded (no N+1); no `IN ({placeholders})` built from unbounded FTS match lists remains in the file's search paths; existing prompt tests green.
 
@@ -441,11 +441,11 @@ def test_browse_order_uses_index(tmp_path):
 
 **Interfaces:** none.
 
-- [ ] **Step 1: Prove 1:1 joins first.** Read every JOIN the builder can emit for the affected query shapes (media_fts, keyword joins, etc.). For each, write down the join cardinality in the test docstring. If ANY join can multiply rows, stop: keep DISTINCT, record why in notes, and skip to Step 4.
-- [ ] **Step 2: Equivalence test** — golden result sets (ids + counts) for: text search, keyword filter, combined, empty. Run on current code, capture baseline.
-- [ ] **Step 3: Remove DISTINCT** from both the COUNT and the SELECT. Re-run equivalence.
-- [ ] **Step 4: Run** — `pytest Tests/ -k "search_media" -q` (targeted), plus the file's own test module if present.
-- [ ] **Step 5: Evidence** — EXPLAIN/trace: temp B-tree dedup step present before, absent after, on a fixture with ≥ 1k matches.
+- [x] **Step 1: Prove 1:1 joins first.** Read every JOIN the builder can emit for the affected query shapes (media_fts, keyword joins, etc.). For each, write down the join cardinality in the test docstring. If ANY join can multiply rows, stop: keep DISTINCT, record why in notes, and skip to Step 4.
+- [x] **Step 2: Equivalence test** — golden result sets (ids + counts) for: text search, keyword filter, combined, empty. Run on current code, capture baseline.
+- [x] **Step 3: Remove DISTINCT** from both the COUNT and the SELECT. Re-run equivalence.
+- [x] **Step 4: Run** — `pytest Tests/ -k "search_media" -q` (targeted), plus the file's own test module if present.
+- [x] **Step 5: Evidence** — EXPLAIN/trace: temp B-tree dedup step present before, absent after, on a fixture with ≥ 1k matches.
 
 **Acceptance criteria:** identical results; dedup temp-B-tree gone (if Step 1 proved 1:1); documented cardinality reasoning in notes.
 
@@ -541,11 +541,11 @@ def test_digest_computed_once_per_file(monkeypatch, observe_fixture_factory):
 **Interfaces:**
 - Produces: `get_docling_converter() -> "DocumentConverter"` and `_reset_docling_converter_for_tests() -> None` in `PDF_Processing_Lib.py`.
 
-- [ ] **Step 1: Failing test** (inject a fake module like B4's pattern — `sys.modules["docling"]`/`docling.document_converter` fakes with a counting `DocumentConverter`): two `docling_parse_pdf` calls (tiny in-memory PDF or a stubbed `converter.convert`) → 1 construction. Note: parsing happens inside process-pool workers in production; a per-process module singleton is the correct scope (each worker constructs once).
-- [ ] **Step 2: Run, expect FAIL.**
-- [ ] **Step 3: Implement.** Module state + `threading.Lock` (parse workers may also run threads), lazy import preserved (docling stays optional — keep the existing ImportError handling path so `docling_parse_pdf` still raises its current error when docling is missing). Preserve `enable_ocr` plumbing: if the converter construction differs per OCR flag today, key the singleton on that flag (dict keyed by flag) and note it.
-- [ ] **Step 4: Run** — `pytest Tests/Local_Ingestion/test_docling_converter_singleton.py Tests/Local_Ingestion -k "pdf or docling" -q`.
-- [ ] **Step 5: Evidence** — constructions per 3-PDF batch before (3) vs after (1).
+- [x] **Step 1: Failing test** (inject a fake module like B4's pattern — `sys.modules["docling"]`/`docling.document_converter` fakes with a counting `DocumentConverter`): two `docling_parse_pdf` calls (tiny in-memory PDF or a stubbed `converter.convert`) → 1 construction. Note: parsing happens inside process-pool workers in production; a per-process module singleton is the correct scope (each worker constructs once).
+- [x] **Step 2: Run, expect FAIL.**
+- [x] **Step 3: Implement.** Module state + `threading.Lock` (parse workers may also run threads), lazy import preserved (docling stays optional — keep the existing ImportError handling path so `docling_parse_pdf` still raises its current error when docling is missing). Preserve `enable_ocr` plumbing: if the converter construction differs per OCR flag today, key the singleton on that flag (dict keyed by flag) and note it.
+- [x] **Step 4: Run** — `pytest Tests/Local_Ingestion/test_docling_converter_singleton.py Tests/Local_Ingestion -k "pdf or docling" -q`.
+- [x] **Step 5: Evidence** — constructions per 3-PDF batch before (3) vs after (1).
 
 **Acceptance criteria:** one converter per process per config; optional-dependency error path unchanged; existing PDF tests green.
 
@@ -562,7 +562,7 @@ def test_digest_computed_once_per_file(monkeypatch, observe_fixture_factory):
 **Interfaces:**
 - Produces: shared helper `analyze_chunks_concurrently(chunks: Sequence[str], analyze_fn: Callable[[str], str], max_workers: int = 3) -> list[str]` (module location: put it in `Local_Ingestion/local_file_ingestion.py` only if no circular import; otherwise duplicate a 15-line helper per file and note it — prefer one home: grep the import graph first). Order-preserving (result[i] corresponds to chunks[i]).
 
-- [ ] **Step 1: Failing test**:
+- [x] **Step 1: Failing test**:
 
 ```python
 """B14: chunk analysis runs with bounded concurrency and preserves order."""
@@ -589,10 +589,10 @@ def test_bounded_concurrency_and_order():
     assert peak[0] <= 3
 ```
 
-- [ ] **Step 2: Run, expect FAIL** (helper missing).
-- [ ] **Step 3: Implement.** `concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)`; submit all, collect with index bookkeeping; propagate the first exception after all futures settle (today one chunk failure aborts the loop — keep that contract: record the exception and re-raise after join, matching current behavior's failure semantics; read each loop's current error handling and mirror it). Replace each serial loop with the helper. The recursive combine call after the loop stays serial (it depends on all results).
-- [ ] **Step 4: Run** — `pytest Tests/Local_Ingestion/test_analysis_concurrency.py Tests/Local_Ingestion -k "analy" -q`.
-- [ ] **Step 5: Evidence** — 30 chunks × 50 ms fake analyze: wall time serial (≈1.5 s) vs concurrent (≈0.55 s) in the test run; record.
+- [x] **Step 2: Run, expect FAIL** (helper missing).
+- [x] **Step 3: Implement.** `concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)`; submit all, collect with index bookkeeping; propagate the first exception after all futures settle (today one chunk failure aborts the loop — keep that contract: record the exception and re-raise after join, matching current behavior's failure semantics; read each loop's current error handling and mirror it). Replace each serial loop with the helper. The recursive combine call after the loop stays serial (it depends on all results).
+- [x] **Step 4: Run** — `pytest Tests/Local_Ingestion/test_analysis_concurrency.py Tests/Local_Ingestion -k "analy" -q`.
+- [x] **Step 5: Evidence** — 30 chunks × 50 ms fake analyze: wall time serial (≈1.5 s) vs concurrent (≈0.55 s) in the test run; record.
 
 **Acceptance criteria:** peak concurrency ≤ max_workers; per-chunk results order-identical to serial; failure semantics unchanged; existing ingestion tests green.
 
@@ -606,11 +606,11 @@ def test_bounded_concurrency_and_order():
 
 **Interfaces:** none new (same signatures/return order).
 
-- [ ] **Step 1: SAFETY GATE — verify thread-safety before writing code.** Read what `ingest_local_file` opens per call: DB connections, session state, tmp dirs. If it constructs its own DB connections per call (grep the DB singletons it uses), a bounded ThreadPoolExecutor is safe. If it shares module-level DB handles, DO NOT parallelize the whole call: parallelize only the parse/analyze sub-stage (via the B14 helper if importable) and record the limitation in notes. This gate is the task's first checkbox; paste the connection-lifecycle findings into the test docstring.
-- [ ] **Step 2: Failing test** (assuming gate passes): stub `ingest_local_file` with a version that records concurrency + returns a per-file marker; call `batch_ingest_files` over 12 files; assert peak concurrency ≤ 4, results order matches input order, one failing file does not prevent others (collect its error entry as today).
-- [ ] **Step 3: Implement.** ThreadPoolExecutor(max_workers=4); preserve result ordering and per-file error aggregation exactly (read the current loop's error handling first); directory walk/fan-in order unchanged.
-- [ ] **Step 4: Run** — `pytest Tests/Local_Ingestion/test_batch_ingest_concurrency.py Tests/Local_Ingestion -k "batch or ingest" -q`.
-- [ ] **Step 5: Evidence** — wall time for the 12-file stub before/after; concurrency trace.
+- [x] **Step 1: SAFETY GATE — verify thread-safety before writing code.** Read what `ingest_local_file` opens per call: DB connections, session state, tmp dirs. If it constructs its own DB connections per call (grep the DB singletons it uses), a bounded ThreadPoolExecutor is safe. If it shares module-level DB handles, DO NOT parallelize the whole call: parallelize only the parse/analyze sub-stage (via the B14 helper if importable) and record the limitation in notes. This gate is the task's first checkbox; paste the connection-lifecycle findings into the test docstring.
+- [x] **Step 2: Failing test** (assuming gate passes): stub `ingest_local_file` with a version that records concurrency + returns a per-file marker; call `batch_ingest_files` over 12 files; assert peak concurrency ≤ 4, results order matches input order, one failing file does not prevent others (collect its error entry as today).
+- [x] **Step 3: Implement.** ThreadPoolExecutor(max_workers=4); preserve result ordering and per-file error aggregation exactly (read the current loop's error handling first); directory walk/fan-in order unchanged.
+- [x] **Step 4: Run** — `pytest Tests/Local_Ingestion/test_batch_ingest_concurrency.py Tests/Local_Ingestion -k "batch or ingest" -q`.
+- [x] **Step 5: Evidence** — wall time for the 12-file stub before/after; concurrency trace.
 
 **Acceptance criteria:** order and error semantics preserved; bounded workers; TUI queue path (process pool) untouched; if the safety gate failed, the documented partial fix lands instead with evidence.
 
@@ -624,7 +624,7 @@ def test_bounded_concurrency_and_order():
 
 **Interfaces:** none new — same function signature and same returned result list (order and content).
 
-- [ ] **Step 1: Failing test.** The function is async (verify — it awaits LLM calls). Stub the relevance LLM, scraper, and summarizer with delayed fakes recording concurrency:
+- [x] **Step 1: Failing test.** The function is async (verify — it awaits LLM calls). Stub the relevance LLM, scraper, and summarizer with delayed fakes recording concurrency:
 
 ```python
 """B16: relevance gating stays sequential; scrape+summarize overlap under a semaphore."""
@@ -647,10 +647,10 @@ async def test_relevant_results_processed_concurrently(research_gate_factory, mo
     assert gate.results_order_preserved()
 ```
 
-- [ ] **Step 2: Run, expect FAIL** (peak concurrency 1; elapsed ≈ serial).
-- [ ] **Step 3: Implement.** Keep the per-result relevance gate loop exactly as is (it feeds spend decisions in order). Collect results judged relevant into a list; then `asyncio.gather` their (scrape → summarize) pipelines under `asyncio.Semaphore(3)`, each task writing its slot in a pre-sized result list (index-addressed, so order is preserved without sorting). Keep per-result error isolation: an exception in one slot logs and leaves that slot's existing error/placeholder shape exactly as the serial loop produces today (read the current `except` behavior and mirror it per slot). Keep the sleeps where they are deliberate rate-limiting (pre-relevance), drop none.
-- [ ] **Step 4: Run** — `pytest Tests/Web_Scraping/test_research_gate_overlap.py Tests/Web_Scraping -k "research or gate or search" -q`.
-- [ ] **Step 5: Evidence** — wall time for the 6-result fixture before/after in the test; record.
+- [x] **Step 2: Run, expect FAIL** (peak concurrency 1; elapsed ≈ serial).
+- [x] **Step 3: Implement.** Keep the per-result relevance gate loop exactly as is (it feeds spend decisions in order). Collect results judged relevant into a list; then `asyncio.gather` their (scrape → summarize) pipelines under `asyncio.Semaphore(3)`, each task writing its slot in a pre-sized result list (index-addressed, so order is preserved without sorting). Keep per-result error isolation: an exception in one slot logs and leaves that slot's existing error/placeholder shape exactly as the serial loop produces today (read the current `except` behavior and mirror it per slot). Keep the sleeps where they are deliberate rate-limiting (pre-relevance), drop none.
+- [x] **Step 4: Run** — `pytest Tests/Web_Scraping/test_research_gate_overlap.py Tests/Web_Scraping -k "research or gate or search" -q`.
+- [x] **Step 5: Evidence** — wall time for the 6-result fixture before/after in the test; record.
 
 **Acceptance criteria:** relevance order sequential; scrape+summarize peak ≤ 3 concurrent; result list byte-equivalent on the no-failure fixture; failure in one relevant result doesn't affect siblings.
 
