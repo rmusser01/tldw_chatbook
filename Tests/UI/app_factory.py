@@ -277,7 +277,9 @@ def _record_created_databases(app: TldwCli, directory: Path) -> None:
         )
 
 
-def _retire_created_databases(directory: Path) -> None:
+def _retire_created_databases(
+    directory: Path, *, require_empty_directory: bool = True
+) -> None:
     """Require actual original owner retirement before deleting this sandbox."""
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
     from tldw_chatbook.Backup_Recovery.participants import (
@@ -328,35 +330,36 @@ def _retire_created_databases(directory: Path) -> None:
                 )
             ):
                 raise RuntimeError("test_factory_database_not_retired")
-    # The native close wrapper retires a resource lease only after physical
-    # close. Unknown or still-borrowed resources remain visible and keep the
-    # owned sandbox. Do not modify the global maintenance drain or startup.
-    with storage._lock:
-        participants = tuple(
-            _repository_participant(owner)
-            for owner, _, _ in _created_databases.get(directory, ())
-        )
-        if (
-            storage._pause is not None
-            or any(
-                participant.connections or participant.retiring_threads
-                for participant in participants
+    if require_empty_directory:
+        # The native close wrapper retires a resource lease only after physical
+        # close. Unknown or still-borrowed resources remain visible and keep the
+        # owned sandbox. Do not modify the global maintenance drain or startup.
+        with storage._lock:
+            participants = tuple(
+                _repository_participant(owner)
+                for owner, _, _ in _created_databases.get(directory, ())
             )
-            or any(
-                isinstance(getattr(lease, "resource_path", None), Path)
-                and lease.resource_path.is_relative_to(directory)
-                for lease in storage._live_leases
-            )
-            or any(
-                operation.participant in participants
-                for operation in storage._operations
-            )
-            or any(
-                getattr(attempt.operation, "participant", None) in participants
-                for attempt in storage._pending_acquisitions
-            )
-        ):
-            raise RuntimeError("test_factory_directory_has_live_storage")
+            if (
+                storage._pause is not None
+                or any(
+                    participant.connections or participant.retiring_threads
+                    for participant in participants
+                )
+                or any(
+                    isinstance(getattr(lease, "resource_path", None), Path)
+                    and lease.resource_path.is_relative_to(directory)
+                    for lease in storage._live_leases
+                )
+                or any(
+                    operation.participant in participants
+                    for operation in storage._operations
+                )
+                or any(
+                    getattr(attempt.operation, "participant", None) in participants
+                    for attempt in storage._pending_acquisitions
+                )
+            ):
+                raise RuntimeError("test_factory_directory_has_live_storage")
     captured_lock = _created_instance_locks.get(directory)
     if captured_lock is not None:
         from io import BufferedRandom
@@ -396,6 +399,12 @@ def drain_created_dirs() -> int:
         _created_databases.pop(path, None)
         _created_instance_locks.pop(path, None)
         drained += 1
+    # Caller-owned directories retain their files. Only exact factory-created
+    # DB/lock handles are ours; unrelated profile resources may remain live.
+    for path in tuple(_created_databases):
+        _retire_created_databases(path, require_empty_directory=False)
+        _created_databases.pop(path, None)
+        _created_instance_locks.pop(path, None)
     return drained
 
 
@@ -536,6 +545,7 @@ def _build_test_app(
     first_run_setup_completed: bool = True,
     preserve_profile_admission: bool = False,
     config_overrides: Mapping[str, Any] | None = None,
+    user_data_dir: Path | None = None,
 ) -> TldwCli:
     """Build a TldwCli instance with every real I/O seam faked out.
 
@@ -546,6 +556,11 @@ def _build_test_app(
             this app's snapshot only -- see `build_test_app_config`, and
             prefer `save_setting_to_cli_config` for anything a refreshing
             seam must also see.
+        user_data_dir: Existing caller-owned directory for native sources that
+            must match the configured profile. Defaults to a fresh factory-owned
+            sandbox. Explicit directories are resolved and validated, then their
+            exact factory-created DB/lock handles are still retired at teardown;
+            the directory and its files are never removed by this factory.
         preserve_profile_admission: Defaults to False, which clears
             ``library_new_profile_admission``. `app.py` sets that flag from
             `first_profile_created_this_session()`, and the per-test config
@@ -591,15 +606,20 @@ def _build_test_app(
         preserve_profile_admission=preserve_profile_admission,
         explicit_override=explicit_library_lifecycle,
     )
-    user_data_dir = Path(
-        tempfile.mkdtemp(prefix="tldw-chatbook-test-")
-        # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
-        # mkdtemp returns /var/folders/..., /var is a symlink, and the
-        # private-path guard refuses to traverse a symlinked component.
-        # Without it every test on this harness dies with
-        # `PrivatePathError: link_or_non_regular` before its first assertion.
-    ).resolve(strict=True)
-    _created_dirs.append(user_data_dir)
+    if user_data_dir is None:
+        user_data_dir = Path(
+            tempfile.mkdtemp(prefix="tldw-chatbook-test-")
+            # `.resolve(strict=True)` is load-bearing, not tidiness: on macOS
+            # mkdtemp returns /var/folders/..., /var is a symlink, and the
+            # private-path guard refuses to traverse a symlinked component.
+            # Without it every test on this harness dies with
+            # `PrivatePathError: link_or_non_regular` before its first assertion.
+        ).resolve(strict=True)
+        _created_dirs.append(user_data_dir)
+    else:
+        user_data_dir = Path(user_data_dir).resolve(strict=True)
+        if not user_data_dir.is_dir():
+            raise NotADirectoryError(user_data_dir)
 
     # task-1631: started (not entered via the `with ExitStack()` below) and
     # left running -- `LocalWatchlistsService.db_factory` (wired inside

@@ -3978,7 +3978,7 @@ class ConsoleChatController:
         #: up without rebuilding the controller.
         self._ensure_run_hooks = ensure_run_hooks
         self._hook_permissions_accessor = hook_permissions_accessor
-        self._hook_preparation_reads: set[Any] = set()
+        self._preparation_reads: set[Any] = set()
         self._project_instruction_display: dict[
             str, ProjectInstructionDisplayMetadata
         ] = {}
@@ -6412,12 +6412,12 @@ class ConsoleChatController:
                 ):
                     raise RuntimeError("Console hook admission owner changed.")
 
-            observers = () if runtime is None else (runtime._hook_preparation_reads,)
+            observers = () if runtime is None else (runtime._preparation_reads,)
             return await run_hook_preparation_read(
                 callback,
                 creator=self,
                 session_id=session_id,
-                reads=self._hook_preparation_reads,
+                reads=self._preparation_reads,
                 observers=observers,
                 require_current=require_current,
                 source=source,
@@ -6434,7 +6434,7 @@ class ConsoleChatController:
             dict.fromkeys(
                 read.task
                 for read in hook_preparation_reads_for(
-                    getattr(self, "_hook_preparation_reads", set()),
+                    getattr(self, "_preparation_reads", set()),
                     session_id,
                 )
             )
@@ -6444,7 +6444,7 @@ class ConsoleChatController:
         from .console_hook_preparation import drain_hook_preparation_reads
 
         return await drain_hook_preparation_reads(
-            getattr(self, "_hook_preparation_reads", set()), session_id
+            getattr(self, "_preparation_reads", set()), session_id
         )
 
     async def queue_prompt(
@@ -22226,26 +22226,18 @@ class ConsoleChatController:
         *,
         context_provider: Callable[..., ConsoleTurnConfigurationSnapshot] | None = None,
     ) -> ConsoleTurnConfigurationSnapshot:
-        """Prepare fresh native MCP inputs before composing on the owning loop."""
+        """Select loop-owned values once, then capture eligible native domain inputs."""
         import sys
         from types import MethodType
-
         from tldw_chatbook import config
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-        from tldw_chatbook.MCP.console_snapshot import (
-            capture_console_definition_maximum,
-            standard_console_sources,
-        )
 
         original_provider = self._turn_context_provider
         provider = (
             context_provider if context_provider is not None else original_provider
         )
 
-        def synchronous_capture() -> ConsoleTurnConfigurationSnapshot:
-            if context_provider is None:
-                return self.resolve_turn_configuration_snapshot(session_id)
-            context = provider(session_id)
+        def validate(context):
             if not isinstance(context, ConsoleTurnConfigurationSnapshot):
                 raise TypeError(
                     "Console turn-context provider must return ConsoleTurnConfigurationSnapshot."
@@ -22256,128 +22248,247 @@ class ConsoleChatController:
                 )
             return context
 
-        screen_owner = getattr(provider, "__self__", None)
-        standard_screen = False
+        def synchronous_capture():
+            return (
+                self.resolve_turn_configuration_snapshot(session_id)
+                if context_provider is None
+                else validate(provider(session_id))
+            )
+
+        owner = getattr(provider, "__self__", None)
+        mounted = False
         if isinstance(provider, MethodType):
-            # UI compatibility is needed only for an explicitly supplied bound
-            # provider. Default app-owned capture has no Console UI dependency.
             from tldw_chatbook.UI.Console_Modules.session import (
                 ConsoleSessionController,
                 _CONSOLE_TURN_CONTEXT_BUILDER,
+                _CONSOLE_TURN_CAPTURE_SELECTOR,
             )
 
-            standard_screen = (
-                type(screen_owner) is ConsoleSessionController
+            mounted = (
+                type(owner) is ConsoleSessionController
                 and provider.__func__ is _CONSOLE_TURN_CONTEXT_BUILDER
             )
-        if provider is not None and not standard_screen:
+        if provider is not None and not mounted:
             return synchronous_capture()
-        app = self.app
-        app_config = getattr(app, "app_config", None)
+
+        from .console_configuration_preparation import (
+            ConsoleTurnCaptureSelection,
+            capture_console_turn_configuration_owned,
+            standard_console_configuration_sources,
+        )
+        from tldw_chatbook.MCP.console_snapshot import (
+            capture_console_definition_maximum,
+            standard_console_sources,
+        )
+
+        app, store = self.app, self.store
         service = getattr(app, "unified_mcp_service", None)
         if not standard_console_sources(service):
             return synchronous_capture()
-
-        store = self.store
-        session = next(item for item in store.sessions() if item.id == session_id)
-        scratch = self._scratch_spaces
-        provider_config = self._provider_config
+        eligible_sources = standard_console_configuration_sources(
+            app, store, self, session_id=session_id
+        )
+        session = next((row for row in store.sessions() if row.id == session_id), None)
+        if session is None:
+            raise KeyError(session_id)
+        scratch, provider_config = self._scratch_spaces, self._provider_config
+        app_config = getattr(app, "app_config", None)
         configuration_identity = config.current_config_identity()
-        revision = store.session_settings_revision(session_id)
-        workspace_id = store.session_workspace_id(session_id)
-        selection = self._provider_selection_for_session(session_id)
-        if standard_screen and (
-            screen_owner.app_instance is not app
-            or screen_owner._ensure_console_chat_store() is not store
-        ):
-            raise RecoveryRequired("console_snapshot_owner_changed")
-        screen_callbacks = (
-            tuple(
-                getattr(screen_owner, name, None)
-                for name in (
-                    "_current_chat_store_accessor",
-                    "_chat_store_accessor",
-                    "_provider_readiness_app_config_fn",
-                    "_build_provider_selection_fn",
-                    "_scratch_snapshot_provider",
-                    "_rag_source_types_accessor",
-                    "_rag_top_k_accessor",
-                )
+        settings_revision = store.session_settings_revision(session_id)
+        session_identity = (
+            session.incarnation_id,
+            session.conversation_binding_revision,
+            session.ephemeral,
+            session.workspace_id,
+        )
+        runtime = getattr(self, "_hooks_v2_runtime", None)
+        selected_callbacks = ()
+        adapter_codes = ()
+        scratch_adapter = None
+        scratch_runtime_accessor = None
+        selector = None
+        if mounted:
+            selector = owner._build_console_turn_capture_selection
+            function, code = _CONSOLE_TURN_CAPTURE_SELECTOR
+            stock_selector = (
+                isinstance(selector, MethodType)
+                and selector.__self__ is owner
+                and selector.__func__ is function
+                and function.__code__ is code
             )
-            if standard_screen
-            else ()
+            if (
+                owner.app_instance is not app
+                or owner._ensure_console_chat_store() is not store
+            ):
+                raise RecoveryRequired("console_snapshot_owner_changed")
+            names = (
+                "_current_chat_store_accessor",
+                "_chat_store_accessor",
+                "_provider_readiness_app_config_fn",
+                "_build_provider_selection_fn",
+                "_scratch_snapshot_provider",
+                "_rag_source_types_accessor",
+                "_rag_top_k_accessor",
+                "_build_console_turn_capture_selection",
+                "_resolve_turn_tool_policy_profile_id",
+                "_resolve_turn_persona_policy_rules",
+            )
+            selected_callbacks = tuple(
+                (name, getattr(owner, name, None)) for name in names
+            )
+            selection = (
+                selector(session_id, scratch_owner=scratch)
+                if eligible_sources and stock_selector
+                else None
+            )
+            if selection is not None:
+                from tldw_chatbook.UI.Console_Modules.session import (
+                    _CONSOLE_CAPTURE_POLICY_ADAPTERS,
+                )
+                from tldw_chatbook.UI.Console_Modules.wiring import (
+                    _STOCK_CONSOLE_SCRATCH_SNAPSHOT,
+                )
+
+                adapter_codes = (
+                    ((function, code),)
+                    + tuple(
+                        (original, original_code)
+                        for _, original, original_code in _CONSOLE_CAPTURE_POLICY_ADAPTERS
+                    )
+                    + (_STOCK_CONSOLE_SCRATCH_SNAPSHOT,)
+                )
+                scratch_adapter = owner._scratch_snapshot_provider
+                scratch_screen = scratch_adapter.args[0]
+                scratch_runtime_accessor = scratch_screen._console_runtime
+        elif eligible_sources:
+            selection = ConsoleTurnCaptureSelection(
+                provider_selection=self._provider_selection_for_session(session_id),
+                presentation_context=self._presentation_context_for(session_id),
+                rag_defaults=None,
+                tool_configuration=None,
+                skill_workspace_id=store.session_workspace_id(session_id),
+                project_bindings_eligible=self._agent_dispatch_is_eligible(
+                    session, prefill=store.session_one_shot_prefill(session_id)
+                ),
+                agent_runtime_enabled=self._agent_runtime_enabled,
+            )
+        else:
+            selection = None
+        legacy_selection = (
+            self._provider_selection_for_session(session_id)
+            if selection is None
+            else None
         )
 
-        def same_callback(current: Any, original: Any) -> bool:
-            return current is original or (
-                type(current) is MethodType
-                and type(original) is MethodType
-                and current.__func__ is original.__func__
-                and current.__self__ is original.__self__
+        def same(left, right):
+            return left is right or (
+                isinstance(left, MethodType)
+                and isinstance(right, MethodType)
+                and left.__self__ is right.__self__
+                and left.__func__ is right.__func__
             )
 
-        def require_current() -> None:
-            current_session = next(
-                (item for item in store.sessions() if item.id == session_id), None
+        def require_current():
+            current = next(
+                (row for row in store.sessions() if row.id == session_id), None
             )
             if (
                 self.app is not app
                 or self.store is not store
-                or current_session is not session
+                or current is not session
                 or self._turn_context_provider is not original_provider
-                or getattr(app, "app_config", None) is not app_config
                 or self._scratch_spaces is not scratch
                 or self._provider_config is not provider_config
-                or getattr(app, "unified_mcp_service", None) is not service
+                or getattr(app, "app_config", None) is not app_config
                 or sys.modules.get("tldw_chatbook.config") is not config
+                or getattr(app, "unified_mcp_service", None) is not service
                 or config.current_config_identity() != configuration_identity
-                or store.session_settings_revision(session_id) != revision
-                or store.session_workspace_id(session_id) != workspace_id
-                or self._provider_selection_for_session(session_id) != selection
+                or (
+                    selection is None
+                    and self._provider_selection_for_session(session_id)
+                    != legacy_selection
+                )
+                or store.session_settings_revision(session_id) != settings_revision
+                or (
+                    session.incarnation_id,
+                    session.conversation_binding_revision,
+                    session.ephemeral,
+                    session.workspace_id,
+                )
+                != session_identity
+                or getattr(self, "_hooks_v2_runtime", None) is not runtime
+                or self._disposed
+                or self._shutdown_requested.is_set()
+                or (
+                    runtime is not None
+                    and (
+                        runtime._disposed
+                        or runtime._chat_controller is not self
+                        or runtime._chat_store is not store
+                        or session_id in runtime._admission_fenced_sessions
+                    )
+                )
             ):
                 raise RecoveryRequired("console_snapshot_owner_changed")
-            if standard_screen and (
-                screen_owner.app_instance is not app
-                or screen_owner._ensure_console_chat_store() is not store
+            if mounted and (
+                owner.app_instance is not app
+                or owner._ensure_console_chat_store() is not store
                 or not all(
-                    same_callback(getattr(screen_owner, name, None), original)
-                    for name, original in zip(
-                        (
-                            "_current_chat_store_accessor",
-                            "_chat_store_accessor",
-                            "_provider_readiness_app_config_fn",
-                            "_build_provider_selection_fn",
-                            "_scratch_snapshot_provider",
-                            "_rag_source_types_accessor",
-                            "_rag_top_k_accessor",
-                        ),
-                        screen_callbacks,
+                    same(getattr(owner, name, None), callback)
+                    for name, callback in selected_callbacks
+                )
+                or not same(owner._build_console_turn_execution_context, provider)
+                or any(
+                    function.__code__ is not code for function, code in adapter_codes
+                )
+                or (
+                    scratch_adapter is not None
+                    and (
+                        scratch_adapter.keywords
+                        or len(scratch_adapter.args) != 1
+                        or scratch_adapter.args[0] is not scratch_screen
+                        or not same(
+                            scratch_screen._console_runtime, scratch_runtime_accessor
+                        )
+                        or getattr(scratch_screen, "_session", None) is not owner
+                        or scratch_screen.app_instance is not app
                     )
                 )
             ):
                 raise RecoveryRequired("console_snapshot_owner_changed")
 
-        maximum = await capture_console_definition_maximum(
-            service, CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS
+        require_current()
+        if selection is None:
+            # Keep known custom mounted callbacks on their previous loop route.
+            service = getattr(app, "unified_mcp_service", None)
+            if not standard_console_sources(service):
+                return synchronous_capture()
+            maximum = await capture_console_definition_maximum(
+                service, CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS
+            )
+            require_current()
+            context = (
+                provider(session_id, mcp_definition_maximum=maximum)
+                if mounted
+                else self.resolve_runtime_turn_configuration_snapshot(
+                    session_id, mcp_definition_maximum=maximum
+                )
+            )
+            require_current()
+            return validate(context)
+        observers = () if runtime is None else (runtime._preparation_reads,)
+        context = await capture_console_turn_configuration_owned(
+            app,
+            store,
+            session_id,
+            selection=selection,
+            creator=self,
+            reads=self._preparation_reads,
+            observers=observers,
+            require_current=require_current,
         )
         require_current()
-        context = (
-            provider(session_id, mcp_definition_maximum=maximum)
-            if standard_screen
-            else self.resolve_runtime_turn_configuration_snapshot(
-                session_id, mcp_definition_maximum=maximum
-            )
-        )
-        require_current()
-        if not isinstance(context, ConsoleTurnConfigurationSnapshot):
-            raise TypeError(
-                "Console turn-context provider must return ConsoleTurnConfigurationSnapshot."
-            )
-        if context.session_id != session_id:
-            raise ValueError(
-                "Console turn-context provider returned a different session."
-            )
-        return context
+        return validate(context)
 
     def resolve_turn_configuration_snapshot(
         self, session_id: str

@@ -43,6 +43,9 @@ CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS: frozenset = frozenset(
 )
 
 
+_UNSET_PLUGIN_SERVICE = object()
+
+
 def _character_emote_snapshot_from_graph(
     actor_id: int | None,
     graph: Mapping[str, Any] | None,
@@ -175,7 +178,10 @@ def _empty_local_skill_context() -> dict[str, Any]:
 
 
 def capture_skill_context_maximum(
-    app: Any, workspace_id: str | None = None
+    app: Any,
+    workspace_id: str | None = None,
+    *,
+    _plugin_service: Any = _UNSET_PLUGIN_SERVICE,
 ) -> dict[str, Any]:
     """Capture the currently eligible local-skill catalog synchronously."""
     scope = getattr(app, "skills_scope_service", None)
@@ -199,7 +205,11 @@ def capture_skill_context_maximum(
                     str(summary.get("name", ""))
                 )
             (blocked if summary.get("trust_blocked") else available).append(summary)
-        plugin_service = getattr(local, "plugin_service", None)
+        plugin_service = (
+            getattr(local, "plugin_service", None)
+            if _plugin_service is _UNSET_PLUGIN_SERVICE
+            else _plugin_service
+        )
         if plugin_service is not None:
             plugin_context = plugin_service.capture_maximum(workspace_id)
             names = {item.get("name") for item in available + blocked}
@@ -275,6 +285,8 @@ def capture_console_turn_configuration(
     tool_policy_profile_id: str | None,
     persona_policy_rules: Sequence[Mapping[str, Any]] | None,
     mcp_definition_maximum: Mapping[str, str] | None = None,
+    _require_current=None,
+    _plugin_service: Any = _UNSET_PLUGIN_SERVICE,
 ) -> ConsoleTurnConfigurationSnapshot:
     """Capture common domain state using the adapters' explicit selected values.
 
@@ -298,10 +310,19 @@ def capture_console_turn_configuration(
         The complete detached snapshot. It carries no execution permission and
         retains no screen, controller or adapter callback.
     """
+
+    def checked(callback, *args, **kwargs):
+        value = callback(*args, **kwargs)
+        if _require_current is not None:
+            _require_current()
+        return value
+
     session = next(item for item in store.sessions() if item.id == session_id)
     held_scope = session.rag_scope_holder.scope
     workspace_id = store.session_workspace_id(session_id)
-    roots, aliases, skipped = capture_change_review_admission(app, workspace_id)
+    roots, aliases, skipped = checked(
+        capture_change_review_admission, app, workspace_id
+    )
     model = provider_selection.explicit_model or provider_selection.configured_model
     if mcp_definition_maximum is None:
         mcp_definition_maximum = capture_mcp_definition_maximum(app)
@@ -339,9 +360,20 @@ def capture_console_turn_configuration(
             conversations_allowed=held_scope is None,
         ),
         project_authority=project_authority,
-        character_authority=capture_character_authority(session, character_repository),
-        prompt_transform_inputs=capture_prompt_transform_inputs(app, session),
-        skill_context_maximum=capture_skill_context_maximum(app, skill_workspace_id),
+        character_authority=checked(
+            capture_character_authority, session, character_repository
+        ),
+        prompt_transform_inputs=checked(capture_prompt_transform_inputs, app, session),
+        skill_context_maximum=checked(
+            capture_skill_context_maximum,
+            app,
+            skill_workspace_id,
+            **(
+                {}
+                if _plugin_service is _UNSET_PLUGIN_SERVICE
+                else {"_plugin_service": _plugin_service}
+            ),
+        ),
         mcp_tool_maximum=mcp_definition_maximum,
         mcp_definition_maximum=mcp_definition_maximum,
         capabilities={

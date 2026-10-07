@@ -1154,7 +1154,7 @@ class ConsoleRuntime:
         self._run_hooks_engine: Any = _UNSET
         self._run_hooks_lock = RLock()
         self._hook_permissions: HookPermissions | None = None
-        self._hook_preparation_reads: set[Any] = set()
+        self._preparation_reads: set[Any] = set()
         # V2 sessions share the app loop and budgets, including viewless work.
         self._hooks_v2_budget_owner: Any = None
         self._hooks_v2_engines: dict[str, Any] = {}
@@ -1892,9 +1892,9 @@ class ConsoleRuntime:
         if value is not None:
             from .console_hook_preparation import observe_hook_preparation_reads
 
-            reads = getattr(value, "_hook_preparation_reads", None)
+            reads = getattr(value, "_preparation_reads", None)
             if reads is not None:
-                observe_hook_preparation_reads(reads, self._hook_preparation_reads)
+                observe_hook_preparation_reads(reads, self._preparation_reads)
             value._hooks_v2_runtime = self
         if value is not None and self._app is not None:
             value.app = self._app
@@ -3403,14 +3403,14 @@ class ConsoleRuntime:
 
         current_callback = callback
         observers = ()
-        controller_reads = getattr(source.controller, "_hook_preparation_reads", None)
+        controller_reads = getattr(source.controller, "_preparation_reads", None)
         if controller_reads is not None:
             observers = (controller_reads,)
         return await run_hook_preparation_read(
             current_callback,
             creator=self,
             session_id=source.session_id,
-            reads=self._hook_preparation_reads,
+            reads=self._preparation_reads,
             observers=observers,
             require_current=lambda: self._require_hook_preparation_source(source),
             source=source,
@@ -3419,9 +3419,7 @@ class ConsoleRuntime:
     async def _drain_hook_preparation_reads(self, session_id=None):
         from .console_hook_preparation import drain_hook_preparation_reads
 
-        return await drain_hook_preparation_reads(
-            self._hook_preparation_reads, session_id
-        )
+        return await drain_hook_preparation_reads(self._preparation_reads, session_id)
 
     def _hooks_v2_context_key(self, session_id: str):
         """Capture host workspace/binding authority, without prompt bodies."""
@@ -6194,7 +6192,7 @@ class ConsoleRuntime:
 
                 if not native_cancel_requested and (
                     (not callable(native_tasks) or not native_tasks())
-                    and not hook_preparation_reads_for(self._hook_preparation_reads)
+                    and not hook_preparation_reads_for(self._preparation_reads)
                 ):
                     raise
                 native_cancel_requested = True

@@ -279,12 +279,12 @@ async def test_replaced_controller_cannot_detach_original_native_read_from_dispo
             assert await _until(probe.entered.is_set, 5)
             probe.assert_live()
             (read,) = hook_preparation_reads_for(
-                state.runtime._hook_preparation_reads, state.session.id
+                state.runtime._preparation_reads, state.session.id
             )
-            assert read in state.controller._hook_preparation_reads
+            assert read in state.controller._preparation_reads
             assert read.task is record.task and not read.retired.done()
             state.runtime.set_chat_controller(replacement)
-            assert read in state.runtime._hook_preparation_reads
+            assert read in state.runtime._preparation_reads
             closing = asyncio.create_task(state.runtime.dispose())
             state.tasks.append(closing)
             assert CONSOLE_RUNTIME_SHUTDOWN_GRACE_SECONDS == 3.0
@@ -307,7 +307,7 @@ async def test_replaced_controller_cannot_detach_original_native_read_from_dispo
             await state.controller.shutdown()
     probe.assert_retired()
     assert read.retired.done() and not read.retired.cancelled()
-    assert hook_preparation_reads_for(state.runtime._hook_preparation_reads) == ()
+    assert hook_preparation_reads_for(state.runtime._preparation_reads) == ()
     assert state.gateway.user_turns == []
     assert not state.runtime.has_custodied_turns(state.session.id)
 
@@ -556,7 +556,7 @@ async def test_original_workspace_context_outlives_dispose_cancelled_during_grac
                 ), "original workspace reader not reached"
                 probe.assert_live()
                 (read,) = hook_preparation_reads_for(
-                    state.runtime._hook_preparation_reads, state.session.id
+                    state.runtime._preparation_reads, state.session.id
                 )
                 assert read.task is task and not read.retired.done()
                 closing = asyncio.create_task(state.runtime.dispose())
@@ -584,7 +584,7 @@ async def test_original_workspace_context_outlives_dispose_cancelled_during_grac
                     await asyncio.gather(closing, return_exceptions=True)
                 assert await _until(probe.retired, 5)
         assert read.retired.done() and not read.retired.cancelled()
-        assert hook_preparation_reads_for(state.runtime._hook_preparation_reads) == ()
+        assert hook_preparation_reads_for(state.runtime._preparation_reads) == ()
         assert state.gateway.user_turns == []
         assert not state.runtime.has_custodied_turns(state.session.id)
     finally:
@@ -625,7 +625,7 @@ async def test_completed_native_read_does_not_extend_unrelated_custom_submit_tai
             task = record.task
             assert await _until(probe.entered.is_set, 5)
             probe.assert_live()
-            (read,) = hook_preparation_reads_for(state.runtime._hook_preparation_reads)
+            (read,) = hook_preparation_reads_for(state.runtime._preparation_reads)
             probe.release.set()
             await asyncio.wait_for(tail_entered.wait(), 5)
             assert await _until(probe.retired, 5)
@@ -633,7 +633,7 @@ async def test_completed_native_read_does_not_extend_unrelated_custom_submit_tai
             assert not task.done()
             assert (
                 await asyncio.wait_for(
-                    drain_hook_preparation_reads(state.runtime._hook_preparation_reads),
+                    drain_hook_preparation_reads(state.runtime._preparation_reads),
                     0.5,
                 )
                 is False
@@ -683,20 +683,18 @@ async def test_attaching_then_replacing_standalone_creator_preserves_native_reti
             state.tasks.append(task)
             assert await _until(probe.entered.is_set, 5)
             probe.assert_live()
-            (read,) = hook_preparation_reads_for(standalone._hook_preparation_reads)
+            (read,) = hook_preparation_reads_for(standalone._preparation_reads)
             assert read.task is task and read.session_id is None
             assert not state.runtime.has_custodied_turns()
-            assert (
-                hook_preparation_reads_for(state.runtime._hook_preparation_reads) == ()
-            )
+            assert hook_preparation_reads_for(state.runtime._preparation_reads) == ()
             state.runtime.set_chat_controller(standalone)
-            assert hook_preparation_reads_for(
-                state.runtime._hook_preparation_reads
-            ) == (read,)
+            assert hook_preparation_reads_for(state.runtime._preparation_reads) == (
+                read,
+            )
             state.runtime.set_chat_controller(replacement)
-            assert hook_preparation_reads_for(
-                state.runtime._hook_preparation_reads
-            ) == (read,)
+            assert hook_preparation_reads_for(state.runtime._preparation_reads) == (
+                read,
+            )
             closing = asyncio.create_task(state.runtime.dispose())
             state.tasks.append(closing)
             await asyncio.sleep(CONSOLE_RUNTIME_SHUTDOWN_GRACE_SECONDS + 0.05)
@@ -707,8 +705,8 @@ async def test_attaching_then_replacing_standalone_creator_preserves_native_reti
                 probe.assert_live()
                 assert not task.done() and not closing.done()
                 assert not read.retired.done()
-                assert read in standalone._hook_preparation_reads
-                assert read in state.runtime._hook_preparation_reads
+                assert read in standalone._preparation_reads
+                assert read in state.runtime._preparation_reads
                 assert not state.runtime.has_custodied_turns()
         finally:
             probe.release.set()
@@ -722,8 +720,8 @@ async def test_attaching_then_replacing_standalone_creator_preserves_native_reti
             await state.controller.shutdown()
     probe.assert_retired()
     assert read.retired.done() and not read.retired.cancelled()
-    assert hook_preparation_reads_for(standalone._hook_preparation_reads) == ()
-    assert hook_preparation_reads_for(state.runtime._hook_preparation_reads) == ()
+    assert hook_preparation_reads_for(standalone._preparation_reads) == ()
+    assert hook_preparation_reads_for(state.runtime._preparation_reads) == ()
     assert state.gateway.user_turns == []
 
 
@@ -736,13 +734,13 @@ async def test_cold_runtime_hook_preparation_needs_no_controller_or_store(hook_f
         assert runtime._chat_controller is None and runtime._chat_store is None
         assert await runtime.prepare_hooks_v2("standalone-session") is None
         assert runtime._chat_controller is None and runtime._chat_store is None
-        assert hook_preparation_reads_for(runtime._hook_preparation_reads) == ()
+        assert hook_preparation_reads_for(runtime._preparation_reads) == ()
         assert runtime.ensure_hook_permissions().snapshot().ready
         assert runtime.get_hooks_v2("standalone-session") is None
     finally:
         await runtime.dispose()
     assert runtime._disposed
-    assert hook_preparation_reads_for(runtime._hook_preparation_reads) == ()
+    assert hook_preparation_reads_for(runtime._preparation_reads) == ()
 
 
 @pytest.mark.parametrize("replacement", ["app", "context_provider"])

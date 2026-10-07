@@ -2896,3 +2896,11 @@ _SENSITIVE_INPUT_ORIGINALS = (
         for name in ("default_local_skills_store_dir",)
     ),
 )
+
+
+# Definition-time identity of the getter bypassed only by owned Console capture.
+_STOCK_PLUGIN_SERVICE_PROPERTY = (
+    LocalSkillsService.plugin_service,
+    LocalSkillsService.plugin_service.fget,
+    LocalSkillsService.plugin_service.fget.__code__,
+)

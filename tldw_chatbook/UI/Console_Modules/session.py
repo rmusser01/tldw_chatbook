@@ -4394,6 +4394,107 @@ class ConsoleSessionController:
             "assistant_default_notice": startup.notice,
         }
 
+    def _build_console_turn_capture_selection(self, session_id: str, *, scratch_owner):
+        """Select detached view values only for the qualified stock capture route."""
+        from types import MethodType
+        from ...Chat.console_configuration_preparation import (
+            ConsoleTurnCaptureSelection,
+        )
+        from ..Console_Modules.wiring import _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+        from ..Screens.settings_library_rag_defaults import load_direct_library_tools
+
+        scratch = self._scratch_snapshot_provider
+        scratch_function, scratch_code = _STOCK_CONSOLE_SCRATCH_SNAPSHOT
+        if (
+            type(scratch) is not partial
+            or scratch.func is not scratch_function
+            or scratch_function.__code__ is not scratch_code
+            or len(scratch.args) != 1
+            or scratch.keywords
+        ):
+            return None
+        for name, original, code in _CONSOLE_CAPTURE_POLICY_ADAPTERS:
+            callback = getattr(self, name, None)
+            if not (
+                isinstance(callback, MethodType)
+                and callback.__self__ is self
+                and callback.__func__ is original
+                and original.__code__ is code
+            ):
+                return None
+        screen = scratch.args[0]
+        if (
+            getattr(screen, "_session", None) is not self
+            or screen.app_instance is not self.app_instance
+        ):
+            return None
+        runtime = screen._console_runtime()
+        if runtime._scratch_spaces is not scratch_owner:
+            return None
+        app_config = self._provider_readiness_app_config()
+        selection = self._build_provider_selection_fn(session_id)
+        console_config = (
+            app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
+        )
+        if not isinstance(console_config, Mapping):
+            console_config = {}
+        store = self._ensure_console_chat_store()
+        session = next((row for row in store.sessions() if row.id == session_id), None)
+        if session is None:
+            raise KeyError(session_id)
+        agent_runtime_enabled = coerce_bool_setting(
+            console_config.get("agent_runtime", True), True
+        )
+        return ConsoleTurnCaptureSelection(
+            provider_selection=selection,
+            presentation_context=store.presentation_context(
+                session_id, _console_global_user_display_name(app_config)
+            ),
+            rag_defaults={
+                "source_types": tuple(self._rag_source_types_accessor()),
+                "top_k": self._rag_top_k_accessor(),
+            },
+            tool_configuration={
+                "session_ephemeral": bool(session.ephemeral),
+                "agent_runtime_enabled": agent_runtime_enabled,
+                "native_tool_calls_enabled": coerce_bool_setting(
+                    console_config.get("native_tool_calls", True), True
+                ),
+                "local_tools_enabled": coerce_bool_setting(
+                    console_config.get("local_tools_enabled", False), False
+                ),
+                "direct_library_tools": load_direct_library_tools(app_config),
+                "project_instructions_startup_max_bytes": coerce_int_setting(
+                    console_config.get(
+                        "project_instructions_startup_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                "project_instructions_nested_max_bytes": coerce_int_setting(
+                    console_config.get(
+                        "project_instructions_nested_max_bytes",
+                        DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    ),
+                    DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    minimum=MIN_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                    maximum=MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
+                ),
+                "exchange_capture_enabled": coerce_bool_setting(
+                    console_config.get("exchange_capture", True), True
+                ),
+            },
+            skill_workspace_id=None,
+            project_bindings_eligible=bool(
+                agent_runtime_enabled
+                and not store.session_one_shot_prefill(session_id)
+                and session.assistant_kind != "character"
+            ),
+            agent_runtime_enabled=agent_runtime_enabled,
+        )
+
     def _build_console_turn_execution_context(
         self,
         session_id: str,
@@ -6598,4 +6699,21 @@ class ConsoleSessionController:
 # Preserve the concrete builder contract before any custom class replacement.
 _CONSOLE_TURN_CONTEXT_BUILDER = (
     ConsoleSessionController._build_console_turn_execution_context
+)
+
+
+_CONSOLE_TURN_CAPTURE_SELECTOR = (
+    ConsoleSessionController._build_console_turn_capture_selection,
+    ConsoleSessionController._build_console_turn_capture_selection.__code__,
+)
+_CONSOLE_CAPTURE_POLICY_ADAPTERS = tuple(
+    (
+        name,
+        getattr(ConsoleSessionController, name),
+        getattr(ConsoleSessionController, name).__code__,
+    )
+    for name in (
+        "_resolve_turn_tool_policy_profile_id",
+        "_resolve_turn_persona_policy_rules",
+    )
 )
