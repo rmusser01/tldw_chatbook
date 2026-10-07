@@ -228,7 +228,9 @@ def test_v1_file_upgrades_in_place_to_v2(tmp_path):
         assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 1
     db.close()
 
-    # Reopening the v1 file must upgrade it in place via the additive DDL.
+    # Reopening the v1 file must upgrade it in place via the additive DDL
+    # (through every later additive bump -- v3 adds the 'guardian' profile
+    # source CHECK, so a v1 file lands on version 3 as well).
     reopened = DreamsDB(path, "test-client")
     with reopened.connection() as conn:
         tables = {
@@ -248,7 +250,9 @@ def test_v1_file_upgrades_in_place_to_v2(tmp_path):
         # Task 6 ledger item: the per-story reads Task 5 added
         # (``find_tracked_by_story`` + the badge) get their pinned index.
         assert "idx_dream_tracked_origin_story" in indexes
-        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 2
+        assert conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0] == DreamsDB._CURRENT_SCHEMA_VERSION
     # The upgraded file is fully usable: track CRUD works and v1 data survived.
     item_id = reopened.create_tracked_item(
         mechanism="page", intent="deal", cadence_seconds=60
@@ -257,6 +261,115 @@ def test_v1_file_upgrades_in_place_to_v2(tmp_path):
     assert reopened.count_active_tracked() == 1
     assert reopened.get_collection_by_date("2026-09-22")["status"] == "generating"
     reopened.close()
+
+
+# --- Schema v3 (Guardian x Dreams, ADR-204 contract 3) -------------------------
+
+
+_PROFILE_V2_DDL = """
+CREATE TABLE dream_interest_profile (
+    id INTEGER PRIMARY KEY,
+    facet TEXT NOT NULL CHECK(facet IN ('topic', 'goal')),
+    text TEXT NOT NULL,
+    weight REAL NOT NULL DEFAULT 1.0,
+    searchable INTEGER NOT NULL DEFAULT 1,
+    source TEXT NOT NULL
+        CHECK(source IN ('user', 'seed', 'personal_context', 'notes', 'media')),
+    query_angle TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_boosted_at TEXT,
+    UNIQUE(facet, text)
+)
+"""
+
+
+def _rewind_to_v2(db) -> None:
+    """Rewind an open v3 database file to a faithful v2 state.
+
+    v3 changes a CHECK constraint (``source`` gains ``'guardian'``), and
+    SQLite CHECKs are baked into the table DDL, so the faithful rewind
+    rebuilds ``dream_interest_profile`` with the v2 shape. A real v2 writer
+    could never have stored ``source='guardian'`` rows (the CHECK refuses
+    them), so such rows are dropped, not carried. Re-stamping the version
+    row to 2 completes the old-file shape.
+    """
+    with db.transaction() as conn:
+        conn.execute("DROP TABLE IF EXISTS dream_interest_profile_v2")
+        conn.execute(
+            _PROFILE_V2_DDL.replace(
+                "dream_interest_profile", "dream_interest_profile_v2", 1
+            )
+        )
+        conn.execute(
+            "INSERT INTO dream_interest_profile_v2"
+            " SELECT * FROM dream_interest_profile"
+            " WHERE source != 'guardian'"
+        )
+        conn.execute("DROP TABLE dream_interest_profile")
+        conn.execute(
+            "ALTER TABLE dream_interest_profile_v2"
+            " RENAME TO dream_interest_profile"
+        )
+        conn.execute("DELETE FROM schema_version")
+        conn.execute("INSERT INTO schema_version (version) VALUES (2)")
+
+
+def test_v2_file_upgrades_in_place_to_v3_and_accepts_guardian_source(tmp_path):
+    path = tmp_path / "dreams-v2.sqlite"
+    db = DreamsDB(path, "test-client")
+    db.upsert_profile_entry(
+        "topic", "rust tui", weight=0.8, searchable=1, source="notes"
+    )
+    _rewind_to_v2(db)
+    with db.connection() as conn:
+        assert conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0] == 2
+        # The v2 CHECK refuses the guardian source on the rewound file.
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO dream_interest_profile"
+                " (facet, text, weight, searchable, source, created_at,"
+                "  updated_at) VALUES ('topic', 'x', 0.5, 1, 'guardian',"
+                " '2026-09-29T00:00:00Z', '2026-09-29T00:00:00Z')"
+            )
+    db.close()
+
+    # Reopening the v2 file must upgrade it in place: version stamps to 3
+    # and the rebuilt CHECK accepts 'guardian' through the public writer.
+    reopened = DreamsDB(path, "test-client")
+    assert reopened._CURRENT_SCHEMA_VERSION == 3
+    reopened.upsert_profile_entry(
+        "topic", "late_night_work", weight=0.75, searchable=1, source="guardian"
+    )
+    with reopened.connection() as conn:
+        assert conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0] == 3
+    by_text = {row["text"]: row for row in reopened.list_profile()}
+    assert by_text["rust tui"]["source"] == "notes", "v2 data survived"
+    assert by_text["late_night_work"]["source"] == "guardian"
+    reopened.close()
+
+
+def test_fresh_v3_build_never_runs_the_profile_rebuild_migration(tmp_path):
+    """A fresh build creates the new-CHECK table directly; the v2 -> v3
+    rebuild migration must be a no-op there (pinned by table id continuity:
+    the rebuild would have replaced the table object)."""
+    db = DreamsDB(tmp_path / "dreams-fresh.sqlite", "test-client")
+    db.upsert_profile_entry(
+        "topic", "seeded", weight=1.0, searchable=1, source="seed"
+    )
+    with db.connection() as conn:
+        (profile_id,) = conn.execute(
+            "SELECT id FROM dream_interest_profile"
+        ).fetchone()
+        assert conn.execute(
+            "SELECT MAX(version) FROM schema_version"
+        ).fetchone()[0] == 3
+    assert profile_id == 1, "the seeded row keeps the first autoincrement id"
+    db.close()
 
 
 # --- Qodo review on PR #2890 -----------------------------------------------------

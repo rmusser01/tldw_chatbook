@@ -17,8 +17,12 @@ from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProj
 # dreams phase 1: typing only -- importing the Dreams projection at module
 # level would put its (small, but nonzero) import chain on every boot's
 # `_ui_ready` module census for queue consumers that never wire Dreams.
+# guardian task 2: same guard, same reason, for the Guardian projection.
 if TYPE_CHECKING:
     from tldw_chatbook.Scheduling.services.dreams_projection import DreamsProjection
+    from tldw_chatbook.Scheduling.services.guardian_projection import (
+        GuardianProjection,
+    )
 
 _FUTURE_SORT_KEY = "9999-12-31T23:59:59+00:00"
 _DEFAULT_OWNER_ID = "local"
@@ -52,11 +56,13 @@ class PriorityQueue:
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
         dreams_projection: "DreamsProjection | None" = None,  # dreams phase 1
+        guardian_projection: "GuardianProjection | None" = None,  # guardian task 2
     ) -> None:
         self.db = db
         self.watchlist_projection = watchlist_projection
         self.briefing_projection = briefing_projection
         self.dreams_projection = dreams_projection
+        self.guardian_projection = guardian_projection
         self._items: list[dict[str, Any]] = []
 
     @staticmethod
@@ -119,6 +125,7 @@ class PriorityQueue:
         self._append_projected(self.watchlist_projection)
         self._append_projected(self.briefing_projection)
         self._append_projected(self.dreams_projection)  # dreams phase 1
+        self._append_projected(self.guardian_projection)  # guardian task 2
 
         self._items.sort(key=self._sort_key)
 

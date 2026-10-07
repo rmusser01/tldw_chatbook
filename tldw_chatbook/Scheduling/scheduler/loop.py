@@ -35,8 +35,12 @@ from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProj
 
 # dreams phase 1: typing only -- see the matching guard in `queue.py`
 # (module-level import would put the Dreams chain on every boot census).
+# guardian task 2: same guard for the Guardian projection.
 if TYPE_CHECKING:
     from tldw_chatbook.Scheduling.services.dreams_projection import DreamsProjection
+    from tldw_chatbook.Scheduling.services.guardian_projection import (
+        GuardianProjection,
+    )
 
 Handler = Callable[[dict[str, Any]], Coroutine[Any, Any, None]]
 
@@ -101,6 +105,7 @@ class SchedulerLoop:
         watchlist_projection: WatchlistProjection | None = None,
         briefing_projection: BriefingProjection | None = None,
         dreams_projection: "DreamsProjection | None" = None,  # dreams phase 1
+        guardian_projection: "GuardianProjection | None" = None,  # guardian task 2
         queue_reload_interval_ticks: int = 60,
         expected_unhandled_types: frozenset[str] = frozenset(),
         missed_fire_grace_seconds: float = MISSED_FIRE_GRACE_SECONDS,
@@ -194,6 +199,7 @@ class SchedulerLoop:
             watchlist_projection=watchlist_projection,
             briefing_projection=briefing_projection,
             dreams_projection=dreams_projection,  # dreams phase 1
+            guardian_projection=guardian_projection,  # guardian task 2
         )
 
     @contextmanager

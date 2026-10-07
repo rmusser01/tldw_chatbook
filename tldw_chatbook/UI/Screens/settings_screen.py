@@ -7,6 +7,7 @@ legacy Chat window are deprecated parallels; new settings belong here.
 
 import asyncio
 import copy
+import json
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
@@ -212,6 +213,7 @@ from ...LLM_Provider_Catalog.model_catalog_settings import (
     load_model_catalog_settings,
 )
 from ...Dreams.settings import dreams_setting
+from ...Guardian.settings import guardian_setting
 from ...LLM_Calls.qwencloud import normalize_qwencloud_api_mode
 from ...TTS.adapter_types import TTSNativeCapabilityObservation
 from ...Utils.input_validation import (
@@ -233,6 +235,7 @@ from ...Utils.console_background_effects import (
     normalize_console_background_effects,
 )
 from ...Utils.path_validation import validate_path_simple
+from ...Utils.timestamps import parse_utc, utc_now, utc_now_iso
 from ..Navigation.base_app_screen import BaseAppScreen
 from .provider_model_resolution import (
     EffectiveProviderModel,
@@ -1511,6 +1514,62 @@ _DREAMS_READ_ONLY_KEYS: tuple[str, ...] = (
     "track_min_check_interval_hours",
     "track_quiet_retire_count",
 )
+# Guardian (task-33200, ADR-204): option tables for the rule-editor
+# selects, mirroring the schema CHECKs in Guardian_DB._SCHEMA_DDL so the
+# editor can never offer a value the store would refuse. Textual Select
+# options are (label, value) pairs.
+_GUARDIAN_ACTION_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("notify - surface a notice", "notify"),
+    ("redact - mask the match before sending", "redact"),
+    ("block - hold the send", "block"),
+)
+_GUARDIAN_SEVERITY_OPTIONS: tuple[tuple[str, str], ...] = tuple(
+    (value, value) for value in ("info", "warning", "critical")
+)
+_GUARDIAN_FREQUENCY_OPTIONS: tuple[tuple[str, str], ...] = tuple(
+    (value, value)
+    for value in (
+        "every_message",
+        "once_per_conversation",
+        "once_per_session",
+        "once_per_day",
+    )
+)
+_GUARDIAN_DISPLAY_OPTIONS: tuple[tuple[str, str], ...] = tuple(
+    (value, value)
+    for value in ("inline_banner", "post_visit_summary", "silent_log")
+)
+#: [guardian] keys this section displays read-only (final-review T3-1):
+#: the trend thresholds and retention the section banner promises stay
+#: editable in TOML only (v1) -- everything in GUARDIAN_DEFAULTS except
+#: the one key the section owns: enabled.
+_GUARDIAN_READ_ONLY_KEYS: tuple[str, ...] = (
+    "fixation_share_threshold",
+    "fixation_window_days",
+    "fixation_min_hits",
+    "doomloop_hits_per_day",
+    "alert_retention_days",
+)
+
+
+def _guardian_cooldown_minutes_left(until_iso: str) -> int:
+    """Whole minutes left on a cooldown, floored at 1 while it binds.
+
+    Shared by the section's gate copy, both cooldown refusals (the
+    feature toggle and the rule-deactivation one inside the editor), and
+    the bypass log line -- one formatter so every surface shows the same
+    remaining time. Unparseable or past values read as 0.
+    """
+    try:
+        until = parse_utc(str(until_iso))
+    except (TypeError, ValueError):
+        return 0
+    remaining = (until - utc_now()).total_seconds()
+    if remaining <= 0:
+        return 0
+    return max(1, math.ceil(remaining / 60))
+
+
 # THEME and SPLASH_SCREEN are intentionally excluded; they manage their own
 # persistence models (theme files and immediate splash config writes).
 GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
@@ -1726,6 +1785,39 @@ SETTINGS_DOMAIN_CATEGORY_CONTRACTS = (
             "Use this page to enable Dreams and shape the interest profile; "
             "press g on any Dreams story for goals, and edit remaining [dreams] "
             "keys in config.toml."
+        ),
+    ),
+    SettingsDomainCategoryContract(
+        category=SettingsCategoryId.GUARDIAN,
+        title="Guardian",
+        owner_destination="Settings (this page)",
+        source_of_truth=(
+            "config.toml [guardian] (enabled, retention, trend thresholds)",
+            "the Guardian store (rules, alert digests, escalation state)",
+            "the Console dispatch-seam checker and the daily trend task",
+        ),
+        settings_can_mutate=True,
+        rows=(
+            (
+                "Awareness rules",
+                "this page owns the enable toggle and the full rules editor "
+                "(pattern, action, escalation, crisis flag)",
+            ),
+            (
+                "Notices",
+                "the Console surfaces inline notices, redactions, and the "
+                "post-visit summary; crisis rules always notify",
+            ),
+            (
+                "Dreams gate",
+                "only rules opted in with feeds_discovery feed Dreams "
+                "aggregates; crisis rules never can",
+            ),
+        ),
+        follow_up=(
+            "Use this page to enable Guardian and edit your awareness "
+            "rules; trend thresholds and retention stay editable in "
+            "config.toml ([guardian])."
         ),
     ),
     SettingsDomainCategoryContract(
@@ -2915,6 +3007,406 @@ def _settings_ssh_advisory_probe(
             _record_unreached(f"probe failed ({code})")
 
 
+class GuardianRuleEditModal(ModalScreen[None]):
+    """Create, edit, or delete ONE Guardian awareness rule; dismisses None.
+
+    Follows the DreamsGoalsModal idioms (``artifacts_dreams_goals_modal``):
+    a small ``DEFAULT_CSS`` of existing theme variables only (ADR-150:
+    nothing new to govern), single-row instant SQLite writes made directly
+    in the action handlers, failures surfaced as notices in the modal's
+    own status line -- never crashes -- and ``on_changed()`` fired after
+    every mutating action so the section re-reads its rows.
+
+    Crisis caps (ADR-204 contract 7) are pinned in the UI -- loading or
+    checking ``is_crisis`` fixes the action selector to ``notify`` and
+    disables the ``feeds_discovery`` checkbox with explanatory copy -- but
+    the write boundary itself stays in ``GuardianDB.upsert_rule``: this
+    modal passes the fields through verbatim and surfaces any
+    ``GuardianRuleConflict`` rejection as the status line, so a
+    programmatic or raced write can never silently coerce past the store.
+
+    Anti-impulsive-disable (contract 6): saving a DEACTIVATION of a rule
+    whose cooldown is still active is refused with the remaining minutes.
+    """
+
+    DEFAULT_CSS = """
+    GuardianRuleEditModal { align: center middle; background: $background 70%; }
+    GuardianRuleEditModal > VerticalScroll {
+        width: 76; max-width: 96%; height: auto; max-height: 90%;
+        background: $surface; border: solid $primary; padding: 1 2;
+    }
+    GuardianRuleEditModal #grm-crisis-copy { color: $warning; margin-top: 1; }
+    GuardianRuleEditModal #grm-status { color: $warning; margin-top: 1; }
+    GuardianRuleEditModal #grm-buttons { margin-top: 1; height: auto; }
+    """
+
+    def __init__(
+        self,
+        *,
+        db_getter: Callable[[], Any],
+        on_changed: Callable[[], None],
+        rule_id: int | None = None,
+    ) -> None:
+        super().__init__()
+        self._db_getter = db_getter
+        self._on_changed = on_changed
+        self._rule_id = int(rule_id) if rule_id is not None else None
+
+    # --- Compose -----------------------------------------------------------
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="grm-dialog"):
+            yield Static("", id="grm-title")
+            yield Input(placeholder="Rule name", id="grm-name")
+            yield Input(
+                placeholder="topic key (e.g. late_night_work)", id="grm-topic"
+            )
+            yield Input(placeholder="Regex pattern to watch for", id="grm-pattern")
+            yield Input(
+                placeholder="Except patterns (comma-separated, optional)",
+                id="grm-excepts",
+            )
+            yield Select(
+                _GUARDIAN_ACTION_OPTIONS, allow_blank=False,
+                value="notify", id="grm-action",
+            )
+            yield Select(
+                _GUARDIAN_SEVERITY_OPTIONS, allow_blank=False,
+                value="info", id="grm-severity",
+            )
+            yield Select(
+                _GUARDIAN_FREQUENCY_OPTIONS, allow_blank=False,
+                value="every_message", id="grm-frequency",
+            )
+            yield Select(
+                _GUARDIAN_DISPLAY_OPTIONS, allow_blank=False,
+                value="inline_banner", id="grm-display",
+            )
+            yield Input(
+                placeholder="Escalate after N hits this session (blank: never)",
+                id="grm-esc-session",
+            )
+            yield Input(
+                placeholder="Escalate after N hits in a window (blank: never)",
+                id="grm-esc-window",
+            )
+            yield Input(
+                placeholder="Escalation window in days (blank: 7)", id="grm-esc-days"
+            )
+            yield Input(
+                placeholder="Cooldown minutes after escalation (blank: none)",
+                id="grm-cooldown",
+            )
+            yield Checkbox("Rule enabled", True, id="grm-enabled")
+            yield Checkbox(
+                "Crisis rule (always notify, with crisis resources)", False,
+                id="grm-is-crisis",
+            )
+            yield Checkbox(
+                "Feed this topic to Dreams discovery (aggregate counts only)",
+                False, id="grm-feeds-discovery",
+            )
+            yield Static("", id="grm-crisis-copy")
+            yield Static("", id="grm-status")
+            with Horizontal(id="grm-buttons"):
+                yield Button("Save", id="grm-save", compact=True)
+                yield Button("Delete", id="grm-delete", compact=True)
+                yield Button("Close", id="grm-close", compact=True)
+
+    def on_mount(self) -> None:
+        self._load()
+
+    # --- State -------------------------------------------------------------
+
+    def edit_rule(self, rule_id: int) -> None:
+        """Point the editor at an existing rule and reload if mounted."""
+        self._rule_id = int(rule_id)
+        if self.is_running:
+            self._load()
+
+    def _db(self) -> Any:
+        try:
+            return self._db_getter()
+        except Exception:  # noqa: BLE001 - a broken getter is a missing DB
+            return None
+
+    def _load(self) -> None:
+        """Populate every field from the stored rule (defaults when new)."""
+        rule: dict | None = None
+        if self._rule_id is not None:
+            db = self._db()
+            if db is not None:
+                try:
+                    rule = db.get_rule(self._rule_id)
+                except Exception:  # noqa: BLE001 - a broken read keeps defaults
+                    rule = None
+            if rule is None:
+                self._rule_id = None
+        self.query_one("#grm-title", Static).update(
+            "Edit awareness rule" if rule is not None else "New awareness rule"
+        )
+        if rule is None:
+            # Insert defaults mirror _RULE_DEFAULTS in Guardian_DB.
+            self.query_one("#grm-name", Input).value = ""
+            self.query_one("#grm-topic", Input).value = ""
+            self.query_one("#grm-pattern", Input).value = ""
+            self.query_one("#grm-excepts", Input).value = ""
+            self.query_one("#grm-action", Select).value = "notify"
+            self.query_one("#grm-severity", Select).value = "info"
+            self.query_one("#grm-frequency", Select).value = "every_message"
+            self.query_one("#grm-display", Select).value = "inline_banner"
+            self.query_one("#grm-esc-session", Input).value = ""
+            self.query_one("#grm-esc-window", Input).value = ""
+            self.query_one("#grm-esc-days", Input).value = ""
+            self.query_one("#grm-cooldown", Input).value = ""
+            self.query_one("#grm-enabled", Checkbox).value = True
+            self.query_one("#grm-is-crisis", Checkbox).value = False
+            self.query_one("#grm-feeds-discovery", Checkbox).value = False
+            self._apply_crisis_pinning(False)
+            return
+        excepts = rule.get("except_patterns") or []
+        if not isinstance(excepts, str):
+            excepts = ", ".join(str(item) for item in excepts)
+        self.query_one("#grm-name", Input).value = str(rule.get("name") or "")
+        self.query_one("#grm-topic", Input).value = str(rule.get("topic") or "")
+        self.query_one("#grm-pattern", Input).value = str(rule.get("pattern") or "")
+        self.query_one("#grm-excepts", Input).value = str(excepts)
+        self.query_one("#grm-action", Select).value = str(rule.get("action") or "notify")
+        self.query_one("#grm-severity", Select).value = str(
+            rule.get("severity") or "info"
+        )
+        self.query_one("#grm-frequency", Select).value = str(
+            rule.get("notification_frequency") or "every_message"
+        )
+        self.query_one("#grm-display", Select).value = str(
+            rule.get("display_mode") or "inline_banner"
+        )
+        for field, node_id in (
+            ("escalate_session_threshold", "grm-esc-session"),
+            ("escalate_window_threshold", "grm-esc-window"),
+            ("escalate_window_days", "grm-esc-days"),
+            ("cooldown_minutes", "grm-cooldown"),
+        ):
+            value = rule.get(field)
+            self.query_one(f"#{node_id}", Input).value = (
+                "" if value is None else str(value)
+            )
+        self.query_one("#grm-enabled", Checkbox).value = bool(rule.get("enabled"))
+        is_crisis = bool(rule.get("is_crisis"))
+        self.query_one("#grm-is-crisis", Checkbox).value = is_crisis
+        self.query_one("#grm-feeds-discovery", Checkbox).value = bool(
+            rule.get("feeds_discovery")
+        )
+        self._apply_crisis_pinning(is_crisis)
+
+    def _apply_crisis_pinning(self, is_crisis: bool) -> None:
+        """Pin the crisis caps in the UI (contract 7) -- or unpin them.
+
+        The action selector is fixed to ``notify`` and the feeds checkbox
+        is unchecked and disabled, with the copy explaining why. The store
+        remains the boundary; this only keeps honest clicks honest.
+        """
+        action = self.query_one("#grm-action", Select)
+        feeds = self.query_one("#grm-feeds-discovery", Checkbox)
+        copy_row = self.query_one("#grm-crisis-copy", Static)
+        if is_crisis:
+            action.value = "notify"
+            action.disabled = True
+            feeds.value = False
+            feeds.disabled = True
+            copy_row.update(
+                "Crisis rules always surface notifications with crisis "
+                "resources; their action cannot change and they can never "
+                "feed Dreams discovery."
+            )
+        else:
+            action.disabled = False
+            feeds.disabled = False
+            copy_row.update("")
+
+    @on(Checkbox.Changed, "#grm-is-crisis")
+    def handle_crisis_toggled(self, event: Checkbox.Changed) -> None:
+        event.stop()
+        self._apply_crisis_pinning(bool(event.value))
+
+    # --- Cooldown refusal (contract 6) --------------------------------------
+
+    def _cooldown_until(self, rule_id: int) -> str | None:
+        """This rule's active cooldown-until value, or None."""
+        db = self._db()
+        if db is None:
+            return None
+        try:
+            with db.connection() as conn:
+                row = conn.execute(
+                    "SELECT cooldown_until FROM guardian_escalation_state"
+                    " WHERE rule_id = ? AND cooldown_until IS NOT NULL"
+                    " AND cooldown_until > ?",
+                    (rule_id, utc_now_iso()),
+                ).fetchone()
+        except Exception:  # noqa: BLE001 - a broken read never blocks the save
+            return None
+        return str(row[0]) if row is not None else None
+
+    # --- Actions ------------------------------------------------------------
+
+    def action_save(self) -> None:
+        """Write the form's fields through ``upsert_rule`` (or refuse)."""
+        db = self._db()
+        if db is None:
+            self._status("Guardian storage unavailable; nothing was saved.")
+            return
+        existing = None
+        if self._rule_id is not None:
+            try:
+                existing = db.get_rule(self._rule_id)
+            except Exception:  # noqa: BLE001 - a broken read blocks the write
+                existing = None
+        enabled = bool(self.query_one("#grm-enabled", Checkbox).value)
+        if (
+            existing is not None
+            and int(existing.get("enabled") or 0)
+            and not enabled
+        ):
+            until = self._cooldown_until(self._rule_id)
+            if until is not None:
+                # Contract 6: an escalated hold must survive an impulsive
+                # deactivation; the remaining minutes say when it lifts.
+                self._status(
+                    "This rule is in an escalated cooldown - deactivating "
+                    f"is available in {_guardian_cooldown_minutes_left(until)} "
+                    "min. You can still edit it, or disable Guardian as a "
+                    "whole in Advanced Config (logged as a bypass)."
+                )
+                return
+        fields: dict[str, object] = {
+            "name": self.query_one("#grm-name", Input).value.strip(),
+            "topic": self.query_one("#grm-topic", Input).value.strip(),
+            "pattern": self.query_one("#grm-pattern", Input).value.strip(),
+            "except_patterns": json.dumps(
+                [
+                    item.strip()
+                    for item in self.query_one("#grm-excepts", Input).value.split(",")
+                    if item.strip()
+                ]
+            ),
+            "action": str(self.query_one("#grm-action", Select).value),
+            "severity": str(self.query_one("#grm-severity", Select).value),
+            "notification_frequency": str(
+                self.query_one("#grm-frequency", Select).value
+            ),
+            "display_mode": str(self.query_one("#grm-display", Select).value),
+            "is_crisis": 1 if self.query_one("#grm-is-crisis", Checkbox).value else 0,
+            "feeds_discovery": (
+                1 if self.query_one("#grm-feeds-discovery", Checkbox).value else 0
+            ),
+            "enabled": 1 if enabled else 0,
+        }
+        for field, node_id in (
+            ("escalate_session_threshold", "grm-esc-session"),
+            ("escalate_window_threshold", "grm-esc-window"),
+            ("escalate_window_days", "grm-esc-days"),
+            ("cooldown_minutes", "grm-cooldown"),
+        ):
+            raw = self.query_one(f"#{node_id}", Input).value.strip()
+            if raw:
+                try:
+                    fields[field] = int(raw)  # type: ignore[assignment]
+                except ValueError:
+                    self._status(f"{field.replace('_', ' ')} must be a whole number.")
+                    return
+            else:
+                fields[field] = None
+        if not str(fields["name"]) or not str(fields["topic"]) or not str(
+            fields["pattern"]
+        ):
+            self._status("Name, topic, and pattern are required.")
+            return
+        # Lazy import (the screen pre-importer reaches this module at boot;
+        # Guardian's DB is only needed once a save is actually attempted).
+        from ...DB.Guardian_DB import GuardianRuleConflict
+
+        try:
+            rule_id = db.upsert_rule(
+                **({"id": self._rule_id} if self._rule_id is not None else {}),
+                **fields,
+            )
+        except GuardianRuleConflict as exc:
+            # The store's crisis caps are the boundary; the modal surfaces
+            # the typed rejection verbatim as the notice.
+            self._status(exc.reason)
+            return
+        except Exception as exc:  # noqa: BLE001 - a failed write is a notice
+            self._status(f"Could not save rule: {type(exc).__name__}")
+            return
+        self._rule_id = int(rule_id)
+        self._status("Saved.")
+        self._changed()
+
+    def action_delete(self) -> None:
+        """Delete the edited rule (history alerts stay; the rule goes)."""
+        if self._rule_id is None:
+            self._status("This rule is not stored yet; nothing to delete.")
+            return
+        db = self._db()
+        if db is None:
+            self._status("Guardian storage unavailable; nothing was deleted.")
+            return
+        until = self._cooldown_until(self._rule_id)
+        if until is not None:
+            # Contract 6 (final-review T3-2): deletion is gated exactly like
+            # deactivation -- refusal-total while the cooldown binds, so an
+            # escalated hold cannot be discarded on impulse. The rule can
+            # still be edited, and the config-file hatch (disable Guardian
+            # as a whole, logged as a bypass) remains the escape route.
+            self._status(
+                "This rule is in an escalated cooldown - deleting is "
+                f"available in {_guardian_cooldown_minutes_left(until)} "
+                "min. You can still edit it, or disable Guardian as a "
+                "whole in Advanced Config (logged as a bypass)."
+            )
+            return
+        try:
+            db.delete_rule(self._rule_id)
+        except Exception as exc:  # noqa: BLE001 - a failed write is a notice
+            self._status(f"Could not delete rule: {type(exc).__name__}")
+            return
+        self._rule_id = None
+        self._changed()
+        self.dismiss(None)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#grm-save")
+    def handle_save(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_save()
+
+    @on(Button.Pressed, "#grm-delete")
+    def handle_delete(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_delete()
+
+    @on(Button.Pressed, "#grm-close")
+    def handle_close(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.action_close()
+
+    # --- Helpers -------------------------------------------------------------
+
+    def _status(self, text: str) -> None:
+        self.query_one("#grm-status", Static).update(text)
+
+    def _changed(self) -> None:
+        try:
+            self._on_changed()
+        except Exception as exc:  # noqa: BLE001 - a broken refresh must not crash
+            logger.warning(
+                "Guardian rule editor on_changed failed: %s", type(exc).__name__
+            )
+
+
 class SettingsScreen(BaseAppScreen):
     """Global preferences, appearance, storage, and app behavior."""
 
@@ -3545,6 +4037,13 @@ class SettingsScreen(BaseAppScreen):
         #: #settings-dreams-result across the pane recomposes its own actions
         #: trigger (mirrors the workspace folder result retention idiom).
         self._settings_dreams_result = ""
+        #: task-33200 (Guardian, ADR-204): latest section action outcome,
+        #: same retention idiom as the Dreams result row.
+        self._settings_guardian_result = ""
+        #: The cooldown-until value whose config-disable bypass was already
+        #: logged (contract 6: one ``guardian_cooldown_bypassed`` record per
+        #: distinct cooldown event, detected at section render).
+        self._guardian_bypass_logged_until: str | None = None
         #: Task 20 (SSH bindings): the latest SSH-editor outcome, same
         #: ``(workspace_id, binding_id | None, text)`` shape as the folder
         #: result so the pane recompose keeps it beside its action.
@@ -4644,6 +5143,12 @@ class SettingsScreen(BaseAppScreen):
                 "Immediate actions",
             ),
             SettingsCategorySummary(
+                SettingsCategoryId.GUARDIAN,
+                "Guardian",
+                "Enable local self-monitoring awareness rules and trend notices.",
+                "Immediate actions",
+            ),
+            SettingsCategorySummary(
                 SettingsCategoryId.WORKFLOWS,
                 "Workflows",
                 "Procedure, dry-run, approval, and execution safety defaults.",
@@ -5533,6 +6038,7 @@ class SettingsScreen(BaseAppScreen):
                     SettingsCategoryId.SCHEDULES,
                     SettingsCategoryId.WATCHLISTS,
                     SettingsCategoryId.DREAMS,
+                    SettingsCategoryId.GUARDIAN,
                     SettingsCategoryId.WORKFLOWS,
                     SettingsCategoryId.MCP_DEFAULTS,
                     SettingsCategoryId.ACP_DEFAULTS,
@@ -5696,6 +6202,29 @@ class SettingsScreen(BaseAppScreen):
                         recovery_copy=(
                             "Disable Dreams here to stop cycles; re-enable to resume "
                             "with the stored profile and stories."
+                        ),
+                    )
+                )
+                continue
+            if contract.category is SettingsCategoryId.GUARDIAN:
+                records.append(
+                    SettingsOwnershipRecord(
+                        category=contract.category,
+                        owns_config_sections=("guardian.enabled",),
+                        reads_runtime_state_from=contract.source_of_truth,
+                        writes_allowed=True,
+                        runtime_owner=(
+                            "Settings persisted [guardian] enabled and the rule "
+                            "store; the Console checker and trend task own runtime"
+                        ),
+                        boundary_copy=(
+                            "Settings owns enabling Guardian and the awareness "
+                            "rules; the Console dispatch seam owns live notices; "
+                            "retention and trend thresholds stay in config.toml."
+                        ),
+                        recovery_copy=(
+                            "Disable Guardian here to stop checks; rules and "
+                            "history stay on disk."
                         ),
                     )
                 )
@@ -9042,6 +9571,11 @@ class SettingsScreen(BaseAppScreen):
                 "Applies immediately: the toggle, provider, model, region, and "
                 "topic edits below save as you make them."
             )
+        if category is SettingsCategoryId.GUARDIAN:
+            return (
+                "Applies immediately: the toggle and every rule edit below "
+                "save as you make them."
+            )
         if category == SettingsCategoryId.IMAGE_GENERATION:
             if self._category_has_unsaved_changes(category):
                 return "Guided edits: use the panel's own Save/Revert controls below."
@@ -9769,6 +10303,8 @@ class SettingsScreen(BaseAppScreen):
             return "Applies immediately"
         if category is SettingsCategoryId.DREAMS:
             return "Applies immediately"
+        if category is SettingsCategoryId.GUARDIAN:
+            return "Applies immediately"
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Validate, then Save"
         return "Read-only here"
@@ -9828,6 +10364,11 @@ class SettingsScreen(BaseAppScreen):
             return (
                 "Enable and profile edits apply on the next Dreams cycle or at "
                 "boot; budget and cadence keys stay editable in config.toml only."
+            )
+        if category is SettingsCategoryId.GUARDIAN:
+            return (
+                "Checks apply to your next Console message; trend thresholds and "
+                "retention stay editable in config.toml only."
             )
         # TASK-23104: the badge already leads the banner with "State: ..." --
         # scope text must never embed a second "State:" segment of its own
@@ -16651,6 +17192,26 @@ class SettingsScreen(BaseAppScreen):
                     "cycles own derived rows; budgets stay config.toml-only (v1)",
                 ),
             )
+        if category is SettingsCategoryId.GUARDIAN:
+            # Same reasoning as DREAMS above: Settings genuinely writes here,
+            # so the generic read-only domain copy must not win.
+            return (
+                (
+                    "Affected config",
+                    "[guardian] enabled; rule rows in the Guardian store "
+                    "(patterns, actions, escalation, crisis flags)",
+                ),
+                (
+                    "Recovery",
+                    "disable Guardian here to stop checks; rules and history "
+                    "stay on disk and survive re-enable",
+                ),
+                (
+                    "Boundary",
+                    "Settings owns the gate and rules; crisis rules are capped "
+                    "to notify and can never feed Dreams discovery",
+                ),
+            )
         if category in DOMAIN_SETTINGS_CATEGORY_IDS:
             contract = self._domain_category_contract(category)
             return (
@@ -20689,6 +21250,8 @@ class SettingsScreen(BaseAppScreen):
                 )
             if category is SettingsCategoryId.DREAMS:
                 yield from self._render_dreams_controls()
+            if category is SettingsCategoryId.GUARDIAN:
+                yield from self._render_guardian_controls()
             yield Static("How this page works", classes="destination-section")
             yield self._detail_row("Owner destination", contract.owner_destination)
             yield self._detail_row(
@@ -30303,6 +30866,340 @@ class SettingsScreen(BaseAppScreen):
     def _refresh_dreams_pane(self) -> None:
         """Re-render the Dreams category through the standard pane rebuild."""
         self.mutate_reactive(SettingsScreen.active_category)
+
+    # ------------------------------------------------------------------
+    # Guardian (task-33200, ADR-204): the canonical enable path plus the
+    # awareness-rules editor. Immediate-apply like the Dreams section
+    # above; rule rows follow the workspace folder-bindings idioms
+    # (per-row attr-stashed buttons, retained result). The toggle handler
+    # is the ONE caller of the app's ``get_guardian_db`` builder
+    # (contract 1, the Dreams R2 ruling replicated), and both the disable
+    # toggle and rule deactivation refuse while a cooldown is active
+    # (contract 6, anti-impulsive-disable).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _guardian_enabled() -> bool:
+        """Read the persisted Guardian master switch."""
+        return bool(guardian_setting("enabled", False))
+
+    @staticmethod
+    def _format_guardian_value(value: object) -> str:
+        """Render one read-only [guardian] value the way TOML spells it."""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, str):
+            return f'"{value}"'
+        return str(value)
+
+    @staticmethod
+    def _guardian_toggle_label(enabled: bool) -> str:
+        return "Disable Guardian" if enabled else "Enable Guardian"
+
+    @staticmethod
+    def _guardian_gate_copy(enabled: bool, cooldown: dict | None = None) -> str:
+        """Describe the gate; append the live cooldown while one binds."""
+        if enabled:
+            base = (
+                "Guardian is enabled. Your rules check every Console "
+                "message before it is sent; notices and the post-visit "
+                "summary surface in the Console."
+            )
+        else:
+            base = (
+                "Guardian is disabled. Nothing runs, nothing is recorded; "
+                "your rules and history stay on disk."
+            )
+        if cooldown is not None:
+            base += (
+                f" Cooldown active on '{cooldown.get('name')}': disabling "
+                "Guardian is available in "
+                f"{_guardian_cooldown_minutes_left(str(cooldown.get('until')))}"
+                " min."
+            )
+        return base
+
+    @staticmethod
+    def _guardian_cooldown_refusal_copy(cooldown: dict) -> str:
+        """The refusal notice for a disable during an active cooldown."""
+        return (
+            f"Guardian cooldown is active on rule '{cooldown.get('name')}' "
+            f"(an escalated hold): disabling is available in "
+            f"{_guardian_cooldown_minutes_left(str(cooldown.get('until')))} "
+            "min. You can still edit the rule, or override via [guardian] "
+            "in Advanced Config (logged as a bypass)."
+        )
+
+    def _guardian_db(self):
+        """The app-owned Guardian DB handle, or None.
+
+        Raw attribute read, never ``app.get_guardian_db()``: that method
+        BOOTSTRAPS storage, and an off-by-default feature must not gain a
+        database just because Settings opened. The toggle handler is the
+        one place that may build it, and only after a successful enable.
+        """
+        return getattr(self.app_instance, "guardian_db", None)
+
+    def _guardian_cooldown_blocker(
+        self, *, rule_id: int | None = None
+    ) -> dict | None:
+        """The active cooldown binding this action, read via the DB.
+
+        With ``rule_id``: that rule's own cooldown (rule deactivation);
+        without: the soonest-ending cooldown across all rules (the feature
+        toggle). Any store failure degrades to "no blocker" -- the config
+        write itself stays the source of truth for the gate.
+        """
+        db = self._guardian_db()
+        if db is None:
+            return None
+        try:
+            with db.connection() as conn:
+                if rule_id is not None:
+                    row = conn.execute(
+                        "SELECT r.id AS rule_id, r.name AS name,"
+                        " s.cooldown_until AS until"
+                        " FROM guardian_escalation_state AS s"
+                        " JOIN guardian_rules AS r ON r.id = s.rule_id"
+                        " WHERE s.rule_id = ? AND s.cooldown_until IS NOT NULL"
+                        " AND s.cooldown_until > ?",
+                        (rule_id, utc_now_iso()),
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT r.id AS rule_id, r.name AS name,"
+                        " s.cooldown_until AS until"
+                        " FROM guardian_escalation_state AS s"
+                        " JOIN guardian_rules AS r ON r.id = s.rule_id"
+                        " WHERE s.cooldown_until IS NOT NULL"
+                        " AND s.cooldown_until > ?"
+                        " ORDER BY s.cooldown_until LIMIT 1",
+                        (utc_now_iso(),),
+                    ).fetchone()
+        except Exception:  # noqa: BLE001 - a broken read never blocks the gate
+            return None
+        return dict(row) if row is not None else None
+
+    def _note_guardian_cooldown_bypass(self) -> None:
+        """Detect + log a config-file disable during an active cooldown.
+
+        The config-file escape hatch works (contract 6), but it must be
+        visible: when the section renders with Guardian disabled while a
+        rule's cooldown is still in the future, log ONE
+        ``guardian_cooldown_bypassed`` record per distinct cooldown event
+        (deduped on the ``cooldown_until`` value, so a re-render never
+        duplicates the record and a later, separate cooldown logs again).
+
+        The record goes to LOGURU (ADR-204 contract 6 names it), not this
+        module's stdlib ``logger``: the module-scope name is
+        ``logging.getLogger`` and cannot take loguru brace-args -- and a
+        compose-time logging failure must never strand the pane.
+        """
+        blocker = self._guardian_cooldown_blocker()
+        if blocker is None:
+            self._guardian_bypass_logged_until = None
+            return
+        until = str(blocker.get("until"))
+        if self._guardian_bypass_logged_until == until:
+            return
+        self._guardian_bypass_logged_until = until
+        from loguru import logger as guardian_logger
+
+        guardian_logger.warning(
+            "guardian_cooldown_bypassed: Guardian was disabled via the "
+            "config file while rule '{}' had an active cooldown ({} min "
+            "left); per ADR-204 contract 6 the cooldown no longer binds "
+            "and no checks are running.",
+            blocker.get("name"),
+            _guardian_cooldown_minutes_left(until),
+        )
+
+    def _render_guardian_controls(self) -> ComposeResult:
+        enabled = self._guardian_enabled()
+        blocker = None
+        if enabled:
+            blocker = self._guardian_cooldown_blocker()
+        else:
+            # A disabled Guardian is not bound by cooldowns anymore -- but
+            # a store that still holds a future cooldown means the disable
+            # happened through the config file, which must be logged once.
+            self._note_guardian_cooldown_bypass()
+        yield Static(
+            self._guardian_gate_copy(enabled, blocker),
+            id="settings-guardian-status",
+            classes="settings-status-row",
+            markup=False,
+        )
+        yield Button(
+            self._guardian_toggle_label(enabled),
+            id="settings-guardian-toggle",
+            compact=True,
+        )
+        yield Static(
+            self._settings_guardian_result,
+            id="settings-guardian-result",
+            classes="settings-status-row",
+            markup=False,
+        )
+        yield from self._render_guardian_rules()
+        # Final-review T3-1: the Dreams read-only idiom -- config keys the
+        # section never mutates render as detail rows read live, with the
+        # hint matching the banner copy ("stay editable in config.toml").
+        yield Static(
+            "Trend thresholds & retention "
+            "(read-only; edit [guardian] in config.toml)",
+            classes="destination-section",
+            markup=False,
+        )
+        for key in _GUARDIAN_READ_ONLY_KEYS:
+            yield self._detail_row(
+                key, self._format_guardian_value(guardian_setting(key))
+            )
+
+    def _render_guardian_rules(self) -> ComposeResult:
+        """The rules table (name · topic · action · severity · crisis?)."""
+        yield Static("Your awareness rules", classes="destination-section")
+        db = self._guardian_db()
+        if db is None:
+            yield Static(
+                "Guardian storage unavailable. Rules become editable once "
+                "Guardian is enabled and its database opens.",
+                id="settings-guardian-rules-unavailable",
+                classes="settings-status-row",
+                markup=False,
+            )
+            return
+        try:
+            rules = db.list_rules()
+        except Exception:  # noqa: BLE001 - a broken read keeps the section
+            rules = []
+        if not rules:
+            yield Static("No rules yet.", classes="settings-detail-row",
+                         markup=False)
+        for rule in rules:
+            crisis = " · crisis" if int(rule.get("is_crisis") or 0) else ""
+            feeds = (
+                " · feeds Dreams"
+                if int(rule.get("feeds_discovery") or 0)
+                else ""
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static(
+                    f"{rule.get('name')} · {rule.get('topic')} · "
+                    f"{rule.get('action')} · {rule.get('severity')}"
+                    f"{crisis}{feeds}",
+                    classes="settings-detail-row",
+                    markup=False,
+                )
+                edit_button = Button(
+                    "Edit",
+                    id=f"settings-guardian-rule-edit-{rule.get('id')}",
+                    compact=True,
+                )
+                # Stash-at-compose idiom (workspace folder rows): the DB id
+                # rides the button, never parsed back out of its selector.
+                edit_button.guardian_rule_id = rule.get("id")
+                yield edit_button
+        yield Button("Add rule", id="settings-guardian-rule-add", compact=True)
+        yield Static(
+            "Rules check your own typed Console prompts before sending. "
+            "Crisis-flagged rules always notify with crisis resources and "
+            "can never feed Dreams discovery; only rules opted in below "
+            "with 'feeds Dreams' contribute topic aggregates.",
+            id="settings-guardian-rules-caption",
+            classes="settings-help-copy",
+            markup=False,
+        )
+
+    def _refresh_guardian_pane(self) -> None:
+        """Re-render the Guardian category through the pane rebuild."""
+        self.mutate_reactive(SettingsScreen.active_category)
+
+    def open_guardian_rule_editor(self, rule_id: int | None = None) -> None:
+        """Push the rule editor modal for one rule (None = create)."""
+        self.app.push_screen(
+            GuardianRuleEditModal(
+                db_getter=self._guardian_db,
+                on_changed=self._refresh_guardian_pane,
+                rule_id=rule_id,
+            )
+        )
+
+    @on(Button.Pressed, "#settings-guardian-rule-add")
+    def handle_guardian_rule_add(self, event: Button.Pressed) -> None:
+        event.stop()
+        self.open_guardian_rule_editor(None)
+
+    @on(Button.Pressed)
+    def handle_guardian_rule_edit_pressed(self, event: Button.Pressed) -> None:
+        """Dispatch per-row rule editing (id-prefix pattern).
+
+        Only ids starting with ``settings-guardian-rule-edit-`` are
+        consumed; every other press passes through untouched for the
+        screen's other handlers.
+        """
+        button_id = str(getattr(event.button, "id", "") or "")
+        if not button_id.startswith("settings-guardian-rule-edit-"):
+            return
+        event.stop()
+        rule_id = getattr(event.button, "guardian_rule_id", None)
+        if rule_id is None:
+            return
+        self.open_guardian_rule_editor(int(rule_id))
+
+    @on(Button.Pressed, "#settings-guardian-toggle")
+    def handle_guardian_toggle(self, event: Button.Pressed) -> None:
+        """Persist the Guardian master switch (cooldown-aware)."""
+        event.stop()
+        enabled = not self._guardian_enabled()
+        if not enabled:
+            blocker = self._guardian_cooldown_blocker()
+            if blocker is not None:
+                # Contract 6: an escalated hold must survive an impulsive
+                # disable; the config file remains the escape hatch.
+                self._settings_guardian_result = (
+                    self._guardian_cooldown_refusal_copy(blocker)
+                )
+                self._refresh_guardian_pane()
+                return
+        event.button.disabled = True
+        self.run_worker(
+            self._persist_guardian_toggle(enabled),
+            group="settings-guardian",
+            exclusive=True,
+        )
+
+    async def _persist_guardian_toggle(self, enabled: bool) -> None:
+        try:
+            mutation = await asyncio.to_thread(
+                apply_settings_mutation_to_cli_config,
+                {"guardian": {"enabled": enabled}},
+            )
+        except Exception:  # noqa: BLE001 - fixed UI recovery copy
+            mutation = ConfigMutationResult(False, False, "before_replace")
+        if mutation.fully_applied and enabled:
+            builder = getattr(self.app_instance, "get_guardian_db", None)
+            if callable(builder):
+                # First enable: create the storage the rules editor needs
+                # through the app-owned builder (no-op while already
+                # built). This toggle is the builder's ONLY caller.
+                await asyncio.to_thread(builder)
+        if not self.is_attached:
+            return
+        if mutation.fully_applied:
+            self._settings_guardian_result = (
+                "Guardian enabled — checks start with your next Console "
+                "message."
+                if enabled
+                else "Guardian disabled — no checks run; rules and history "
+                "stay on disk."
+            )
+        else:
+            self._settings_guardian_result = (
+                "Guardian was not changed. Retry, or edit [guardian] "
+                "enabled in Advanced Config."
+            )
+        self._refresh_guardian_pane()
 
     @on(Button.Pressed, "#settings-dreams-toggle")
     def handle_dreams_toggle(self, event: Button.Pressed) -> None:

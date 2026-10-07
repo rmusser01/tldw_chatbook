@@ -16823,6 +16823,10 @@ class ChatScreen(BaseAppScreen):
         if not ordered_resume_pending:
             self._session.consume_pending_console_first_chat_intent()
         self._notify_console_fleet_teardown_if_any()
+        # guardian: consume the last visit's staged summary (the report-on-
+        # next-mount slot precedent) and reset the checker's visit id.
+        self._notify_guardian_visit_summary_if_any()
+        self._begin_guardian_visit()
         # PR3a-2 Task 5: claim staged auto-wakes SYNCHRONOUSLY, before any
         # timer or worker below can run the first tab sync -- whose
         # view-clear consumes the ACTIVE conversation's FLEET_UNSEEN mark
@@ -17081,6 +17085,89 @@ class ChatScreen(BaseAppScreen):
                 )
             self.app_instance.notify(copy, severity="information")
 
+    # ------------------------------------------------------------------
+    # guardian (ADR-204): visit lifecycle + report-on-next-mount slot
+    # ------------------------------------------------------------------
+
+    def _begin_guardian_visit(self) -> None:
+        """# guardian: open a fresh Guardian visit for this Console mount.
+
+        Resets the dispatch-seam checker's visit id and per-visit error
+        dedup (``begin_visit``) so a reused screen cannot fold two sittings
+        into one visit. The checker is Task 1's seam object, built lazily
+        on the first dispatch -- nothing Guardian-shaped is imported here
+        (ADR-097); a screen that never dispatched has no checker and this
+        is a no-op.
+        """
+        checker = getattr(self, "_guardian_checker", None)
+        if checker is None:
+            return
+        try:
+            checker.begin_visit()
+        except Exception:  # noqa: BLE001 - a visit reset never blocks a mount
+            logger.opt(exception=True).debug(
+                "Guardian visit reset failed on Console mount"
+            )
+
+    def _notify_guardian_visit_summary_if_any(self) -> None:
+        """# guardian: one-shot consumption of the last visit's summary slot.
+
+        Reads and clears ``_guardian_visit_summary_notice`` on the app
+        object (the report-on-next-mount slot precedent -- the app outlives
+        the screen that staged it), then surfaces one compact line. Empty
+        visits staged nothing, so an ordinary mount stays silent. Task 3
+        owns the polished surfacing; this is the minimal wiring.
+        """
+        payload = getattr(self.app_instance, "_guardian_visit_summary_notice", None)
+        if not payload:
+            return
+        try:
+            self.app_instance._guardian_visit_summary_notice = None
+        except Exception:  # noqa: BLE001 - a broken slot never blocks a mount
+            return
+        counts = payload.get("per_topic_counts") or {}
+        escalated = payload.get("escalated_rules") or []
+        trends = payload.get("trend_notices") or []
+        parts = []
+        if counts:
+            summary = ", ".join(
+                f"{topic} x{hits}" for topic, hits in sorted(counts.items())[:3]
+            )
+            parts.append(f"Last Console visit — Guardian noticed: {summary}")
+        if escalated:
+            parts.append(f"escalated: {', '.join(map(str, escalated[:3]))}")
+        if trends:
+            labels = ", ".join(str(t.get("label")) for t in trends[:3])
+            parts.append(f"trends: {labels}")
+        if parts:
+            self.app_instance.notify("; ".join(parts), severity="information")
+
+    async def _finalize_guardian_visit(self) -> None:
+        """# guardian: finalize the visit's summary at Console unmount.
+
+        Runs the checker's ``finalize_visit()`` (summary + trend cadence +
+        retention sweep) on a worker thread and stages the payload on the
+        app object's report-on-next-mount slot for the NEXT Console mount.
+        Degrade-never-raise at this seam too: an unmount must always
+        proceed, with or without a summary.
+        """
+        checker = getattr(self, "_guardian_checker", None)
+        if checker is None:
+            return
+        try:
+            payload = await asyncio.to_thread(checker.finalize_visit)
+        except Exception:  # noqa: BLE001 - a summary never blocks unmount
+            logger.opt(exception=True).debug(
+                "Guardian visit summary failed at Console unmount"
+            )
+            return
+        if not payload:
+            return
+        try:
+            self.app_instance._guardian_visit_summary_notice = payload
+        except Exception:  # noqa: BLE001 - bare/unit harness has no app slot
+            pass
+
     def flush_pending_work(self) -> bool:
         """Veto navigation while a dirty queue-manager edit is open.
 
@@ -17124,6 +17211,10 @@ class ChatScreen(BaseAppScreen):
     async def on_unmount(self) -> None:
         """Release Console-native resources owned by this screen."""
         self._release_claimed_conversation_settings_return()
+        # guardian: end the visit's summary BEFORE the runtime leave below
+        # (ADR-204 §Post-visit summary); store work off the event thread,
+        # degrade-never-raise.
+        await self._finalize_guardian_visit()
         runtime = self._console_runtime()
         generation = getattr(self, "_console_runtime_attachment_generation", None)
         self._console_runtime_attachment_retired = True
