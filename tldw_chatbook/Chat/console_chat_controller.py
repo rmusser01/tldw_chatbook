@@ -3048,6 +3048,14 @@ class ConsoleProviderGatewayProtocol(Protocol):
         """Stream response chunks for provider messages."""
 
 
+@dataclass(slots=True)
+class _HookAdmissionReadSource:
+    accessor: Any = field(repr=False)
+    permissions: Any = field(repr=False)
+    runtime: Any = field(default=None, repr=False)
+    managed: bool = False
+
+
 @dataclass(slots=True, eq=False)
 class _OrdinaryNativeCommitOwner:
     """Lifetime of one issued save; existing store state retains authority."""
@@ -3970,6 +3978,7 @@ class ConsoleChatController:
         #: up without rebuilding the controller.
         self._ensure_run_hooks = ensure_run_hooks
         self._hook_permissions_accessor = hook_permissions_accessor
+        self._hook_preparation_reads: set[Any] = set()
         self._project_instruction_display: dict[
             str, ProjectInstructionDisplayMetadata
         ] = {}
@@ -6279,8 +6288,29 @@ class ConsoleChatController:
         from tldw_chatbook.config import read_hooks_config_snapshot
 
         try:
-            if self._hook_permissions_accessor is not None:
-                return self._hook_permissions_accessor().snapshot().blocked_reason
+            from .console_hook_preparation import hook_preparation_source_for
+
+            source = hook_preparation_source_for(self)
+            accessor = (
+                source.accessor
+                if isinstance(source, _HookAdmissionReadSource)
+                else self._hook_permissions_accessor
+            )
+            if accessor is not None:
+                if isinstance(source, _HookAdmissionReadSource) and source.managed:
+                    # Preserve cold constructor/import affinity on this worker.
+                    with source.runtime._run_hooks_lock:
+                        permissions = (
+                            source.permissions
+                            if source.permissions is not None
+                            else accessor()
+                        )
+                        source.permissions = permissions
+                else:
+                    permissions = accessor()
+                    if isinstance(source, _HookAdmissionReadSource):
+                        source.permissions = permissions
+                return permissions.snapshot().blocked_reason
             saved = read_hooks_config_snapshot()
             inventory = inspect_hooks_config(
                 {"hooks": saved.section} if saved.section_present else {}
@@ -6292,8 +6322,130 @@ class ConsoleChatController:
             return "Hooks unavailable; review or disable hooks before sending."
 
     async def hook_admission_reason(self) -> str | None:
-        """Read hook authority off-thread before acquiring new draft custody."""
-        return await asyncio.to_thread(self._hook_admission_reason)
+        """Retain the original finite authority read without changing callback shape."""
+        from types import MethodType
+        from .console_hook_preparation import (
+            hook_preparation_session_for,
+            run_hook_preparation_read,
+        )
+
+        def same(left, right):
+            return left is right or (
+                isinstance(left, MethodType)
+                and isinstance(right, MethodType)
+                and left.__func__ is right.__func__
+                and left.__self__ is right.__self__
+            )
+
+        try:
+            session_id = hook_preparation_session_for(self)
+            store, app = self.store, self.app
+            session = (
+                next((row for row in store.sessions() if row.id == session_id), None)
+                if session_id is not None
+                else None
+            )
+            identity = (
+                getattr(session, "incarnation_id", None),
+                getattr(session, "conversation_binding_revision", None),
+                getattr(session, "ephemeral", None),
+                getattr(session, "workspace_id", None),
+            )
+            accessor = self._hook_permissions_accessor
+            callback = self._hook_admission_reason
+            runtime = getattr(self, "_hooks_v2_runtime", None)
+            runtime_store = getattr(runtime, "_chat_store", None)
+            runtime_controller = getattr(runtime, "_chat_controller", None)
+            permissions = None
+            managed = False
+            if runtime is not None:
+                from .console_runtime import _HOOK_PERMISSION_ACCESSOR_ORIGINAL
+
+                function, code = _HOOK_PERMISSION_ACCESSOR_ORIGINAL
+                if (
+                    isinstance(accessor, MethodType)
+                    and accessor.__self__ is runtime
+                    and accessor.__func__ is function
+                    and function.__code__ is code
+                ):
+                    managed = True
+                    permissions = runtime._hook_permissions
+            source = _HookAdmissionReadSource(accessor, permissions, runtime, managed)
+
+            def require_current():
+                current = (
+                    next(
+                        (row for row in store.sessions() if row.id == session_id), None
+                    )
+                    if session_id is not None
+                    else None
+                )
+                if (
+                    self._disposed
+                    or self.store is not store
+                    or self.app is not app
+                    or not same(self._hook_permissions_accessor, accessor)
+                    or not same(self._hook_admission_reason, callback)
+                    or current is not session
+                    or (
+                        getattr(current, "incarnation_id", None),
+                        getattr(current, "conversation_binding_revision", None),
+                        getattr(current, "ephemeral", None),
+                        getattr(current, "workspace_id", None),
+                    )
+                    != identity
+                    or (
+                        runtime is not None
+                        and (
+                            getattr(self, "_hooks_v2_runtime", None) is not runtime
+                            or runtime._disposed
+                            or runtime._chat_store is not runtime_store
+                            or runtime._chat_controller is not runtime_controller
+                            or session_id in runtime._admission_fenced_sessions
+                            or (
+                                source.managed
+                                and source.permissions is not None
+                                and runtime._hook_permissions is not source.permissions
+                            )
+                        )
+                    )
+                ):
+                    raise RuntimeError("Console hook admission owner changed.")
+
+            observers = () if runtime is None else (runtime._hook_preparation_reads,)
+            return await run_hook_preparation_read(
+                callback,
+                creator=self,
+                session_id=session_id,
+                reads=self._hook_preparation_reads,
+                observers=observers,
+                require_current=require_current,
+                source=source,
+            )
+        except Exception:
+            # Keep the existing public reason-return contract; cancellation is
+            # BaseException and escapes only after its real native read retires.
+            return "Hooks unavailable; review or disable hooks before sending."
+
+    def _hook_preparation_read_tasks(self, session_id=None):
+        from .console_hook_preparation import hook_preparation_reads_for
+
+        return tuple(
+            dict.fromkeys(
+                read.task
+                for read in hook_preparation_reads_for(
+                    getattr(self, "_hook_preparation_reads", set()),
+                    session_id,
+                )
+            )
+        )
+
+    async def _drain_hook_preparation_reads(self, session_id=None):
+        from .console_hook_preparation import drain_hook_preparation_reads
+
+        return await drain_hook_preparation_reads(
+            getattr(self, "_hook_preparation_reads", set()), session_id
+        )
 
     async def queue_prompt(
         self,
@@ -6312,7 +6464,10 @@ class ConsoleChatController:
                 self.prompt_queue_registry.snapshot(session_id),
                 detail=validation_error,
             )
-        reason = await self.hook_admission_reason()
+        from .console_hook_preparation import bind_hook_preparation_session
+
+        with bind_hook_preparation_session(self, session_id):
+            reason = await self.hook_admission_reason()
         if reason is not None:
             return PromptQueueMutationResult(
                 QueueMutationStatus.INVALID,
@@ -9597,7 +9752,10 @@ class ConsoleChatController:
             and origin is not ConsoleSubmissionOrigin.AGENT_WAKE
         ):
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
-        reason = await self.hook_admission_reason()
+        from .console_hook_preparation import bind_hook_preparation_session
+
+        with bind_hook_preparation_session(self, owner_key):
+            reason = await self.hook_admission_reason()
         if reason is not None:
             return ConsoleSubmitResult(
                 False,
@@ -13319,7 +13477,10 @@ class ConsoleChatController:
                     preparation_id=preparation_id,
                     provider_started=False,
                 )
-            reason = await self.hook_admission_reason()
+            from .console_hook_preparation import bind_hook_preparation_session
+
+            with bind_hook_preparation_session(self, session_id):
+                reason = await self.hook_admission_reason()
             if reason is not None:
                 raise ConsoleDispatchSettlementError(reason)
             assistant = assistant_holder.get("assistant")
@@ -15001,7 +15162,10 @@ class ConsoleChatController:
                 )
         repair_session = self._active_citation_repair_sessions.get(session_id)
         self.clear_original_attempts_for_session(session_id)
-        submit_tasks = self._submit_tasks_for_session(session_id)
+        submit_tasks = tuple(
+            set(self._submit_tasks_for_session(session_id))
+            | set(self._hook_preparation_read_tasks(session_id))
+        )
         if repair_session is not None and owns_active_stream:
             repair_session.cancel_reason = "session_close"
         if owns_active_stream:
@@ -15178,7 +15342,9 @@ class ConsoleChatController:
     def session_shutdown_tasks(self, session_id: str) -> tuple[asyncio.Task[Any], ...]:
         """Snapshot controller-owned tasks that must settle before deletion."""
 
-        tasks = set(self._submit_tasks_for_session(session_id))
+        tasks = set(self._submit_tasks_for_session(session_id)) | set(
+            self._hook_preparation_read_tasks(session_id)
+        )
         item = self._chat_start._active.get(session_id)
         if item is not None and item.task is not None:
             tasks.add(item.task)
@@ -18664,11 +18830,20 @@ class ConsoleChatController:
             stopped; False (a no-op) when it did not.
         """
         session_id = self.store.active_session_id or ""
+        hook_read_tasks = self._hook_preparation_read_tasks(session_id)
         received = self.store.received_turn_for_session(session_id)
         if received is not None and self.store.seal_received_turn(received):
             self._note_controller_activity_changed(session_id)
             self._signal_stop(session_id=session_id)
-            for task in self._submit_tasks_for_session(session_id):
+            for task in set(self._submit_tasks_for_session(session_id)) | set(
+                hook_read_tasks
+            ):
+                if task is not asyncio.current_task():
+                    self._cancel_task_on_owner_loop(task)
+            return True
+        if hook_read_tasks:
+            self._signal_stop(session_id=session_id)
+            for task in hook_read_tasks:
                 if task is not asyncio.current_task():
                     self._cancel_task_on_owner_loop(task)
             return True
@@ -18814,6 +18989,7 @@ class ConsoleChatController:
         boundary for the same app-owned controller.
         """
         self.begin_shutdown()
+        await self._drain_hook_preparation_reads()
         if self._chat_start.tasks():
             await asyncio.gather(*self._chat_start.tasks(), return_exceptions=True)
         for live_session in tuple(self.store.sessions()):
@@ -18952,6 +19128,9 @@ class ConsoleChatController:
         """Run queue/preparation/task teardown on the asyncio owner loop."""
 
         submit_tasks = self._submit_tasks_snapshot()
+        for task in self._hook_preparation_read_tasks():
+            if task is not asyncio.current_task():
+                self._cancel_task_on_owner_loop(task)
         stream_tasks = dict(self._active_stream_tasks)
         queue_failure: BaseException | None = None
         cleanup_failure: BaseException | None = None

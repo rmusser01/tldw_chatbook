@@ -374,6 +374,27 @@ CONSOLE_SESSION_CLOSE_GRACE_SECONDS = 2.0
 CONSOLE_RUNTIME_SHUTDOWN_GRACE_SECONDS = 3.0
 
 
+@dataclass(frozen=True, slots=True)
+class _HookPreparationSource:
+    """Original sources for one finite runtime hook preparation invocation."""
+
+    app: Any = field(repr=False)
+    store: Any = field(repr=False)
+    controller: Any = field(repr=False)
+    session_id: str
+    session: Any = field(repr=False)
+    session_identity: tuple[Any, ...] = field(repr=False)
+    permissions: Any = field(repr=False)
+    persistence: Any = field(repr=False)
+    chat_database: Any = field(repr=False)
+    registry: Any = field(repr=False)
+    workspace_database: Any = field(repr=False)
+    consent: Any = field(repr=False)
+    authority_reader: Any = field(repr=False)
+    controller_app: Any = field(repr=False)
+    context_provider: Any = field(repr=False)
+
+
 @dataclass(slots=True)
 class _ConsoleTurnCustodyInputs:
     """Sensitive turn-only values kept out of the public request repr."""
@@ -1133,6 +1154,7 @@ class ConsoleRuntime:
         self._run_hooks_engine: Any = _UNSET
         self._run_hooks_lock = RLock()
         self._hook_permissions: HookPermissions | None = None
+        self._hook_preparation_reads: set[Any] = set()
         # V2 sessions share the app loop and budgets, including viewless work.
         self._hooks_v2_budget_owner: Any = None
         self._hooks_v2_engines: dict[str, Any] = {}
@@ -1868,6 +1890,11 @@ class ConsoleRuntime:
         """Replace the chat-controller handle."""
         self._chat_controller = value
         if value is not None:
+            from .console_hook_preparation import observe_hook_preparation_reads
+
+            reads = getattr(value, "_hook_preparation_reads", None)
+            if reads is not None:
+                observe_hook_preparation_reads(reads, self._hook_preparation_reads)
             value._hooks_v2_runtime = self
         if value is not None and self._app is not None:
             value.app = self._app
@@ -3280,13 +3307,143 @@ class ConsoleRuntime:
             self._hooks_v2_engines[session_id] = engine
             return engine
 
+    def _capture_hook_preparation_source(self, session_id, permissions):
+        store, controller, app = self._chat_store, self._chat_controller, self._app
+        session = (
+            next((row for row in store.sessions() if row.id == session_id), None)
+            if store is not None
+            else None
+        )
+        identity = (
+            getattr(session, "incarnation_id", None),
+            getattr(session, "conversation_binding_revision", None),
+            getattr(session, "ephemeral", None),
+            getattr(session, "workspace_id", None),
+        )
+        persistence = getattr(store, "persistence", None)
+        registry = getattr(app, "workspace_registry_service", None)
+        return _HookPreparationSource(
+            app,
+            store,
+            controller,
+            session_id,
+            session,
+            identity,
+            permissions,
+            persistence,
+            getattr(persistence, "db", None),
+            registry,
+            getattr(registry, "db", None),
+            getattr(app, "change_review_consent_service", None),
+            getattr(controller, "_hook_authority_values", None),
+            getattr(controller, "app", None),
+            getattr(controller, "_turn_context_provider", None),
+        )
+
+    def _require_hook_preparation_source(self, source):
+        self._raise_if_disposed_or_session_fenced(source.session_id)
+        session = (
+            next(
+                (row for row in source.store.sessions() if row.id == source.session_id),
+                None,
+            )
+            if source.store is not None
+            else None
+        )
+        reader = getattr(source.controller, "_hook_authority_values", None)
+        same_reader = reader is source.authority_reader or (
+            inspect.ismethod(reader)
+            and inspect.ismethod(source.authority_reader)
+            and reader.__self__ is source.authority_reader.__self__
+            and reader.__func__ is source.authority_reader.__func__
+        )
+        if (
+            self._app is not source.app
+            or self._chat_store is not source.store
+            or self._chat_controller is not source.controller
+            or self._hook_permissions is not source.permissions
+            or not same_reader
+            or session is not source.session
+            or (
+                getattr(session, "incarnation_id", None),
+                getattr(session, "conversation_binding_revision", None),
+                getattr(session, "ephemeral", None),
+                getattr(session, "workspace_id", None),
+            )
+            != source.session_identity
+            or getattr(source.store, "persistence", None) is not source.persistence
+            or getattr(source.persistence, "db", None) is not source.chat_database
+            or getattr(source.app, "workspace_registry_service", None)
+            is not source.registry
+            or getattr(source.registry, "db", None) is not source.workspace_database
+            or getattr(source.app, "change_review_consent_service", None)
+            is not source.consent
+            or (
+                source.controller is not None
+                and (
+                    getattr(source.controller, "store", source.store)
+                    is not source.store
+                    or getattr(source.controller, "app", None)
+                    is not source.controller_app
+                    or getattr(source.controller, "_turn_context_provider", None)
+                    is not source.context_provider
+                    or getattr(source.controller, "_disposed", False)
+                    or (
+                        getattr(source.controller, "_shutdown_requested", None)
+                        is not None
+                        and source.controller._shutdown_requested.is_set()
+                    )
+                )
+            )
+        ):
+            raise RuntimeError("Console hook preparation owner changed.")
+
+    async def _read_hook_preparation(self, callback, source):
+        from .console_hook_preparation import run_hook_preparation_read
+
+        current_callback = callback
+        observers = ()
+        controller_reads = getattr(source.controller, "_hook_preparation_reads", None)
+        if controller_reads is not None:
+            observers = (controller_reads,)
+        return await run_hook_preparation_read(
+            current_callback,
+            creator=self,
+            session_id=source.session_id,
+            reads=self._hook_preparation_reads,
+            observers=observers,
+            require_current=lambda: self._require_hook_preparation_source(source),
+            source=source,
+        )
+
+    async def _drain_hook_preparation_reads(self, session_id=None):
+        from .console_hook_preparation import drain_hook_preparation_reads
+
+        return await drain_hook_preparation_reads(
+            self._hook_preparation_reads, session_id
+        )
+
     def _hooks_v2_context_key(self, session_id: str):
         """Capture host workspace/binding authority, without prompt bodies."""
-        store = self._chat_store
-        controller = self._chat_controller
+        from .console_hook_preparation import hook_preparation_source_for
+
+        source = hook_preparation_source_for(self)
+        if isinstance(source, _HookPreparationSource):
+            if source.session_id != session_id:
+                raise RuntimeError("Console hook preparation session changed.")
+            self._require_hook_preparation_source(source)
+            store, controller, session = source.store, source.controller, source.session
+        else:
+            store, controller = self._chat_store, self._chat_controller
+            session = (
+                next((row for row in store.sessions() if row.id == session_id), None)
+                if store is not None
+                else None
+            )
         if store is None or controller is None:
             return None
-        session = next(row for row in store.sessions() if row.id == session_id)
+        if session is None:
+            raise RuntimeError("Console hook preparation session changed.")
         from tldw_chatbook.DB.base_db import operation_owned_connection
 
         # Only the stock finite callback gains Workspace connection ownership.
@@ -3299,10 +3456,22 @@ class ConsoleRuntime:
             ChangeReviewConsentService,
         )
 
-        app = self._app
-        registry = getattr(app, "workspace_registry_service", None)
-        database = getattr(registry, "db", None)
-        consent = getattr(app, "change_review_consent_service", None)
+        app = source.app if isinstance(source, _HookPreparationSource) else self._app
+        registry = (
+            source.registry
+            if isinstance(source, _HookPreparationSource)
+            else getattr(app, "workspace_registry_service", None)
+        )
+        database = (
+            source.workspace_database
+            if isinstance(source, _HookPreparationSource)
+            else getattr(registry, "db", None)
+        )
+        consent = (
+            source.consent
+            if isinstance(source, _HookPreparationSource)
+            else getattr(app, "change_review_consent_service", None)
+        )
         hook_anchor = controller_module._HOOK_AUTHORITY_VALUES_ORIGINAL
         controller_class, name, function, code, defaults, kwdefaults, closure = (
             hook_anchor
@@ -3353,7 +3522,12 @@ class ConsoleRuntime:
         )
         if not stock:
             with operation_owned_connection(getattr(store.persistence, "db", None)):
-                values = controller._hook_authority_values(session_id)
+                if isinstance(source, _HookPreparationSource):
+                    self._require_hook_preparation_source(source)
+                    values = source.authority_reader(session_id)
+                    self._require_hook_preparation_source(source)
+                else:
+                    values = controller._hook_authority_values(session_id)
                 return (
                     session.workspace_id,
                     values["workspace_roots"],
@@ -3429,7 +3603,11 @@ class ConsoleRuntime:
 
         self._raise_if_disposed_or_session_fenced(session_id)
         permissions = self.ensure_hook_permissions()
-        review, targets = await asyncio.to_thread(permissions.v2_configuration)
+        source = self._capture_hook_preparation_source(session_id, permissions)
+        review, targets = await self._read_hook_preparation(
+            permissions.v2_configuration, source
+        )
+        self._require_hook_preparation_source(source)
         configured = load_hooks_config(
             {"hooks": review.config.section} if review.config.section_present else {}
         )
@@ -3449,6 +3627,7 @@ class ConsoleRuntime:
                 if service is None:
                     raise PermissionError("plugin_hook_authority_unavailable")
                 native = await service.hook_configuration(maximum)
+                self._require_hook_preparation_source(source)
         signature = (
             configured,
             targets,
@@ -3468,7 +3647,10 @@ class ConsoleRuntime:
         ):
             self._raise_if_disposed_or_session_fenced(session_id)
             return None
-        context_key = await asyncio.to_thread(self._hooks_v2_context_key, session_id)
+        context_key = await self._read_hook_preparation(
+            functools.partial(self._hooks_v2_context_key, session_id), source
+        )
+        self._require_hook_preparation_source(source)
         self._raise_if_disposed_or_session_fenced(session_id)
         owner = self._hooks_v2_lifecycles.get(session_id)
         context_changed = owner is not None and owner.context_key != context_key
@@ -3480,7 +3662,9 @@ class ConsoleRuntime:
             if owner is not None and getattr(owner, "turn_scope", None) is not None:
                 raise RuntimeError("hook replacement requires idle session")
             await self.close_hooks_v2(session_id)
-            self._hooks_v2_lifecycles.pop(session_id, None)
+            self._require_hook_preparation_source(source)
+            if self._hooks_v2_lifecycles.get(session_id) is owner:
+                self._hooks_v2_lifecycles.pop(session_id, None)
             if context_changed and previous is None and engine is not None:
                 # Host-injected definitions retain their authority resolver.
                 engine = self.ensure_hooks_v2(
@@ -3611,6 +3795,7 @@ class ConsoleRuntime:
                             configuration, lifecycle, pending_scope
                         )
                     )
+                    self._require_hook_preparation_source(source)
                     engine.mcp_executor.bind_context(context)
             except BaseException:
                 lifecycle.close_scope(pending_scope)
@@ -3626,14 +3811,16 @@ class ConsoleRuntime:
             )
             try:
                 await lifecycle.initialize(token)
+                self._require_hook_preparation_source(source)
                 lifecycle.publish(token)
             except BaseException:
                 lifecycle.cancel(token)
                 if pending_scope is not None:
                     lifecycle.close_scope(pending_scope)
                     lifecycle.turn_scope = None
-                # A failed provisional initialization has no live session effects.
-                self._hooks_v2_lifecycles.pop(session_id, None)
+                # A failed provisional initialization cannot remove a successor.
+                if self._hooks_v2_lifecycles.get(session_id) is lifecycle:
+                    self._hooks_v2_lifecycles.pop(session_id, None)
                 raise
         if configuration is not None and engine.mcp_executor is not None:
             engine.mcp_executor.retain_runtime(session_id)
@@ -5595,6 +5782,7 @@ class ConsoleRuntime:
             controller, session_id
         )
         cancel_requested |= await self._drain_hook_review_operations(session_id)
+        cancel_requested |= await self._drain_hook_preparation_reads(session_id)
         pending = {task for task in pending if not task.done()}
         fleet_fenced = callable(getattr(bridge, "fence_fleet", None))
         fleet_drain_succeeded = not fleet_fenced and fleet_waiter is None
@@ -5768,6 +5956,7 @@ class ConsoleRuntime:
             if controller is not None:
                 await self._drain_ordinary_native_commits(controller)
                 await self._drain_hook_review_operations()
+            await self._drain_hook_preparation_reads()
 
     async def _dispose_owned(
         self,
@@ -6001,8 +6190,11 @@ class ConsoleRuntime:
                 native_tasks = getattr(
                     controller, "_ordinary_native_commit_tasks", None
                 )
+                from .console_hook_preparation import hook_preparation_reads_for
+
                 if not native_cancel_requested and (
-                    not callable(native_tasks) or not native_tasks()
+                    (not callable(native_tasks) or not native_tasks())
+                    and not hook_preparation_reads_for(self._hook_preparation_reads)
                 ):
                     raise
                 native_cancel_requested = True
@@ -6020,6 +6212,7 @@ class ConsoleRuntime:
         if controller is not None:
             await self._drain_ordinary_native_commits(controller)
             await self._drain_hook_review_operations()
+        await self._drain_hook_preparation_reads()
         await self.close_hooks_v2()
         for turn_id in tuple(self._turn_custody):
             self._release_custody(turn_id)
@@ -6262,6 +6455,10 @@ async def dispose_console_runtime(app: Any, *, view: Any | None = None) -> None:
 
 # Definition-time owner for the optional stock hook connection scope.
 _HOOK_CONTEXT_KEY_ORIGINAL_OWNER = ConsoleRuntime
+_HOOK_PERMISSION_ACCESSOR_ORIGINAL = (
+    ConsoleRuntime.ensure_hook_permissions,
+    ConsoleRuntime.ensure_hook_permissions.__code__,
+)
 
 
 # Only the selected finite worker carries a publication source proof. Direct

@@ -18760,3 +18760,8 @@ TASK-34563.10 follow-up, 2026-10-07: a custom task factory created an eager stdl
 ### A remounted modal needs a new presentation token before old Unmount finishes
 
 TASK-34563.10 follow-up, 2026-10-07: a mounted Cancel check failed because Textual resumed the Console and projected a replacement review before the popped modal's Unmount released its token. Both modals shared a token, so late old cleanup invalidated the visible replacement. A deterministic original-projector control reproduced the reused token. New presentation creation now rotates the token; updates to the same presentation retain it. Testing only unmount-then-remount serially had missed the actual framework ordering.
+
+
+## Python 3.12 native observers need global unwind events and setup cleanup
+
+TASK-34563.13, 2026-10-07: the first integrated hook-preparation run had 45 passes and one observer setup failure before Send. Python 3.12 rejected `sys.monitoring.set_local_events(..., PY_RETURN | PY_UNWIND)` with `ValueError: invalid local event set 0x1004`; PY_UNWIND is global-only. Setup was outside the observer context manager's try/finally, so partial registration also survived that failed setup. Keep PY_RETURN local, register PY_UNWIND globally with exact code and owner filtering, and put all registration/event setup under cleanup immediately after reserving the tool ID. The corrected original WorkspaceDB producer test then passed through disposal cancellation with actual connection/lease retirement. A clean integrated rerun is required after an observer setup leak; the original 45 passes alone do not qualify the corrected observer.
