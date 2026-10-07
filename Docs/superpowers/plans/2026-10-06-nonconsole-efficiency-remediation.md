@@ -24,10 +24,7 @@
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/212-prompt-injection-cold-start-caches.md        (created in Wave 2, before T3)
-          backlog/decisions/213-persistent-embedding-content-hash-cache.md   (created in Wave 4, before T8)
-          backlog/decisions/214-provider-http-session-reuse.md               (created in Wave 3, before T6)
-          backlog/decisions/215-conversation-timestamp-normalization.md      (created in Wave 6, before T15)
+ADR path: numbers below were verified against a LOCAL checkout that is behind origin/dev — T3 found ADR-212 already taken and used ADR-221 instead. AUTHORING RULE for every later ADR task: verify the next free number against the dev worktree (ls backlog/decisions/) at authoring time; the numbers in this plan are provisional. Planned ADRs: injection caches (landed as ADR-221), embedding cache, provider session reuse, timestamp normalization.
 Reason: injection caches define cross-module invalidation contracts; the embedding cache adds
 storage/schema; session reuse changes provider runtime resource lifecycle; T15 migrates stored
 data format + schema. All other tasks are mechanical performance fixes inside existing
