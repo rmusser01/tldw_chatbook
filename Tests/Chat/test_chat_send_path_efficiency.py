@@ -1,0 +1,117 @@
+"""Efficiency guards on the chat() send path (task-20b/20c).
+
+20b: the DEBUG-only payload-summary loop must not perform any summary work
+(per-message part scans + joins) when the root logger is below DEBUG.
+20c: the post-generation replacement dictionary must be parsed once per
+(size, mtime_ns) file signature instead of once per non-streaming response.
+"""
+
+import logging
+from unittest.mock import patch
+
+import pytest
+
+import tldw_chatbook.Chat.Chat_Functions as chat_functions_module
+
+GOLDEN_PAYLOAD_SUMMARY_LINES = [
+    "Debug - Chat Function - Final LLM payload structure:",
+    "  Msg 0: content_type=list; parts=[text(length=11)]",
+    "  Msg 1: content_type=list; parts=[text(length=18), image_url(length=26)]",
+    "  Msg 2: content_type=list; parts=[text(length=6)]",
+]
+
+
+def _golden_history():
+    return [
+        {"role": "user", "content": [{"type": "text", "text": "hello there"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "an assistant reply"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,QUJD"},
+                },
+            ],
+        },
+    ]
+
+
+def _large_history(message_count: int):
+    return [
+        {
+            "role": "user" if index % 2 == 0 else "assistant",
+            "content": [{"type": "text", "text": f"turn {index}"}],
+        }
+        for index in range(message_count)
+    ]
+
+
+class TestDebugPayloadSummaryGuard:
+    @pytest.mark.unit
+    def test_payload_summary_performs_zero_work_at_info_level(self, caplog):
+        summary_calls = []
+        real_summary = chat_functions_module._debug_dump_llm_payload_summary
+
+        def spy(payload):
+            summary_calls.append(payload)
+            return real_summary(payload)
+
+        with (
+            patch.object(chat_functions_module, "_debug_dump_llm_payload_summary", spy),
+            patch.object(
+                chat_functions_module, "chat_api_call", return_value="ok"
+            ) as mock_call,
+            patch.object(chat_functions_module, "load_settings", return_value={}),
+            caplog.at_level(logging.INFO),
+        ):
+            response = chat_functions_module.chat(
+                message="latest",
+                history=_large_history(499),
+                media_content=None,
+                selected_parts=[],
+                api_endpoint="openai",
+                api_key="k",
+                custom_prompt=None,
+                temperature=0.7,
+            )
+
+        assert response == "ok"
+        assert mock_call.call_count == 1
+        # 499 history turns + the current user message reach the payload build.
+        assert len(mock_call.call_args.kwargs["messages_payload"]) == 500
+        assert summary_calls == [], (
+            "at INFO level the per-message summary loop (part scans + joins) "
+            "must not run at all"
+        )
+
+    @pytest.mark.unit
+    def test_payload_summary_output_is_byte_identical_at_debug_level(self, caplog):
+        with (
+            patch.object(chat_functions_module, "chat_api_call", return_value="ok"),
+            patch.object(chat_functions_module, "load_settings", return_value={}),
+            caplog.at_level(logging.DEBUG),
+        ):
+            response = chat_functions_module.chat(
+                message="latest",
+                history=_golden_history(),
+                media_content=None,
+                selected_parts=[],
+                api_endpoint="openai",
+                api_key="k",
+                custom_prompt=None,
+                temperature=0.7,
+                image_history_mode="send_all",
+                strip_thinking_tags=False,
+            )
+
+        assert response == "ok"
+        emitted = [
+            record.getMessage()
+            for record in caplog.records
+            if record.getMessage().startswith(
+                "Debug - Chat Function - Final LLM payload structure:"
+            )
+            or record.getMessage().startswith("  Msg ")
+        ]
+        assert emitted == GOLDEN_PAYLOAD_SUMMARY_LINES

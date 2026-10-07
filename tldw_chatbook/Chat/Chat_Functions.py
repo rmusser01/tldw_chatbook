@@ -1621,6 +1621,36 @@ def project_chat_handler_kwargs(
     return projected
 
 
+def _debug_dump_llm_payload_summary(
+    llm_messages_payload: List[Dict[str, Any]],
+) -> None:
+    """Emit the DEBUG-only per-message summary of the final LLM payload (task-20b).
+
+    The call site guards this with the root logger's DEBUG level so the
+    per-message summary work (part scans + ``", ".join``) is skipped entirely
+    when DEBUG is disabled; module-level ``logging.debug`` delegates to that
+    same root logger, so the guard suppresses exactly the emissions the
+    unguarded loop would have dropped anyway.
+    """
+
+    logging.debug("Debug - Chat Function - Final LLM payload structure:")
+    for i, msg_p in enumerate(llm_messages_payload):
+        content_log = []
+        if isinstance(msg_p.get("content"), list):
+            for part_c in msg_p["content"]:
+                if part_c.get("type") == "text":
+                    content_log.append(f"text(length={len(part_c.get('text', ''))})")
+                elif part_c.get("type") == "image_url":
+                    image_url_value = part_c.get("image_url", {}).get("url", "")
+                    content_log.append(f"image_url(length={len(image_url_value)})")
+        logging.debug(
+            "  Msg %d: content_type=%s; parts=[%s]",
+            i,
+            type(msg_p.get("content")).__name__,
+            ", ".join(content_log),
+        )
+
+
 def chat(
     message: str,
     history: List[Dict[str, Any]],
@@ -2031,24 +2061,8 @@ def chat(
                 "Invalid temperature; reason=value_error; using_default=0.7"
             )
 
-        logging.debug("Debug - Chat Function - Final LLM payload structure:")
-        for i, msg_p in enumerate(llm_messages_payload):
-            content_log = []
-            if isinstance(msg_p.get("content"), list):
-                for part_c in msg_p["content"]:
-                    if part_c.get("type") == "text":
-                        content_log.append(
-                            f"text(length={len(part_c.get('text', ''))})"
-                        )
-                    elif part_c.get("type") == "image_url":
-                        image_url_value = part_c.get("image_url", {}).get("url", "")
-                        content_log.append(f"image_url(length={len(image_url_value)})")
-            logging.debug(
-                "  Msg %d: content_type=%s; parts=[%s]",
-                i,
-                type(msg_p.get("content")).__name__,
-                ", ".join(content_log),
-            )
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            _debug_dump_llm_payload_summary(llm_messages_payload)
 
         logging.debug(
             "Debug - Chat Function - Temperature configured: %s",
