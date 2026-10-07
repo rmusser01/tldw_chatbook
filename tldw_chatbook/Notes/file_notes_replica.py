@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 from typing import NamedTuple
@@ -24,6 +25,21 @@ from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 
 from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase
 
+#: ADR-218: most-recent ``pre_edit`` revisions kept per note (protected
+#: paths included -- protected saves are the only checkpoint writer, so
+#: exempting them would leave the growth ADR-218 exists to bound unbounded;
+#: PR #3016 review finding 14).
+MAX_REVISIONS_PER_NOTE = 50
+#: ADR-218: tombstones and revisions past this age are expired.
+RECOVERY_EXPIRY_DAYS = 30
+#: Default bounded page size for revision-history listings; one definition
+#: shared by the replica and the service so the two layers cannot drift
+#: (PR #3016 review finding 5).
+REVISION_HISTORY_DEFAULT_LIMIT = 10
+#: Hard ceiling for any caller-supplied history page size, clamped before
+#: the query runs (PR #3016 review finding 3).
+REVISION_HISTORY_MAX_LIMIT = 200
+
 
 class ReplicaFileInfo(NamedTuple):
     """Metadata needed to reconcile one active disk file with its replica."""
@@ -32,6 +48,27 @@ class ReplicaFileInfo(NamedTuple):
     content_hash: str
     size: int
     mtime_ns: int
+
+
+class ReplicaRevisionInfo(NamedTuple):
+    """One bounded history-listing entry for a replicated file."""
+
+    kind: str
+    session_key: str | None
+    created_at: str
+    content_hash: str
+    size: int
+    #: Stable revision-row identity (``rowid``): multiple ``delete``
+    #: revisions share a NULL session key, so this is how a History entry
+    #: selects exactly the row it listed (PR #3016 review finding 2).
+    revision_id: int
+
+
+class ReplicaRevisionBytes(NamedTuple):
+    """Exact stored bytes of one revision and their recorded digest."""
+
+    raw_bytes: bytes
+    content_hash: str
 
 
 class FileNotesReplica:
@@ -483,28 +520,11 @@ class FileNotesReplica:
             ``True`` when an exact entry or folder prefix protects the path.
         """
         with self._locked_connection():
-            row = self._connection.execute(
-                """
-                SELECT 1
-                FROM protected_paths
-                WHERE root = ?
-                  AND (
-                        (is_prefix = 0 AND relative_path = ?)
-                     OR (
-                            is_prefix = 1
-                        AND (
-                               relative_path = ''
-                            OR relative_path = ?
-                            OR substr(?, 1, length(relative_path) + 1)
-                               = relative_path || '/'
-                        )
-                     )
-                  )
-                LIMIT 1
-                """,
-                (root, relative_path, relative_path, relative_path),
-            ).fetchone()
-        return row is not None
+            return _protected_row_exists(
+                self._connection,
+                root,
+                relative_path,
+            )
 
     def checkpoint(
         self,
@@ -554,6 +574,334 @@ class FileNotesReplica:
             )
             inserted = cursor.rowcount > 0
         return inserted
+
+    def list_revisions(
+        self,
+        root: str,
+        relative_path: str,
+        *,
+        limit: int = REVISION_HISTORY_DEFAULT_LIMIT,
+    ) -> list[ReplicaRevisionInfo]:
+        """List one file's revisions, most recent first, bounded to ``limit``.
+
+        The caller-supplied ``limit`` is clamped to at most
+        :data:`REVISION_HISTORY_MAX_LIMIT` before anything is read, rows are
+        ranked by parsed UTC instant -- stored spellings mix ``Z``,
+        ``+00:00`` and offsets, so SQL text order is not chronological order
+        (PR #3016 review findings 3, 5 and 12) -- and revision bytes stay in
+        the database: the listing reads only ``length(raw_bytes)``.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+            limit: Maximum number of entries returned.
+
+        Returns:
+            Revision entries (row id, time, kind, session, hash, size),
+            newest first.
+        """
+        if limit <= 0:
+            return []
+        bounded_limit = min(limit, REVISION_HISTORY_MAX_LIMIT)
+        with self._locked_connection():
+            rows = self._connection.execute(
+                """
+                SELECT rowid, kind, session_key, created_at, content_hash,
+                       length(raw_bytes) AS byte_size
+                FROM revisions
+                WHERE root = ? AND relative_path = ?
+                """,
+                (root, relative_path),
+            ).fetchall()
+        ranked = sorted(rows, key=_revision_row_rank, reverse=True)
+        return [
+            ReplicaRevisionInfo(
+                kind=str(row["kind"]),
+                session_key=(
+                    None if row["session_key"] is None else str(row["session_key"])
+                ),
+                created_at=str(row["created_at"]),
+                content_hash=str(row["content_hash"]),
+                size=int(row["byte_size"]),
+                revision_id=int(row["rowid"]),
+            )
+            for row in ranked[:bounded_limit]
+        ]
+
+    def get_revision(
+        self,
+        root: str,
+        relative_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+        revision_id: int | None = None,
+    ) -> ReplicaRevisionBytes | None:
+        """Return one revision's exact bytes and recorded digest.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                deletion revision, whose session key is NULL.
+            revision_id: Exact revision row (from :meth:`list_revisions`).
+                Without it, a ``delete`` lookup with a NULL session key
+                serves the NEWEST deletion -- the row the current
+                tombstone's delete wrote. Every delete cycle inserts its
+                own NULL-session row (NULLs do not collide under the UNIQUE
+                index), so an unordered lookup could otherwise serve an
+                older cycle's bytes (PR #3016 review finding 2).
+
+        Returns:
+            Stored bytes with their digest, or ``None`` when absent.
+        """
+        with self._locked_connection():
+            if revision_id is not None:
+                row = self._connection.execute(
+                    """
+                    SELECT raw_bytes, content_hash
+                    FROM revisions
+                    WHERE root = ?
+                      AND relative_path = ?
+                      AND kind = ?
+                      AND session_key IS ?
+                      AND rowid = ?
+                    """,
+                    (root, relative_path, kind, session_key, revision_id),
+                ).fetchone()
+            elif kind == "delete" and session_key is None:
+                delete_rows = self._connection.execute(
+                    """
+                    SELECT rowid, created_at, raw_bytes, content_hash
+                    FROM revisions
+                    WHERE root = ?
+                      AND relative_path = ?
+                      AND kind = 'delete'
+                    """,
+                    (root, relative_path),
+                ).fetchall()
+                row = (
+                    max(delete_rows, key=_revision_row_rank)
+                    if delete_rows
+                    else None
+                )
+            else:
+                row = self._connection.execute(
+                    """
+                    SELECT raw_bytes, content_hash
+                    FROM revisions
+                    WHERE root = ?
+                      AND relative_path = ?
+                      AND kind = ?
+                      AND session_key IS ?
+                    """,
+                    (root, relative_path, kind, session_key),
+                ).fetchone()
+        if row is None:
+            return None
+        return ReplicaRevisionBytes(
+            raw_bytes=bytes(row["raw_bytes"]),
+            content_hash=str(row["content_hash"]),
+        )
+
+    def verify_revision(
+        self,
+        root: str,
+        relative_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+        revision_id: int | None = None,
+    ) -> bool | None:
+        """Check one revision's stored bytes against its recorded digest.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                deletion revision.
+            revision_id: Exact revision row (from :meth:`list_revisions`),
+                selecting one specific deletion among several.
+
+        Returns:
+            ``True`` when the digest of the stored bytes equals the recorded
+            digest, ``False`` on mismatch, ``None`` when the revision is
+            absent.
+        """
+        revision = self.get_revision(
+            root,
+            relative_path,
+            kind=kind,
+            session_key=session_key,
+            revision_id=revision_id,
+        )
+        if revision is None:
+            return None
+        return (
+            hashlib.sha256(revision.raw_bytes).hexdigest() == revision.content_hash
+        )
+
+    def enforce_retention(
+        self,
+        root: str,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """Apply the ADR-218 retention bounds for one root atomically.
+
+        Three rules, one transaction: each path keeps at most
+        :data:`MAX_REVISIONS_PER_NOTE` most-recent ``pre_edit`` revisions;
+        tombstones and revisions older than :data:`RECOVERY_EXPIRY_DAYS` are
+        expired; protected paths and the most-recent tombstone (with its own
+        ``delete`` revision, matched by row identity) are never expired.
+        Timestamps are compared as parsed UTC values -- the stored spellings
+        mix ``Z``, ``+00:00`` and offsets, so ordering NEVER happens in SQL
+        text -- and a value that cannot be parsed is kept, never evicted.
+
+        Args:
+            root: Canonical notes-root identifier.
+            now: Retention clock; defaults to the current UTC time.
+        """
+        observed_now = now or datetime.now(timezone.utc)
+        if observed_now.tzinfo is None:
+            observed_now = observed_now.replace(tzinfo=timezone.utc)
+        cutoff = observed_now - timedelta(days=RECOVERY_EXPIRY_DAYS)
+        with self._transaction() as cursor:
+            # Rule 1: the per-note checkpoint cap. Every path is capped,
+            # protected included (PR #3016 review finding 14): protected
+            # saves are the only checkpoint writer, so exempting them would
+            # leave exactly the growth ADR-218 exists to bound unbounded.
+            # Survivors are chosen by parsed UTC instant (finding 1), with
+            # insertion order as the deterministic tie-break; unparseable
+            # stamps rank newest, so they are always kept.
+            cap_paths = cursor.execute(
+                """
+                SELECT DISTINCT relative_path
+                FROM revisions
+                WHERE root = ? AND kind = 'pre_edit'
+                """,
+                (root,),
+            ).fetchall()
+            for row in cap_paths:
+                relative_path = str(row["relative_path"])
+                checkpoint_rows = cursor.execute(
+                    """
+                    SELECT rowid, created_at
+                    FROM revisions
+                    WHERE root = ? AND relative_path = ? AND kind = 'pre_edit'
+                    """,
+                    (root, relative_path),
+                ).fetchall()
+                ranked = sorted(
+                    checkpoint_rows,
+                    key=_revision_row_rank,
+                    reverse=True,
+                )
+                expired_ids = [
+                    int(expired["rowid"])
+                    for expired in ranked[MAX_REVISIONS_PER_NOTE:]
+                ]
+                if expired_ids:
+                    cursor.executemany(
+                        "DELETE FROM revisions WHERE rowid = ?",
+                        [(row_id,) for row_id in expired_ids],
+                    )
+
+            # Rule 2: tombstone expiry. Exactly ONE most-recent tombstone is
+            # preserved (PR #3016 review finding 6: a tied greatest
+            # ``deleted_at`` no longer exempts every peer), chosen by parsed
+            # instant with the files rowid as the deterministic tie-break.
+            tombstone_rows = cursor.execute(
+                """
+                SELECT rowid, relative_path, deleted_at
+                FROM files
+                WHERE root = ? AND deleted_at IS NOT NULL
+                """,
+                (root,),
+            ).fetchall()
+            preserved_tombstone_key: tuple[datetime, int] | None = None
+            for row in tombstone_rows:
+                deleted_at = _parse_utc_timestamp(str(row["deleted_at"]))
+                if deleted_at is None:
+                    continue
+                key = (deleted_at, int(row["rowid"]))
+                if preserved_tombstone_key is None or key > preserved_tombstone_key:
+                    preserved_tombstone_key = key
+            preserved_tombstone_path: str | None = None
+            if preserved_tombstone_key is not None:
+                for row in tombstone_rows:
+                    if int(row["rowid"]) == preserved_tombstone_key[1]:
+                        preserved_tombstone_path = str(row["relative_path"])
+                        break
+            for row in tombstone_rows:
+                relative_path = str(row["relative_path"])
+                if _protected_row_exists(cursor, root, relative_path):
+                    continue
+                deleted_at = _parse_utc_timestamp(str(row["deleted_at"]))
+                if deleted_at is None or deleted_at >= cutoff:
+                    continue
+                if (deleted_at, int(row["rowid"])) == preserved_tombstone_key:
+                    continue
+                self._delete_fts(cursor, root, relative_path)
+                cursor.execute(
+                    "DELETE FROM files WHERE root = ? AND relative_path = ?",
+                    (root, relative_path),
+                )
+
+            # Rule 3: revision expiry. Protected paths are exempt, and the
+            # preserved tombstone's own delete revision is exempt by ROW
+            # IDENTITY -- not timestamp equality -- because the deletion
+            # writer accepts independent ``created_at``/``deleted_at``
+            # values (PR #3016 review finding 7). The identity is the
+            # newest ``delete`` row of the preserved tombstone's path, the
+            # same row a NULL-session lookup serves.
+            preserved_delete_row_id: int | None = None
+            if preserved_tombstone_path is not None:
+                delete_rows = cursor.execute(
+                    """
+                    SELECT rowid, created_at
+                    FROM revisions
+                    WHERE root = ? AND relative_path = ? AND kind = 'delete'
+                    """,
+                    (root, preserved_tombstone_path),
+                ).fetchall()
+                if delete_rows:
+                    newest_delete = max(delete_rows, key=_revision_row_rank)
+                    preserved_delete_row_id = int(newest_delete["rowid"])
+            revision_rows = cursor.execute(
+                """
+                SELECT rowid, relative_path, kind, created_at
+                FROM revisions
+                WHERE root = ?
+                """,
+                (root,),
+            ).fetchall()
+            expired_row_ids: list[int] = []
+            protected_cache: dict[str, bool] = {}
+            for row in revision_rows:
+                relative_path = str(row["relative_path"])
+                is_protected = protected_cache.get(relative_path)
+                if is_protected is None:
+                    is_protected = _protected_row_exists(
+                        cursor, root, relative_path
+                    )
+                    protected_cache[relative_path] = is_protected
+                if is_protected:
+                    continue
+                if int(row["rowid"]) == preserved_delete_row_id:
+                    # The preserved tombstone's own delete revision is the
+                    # same recovery fact as the tombstone kept above.
+                    continue
+                created_at = _parse_utc_timestamp(str(row["created_at"]))
+                if created_at is None or created_at >= cutoff:
+                    continue
+                expired_row_ids.append(int(row["rowid"]))
+            for row_id in expired_row_ids:
+                cursor.execute(
+                    "DELETE FROM revisions WHERE rowid = ?", (row_id,)
+                )
 
     def prepare_deletion(
         self,
@@ -765,3 +1113,71 @@ class FileNotesReplica:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _protected_row_exists(
+    connection: sqlite3.Connection,
+    root: str,
+    relative_path: str,
+) -> bool:
+    """Return whether an exact or component-bounded prefix protects a path."""
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM protected_paths
+        WHERE root = ?
+          AND (
+                (is_prefix = 0 AND relative_path = ?)
+             OR (
+                    is_prefix = 1
+                AND (
+                       relative_path = ''
+                    OR relative_path = ?
+                    OR substr(?, 1, length(relative_path) + 1)
+                       = relative_path || '/'
+                )
+             )
+          )
+        LIMIT 1
+        """,
+        (root, relative_path, relative_path, relative_path),
+    ).fetchone()
+    return row is not None
+
+
+def _parse_utc_timestamp(value: str) -> datetime | None:
+    """Parse one stored UTC timestamp, or ``None`` when unparseable.
+
+    Stored spellings mix trailing ``Z``, ``+00:00`` and non-UTC offsets
+    across the codebase's history; SQL string ordering cannot compare them,
+    so retention and history ranking parse in Python. ``None`` fails safe:
+    the caller keeps, never evicts.
+    """
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+#: Ranks above every parseable instant, so a revision whose stored stamp
+#: cannot be parsed is listed and kept rather than silently dropped or
+#: evicted (the ADR-218 fail-safe applied to ordering).
+_MAX_SORT_INSTANT = datetime.max.replace(tzinfo=timezone.utc)
+
+
+def _revision_row_rank(row: sqlite3.Row) -> tuple[datetime, int]:
+    """Rank one revision row by parsed UTC instant, then insertion order.
+
+    PR #3016 review findings 1 and 12: ``created_at`` text order is not time
+    order for the spellings this replica stores, so every survivor/newest
+    choice (the checkpoint cap, history listing, newest-deletion lookup)
+    ranks rows with this key instead of ``ORDER BY created_at``.
+    """
+    parsed = _parse_utc_timestamp(str(row["created_at"]))
+    return (
+        parsed if parsed is not None else _MAX_SORT_INSTANT,
+        int(row["rowid"]),
+    )

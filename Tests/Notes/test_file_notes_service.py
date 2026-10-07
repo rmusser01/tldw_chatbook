@@ -1574,3 +1574,403 @@ def test_frontmatter_lines_counts_only_the_hidden_block(
     assert service.open_file("plain.md").frontmatter_lines == 0
     # An unterminated block is not frontmatter -- it stays in the body.
     assert service.open_file("unclosed.md").frontmatter_lines == 0
+
+
+# --- task-34381: revisions read-path (history, verify, export, restore) -----
+
+
+def _protected_history_service(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> tuple[Path, FileNotesService, bytes, bytes]:
+    """One protected note with a pre-edit checkpoint and a delete revision."""
+    root = tmp_path / "history-notes"
+    root.mkdir()
+    note = root / "important.md"
+    checkpoint_bytes = b"checkpoint era bytes\n"
+    deletion_bytes = b"final deleted bytes\n"
+    note.write_bytes(checkpoint_bytes)
+    service = FileNotesService(root, replica)
+    assert service.protect_path("important.md").status == "ok"
+    opened = service.open_file("important.md")
+    assert (
+        service.save_file(
+            opened,
+            "edited body\n",
+            session_key="session-1",
+        ).status
+        == "ok"
+    )
+    # The protected save above committed checkpoint_bytes for session-1.
+    note.write_bytes(deletion_bytes)
+    current = service.open_file("important.md")
+    assert (
+        service.delete_file(
+            "important.md",
+            expected_hash=current.content_hash,
+        ).status
+        == "ok"
+    )
+    assert note.exists() is False
+    return root, service, checkpoint_bytes, deletion_bytes
+
+
+def test_revision_history_lists_bounded_most_recent_entries(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    root, service, checkpoint_bytes, deletion_bytes = _protected_history_service(
+        tmp_path, replica
+    )
+
+    history = service.list_revision_history("important.md", limit=10)
+
+    assert history.replica_warning is None
+    kinds = [(entry.kind, entry.session_key) for entry in history.entries]
+    # Newest first: the deletion snapshot, then the coalesced session checkpoint.
+    assert kinds == [("delete", None), ("pre_edit", "session-1")]
+    newest = history.entries[0]
+    assert newest.content_hash == _digest(deletion_bytes)
+    assert newest.size == len(deletion_bytes)
+    oldest = history.entries[1]
+    assert oldest.content_hash == _digest(checkpoint_bytes)
+    assert (
+        service.list_revision_history("important.md", limit=1).entries
+        == history.entries[:1]
+    )
+    assert service.list_revision_history("absent.md").entries == ()
+    # Without the replica there is no history to read, and that is reported.
+    bare = FileNotesService(root, None)
+    try:
+        assert bare.list_revision_history("important.md").entries == ()
+        assert bare.list_revision_history("important.md").replica_warning
+    finally:
+        bare.close()
+
+
+def test_verify_revision_reports_match_mismatch_and_absence(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    _root, service, _checkpoint_bytes, _deletion_bytes = _protected_history_service(
+        tmp_path, replica
+    )
+
+    verified = service.verify_revision(
+        "important.md",
+        kind="pre_edit",
+        session_key="session-1",
+    )
+    assert verified.status == "ok"
+
+    mismatch = service.verify_revision(
+        "important.md",
+        kind="pre_edit",
+        session_key="absent",
+    )
+    assert mismatch.status == "missing"
+
+    # A stored digest that no longer describes the bytes is the corruption
+    # shape verify exists to name.
+    replica._connection.execute(
+        """
+        UPDATE revisions SET content_hash = ?
+        WHERE kind = 'pre_edit' AND session_key = 'session-1'
+        """,
+        (_digest(b"not the stored bytes"),),
+    )
+    corrupted = service.verify_revision(
+        "important.md",
+        kind="pre_edit",
+        session_key="session-1",
+    )
+    assert corrupted.status == "conflict"
+    assert "match" in (corrupted.message or "")
+
+
+def test_export_revision_streams_exact_bytes_without_clobbering(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    root, service, checkpoint_bytes, _deletion_bytes = _protected_history_service(
+        tmp_path, replica
+    )
+
+    exported = service.export_revision_file(
+        "important.md",
+        "recovered.md",
+        kind="pre_edit",
+        session_key="session-1",
+    )
+
+    assert exported.status == "ok"
+    assert (root / "recovered.md").read_bytes() == checkpoint_bytes
+    assert exported.content_hash == _digest(checkpoint_bytes)
+    assert service.session_changes[-1] == SessionChange("created", "recovered.md")
+
+    # Occupied destinations are refused, never replaced.
+    (root / "occupied.md").write_bytes(b"keep me")
+    occupied = service.export_revision_file(
+        "important.md",
+        "occupied.md",
+        kind="pre_edit",
+        session_key="session-1",
+    )
+    assert occupied.status == "exists"
+    assert (root / "occupied.md").read_bytes() == b"keep me"
+
+    absent_revision = service.export_revision_file(
+        "important.md",
+        "never.md",
+        kind="pre_edit",
+        session_key="absent",
+    )
+    assert absent_revision.status == "missing"
+    assert not (root / "never.md").exists()
+
+
+def test_restore_revision_writes_absent_paths_only_and_verifies_hash(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    root, service, checkpoint_bytes, _deletion_bytes = _protected_history_service(
+        tmp_path, replica
+    )
+
+    restored = service.restore_revision(
+        "important.md",
+        "restored-copy.md",
+        kind="pre_edit",
+        session_key="session-1",
+    )
+
+    assert restored.status == "ok"
+    assert (root / "restored-copy.md").read_bytes() == checkpoint_bytes
+    assert restored.content_hash == _digest(checkpoint_bytes)
+    assert service.session_changes[-1] == SessionChange(
+        "restored",
+        "restored-copy.md",
+    )
+    # The replica tracks the restored path as current content.
+    root_key = str(root.resolve())
+    assert replica.get_bytes(root_key, "restored-copy.md") == checkpoint_bytes
+
+    occupied = service.restore_revision(
+        "important.md",
+        "restored-copy.md",
+        kind="pre_edit",
+        session_key="session-1",
+    )
+    assert occupied.status == "exists"
+    assert "never replaces" in (occupied.message or "")
+    assert (root / "restored-copy.md").read_bytes() == checkpoint_bytes
+
+
+def test_revision_refusals_name_a_hash_that_no_longer_matches(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    _root, service, _checkpoint_bytes, _deletion_bytes = _protected_history_service(
+        tmp_path, replica
+    )
+    replica._connection.execute(
+        """
+        UPDATE revisions SET content_hash = ?
+        WHERE kind = 'pre_edit' AND session_key = 'session-1'
+        """,
+        (_digest(b"not the stored bytes"),),
+    )
+
+    exported = service.export_revision_file(
+        "important.md",
+        "export.md",
+        kind="pre_edit",
+        session_key="session-1",
+    )
+    assert exported.status == "conflict"
+    assert "hash" in (exported.message or "").lower()
+    assert not (_root / "export.md").exists()
+
+    restored = service.restore_revision(
+        "important.md",
+        "restore.md",
+        kind="pre_edit",
+        session_key="session-1",
+    )
+    assert restored.status == "conflict"
+    assert "hash" in (restored.message or "").lower()
+    assert not (_root / "restore.md").exists()
+
+
+def _redeleted_history_service(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> tuple[Path, FileNotesService, bytes, bytes]:
+    """One note deleted, restored, and deleted again with new bytes.
+
+    PR #3016 review finding 2's exact sequence: the second delete inserts a
+    second NULL-session ``delete`` revision, and every identity-less
+    lookup must serve THOSE bytes -- the first cycle's must stay reachable
+    only through the history listing's revision id.
+    """
+    root = tmp_path / "redeleted-notes"
+    root.mkdir()
+    note = root / "cycled.md"
+    first_bytes = b"the first deleted body\n"
+    second_bytes = b"a different second deleted body\n"
+    service = FileNotesService(root, replica)
+    note.write_bytes(first_bytes)
+    opened = service.open_file("cycled.md")
+    assert (
+        service.delete_file("cycled.md", expected_hash=opened.content_hash).status
+        == "ok"
+    )
+    assert service.restore_file("cycled.md").status == "ok"
+    note.write_bytes(second_bytes)
+    current = service.open_file("cycled.md")
+    assert (
+        service.delete_file("cycled.md", expected_hash=current.content_hash).status
+        == "ok"
+    )
+    return root, service, first_bytes, second_bytes
+
+
+def test_deleted_copy_export_writes_the_current_tombstones_bytes(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """The Export-deleted-copy fallback never serves a stale deletion."""
+    root, service, first_bytes, second_bytes = _redeleted_history_service(
+        tmp_path, replica
+    )
+
+    exported = service.export_revision_file(
+        "cycled.md",
+        "recovered.md",
+        kind="delete",
+        session_key=None,
+    )
+
+    assert exported.status == "ok"
+    assert (root / "recovered.md").read_bytes() == second_bytes
+    assert exported.content_hash == _digest(second_bytes)
+    # The tombstone itself holds the same second-cycle bytes.
+    assert replica.get_restore_bytes(service.root_key, "cycled.md") == second_bytes
+    assert first_bytes != second_bytes
+
+
+def test_history_revision_ids_select_each_deletion_exactly(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """Each listed History entry can act on exactly its own deletion row."""
+    _root, service, first_bytes, second_bytes = _redeleted_history_service(
+        tmp_path, replica
+    )
+
+    entries = service.list_revision_history("cycled.md", limit=10).entries
+    deletions = [entry for entry in entries if entry.kind == "delete"]
+    assert len(deletions) == 2
+    assert deletions[0].revision_id != deletions[1].revision_id
+    older_id = deletions[1].revision_id
+
+    verified = service.verify_revision(
+        "cycled.md",
+        kind="delete",
+        session_key=None,
+        revision_id=older_id,
+    )
+    assert verified.status == "ok"
+
+    exported = service.export_revision_file(
+        "cycled.md",
+        "first-cycle.md",
+        kind="delete",
+        session_key=None,
+        revision_id=older_id,
+    )
+    assert exported.status == "ok"
+    assert (_root / "first-cycle.md").read_bytes() == first_bytes
+
+    restored = service.restore_revision(
+        "cycled.md",
+        "second-cycle.md",
+        kind="delete",
+        session_key=None,
+        revision_id=deletions[0].revision_id,
+    )
+    assert restored.status == "ok"
+    assert (_root / "second-cycle.md").read_bytes() == second_bytes
+
+
+def test_revision_history_limit_is_clamped_to_the_shared_ceiling(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+) -> None:
+    """PR #3016 review finding 3: the service cannot request the world."""
+    from tldw_chatbook.Notes.file_notes_service import REVISION_HISTORY_MAX_LIMIT
+
+    root = tmp_path / "clamped-notes"
+    root.mkdir()
+    (root / "busy.md").write_text("body\n", encoding="utf-8")
+    service = FileNotesService(root, replica)
+    service.protect_path("busy.md")
+    for index in range(REVISION_HISTORY_MAX_LIMIT + 50):
+        replica.checkpoint(
+            service.root_key,
+            "busy.md",
+            f"body {index}".encode(),
+            content_hash=_digest(f"body {index}".encode()),
+            session_key=f"session-{index:04d}",
+        )
+
+    history = service.list_revision_history("busy.md", limit=1_000_000)
+
+    assert len(history.entries) == REVISION_HISTORY_MAX_LIMIT
+
+
+def test_revision_export_reports_durability_warning_after_publishing(
+    tmp_path: Path,
+    replica: FileNotesReplica,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PR #3016 review finding 9: a failed parent fsync is post-publication.
+
+    The link has already published verified bytes when the folder fsync
+    fails, so the export must be recorded and reported as published-with-a-
+    warning -- never as an error that leaves an unrecorded file and a retry
+    that can only return ``exists``.
+    """
+    root, service, checkpoint_bytes, _deletion_bytes = _protected_history_service(
+        tmp_path, replica
+    )
+
+    def failing_fsync(directory: object) -> None:
+        raise OSError("directory fsync refused")
+
+    monkeypatch.setattr(service_module, "fsync_parent_directory", failing_fsync)
+
+    exported = service.export_revision_file(
+        "important.md",
+        "unconfirmed.md",
+        kind="pre_edit",
+        session_key="session-1",
+    )
+
+    assert exported.status == "ok"
+    assert (root / "unconfirmed.md").read_bytes() == checkpoint_bytes
+    assert exported.replica_warning is not None
+    assert "fsync" in exported.replica_warning
+    # The published destination is recorded exactly like a clean export.
+    assert service.session_changes[-1] == SessionChange("created", "unconfirmed.md")
+
+    # A retry against the same destination names the real state: it exists.
+    monkeypatch.undo()
+    retry = service.export_revision_file(
+        "important.md",
+        "unconfirmed.md",
+        kind="pre_edit",
+        session_key="session-1",
+    )
+    assert retry.status == "exists"
+    assert (root / "unconfirmed.md").read_bytes() == checkpoint_bytes
