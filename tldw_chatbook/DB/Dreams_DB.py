@@ -17,6 +17,14 @@ from .base_db import BaseDB
 #: Upper bound for any list read the UI pages through.
 MAX_LIST_LIMIT = 200
 
+#: Upper bound for a ``list_tracked_items`` status read (Qodo #9, PR #2890).
+#: The active set is already capped by ``tracked_item_cap`` (default 20),
+#: but ``retired`` grows forever -- every quiet sweep and passed event
+#: lands there -- and the page-track provenance scan re-reads all three
+#: statuses, so an unbounded read would grow with the user's history.
+#: 500 retired watches is years of use; callers needing more get paging.
+TRACKED_ITEMS_LIST_LIMIT = 500
+
 
 def clamp_limit(limit: int) -> int:
     """Bound a caller-supplied page size to ``1..MAX_LIST_LIMIT``.
@@ -41,10 +49,12 @@ class DreamsSchemaError(RuntimeError):
 
 
 class DreamsDB(BaseDB):
-    """Database wrapper for the Dreams subsystem (Phase 1 discovery loop).
+    """Database wrapper for the Dreams subsystem (discovery + track loops).
 
-    Schema v1 covers the discovery tables only (spec §Data model); the track
-    tables arrive as the Phase 2 migration. Connections are held per thread
+    Schema v1 covered the Phase 1 discovery tables (spec §Data model); v2
+    adds the Phase 2 track tables (``dream_tracked_items`` /
+    ``dream_track_runs``) additively, so v1 files upgrade in place on open.
+    Connections are held per thread
     via the ``Library_Collections_DB`` idiom: Python's sqlite3 refuses a
     connection used from a thread other than its creator, and Dreams is
     reached both from the UI thread and from ``asyncio.to_thread`` cycle
@@ -58,7 +68,7 @@ class DreamsDB(BaseDB):
     reclaimed by :meth:`fail_stale_generating` before the next date claim.
     """
 
-    _CURRENT_SCHEMA_VERSION = 1
+    _CURRENT_SCHEMA_VERSION = 2
     _WAL_SETUP_TIMEOUT_SECONDS = 5.0
     #: Pinging a recently-used held connection on every call roughly doubles
     #: the statement count on query-heavy paths (task-261/3011); idle ones
@@ -151,6 +161,53 @@ class DreamsDB(BaseDB):
             searches INTEGER NOT NULL DEFAULT 0,
             llm_calls INTEGER NOT NULL DEFAULT 0
         )
+        """,
+        # ----- Schema v2 (Phase 2 track loop), additive on top of v1 -----
+        """
+        CREATE TABLE IF NOT EXISTS dream_tracked_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin_story_id INTEGER,
+            mechanism TEXT NOT NULL CHECK(mechanism IN ('page','question')),
+            intent TEXT NOT NULL CHECK(intent IN ('event','deal','topic')),
+            subscription_id INTEGER,
+            query_template TEXT,
+            event_date TEXT,
+            cadence_seconds INTEGER NOT NULL,
+            quiet_retire_count INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','retired')),
+            retired_reason TEXT,
+            created_by_dreams INTEGER NOT NULL DEFAULT 0,
+            last_checked TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_dream_tracked_status
+            ON dream_tracked_items(status)
+        """,
+        # Task 6 ledger item: Task 5 made per-story reads land
+        # (``find_tracked_by_story`` and the story rows' tracked badge),
+        # so the origin-story lookup gets its pinned index -- additive
+        # DDL, no version bump and no data migration.
+        """
+        CREATE INDEX IF NOT EXISTS idx_dream_tracked_origin_story
+            ON dream_tracked_items(origin_story_id)
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS dream_track_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tracked_item_id INTEGER NOT NULL REFERENCES dream_tracked_items(id) ON DELETE CASCADE,
+            status TEXT NOT NULL CHECK(status IN ('changed','unchanged','baseline','rebaselined','withheld','error','skipped')),
+            digest_hash TEXT,
+            verdict_note TEXT NOT NULL DEFAULT '',
+            notified INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_dream_track_runs_item
+            ON dream_track_runs(tracked_item_id, created_at DESC)
         """,
         # No index on dream_feedback(story_id): no Phase 1 query looks
         # feedback up by story (the feedback loop scans by created_at, and
@@ -509,6 +566,34 @@ class DreamsDB(BaseDB):
             ).fetchall()
         return [self._story_dict(row) for row in rows]
 
+    def get_story(self, story_id: int) -> dict | None:
+        """Return one story row by id, or ``None``.
+
+        task-33164 (Phase 2 Track story): the Artifacts screen's Tracked
+        rows resolve their ``origin_story_id`` through this targeted read
+        because the ``list_recent_stories`` window may no longer contain
+        the origin -- a long-lived watch outlives the bounded recent-stories
+        slice. Same row shape as :meth:`list_recent_stories` (all story
+        columns, ``matched_topics`` parsed, the owning collection's
+        ``local_date`` joined in) so the story modal can open it unchanged.
+
+        Args:
+            story_id: The ``dream_stories`` row to read.
+
+        Returns:
+            The story dict with ``local_date`` added, or ``None`` when no
+            row carries that id.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT s.*, c.local_date AS local_date"
+                " FROM dream_stories AS s"
+                " JOIN dreams_collections AS c ON c.id = s.collection_id"
+                " WHERE s.id = ?",
+                (story_id,),
+            ).fetchone()
+        return self._story_dict(row) if row is not None else None
+
     def set_story_kept(self, story_id: int, kept: bool) -> None:
         """Mark a story kept (or clear the mark), stamping kept_at."""
         with self.transaction() as conn:
@@ -678,3 +763,321 @@ class DreamsDB(BaseDB):
         if row is None:
             return {"searches": 0, "llm_calls": 0}
         return {"searches": int(row["searches"]), "llm_calls": int(row["llm_calls"])}
+
+    # ------------------------------------------------------------------
+    # Tracked items (Phase 2 track loop)
+    # ------------------------------------------------------------------
+
+    def create_tracked_item(
+        self,
+        *,
+        origin_story_id: int | None = None,
+        mechanism: str,
+        intent: str,
+        subscription_id: int | None = None,
+        query_template: str | None = None,
+        event_date: str | None = None,
+        cadence_seconds: int,
+        created_by_dreams: int = 0,
+    ) -> int:
+        """Insert one tracked item; the CHECK constraints are the vocabulary.
+
+        Args:
+            origin_story_id: Dream story that prompted tracking, if any.
+            mechanism: How the item is watched (``page``/``question``).
+            intent: What the user wants out of it
+                (``event``/``deal``/``topic``).
+            subscription_id: Media subscription usable for the checks, if any.
+            query_template: Search query the check re-runs, if any.
+            event_date: Date the target event is pinned to, if any.
+            cadence_seconds: Minimum seconds between checks.
+            created_by_dreams: 1 when the Dreams loop (not the user) added it.
+
+        Returns:
+            The new tracked item id.
+
+        Raises:
+            sqlite3.IntegrityError: If ``mechanism`` or ``intent`` is
+                outside its CHECK vocabulary.
+        """
+        now = _utc_now_iso()
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO dream_tracked_items"
+                " (origin_story_id, mechanism, intent, subscription_id,"
+                " query_template, event_date, cadence_seconds, status,"
+                " created_by_dreams, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
+                (
+                    origin_story_id, mechanism, intent, subscription_id,
+                    query_template, event_date, cadence_seconds,
+                    created_by_dreams, now, now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def get_tracked_item(self, tracked_item_id: int) -> dict | None:
+        """Return one tracked item row by id, or None.
+
+        Args:
+            tracked_item_id: The ``dream_tracked_items`` row to read.
+
+        Returns:
+            The full row as a dict (all ``dream_tracked_items``
+            columns), or ``None`` when no row carries that id.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM dream_tracked_items WHERE id = ?",
+                (tracked_item_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_tracked_items(
+        self, status: str = "active", *, limit: int = TRACKED_ITEMS_LIST_LIMIT
+    ) -> list[dict]:
+        """Return tracked items in one status, newest first, bounded.
+
+        Args:
+            status: Lifecycle filter (``active``/``paused``/``retired``).
+            limit: Maximum rows returned, bounded to
+                ``1..TRACKED_ITEMS_LIST_LIMIT`` (Qodo #9: retired rows
+                accumulate forever, so the read is capped the same way
+                ``clamp_limit`` caps the run-list reads).
+
+        Returns:
+            Up to ``limit`` matching rows ordered ``created_at DESC``
+            (``id DESC`` breaks ties so same-millisecond inserts keep
+            newest-first order).
+        """
+        limit = max(1, min(int(limit), TRACKED_ITEMS_LIST_LIMIT))
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM dream_tracked_items WHERE status = ?"
+                " ORDER BY created_at DESC, id DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def find_tracked_by_story(self, origin_story_id: int) -> dict | None:
+        """Return the newest ACTIVE tracked item from a story, or None.
+
+        Final review (ruling P10): the story modal's untrack resolves
+        through this lookup, so a retired/paused row must never surface --
+        re-retiring a sweep-retired row would rewrite its
+        ``retired_reason`` audit data (COALESCE) and disable a
+        subscription the sweep deliberately left live. With the filter the
+        story rows' active-only tracked badge and the ``u`` action agree
+        on what "tracked" means.
+
+        Args:
+            origin_story_id: The dream story whose tracked wrapper to find.
+
+        Returns:
+            The newest active row naming that story as its origin (dict of
+            all columns), or ``None`` when the story has no active
+            wrapper.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM dream_tracked_items WHERE origin_story_id = ?"
+                " AND status = ?"
+                " ORDER BY created_at DESC, id DESC LIMIT 1",
+                (origin_story_id, "active"),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def set_tracked_plan(
+        self, tracked_item_id: int, *, cadence_seconds: int, event_date: str | None
+    ) -> None:
+        """Rewrite one tracked item's check plan (cadence + event date).
+
+        The re-track reuse path (Qodo #2, PR #2890): when a story already
+        has an ACTIVE same-mechanism wrapper, ``track_page`` /
+        ``track_question`` refresh the caller's cadence and event date on
+        the existing row instead of inserting a second wrapper. Both
+        fields are always written -- the caller passes the full new plan,
+        so clearing an event date (``event_date=None``) works.
+
+        Args:
+            tracked_item_id: The wrapper row whose plan to rewrite.
+            cadence_seconds: New minimum seconds between checks.
+            event_date: New target-event date (ISO), or ``None`` to clear.
+
+        A missing row simply matches zero rows (the caller just read the
+        row, and a concurrent retire is a benign no-op); the UPDATE is
+        additionally pinned to ``status='active'`` so a retire landing
+        between the read and this write wins.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE dream_tracked_items SET"
+                " cadence_seconds = ?, event_date = ?, updated_at = ?"
+                " WHERE id = ? AND status = 'active'",
+                (
+                    cadence_seconds, event_date, _utc_now_iso(), tracked_item_id,
+                ),
+            )
+
+    def set_tracked_status(
+        self,
+        tracked_item_id: int,
+        status: str,
+        *,
+        retired_reason: str | None = None,
+    ) -> None:
+        """Move a tracked item between lifecycle states, stamping updated_at.
+
+        ``retired_reason`` keeps the stored value when not passed (COALESCE),
+        so pausing or reactivating never erases why an item was retired.
+
+        Args:
+            tracked_item_id: Item to update.
+            status: New lifecycle state
+                (``active``/``paused``/``retired``).
+            retired_reason: Why the item was retired, when retiring.
+
+        Returns:
+            None; a missing row matches zero rows and is a benign no-op.
+
+        Raises:
+            sqlite3.IntegrityError: If ``status`` is outside its CHECK
+                vocabulary.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE dream_tracked_items SET"
+                " status = ?,"
+                " retired_reason = COALESCE(?, retired_reason),"
+                " updated_at = ?"
+                " WHERE id = ?",
+                (status, retired_reason, _utc_now_iso(), tracked_item_id),
+            )
+
+    def touch_tracked_checked(self, tracked_item_id: int, now_iso: str) -> None:
+        """Stamp a tracked item's last_checked (the scheduler's due clock).
+
+        Args:
+            tracked_item_id: Item that was just checked.
+            now_iso: Check-completion timestamp (canonical UTC shape).
+
+        Returns:
+            None; a missing row matches zero rows and is a benign no-op.
+        """
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE dream_tracked_items SET"
+                " last_checked = ?, updated_at = ?"
+                " WHERE id = ?",
+                (now_iso, _utc_now_iso(), tracked_item_id),
+            )
+
+    def count_active_tracked(self) -> int:
+        """Return how many tracked items are currently active.
+
+        Returns:
+            The COUNT of ``dream_tracked_items`` rows with
+            ``status='active'`` -- the figure the ``tracked_item_cap``
+            guard compares against.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM dream_tracked_items WHERE status = 'active'"
+            ).fetchone()
+        return int(row[0])
+
+    # ------------------------------------------------------------------
+    # Track runs (check outcomes per tracked item)
+    # ------------------------------------------------------------------
+
+    def insert_track_run(
+        self,
+        tracked_item_id: int,
+        *,
+        status: str,
+        digest_hash: str | None,
+        verdict_note: str = "",
+        notified: int = 0,
+    ) -> int:
+        """Append one check-outcome row for a tracked item.
+
+        Args:
+            tracked_item_id: Item the run checked.
+            status: Disposition (``changed``/``unchanged``/``baseline``/
+                ``rebaselined``/``withheld``/``error``/``skipped``).
+            digest_hash: Content digest the verdict was computed from.
+            verdict_note: Short human-facing explanation, '' when none.
+            notified: 1 when the run produced a user notification.
+
+        Returns:
+            The new run id.
+
+        Raises:
+            sqlite3.IntegrityError: If ``status`` is outside its CHECK
+                vocabulary.
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "INSERT INTO dream_track_runs"
+                " (tracked_item_id, status, digest_hash, verdict_note,"
+                " notified, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    tracked_item_id, status, digest_hash, verdict_note,
+                    notified, _utc_now_iso(),
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_recent_track_runs(
+        self, tracked_item_id: int, limit: int = 5
+    ) -> list[dict]:
+        """Return a tracked item's newest runs first.
+
+        Args:
+            tracked_item_id: Item whose runs to read.
+            limit: Maximum number of runs (bounded to 1..MAX_LIST_LIMIT).
+
+        Returns:
+            Run rows ordered ``created_at DESC`` (``id DESC`` breaks ties).
+        """
+        limit = clamp_limit(limit)
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM dream_track_runs WHERE tracked_item_id = ?"
+                " ORDER BY created_at DESC, id DESC LIMIT ?",
+                (tracked_item_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def consecutive_track_dispositions(
+        self, tracked_item_id: int, status: str
+    ) -> int:
+        """Count the trailing run of one disposition, newest run backwards.
+
+        The quiet-retire gate: N consecutive ``unchanged`` (or ``error``)
+        runs is what retires an item without notifying the user, so the
+        count must stop at the newest run whose status differs. With runs
+        (oldest first) ``baseline, unchanged, unchanged, changed`` the
+        trailing run of ``unchanged`` is 0 and of ``changed`` is 1.
+
+        Args:
+            tracked_item_id: Item whose run history to scan.
+            status: Disposition to count the trailing run of.
+
+        Returns:
+            How many of the item's newest runs, walking backwards, hold
+            ``status`` before any run with a different status appears.
+        """
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM dream_track_runs AS r"
+                " WHERE r.tracked_item_id = ? AND r.status = ?"
+                " AND r.id > COALESCE(("
+                "     SELECT b.id FROM dream_track_runs AS b"
+                "     WHERE b.tracked_item_id = ? AND b.status <> ?"
+                "     ORDER BY b.created_at DESC, b.id DESC LIMIT 1"
+                " ), 0)",
+                (tracked_item_id, status, tracked_item_id, status),
+            ).fetchone()
+        return int(row[0])

@@ -45,6 +45,7 @@ from tldw_chatbook.Dreams import (
     profile_sources,
     query_synthesis,
     story_service,
+    track_service,
 )
 from tldw_chatbook.Dreams.discovery import Candidate
 from tldw_chatbook.Dreams.settings import dreams_setting
@@ -66,9 +67,10 @@ _LLM_URL_PREFIX = "dreams://llm/"
 
 #: How far back the feedback loop reads (spec §feedback loop: a trailing
 #: two-week window of story reactions). Feedback kinds count +1 (``more``/
-#: ``kept``/``dived``/``ingested``) or −1 (``less``); ``exported``/
-#: ``tracked`` are recorded but carry no weight signal. The per-reaction
-#: step and clamp live with the snapshot that applies them
+#: ``kept``/``dived``/``ingested``/``tracked`` -- the Phase 2 Track flip:
+#: tracking a story is a positive signal) or −1 (``less``); ``exported`` is
+#: recorded but carries no weight signal. The per-reaction step and clamp
+#: live with the snapshot that applies them
 #: (``interest_profile.FEEDBACK_STEP``).
 _FEEDBACK_WINDOW_DAYS = 14
 
@@ -108,6 +110,22 @@ class CycleDeps:
         perform_search: ``perform_websearch``-shaped search seam.
         now: Injected clock (UTC-aware); drives date bucketing, staleness,
             and catch-up windows.
+        dispatch_getter: Returns the ``NotificationDispatchService`` or
+            ``None``; read only by the Phase 2 track check
+            (``track_service.run_track_check``) to deliver a ``changed``
+            verdict's notification. ``None`` (the default) means a run row
+            without delivery -- existing cycle construction is unaffected.
+        subs_service_getter: Returns the app's ``LocalWatchlistsService``
+            or ``None``; read only by the Phase 2 lifecycle sweep
+            (``track_service.sweep_track_lifecycle``) to disable the
+            dream-created subscription of a wrapper it retires (Qodo #1,
+            PR #2890). ``None`` (the default) keeps the legacy behavior --
+            retired page items keep their subscription -- never an error.
+        scheduling_db_getter: Returns the ``ScheduledTasksDB`` or
+            ``None``; read only by the Phase 2 lifecycle sweep and untrack
+            to disable the one-time reminder linked to a retired tracked
+            item (Qodo #13, PR #2890). ``None`` (the default) leaves
+            linked reminders enabled.
     """
     dreams_db: DreamsDB
     chachanotes_db_getter: Callable[[], Any]
@@ -119,6 +137,9 @@ class CycleDeps:
     now: Callable[[], datetime] = field(
         default=lambda: datetime.now(UTC)
     )
+    dispatch_getter: Callable[[], Any] | None = None
+    subs_service_getter: Callable[[], Any] | None = None
+    scheduling_db_getter: Callable[[], Any] | None = None
 
 
 @dataclass(slots=True)
@@ -474,8 +495,9 @@ def _feedback_net(dreams_db: DreamsDB, *, now: datetime) -> dict[str, int]:
     """Net reactions per matched topic over the trailing window (sync).
 
     Joins ``dream_feedback`` → ``dream_stories.matched_topics`` and nets
-    each normalized topic (+1 per ``more``/``kept``/``dived``/``ingested``,
-    −1 per ``less``; ``exported``/``tracked`` are neutral). Nothing is
+    each normalized topic (+1 per ``more``/``kept``/``dived``/``ingested``/
+    ``tracked`` -- tracking a story is a positive signal, the Phase 2
+    Track flip -- −1 per ``less``; ``exported`` is neutral). Nothing is
     written: ``interest_profile.snapshot`` applies the result as an offset,
     so a reaction counts exactly once per cycle for as long as it is inside
     the window -- never compounding into the stored weight -- and a derived
@@ -505,7 +527,7 @@ def _feedback_net(dreams_db: DreamsDB, *, now: datetime) -> dict[str, int]:
         except ValueError:
             continue
         kind = str(row["kind"])
-        delta = (1 if kind in ("more", "kept", "dived", "ingested")
+        delta = (1 if kind in ("more", "kept", "dived", "ingested", "tracked")
                  else -1 if kind == "less" else 0)
         if delta == 0 or not isinstance(topics, list):
             continue
@@ -584,11 +606,29 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
         seen_cutoff = to_utc_iso(now - timedelta(
             days=int(dreams_setting("seen_item_ttl_days"))))
         await asyncio.to_thread(dreams_db.prune_seen, seen_cutoff)
+        # Track lifecycle sweep (Phase 2 Task 6, stage 0 with the other
+        # maintenance passes): retire event-passed and quiet watches, pause
+        # repeatedly failing ones. Degrade-never-abort -- a sweep exception
+        # is a note on the collection, not a dead cycle -- and the sweep's
+        # own notes ride the same degradation channel. The service getters
+        # let a retirement also disable its dream-created subscription and
+        # linked reminder (Qodo #1/#13, PR #2890); both are optional, and
+        # the sweep degrades without them.
+        stage_notes: list[str] = []
+        try:
+            stage_notes += await track_service.sweep_track_lifecycle(
+                dreams_db, now=now,
+                subs_service_getter=getattr(
+                    deps, "subs_service_getter", None),
+                scheduling_db_getter=getattr(
+                    deps, "scheduling_db_getter", None),
+            )
+        except Exception as exc:  # noqa: BLE001 - the sweep degrades, never aborts
+            stage_notes.append(f"track sweep failed: {exc}")
         # Profile stages (rulings R18/R19) run BEFORE the snapshot so it
         # reflects refreshed signals and the feedback offsets; both degrade
         # with notes and never abort the cycle. Their notes are carried into
         # the collection row once it exists.
-        stage_notes: list[str] = []
         stage_notes += await _refresh_profile_signals(deps, now)
         feedback_net, feedback_notes = await _apply_feedback(deps, now)
         stage_notes += feedback_notes
@@ -661,8 +701,13 @@ async def run_cycle(deps: CycleDeps, *, trigger: str) -> dict:
                     counting_chat, snapshot=snap, count=query_count,
                     exploration_slots=int(dreams_setting("exploration_slots")))
             else:
-                queries = query_synthesis.preview_queries(
-                    [str(t["text"]) for t in snap["topics"]], query_count)
+                # preview_queries now returns labeled rows (Phase 2 Task 1);
+                # the cycle still wants plain query strings. Its internal
+                # filter already dropped unsearchable goals.
+                queries = [row["query"] for row in
+                           query_synthesis.preview_queries(
+                               [str(t["text"]) for t in snap["topics"]],
+                               snap.get("goals", []), count=query_count)]
                 notes.append("llm budget exhausted: fallback queries, no "
                              "synthesis call")
         except Exception as exc:  # noqa: BLE001 - provider unavailable, degrade

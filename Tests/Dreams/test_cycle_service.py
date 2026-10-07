@@ -658,6 +658,20 @@ def test_feedback_ignores_old_and_neutral_reactions(dreams_db, settings):
     assert _net(dreams_db) == {}
 
 
+def test_feedback_tracked_reaction_is_positive(dreams_db, settings):
+    """Phase 2 Track flip: ``tracked`` now nets +1 (+0.1 snapshot weight)."""
+    _fresh_topic(dreams_db, "tracked topic", 0.5)
+    _seed_story_with_feedback(dreams_db, matched=["tracked topic"],
+                              kind="tracked")
+    net = _net(dreams_db)
+    assert net == {"tracked topic": 1}
+    assert _snapshot_weight(dreams_db, "tracked topic", net) == \
+        pytest.approx(0.6)
+    # The stored weight is untouched (offset, never rewrite).
+    assert _profile_row(dreams_db, "tracked topic")["weight"] == \
+        pytest.approx(0.5)
+
+
 @pytest.mark.asyncio
 async def test_feedback_never_compounds_across_cycles(dreams_db, settings):
     """Regression: one reaction used to re-add +0.1 on EVERY cycle."""
@@ -797,3 +811,57 @@ async def test_llm_fallback_story_does_not_repeat_next_day(dreams_db, settings):
     day_two = dreams_db.get_collection_by_date(
         tomorrow.astimezone().strftime("%Y-%m-%d"))
     assert not urls & {s["url"] for s in dreams_db.list_stories(day_two["id"])}
+
+
+# --- track lifecycle sweep at stage 0 (Phase 2 Task 6) -------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_sweeps_tracked_lifecycle_and_records_notes(
+        dreams_db, settings, monkeypatch):
+    """Stage 0 runs the sweep after stale-reclaim, before the profile stages.
+
+    The sweep's notes are degradation notes: they land on the collection row
+    like every other stage's.
+    """
+    from tldw_chatbook.Dreams import track_service
+
+    seen: list[tuple] = []
+
+    async def spy(db, *, now, subs_service_getter=None,
+                  scheduling_db_getter=None):
+        seen.append((db, now))
+        return ["track sweep: retired item 9 (event passed)"]
+
+    monkeypatch.setattr(track_service, "sweep_track_lifecycle", spy)
+    _seed_topics(dreams_db)
+    result = await run_cycle(_deps(dreams_db), trigger="manual")
+
+    assert result["status"] == "complete"
+    assert seen and seen[0][0] is dreams_db, "the sweep got the cycle's DB"
+    assert seen[0][1] is not None, "the sweep got the cycle's clock"
+    row = dreams_db.get_collection_by_date(_today())
+    assert "retired item 9" in (row["degradation_notes"] or ""), (
+        "sweep notes are carried into the collection's degradation notes"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_sweep_failure_degrades_and_cycle_completes(
+        dreams_db, settings, monkeypatch):
+    """A sweep exception is a degradation note, never an abort."""
+    from tldw_chatbook.Dreams import track_service
+
+    async def boom(db, *, now, subs_service_getter=None,
+                   scheduling_db_getter=None):
+        raise RuntimeError("sweep exploded")
+
+    monkeypatch.setattr(track_service, "sweep_track_lifecycle", boom)
+    _seed_topics(dreams_db)
+    result = await run_cycle(_deps(dreams_db), trigger="manual")
+
+    assert result["status"] == "complete", (
+        "a sweep failure must not abort the cycle"
+    )
+    row = dreams_db.get_collection_by_date(_today())
+    assert "track sweep failed" in (row["degradation_notes"] or "")

@@ -48,6 +48,9 @@ the defaults:
 | `seen_item_ttl_days` | `90` | How long a surfaced URL stays deduped. |
 | `max_searches_per_day` | `30` | Daily search budget. |
 | `max_llm_calls_per_day` | `60` | Daily LLM budget (synthesis + stories). |
+| `tracked_item_cap` | `20` | How many tracked pages/questions may be active at once. |
+| `track_min_check_interval_hours` | `12` | Floor between two checks of the same tracked item. |
+| `track_quiet_retire_count` | `14` | Consecutive unchanged checks before a quiet retire. |
 
 ## Where the stories live
 
@@ -67,9 +70,41 @@ From an open story you can:
 - **Ingest (i)** — submit the story's URL to your read-it-later capture
   queue. Only offered for real web (http/https) sources; stories generated
   purely from LLM knowledge have nothing to ingest.
+- **Track this (t) / Untrack (u)** — watch (or stop watching) the story's
+  page for changes; see [Tracking](#tracking) below.
+- **Watch question (w)** — watch the discovery query itself instead of the
+  page: Dreams re-runs it as a search on the check cadence and notifies you
+  when a judged change lands (see [Tracking](#tracking)).
 - **More like this (m) / Less like this (l)** — record feedback that the
   next cycle's interest profile picks up (plus dive/keep/export/ingest
   themselves count as positive signals).
+
+## Tracking
+
+From an open story, **Track this (t)** puts the page under watch: Dreams
+creates (or adopts) a watchlists subscription for the URL, joins it to a
+shared "Dreams Tracked" watchlist, and pins a change alert — every new
+item the page produces lands in the Watchlists **Notifications** pane.
+Tracking an event-dated story also schedules one reminder a week before
+the event. **Watch question (w)** instead tracks the question that found
+the story: the story's discovery query is re-run as a search on the check
+cadence, and one judge call decides whether the results materially
+changed — an unchanged digest never spends the judge. A changed verdict
+surfaces as a row in the **Tracked** group above the Dreams rows;
+selecting a Tracked row opens the story it came from (or a summary
+notice, when its origin story is gone). Both kinds of watch retire the
+same way (see below).
+
+Tracked watches retire on their own: an event-dated watch retires one
+day after its event has passed, and any watch that comes back unchanged
+`track_quiet_retire_count` checks in a row (default 14) retires as
+quiet. A watch whose checks keep failing is paused after 3 errors
+instead of spending budget forever. **Untrack (u)** retires a watch
+manually — a subscription Dreams created is disabled (never deleted), so
+its watchlist membership and alert rules survive; at most
+`tracked_item_cap` watches (default 20) are active at once, and no
+watch is checked more often than once per
+`track_min_check_interval_hours` (default 12).
 
 ## Cost and privacy
 
@@ -80,4 +115,4 @@ From an open story you can:
 - Everything is stored locally in the Dreams SQLite database.
 
 —
-*Verified against dev @ 8cb20b929d — 2026-09-22*
+*Verified against feat/dreams-phase-3 @ a5f7daa078 — 2026-09-28*

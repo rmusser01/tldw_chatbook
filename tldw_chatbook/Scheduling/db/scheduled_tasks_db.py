@@ -936,6 +936,34 @@ class ScheduledTasksDB(BaseDB):
         with self.transaction() as conn:
             return self._update_reminder_task_conn(conn, task_id, **kwargs)
 
+    def disable_reminders_by_link(self, link_type: str, link_id: str) -> int:
+        """Disable every reminder linked to one entity (Qodo #13, PR #2890).
+
+        Dreams promotes one ``one_time`` reminder per event-dated tracked
+        item (``link_type="dream_tracked_item"``, ``link_id=str(item_id)``);
+        when that item is untracked or auto-retired the linked reminder
+        must stop firing. Disabling (never deleting) keeps the row visible
+        in the scheduling UI with its provenance, exactly like the
+        subscriptions the Dreams untrack path disables.
+
+        Args:
+            link_type: The ``link_type`` value the reminders were created
+                with (e.g. ``"dream_tracked_item"``).
+            link_id: The ``link_id`` value, as the string the creator
+                wrote (Dreams stores ``str(tracked_item_id)``).
+
+        Returns:
+            How many reminder rows were disabled (0 when none are linked
+            -- the common case for a dateless watch).
+        """
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE reminder_tasks SET enabled = 0"
+                " WHERE link_type = ? AND link_id = ? AND enabled = 1",
+                (link_type, str(link_id)),
+            )
+            return int(cursor.rowcount)
+
     def delete_reminder_task(self, task_id: str) -> bool:
         """Delete a reminder task by local id."""
         with self.transaction() as conn:

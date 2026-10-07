@@ -1202,6 +1202,27 @@ class LifecycleMixin:
                     f"Error stopping scheduled Dreams cycles: {e}"
                 )
 
+            # dreams phase 2: the same seam for scheduled Dreams track
+            # checks -- `DreamTrackHandler` spawns them as bare
+            # `asyncio.Task`s too, held in its handler module's own set
+            # (ruling P9: the call is what makes that set's documented
+            # on_unmount reachability true).
+            try:
+                from .Scheduling.scheduler.handlers.dream_track_handler import (
+                    shutdown as dream_track_shutdown,
+                )
+
+                cancelled = await dream_track_shutdown()
+                if cancelled:
+                    self.loguru_logger.info(
+                        f"Cancelled {cancelled} in-flight Dreams track "
+                        f"check(s)"
+                    )
+            except Exception as e:
+                self.loguru_logger.error(
+                    f"Error stopping scheduled Dreams track checks: {e}"
+                )
+
             # Disconnect local MCP client sessions (P5-T6), if any were ever
             # established this run.
             try:

@@ -78,3 +78,9 @@ def test_snapshot_decays_stale_topics_keeps_fresh_and_reads_region(
     assert topics["rust"]["weight"] >= 0.05
     assert topics["kubernetes"]["weight"] == pytest.approx(0.9, abs=0.01)
     assert snap["region"] == "near Seattle"
+    # Phase 2 Task 1: goal rows ride along untouched (no decay, no feedback,
+    # no searchable filtering -- egress filters, the snapshot only carries).
+    goals = {g["text"]: g for g in snap["goals"]}
+    assert set(goals) == {"visit japan"}
+    assert goals["visit japan"]["searchable"] == 1
+    assert goals["visit japan"]["weight"] == 1.0

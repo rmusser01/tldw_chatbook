@@ -3472,6 +3472,17 @@ class ServiceWiringMixin:
             # May raise RuntimeError when no provider resolves; run_cycle
             # catches that and degrades the cycle by design.
             chat_getter=resolve_dreams_chat,
+            # Dreams phase 2 (Qodo #1/#13, PR #2890): the track lifecycle
+            # sweep disables a retired wrapper's dream-created subscription
+            # and linked reminder through these seams. Same getter-lambda
+            # discipline as the rest of the bag -- resolved at sweep time,
+            # None degrades to the legacy sweep behavior, never an error.
+            subs_service_getter=lambda: getattr(
+                self, "local_watchlists_service", None
+            ),
+            scheduling_db_getter=lambda: getattr(
+                getattr(self, "scheduling_service", None), "db", None
+            ),
         )
 
     def _start_dreams_boot_catchup(self) -> None:  # dreams phase 1
@@ -3522,6 +3533,33 @@ class ServiceWiringMixin:
             self.get_dreams_db
         )
         self._start_dreams_boot_catchup()
+
+        # dreams phase 2: the track-check handler rides the same post-
+        # `_ui_ready` seam (ADR-097 boot-census ratchet: deferred import
+        # only, nothing Dreams-shaped at module scope). It reuses the SAME
+        # cycle deps getter with the notification dispatcher attached via
+        # `CycleDeps.dispatch_getter`, so a `changed` track verdict can
+        # reach the shared inbox; a missing dispatcher degrades to a run
+        # row without delivery inside `run_track_check`, never an error.
+        # The loop's handler dict is mutated in place, in the same slice
+        # as the projection attach above -- the scheduler worker cannot
+        # run before this slice yields, so a `dream_track_check` task can
+        # only ever dispatch after its handler exists.
+        from .Scheduling.scheduler.handlers.dream_track_handler import (
+            DreamTrackHandler,
+        )
+
+        def _dreams_track_deps():
+            deps = self._dreams_cycle_deps()
+            if deps is not None:
+                deps.dispatch_getter = (
+                    lambda: self.notification_dispatch_service
+                )
+            return deps
+
+        self.scheduler_loop.handlers["dream_track_check"] = DreamTrackHandler(
+            deps_getter=_dreams_track_deps
+        )
 
     def _observe_notes_sync_runtime_start(self, task: asyncio.Task[None]) -> None:
         """Consume a detached startup failure without exposing private detail."""

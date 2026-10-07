@@ -149,6 +149,11 @@ class ArtifactsScreen(BaseAppScreen):
         # holding the Artifacts list's Dreams rows (full `dream_stories`
         # rows shaped by Dreams.dreams_view.list_recent_dreams).
         self._dreams: list[dict[str, Any]] = []
+        # Phase 2 Task 5: the Tracked group's rows (shaped by
+        # Dreams.dreams_view.list_tracked_updates), read in the SAME worker
+        # hop as _dreams -- one extra read, no new worker/trio, and the same
+        # generation guard applies.
+        self._dreams_tracked: list[dict[str, Any]] = []
         self._dreams_generation = 0
         self._dreams_worker: Worker[Any] | None = None
         # TASK-21514: the previewed Daily Report (a full `briefings` row via
@@ -362,58 +367,87 @@ class ArtifactsScreen(BaseAppScreen):
         # drop-while-refreshing behavior is preserved -- but an
         # unconditional recompose on every mount/resume of a screen whose
         # Dreams slot is EMPTY churns the whole list pane for nothing.
-        if self._dreams:
+        if self._dreams or self._dreams_tracked:
             self.refresh(recompose=True)
         self._dreams_worker = self._refresh_dreams(self._dreams_generation)
 
     @work(exclusive=True, thread=True, group="artifacts-dreams")
     def _refresh_dreams(self, generation: int) -> None:
-        from ...Dreams.dreams_view import list_recent_dreams
+        from ...Dreams.dreams_view import list_recent_dreams, list_tracked_updates
 
         db = self._dreams_db()
         rows: list[dict[str, Any]] = []
+        tracked: list[dict[str, Any]] = []
         if db is not None:
             try:
                 rows = list_recent_dreams(db)
             except Exception:  # noqa: BLE001 - an Artifacts refresh must never crash the app
                 rows = []
-        self.app.call_from_thread(self._apply_dreams, generation, rows)
+            # Phase 2 Task 5: the Tracked group rides the SAME thread hop --
+            # one extra read, no new worker -- and its failure degrades to
+            # "no tracked rows" without taking the stories down with it.
+            try:
+                tracked = list_tracked_updates(db)
+            except Exception:  # noqa: BLE001 - an Artifacts refresh must never crash the app
+                tracked = []
+        self.app.call_from_thread(self._apply_dreams, generation, rows, tracked)
 
-    def _apply_dreams(self, generation: int, rows: list[dict[str, Any]]) -> None:
+    def _apply_dreams(
+        self,
+        generation: int,
+        rows: list[dict[str, Any]],
+        tracked: list[dict[str, Any]] | None = None,
+    ) -> None:
         if not self.is_attached or generation != self._dreams_generation:
             # Same guard as _apply_daily_reports: superseded by a newer
             # refresh, or the screen went away -- never recompose.
             return
-        if self._dreams == rows:
+        tracked_rows = tracked or []
+        if self._dreams == rows and self._dreams_tracked == tracked_rows:
             # An unchanged payload (the empty steady state) must not
             # recompose: a late no-op apply landing between another slot's
             # refresh and its repaint would tear the list's widgets down
             # mid-query. Only a real change repaints.
             return
         self._dreams = rows
+        self._dreams_tracked = tracked_rows
         self.refresh(recompose=True)
 
     # --- Dreams Phase 1 (Task 7): row click / Enter opens the story modal ---
 
     def on_click(self, event: Click) -> None:
-        """Open the Dreams story modal when a dreams row is clicked.
+        """Open a Dreams surface when a dreams row is clicked.
 
         Dreams rows are bare Statics (Task 6's idiom), so the click is
         dispatched here after bubbling; unrelated clicks fall through
-        untouched.
+        untouched. Task-33164 widens the routing: a Tracked row
+        (``artifacts-dream-track-row-*``) opens its origin story (or a
+        summary notice when the origin is gone) instead of being a
+        focusable dead end.
 
         Args:
             event: The bubbled click; stopped only on a dreams row.
         """
         widget_id = getattr(event.widget, "id", None) or ""
+        if widget_id.startswith("artifacts-dream-track-row-"):
+            event.stop()
+            self._open_dreams_tracked_row(widget_id)
+            return
         if not widget_id.startswith("artifacts-dream-row-"):
             return
         event.stop()
         self._open_dreams_story_row(widget_id)
 
     def action_open_dreams_story(self) -> None:
-        """Open the focused dreams row's story modal (hidden `enter` binding)."""
+        """Open the focused dreams row's story modal (hidden `enter` binding).
+
+        Routes both row families (task-33164): story/synthetic rows and
+        Tracked rows, so Enter is never a dead end on a focusable row.
+        """
         focused_id = getattr(self.focused, "id", None) or ""
+        if focused_id.startswith("artifacts-dream-track-row-"):
+            self._open_dreams_tracked_row(focused_id)
+            return
         if not focused_id.startswith("artifacts-dream-row-"):
             return
         self._open_dreams_story_row(focused_id)
@@ -432,12 +466,30 @@ class ArtifactsScreen(BaseAppScreen):
             return ensure()
         return getattr(self.app_instance, "collections_capture_scope_service", None)
 
+    def _dreams_track_service(self) -> Any:
+        """The app's local watchlists service (the Dreams track seam), or None."""
+        return getattr(self.app_instance, "local_watchlists_service", None)
+
+    def _dreams_scheduling_db(self) -> Any:
+        """The app's scheduled-tasks DB (the Dreams event-reminder seam).
+
+        The ``SchedulingService`` owns the ``ScheduledTasksDB`` and is built
+        mid-app-init, so this resolves lazily and tolerates a missing
+        service or a missing ``db`` attribute (wiring order): ``None`` means
+        ``promote_to_reminder`` degrades to no reminder -- tracking itself
+        still succeeds.
+        """
+        service = getattr(self.app_instance, "scheduling_service", None)
+        return getattr(service, "db", None)
+
     def _open_dreams_story_row(self, widget_id: str) -> None:
         """Push the story modal for one dreams row (story or synthetic).
 
-        The DB handle is read lazily through the getter (the modal calls
-        it at action time), and ``on_changed`` re-reads the list rows so
-        keep/unkeep badges flip as soon as the modal acts.
+        Resolves the row id against the landed ``_dreams`` rows (story
+        ids, or ``cycle-<date>`` for a synthetic failed-cycle row) and
+        defers to :meth:`_push_dreams_story_modal`; an unknown id is a
+        silent no-op (a refresh may have dropped the row between paint
+        and click).
         """
         key = widget_id.removeprefix("artifacts-dream-row-")
         story = next(
@@ -450,6 +502,15 @@ class ArtifactsScreen(BaseAppScreen):
         )
         if story is None:
             return
+        self._push_dreams_story_modal(story)
+
+    def _push_dreams_story_modal(self, story: dict[str, Any]) -> None:
+        """Push the story modal for one shaped ``dreams_view`` row.
+
+        The DB handle is read lazily through the getter (the modal calls
+        it at action time), and ``on_changed`` re-reads the list rows so
+        keep/unkeep badges flip as soon as the modal acts.
+        """
         # Lazy import (ADR-097 census note at the top of this file): the
         # modal chain stays out of the module import set until first use.
         from .artifacts_dreams_modal import DreamsStoryModal
@@ -463,9 +524,82 @@ class ArtifactsScreen(BaseAppScreen):
                 # the runtime source activated, and composes the capture
                 # services on first use (they are deferred at boot).
                 capture_backend_getter=self._dreams_capture_scope,
+                # Phase 2 Task 3: the track action's seam -- the app's
+                # local watchlists service, resolved lazily so a runtime
+                # without it degrades the action to a notice.
+                subs_service_getter=self._dreams_track_service,
+                # Phase 2 Task 5: the event-reminder seam -- the app's
+                # scheduled-tasks DB, resolved lazily the same way so an
+                # event-dated track promotes a reminder when the scheduler
+                # exists and silently skips it when it does not.
+                scheduling_db_getter=self._dreams_scheduling_db,
                 on_changed=self._start_dreams_refresh,
             )
         )
+
+    # --- Tracked-row interaction (task-33164): open the origin story ---
+
+    def _open_dreams_tracked_row(self, widget_id: str) -> None:
+        """Open one Tracked row's origin story, or a summary notice.
+
+        A Tracked row is focusable Static, so a click or Enter lands here
+        (R2): when the tracked item carries an ``origin_story_id`` that
+        still resolves to a story row, the SAME story modal the story's
+        own row opens is pushed (reshaped as a ``dreams_view`` row -- the
+        origin may sit outside the recent-stories window, which is why
+        the lookup goes through the targeted ``get_story`` read). A gone
+        origin (deleted story, or a question watch created with no origin)
+        is a dismissible summary notice: label, mechanism, status, last
+        run, event date -- no modal, no write. DB read failures degrade
+        to the same notice; the interaction must never crash the screen.
+        """
+        key = widget_id.removeprefix("artifacts-dream-track-row-")
+        update = next(
+            (row for row in self._dreams_tracked if str(row.get("id")) == key),
+            None,
+        )
+        if update is None:
+            return
+        db = self._dreams_db()
+        story: dict[str, Any] | None = None
+        if db is not None:
+            try:
+                item = db.get_tracked_item(int(update["id"]))
+                origin_story_id = item.get("origin_story_id") if item else None
+                if origin_story_id is not None:
+                    story = db.get_story(int(origin_story_id))
+            except Exception:  # noqa: BLE001 - a broken read is the summary path
+                story = None
+        if story is None:
+            self._notify_tracked_summary(update)
+            return
+        # ``dreams_view`` row shape: the modal reads ``label``/
+        # ``collection_date``/``tracked`` alongside the story columns, and
+        # this story IS an active tracked origin by construction (the
+        # Tracked group only renders active items).
+        from ...Dreams.dreams_view import LABEL_MAX_LENGTH
+
+        story_row = dict(story)
+        story_row["collection_date"] = str(story.get("local_date") or "")
+        story_row["label"] = str(story.get("title") or "")[:LABEL_MAX_LENGTH]
+        story_row["tracked"] = True
+        self._push_dreams_story_modal(story_row)
+
+    def _notify_tracked_summary(self, update: dict[str, Any]) -> None:
+        """The unresolvable-origin fallback: one dismissible summary notice.
+
+        The label embeds the query template (user/LLM text), so the notice
+        never parses markup.
+        """
+        parts = [str(update.get("label") or f"Tracked item {update.get('id')}")]
+        if update.get("mechanism"):
+            parts.append(f"mechanism: {update['mechanism']}")
+        if update.get("status"):
+            parts.append(f"status: {update['status']}")
+        parts.append(f"last run: {update.get('last_run_status') or 'none yet'}")
+        if update.get("event_date"):
+            parts.append(f"event: {update['event_date']}")
+        self.notify(" · ".join(parts), markup=False)
 
     # --- TASK-21514: previewing one Daily Report in the detail pane ---------
 
@@ -1157,14 +1291,37 @@ class ArtifactsScreen(BaseAppScreen):
                             id="artifacts-daily-report-demo",
                             tooltip=DAILY_REPORT_DEMO_TOOLTIP,
                         )
+                    # Phase 2 Task 5: the Tracked group composes BEFORE the
+                    # Dreams rows -- a tracked update (a changed check, an
+                    # approaching event) outranks the story stream it came
+                    # from. Same bare-Static idiom and focusable-Static
+                    # pre-yield mutation as the Dreams rows below, so no
+                    # new classes or literals (ADR-150 governance stays
+                    # green). A disabled feature renders no tracked group
+                    # at all (its rows are never read while disabled).
+                    from ...Dreams.dreams_view import (
+                        format_dream_row,
+                        format_tracked_row,
+                    )
+
+                    if self._dreams_enabled and self._dreams_tracked:
+                        for update in self._dreams_tracked:
+                            track_row = Static(
+                                self._literal_text(format_tracked_row(update)),
+                                id=f"artifacts-dream-track-row-{update['id']}",
+                            )
+                            track_row.can_focus = True
+                            yield track_row
+                    elif self._dreams_enabled:
+                        yield Static(
+                            "> Tracked: none", id="artifacts-list-dreams-tracked"
+                        )
                     # Dreams rows reuse the Report rows' exact widget idiom
                     # (bare Statics, `artifacts-<type>-row-{id}` ids, no new
                     # classes or literals), so the ADR-150 governance test
                     # stays green untouched. A disabled feature renders its
                     # disabled copy even when rows exist; an enabled one with
                     # no rows (or no DB handle yet) renders "none yet".
-                    from ...Dreams.dreams_view import format_dream_row
-
                     if self._dreams_enabled and self._dreams:
                         for story in self._dreams:
                             row_id = story.get("id")
