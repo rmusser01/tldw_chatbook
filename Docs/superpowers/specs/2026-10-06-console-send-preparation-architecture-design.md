@@ -196,3 +196,44 @@ Retain per-session ordering, current queue/global caps and bounded native concur
 Result size and field validation follow existing domain/input limits; oversize or malformed data uses the documented refusal/fallback without silent truncation. Provider-specific serialization may produce its own wire representation without mutating shared data. Diagnostics retain bounded stage/count/timing facts rather than secrets, prompt bodies or automatic project-instruction bodies.
 
 Written-spec review precedes writing-plans, and plan review precedes product implementation. Execution remains inline without subagents under the user's existing instruction. The design task closes after the completed written review and requested audit; product implementation remains gated on plan review. No full sweep is authorized, and no product improvement or runtime regression acceptance is claimed by this documentation deliverable.
+
+
+## 6. External architecture references (non-normative)
+
+Reviewed on 2026-10-06 following reference research delivered from the user's side conversation. The sources below were independently checked for the listed observations. Repository links use mutable main branches, not immutable commit pins; recheck any implementation detail before relying on it. Claude Code observations come from public documentation, not its private engine internals. These references support the chosen architecture but establish no tldw latency, I/O-count or retirement acceptance.
+
+### Codex: routing acknowledgment and retained approvals
+
+SessionIo.submit_turn_input queues an identified turn-input operation and waits for Core's routing decision. Dropping that waiter does not retract the queued operation. Command approval registers its responder in active-turn state before emitting the request, keys responses by call/approval identifiers, and treats a cleared pending approval as an abort. [Public session source](https://github.com/openai/codex/blob/main/codex-rs/core/src/session/mod.rs).
+
+The app-server API separates turn start/steer/interrupt requests from streamed turn/item notifications. [App-server documentation](https://learn.chatgpt.com/docs/app-server).
+
+Application to this spec: receipt, routing and completion remain distinct; runtime-owned request/approval identity survives presentation changes, and cancellation is an explicit operation. The protocol does not prove that a terminal frame paints within our budget.
+
+### Oh-my-pi: preparation cancellation and complete-path timing
+
+AgentSession.prompt enters admitted-submission accounting and records submission time before asynchronous preprocessing. Prompt setup retains its generation and AbortController. Abort invalidates setup, cancels preparation/post-prompt work and waits for agent idle; a dropped-prompt callback restores text that never reached the agent/session file. [Agent session source](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/session/agent-session.ts).
+
+Application to this spec: cancellation covers capture and preparation, exact undelivered input remains recoverable, and raw timing begins at Send rather than provider entry. An agent idle signal is not a substitute for tldw's native physical-retirement evidence.
+
+Its TUI coalesces ordinary render requests and uses completed frame cost/output backlog to schedule repaint work. [TUI source](https://github.com/can1357/oh-my-pi/blob/main/packages/tui/src/tui.ts).
+
+Application to this spec: use Textual's existing coalesced refresh mechanisms for projections rather than introducing another renderer. Preserve meaningful receipt/approval/Stop/terminal publication; render coalescing must not discard transcript data or clear unseen receipts without their existing paint evidence.
+
+Durability differs: ordinary local appends are synchronous after a lazy creation boundary but do not fsync. A new ordinary session can remain memory-only until an assistant message or explicit disk creation; remote indexed publication uses ordered asynchronous queues with explicit flush/drain. [Persistence guarantees](https://github.com/can1357/oh-my-pi/blob/main/docs/session.md#persistence-guarantees-and-failure-model).
+
+Application to this spec: retain tldw's own durable-before-dispatch and recovery boundaries. These alternative persistence choices cannot justify moving required commits out of our critical path.
+
+### Claude Code: operation-boundary policy and deferred definitions
+
+The public Agent SDK permission flow evaluates hooks before deny/ask rules; a hook allow does not bypass those later constraints. Its approval callback handles calls unresolved by earlier stages, so it is not itself a universal per-call gate. [Permission evaluation](https://code.claude.com/docs/en/agent-sdk/permissions).
+
+Application to this spec: retain hard floors at their actual execution boundaries, including previously approved routes; never infer authority from a prepared result or optional callback alone.
+
+Official documentation describes MCP definitions and skill contents loading on demand. [How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works).
+
+Application to this spec: domain preparation is demand-driven. Definition/context loading is separate from current consent, storage admission and execution checks; the documentation does not establish that those checks are eliminated.
+
+### Adoption boundary
+
+Use these references as examples of explicit submission outcomes, backend-owned approvals, preparation cancellation, demand-driven data and bounded rendering. Adapt the ideas through existing tldw owners and APIs. Adopt no external engine, weaker persistence policy, permission shortcut or numerical performance claim. The reviewed spec and ADR-222 remain the normative contracts.
