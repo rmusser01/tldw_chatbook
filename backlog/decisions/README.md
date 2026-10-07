@@ -146,6 +146,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-221](221-prompt-injection-cold-start-caches.md) | Accepted | Pay prompt-injection cold starts (book fetch, entry processing, pattern compilation) once per store generation: a monotonic WorldBookManager generation counter, a lock-guarded 8-conversation LRU of built processors keyed (conversation, character, generation), precompiled entry keys, and id-set recursion dedup; chat dictionaries adopt the same contract. |
 
 | [ADR-211](211-ephemeral-provider-failure-presentation.md) | Accepted | Keep sanitized provider failure presentation transient across the gateway, agent outcome and Console while preserving typed fallback semantics and diagnostic persistence. |
+| [ADR-224](224-conversation-timestamp-normalization.md) | Accepted | Migrate `conversations.last_modified` and `flashcards.next_review` to the ADR-173 canonical UTC shape (schema v78→v79) so the keyset, due-card, and character-list queries compare and order on raw indexed columns; a partial expression index serves the character visibility predicate and NOCASE order. |
 
 ## Historical Decision Material
 
