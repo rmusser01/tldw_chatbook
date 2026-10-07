@@ -14,3 +14,7 @@ The stock path captures its runtime, coordinator, bridge, database, conversation
 - Sources and HEAD remained unchanged during every accepted run. New modules pass Ruff and formatting; edited modules introduce no lint findings. The platform workflow includes all 11 native marker controls.
 
 The new worker controls have been verified locally on Windows. The previous seven query/rendering cases passed on Windows, macOS and Linux; cross-platform verification of this new asynchronous boundary remains pending CI. These are functional ownership and responsiveness results, not acceptance of whole Send/startup latency. The broader task and draft PR remain in progress.
+
+## Cross-platform result
+
+At committed `c7e20dd64a`, all 18 marker native/query/rendering checks pass with no skips or errors on Windows, macOS and Linux in [CI run 37674018770](https://github.com/rmusser01/tldw_chatbook/actions/runs/37674018770). This verifies the asynchronous boundary on each actual platform. Original startup liveness still fails and Linux/macOS pending-close still reports its live CharactersRAGDB worker connection; neither broader issue is claimed fixed by the marker change.

@@ -160,6 +160,7 @@ class _App:
         self.notifications.append((message, severity))
 
 
+@pytest.mark.bootstrap_profile
 def test_runtime_attention_is_receipt_or_hidden_decision_and_exact_ack() -> None:
     marks = _Marks((("conv-a", RECEIPT_A), ("conv-b", RECEIPT_B)))
     app = _App(marks)

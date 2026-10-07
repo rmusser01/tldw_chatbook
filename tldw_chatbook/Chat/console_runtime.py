@@ -1630,12 +1630,29 @@ class ConsoleRuntime:
         authorities. Only fixed copy and the boolean projection leave this
         runtime; receipt/decision IDs are never handed to shell widgets.
         """
+        from contextlib import ExitStack
+
+        from tldw_chatbook.Chat.conversation_local_marks_service import (
+            ConversationLocalMarksService,
+        )
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
         revision = self._reserve_attention_revision()
-        with self._attention_operation_lock:
+        with self._attention_operation_lock, ExitStack() as connections:
             if not self._attention_revision_is_current(revision):
                 return self.console_needs_attention
 
             service = self._console_local_marks_service()
+            if (
+                type(service) is ConversationLocalMarksService
+                and type(service.db) is CharactersRAGDB
+                and not service.db.is_memory_db
+            ):
+                # Pending-decision callbacks may run on a short-lived worker.
+                # Its new marks/outcome handle belongs to this complete read;
+                # an existing caller connection or transaction stays borrowed.
+                connections.enter_context(operation_owned_connection(service.db))
             list_marks = getattr(service, "list_console_unseen_marks", None)
             marks_known = False
             marks: tuple[tuple[str, str], ...]

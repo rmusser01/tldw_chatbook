@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-07 19:21'
+updated_date: '2026-10-07 19:23'
 labels: []
 dependencies: []
 ---
@@ -63,6 +63,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #43 Character picker reads on the exact retained file-backed Characters database retire their newly opened worker connection before publishing or propagating cancellation; original profile-selection fences and borrowed, memory and custom behavior remain. Actual handles and registered resource ownership are checked, without weakening the original global storage drain.
 - [x] #44 The original real Hook wiring fixture retires its creator-owned runs database and newly acquired default Workspace connection before returning, while retaining all original behavior assertions and preserving previously borrowed connections.
 - [x] #45 The original real-Git marker rendering fixture retires its creator-owned run database and newly acquired default tool-registry handle while preserving borrowers, so the original subsequent global history drain passes unchanged.
+- [ ] #46 The stock Console attention callback retires its newly acquired worker database handle after its original uncached read, while preserving existing borrowed transactions and custom readers.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -954,3 +955,12 @@ Original normal1 passed while cancel and repeated-cancel2 failed with the exact 
 The new worker controls have been verified locally on Windows. The previous seven query/rendering cases passed on Windows, macOS and Linux; cross-platform verification of this new asynchronous boundary remains pending CI. These are functional ownership and responsiveness results, not acceptance of whole Send/startup latency. The broader task and draft PR remain in progress.
 
 Evidence details: `Docs/Development/2026-10-07-console-marker-preparation-verification.md`. Existing ADR-126 amended before implementation. AC20 remains open for combined original performance acceptance; AC45 has its unchanged subsequent history drain verified.
+
+
+## Attention callback lifetime investigation plan
+
+The actual Linux/macOS pending-close diagnostics retain an open CharactersRAGDB handle on a non-creator worker after operations settle. Source tracing identifies the original synchronous Console attention callback's uncached marks query as a candidate creator. First observe that exact original callback/query/native handle and lease on a finite worker, retaining a real borrowed transaction control. Cleanup must occur after recording the original result so the regression cannot hide the leak. Only after causal RED, give the original stock callback a narrow connection ownership interval and preserve its existing ordering, custom/memory behavior, borrower lifetime, source checks and shutdown deadlines. Then rerun the original pending-close journey and targeted attention compatibility cases. ADR required: no new ADR; a routine missing creator cleanup follows existing ADR126. No global close or deadline change is authorized by this plan.
+
+Attention native RED: the actual original runtime/marks callback returns with its newly acquired native handle physically open, its quiescence registration present and its exact lease live. The real borrowed transaction control passes. The test's unrelated Runtime canvas-policy task also needed explicit disposal; its fixture now awaits original Runtime.dispose before completion. The product correction uses the existing operation_owned_connection only for the stock file-backed marks service inside the original attention operation lock, spanning its marks and outcome reads. All original query, notification and publication statements remain unchanged; custom/memory routes are untouched. Error cleanup and original attention compatibility are included in targeted GREEN.
+
+Attention compatibility prerequisite: all three actual native lifetime cases and 43 original attention behavior cases pass. The first original case errors before body entry because its collection-bound configuration lacks the existing bootstrap_profile declaration. Add only that marker, preserving its body. This final single-case prerequisite correction is pending local rerun/CI; the original pending-close journey and whole timing acceptance remain open. Native sources/HEAD stayed unchanged in the 57.437-second driver; native process custody shows normal exit, zero forced retirement, zero overflow and zero identity lookup races.

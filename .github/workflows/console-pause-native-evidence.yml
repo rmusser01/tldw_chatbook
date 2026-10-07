@@ -26,6 +26,8 @@ on:
       - 'Tests/Chat/test_console_trace_maintenance_lifetime.py'
       - 'Tests/Chat/test_console_change_review_marker_reads.py'
       - 'Tests/UI/test_console_marker_projection_native.py'
+      - 'Tests/Chat/test_console_attention_native_lifetime.py'
+      - 'Tests/UI/test_console_turn_attention.py'
       - 'Tests/Chat/test_change_turn_tracking.py'
       - 'Tests/Chat/test_console_trace_maintenance_parking.py'
       - 'Tests/Chat/test_console_initial_hook_review.py'
@@ -207,6 +209,16 @@ jobs:
         with:
           name: change-review-marker-reads-${{ matrix.os }}
           path: ${{ runner.temp }}/change-review-marker-reads.xml
+          if-no-files-found: error
+      - name: Verify attention callback native cleanup and existing behavior
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Chat/test_console_attention_native_lifetime.py Tests/UI/test_console_turn_attention.py -q --timeout=180 --junitxml=${{ runner.temp }}/attention-lifetimes.xml
+      - name: Retain attention lifetime evidence before longer controls
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: attention-lifetimes-${{ matrix.os }}
+          path: ${{ runner.temp }}/attention-lifetimes.xml
           if-no-files-found: error
       - name: Verify retained Character picker native lifetime and profile selection
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
