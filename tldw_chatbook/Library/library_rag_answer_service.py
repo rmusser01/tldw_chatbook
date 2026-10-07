@@ -48,6 +48,7 @@ from tldw_chatbook.Chat.answer_citations import (
 from tldw_chatbook.Chat.Chat_Functions import chat_api_call, extract_response_content
 from tldw_chatbook.Chat.citation_evidence_models import EvidenceBundle
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Chat.session_usage import session_usage
 from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
@@ -654,6 +655,10 @@ async def generate_library_rag_answer(
         usage = ProviderUsage.from_provider_payload(
             raw_usage_payload, provider=provider, model=response_model
         )
+        if usage is not None:
+            # Session ledger boundary tap (issue #365): Library RAG answers
+            # parse their own provider response. `record_exact` never raises.
+            session_usage().record_exact(usage)
 
         body = extract_response_content(raw).strip()
         if not body:

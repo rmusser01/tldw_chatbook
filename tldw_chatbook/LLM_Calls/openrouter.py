@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
+from tldw_chatbook.Chat.session_usage import session_usage
 from tldw_chatbook.config import (
     get_runtime_config_snapshot,
     resolve_provider_api_key,
@@ -132,6 +133,7 @@ def _log_usage_metrics(model: str, usage: dict[str, Any]) -> None:
         "openrouter_api_total_tokens", usage.get("total_tokens", 0),
         labels={"model": model},
     )
+    session_usage().record_provider_payload(usage, provider="openrouter", model=model)
 
 
 def _log_error_metrics(model: str, duration: float, exc: BaseException) -> None:

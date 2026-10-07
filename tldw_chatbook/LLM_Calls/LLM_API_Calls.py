@@ -339,6 +339,9 @@ def _responses_stream_to_chat_sse(response, *, model: str):
                 completed_usage = (event.get("response") or {}).get("usage")
                 if isinstance(completed_usage, dict):
                     chunk["usage"] = completed_usage
+                    session_usage().record_provider_payload(
+                        completed_usage, provider="openai", model=model
+                    )
                 yield f"data: {json.dumps(chunk)}\n\n"
             elif event_type == "error":
                 yield f"data: {payload_text}\n\n"
@@ -886,6 +889,10 @@ def chat_with_openai(
                         return
                     for line in response.iter_lines(decode_unicode=True):
                         if line and line.strip():
+                            if '"usage"' in line:
+                                _record_openai_stream_usage_line(
+                                    line, model=final_model
+                                )
                             # Pass through OpenAI's SSE lines directly.
                             # Ensure they end with \n\n if not already.
                             # OpenAI's SSE usually includes double newlines.
@@ -1266,6 +1273,28 @@ def _completion_text_from_response(response_data: Any) -> str:
     except Exception:
         pass
     return ""
+
+
+def _record_openai_stream_usage_line(line: str, *, model: str) -> None:
+    """Record exact usage from an OpenAI SSE line, best-effort.
+
+    ``stream_options.include_usage`` is requested for chat-completions
+    streams, so the final chunk carries usage; the substring guard avoids
+    parsing every delta chunk (a false substring hit parses to a payload
+    without a usage dict and records nothing).
+    """
+    try:
+        data = line.removeprefix("data:").strip()
+        if not data or data == "[DONE]":
+            return
+        payload = json.loads(data)
+        usage = payload.get("usage")
+        if isinstance(usage, dict) and usage:
+            session_usage().record_provider_payload(
+                usage, provider="openai", model=model
+            )
+    except Exception:
+        pass
 
 
 #: The shortest credential form ``_credential_redacted_detail`` masks literally.
@@ -2119,6 +2148,16 @@ def chat_with_anthropic(
                                 )
 
                     if output_captured:
+                        # Record BEFORE the yield and never from `finally`:
+                        # Console Stop closes this generator with
+                        # GeneratorExit, and work under that signal must not
+                        # yield or re-enter the parser.
+                        if usage_accumulator:
+                            session_usage().record_provider_payload(
+                                usage_accumulator,
+                                provider="anthropic",
+                                model=current_model,
+                            )
                         yield _usage_sse_chunk()
                 except (
                     requests.exceptions.ChunkedEncodingError
@@ -3754,6 +3793,9 @@ def chat_with_google(
                 # for synthesizing OpenAI tool_calls[].index (Gemini streams
                 # functionCall parts WHOLE, one complete fragment per call).
                 next_tool_position = 0
+                # Gemini usageMetadata is cumulative across chunks; keep the
+                # latest converted usage and record it once at stream end.
+                stream_final_usage = None
                 try:
                     for line in response.iter_lines(decode_unicode=True):
                         if line and line.strip().startswith("data:"):
@@ -3764,6 +3806,8 @@ def chat_with_google(
                                 chunk_usage = _gemini_usage_to_openai(
                                     data_chunk_outer.get("usageMetadata")
                                 )
+                                if chunk_usage is not None:
+                                    stream_final_usage = chunk_usage
                                 candidates = data_chunk_outer.get("candidates", [])
                                 if candidates:
                                     candidate = candidates[0]
@@ -3862,6 +3906,12 @@ def chat_with_google(
                                 logger.warning(
                                     f"Google Gemini: Could not decode JSON line: {safe_llm_error_detail(json_str)}"
                                 )
+                    if stream_final_usage:
+                        session_usage().record_provider_payload(
+                            stream_final_usage,
+                            provider="google",
+                            model=current_model,
+                        )
                 except requests.exceptions.ChunkedEncodingError as e:
                     logger.opt(exception=True).error(
                         f"Google Gemini: ChunkedEncodingError during stream: {e}"

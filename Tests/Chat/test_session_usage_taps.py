@@ -11,6 +11,7 @@ moonshot/zai compatibility wrappers, so a wrong variable name at any tap
 cannot slip through unexercised.
 """
 
+import importlib
 import json
 from unittest.mock import Mock, patch
 
@@ -208,6 +209,148 @@ def test_moonshot_nonstreaming_records_exact_usage():
     snap = session_usage().snapshot()
     assert snap.exact_tokens == 15
     assert snap.estimated_tokens == 0
+    assert snap.calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Streaming + service boundary taps (Task 3): every completed response
+# records into the ledger exactly once (`calls == 1` is the
+# double-counting invariant).
+# ---------------------------------------------------------------------------
+
+
+def _sse(event: dict) -> bytes:
+    return f"data: {json.dumps(event)}".encode("utf-8")
+
+
+ANTHROPIC_STREAM_LINES = [
+    _sse({"type": "message_start", "message": {"usage": {"input_tokens": 12}}}),
+    _sse({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "he"}}),
+    _sse(
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {"output_tokens": 4},
+        }
+    ),
+    _sse({"type": "message_stop"}),
+]
+
+
+def test_anthropic_streaming_records_exact_once():
+    response = Mock()
+    response.status_code = 200
+    response.raise_for_status = Mock()
+    response.iter_lines.return_value = iter(ANTHROPIC_STREAM_LINES)
+    response.close = Mock()
+    with patch("requests.Session.post", return_value=response):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        generator = chat_api_call(
+            "anthropic",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="sk-test",
+            model="claude-3-5-sonnet",
+            streaming=True,
+        )
+        list(generator)
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 16  # 12 input + 4 output
+    assert snap.calls == 1  # exactly once per response
+
+
+OPENAI_STREAM_LINES = [
+    'data: {"id": "1", "choices": [{"index": 0, "delta": {"content": "he"}, "finish_reason": null}]}',
+    'data: {"id": "1", "choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}}',
+    "data: [DONE]",
+]
+
+
+def test_openai_chat_completions_stream_records_exact_once():
+    response = Mock()
+    response.status_code = 200
+    response.raise_for_status = Mock()
+    response.iter_lines.return_value = iter(OPENAI_STREAM_LINES)
+    response.close = Mock()
+    with patch("requests.Session.post", return_value=response):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        generator = chat_api_call(
+            "openai",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="sk-test",
+            model="gpt-4o",
+            streaming=True,
+        )
+        list(generator)
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 10
+    assert snap.calls == 1
+
+
+def test_responses_stream_records_completed_usage_once():
+    from tldw_chatbook.LLM_Calls.LLM_API_Calls import _responses_stream_to_chat_sse
+
+    completed_event = {
+        "type": "response.completed",
+        "response": {
+            "usage": {
+                "input_tokens": 9,
+                "output_tokens": 6,
+                "total_tokens": 15,
+            }
+        },
+    }
+    response = Mock()
+    response.iter_lines.return_value = iter([_sse(completed_event)])
+    response.close = Mock()
+    lines = list(_responses_stream_to_chat_sse(response, model="gpt-5.6"))
+    assert any('"usage"' in line for line in lines)
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 15
+    assert snap.calls == 1
+
+
+def test_gateway_sse_usage_records_exactly_once():
+    from tldw_chatbook.Chat.console_provider_gateway import _content_from_sse_data
+
+    class _Signals:
+        def __init__(self):
+            self.payloads = []
+
+        def record_usage_payload(self, usage):
+            self.payloads.append(usage)
+
+    signals = _Signals()
+    line = (
+        "data: "
+        + json.dumps(
+            {
+                "choices": [],
+                "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6},
+            }
+        )
+        + "\n\n"
+    )
+    _content_from_sse_data(line, signals=signals)
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 6
+    assert snap.calls == 1  # ledger and console signal each saw it once
+    assert len(signals.payloads) == 1
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    ["groq", "deepseek", "mistral", "openrouter"],
+)
+def test_extracted_provider_usage_helper_records(module_name):
+    module = importlib.import_module(f"tldw_chatbook.LLM_Calls.{module_name}")
+    module._log_usage_metrics(
+        "model-x",
+        {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+    )
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 5
     assert snap.calls == 1
 
 

@@ -57,6 +57,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
     canonical_provider_endpoint_identity,
 )
 from tldw_chatbook.Chat.console_library_destination import resolve_console_destination
+from tldw_chatbook.Chat.session_usage import session_usage
 from tldw_chatbook.Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
     effective_provider_endpoint,
@@ -7656,6 +7657,11 @@ def _maybe_record_usage(
     usage = payload.get("usage")
     if isinstance(usage, Mapping) and usage:
         signals.record_usage_payload(usage)
+        # Session ledger boundary tap (issue #365): this is the single point
+        # where the gateway parses a usage payload out of an SSE line, so it
+        # records exactly once per response. Downstream consumers of the
+        # signal (cost tracker, transcript attachment) are NOT taps.
+        session_usage().record_provider_payload(usage)
 
 
 def _content_from_provider_item(
