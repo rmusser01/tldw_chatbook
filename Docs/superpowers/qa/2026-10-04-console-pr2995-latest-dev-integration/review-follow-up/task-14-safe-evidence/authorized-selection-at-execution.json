@@ -1,0 +1,21 @@
+{
+  "together_selectors": [
+    "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_bare_array_listing_of_non_model_objects_stays_invalid",
+    "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalize_models_drops_an_oversized_field_but_keeps_the_model",
+    "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalize_models_rejects_unbounded_metadata",
+    "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalizes_openai_models_response_to_raw_model_ids",
+    "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_response_metadata_does_not_include_sensitive_headers",
+    "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_anthropic_paginates_with_after_id",
+    "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_openai_does_not_paginate",
+    "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_discovery_rejects_model_count_over_bound_without_partial_cache_data",
+    "Tests/LLM_Calls/test_live_capture_replay.py::test_captured_listing_discovers_in_its_recorded_shape[together]",
+    "Tests/LLM_Calls/test_live_capture_replay.py::test_captured_stream_parses_under_its_record[together]",
+    "Tests/LLM_Calls/test_live_capture_replay.py::test_captured_bodies_parse_under_their_record",
+    "Tests/LLM_Calls/test_doc_derived_presets.py::test_stream_options_only_where_the_record_asks[together]",
+    "Tests/LLM_Calls/test_doc_derived_presets.py::test_existing_presets_keep_their_payload_contract",
+    "Tests/LLM_Calls/test_inference_cloud_presets.py::test_allowances_ship_empty_pending_first_capture[together]",
+    "Tests/LLM_Calls/test_live_capture_tool.py::test_listing_picks_a_chat_model_and_ollama_cloud_sends_no_tool_choice"
+  ],
+  "expected_together_cases": 20,
+  "selection_source_sha256": "bff82be9acc7ec8285419c84c629dad2f227b77807d6ccf1a30da00d1e0fb44b"
+}

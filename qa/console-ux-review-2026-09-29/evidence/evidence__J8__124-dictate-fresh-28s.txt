@@ -1,0 +1,40 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.         Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Count from 1 to 40, one num...                                 │
+                  Context ◂  │   Count from 1 to 40…  ✕    New tab     Temporary                             │
+   Terminal                  │                                                                               │
+ ──────────────────────────  │                                                                               │
+ Workspaces             ▸    │                                                                               │
+ ──────────────────────────  │                                                                               │
+ Conversations          ▾    │                                                                               │
+     Archive this chat       │                                                                               │
+      Archived chats         │                                                                               │
+     Search all chats…       │                                                                               │
+   Count from 1 to 40,       │  ───────────────────────────────────────────────────────────────────────────  │
+   one num...                │   User                                                                        │
+                             │   Count from 1 to 40, one number per line.                                    │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ───────────────────────────────────────────────────────────────────────────  │◂ Inspect
+  ▊  Filter      ▎           │  ▊ Assistant                                                                  │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊                                                                            │
+                             │  ▊  1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26      │
+  Chats                 ▾    │  ▊  27 28 29 30 31 32 33 34 35 36 37 38 39 40                                 │
+   Count from 1 to 4…  💬    │  ▊                                                                            │
+                             │  ▊                                                                            │
+ ──────────────────────────  │  ───────────────────────────────────────────────────────────────────────────  │
+ Character · No chats   ▸    │   System                                                                      │
+ ──────────────────────────  │   Unknown command /foo — available: /prompt, /system, /skills,                │
+ Model                  ▸    │   /fewer-permission-prompts, /prefill, /generate-image, /generate-video,      │
+ ──────────────────────────▆ │   /stream-video, /steer, /redirect, /emergency-stop, /rewind, /research,      │
+ Agent                  ▸    │   /help, /doctor, /model, /sessions, /workspace, /new, /temp, /settings,      │
+ ▼ Details                   │   /context, /endpoint. Press Enter again to send as text.                     │
+                             │  ───────────────────────────────────────────────────────────────────────────  │
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: o
+
+█  Composer ▾  Menu   Ask, command, or paste task...        ◐ Preparing speech model…      Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Ctrl+P · Ctrl+Q

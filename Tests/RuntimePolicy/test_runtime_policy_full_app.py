@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
+from Tests.app_module_patches import set_app_global
 import tldw_chatbook.app as app_module
 import tldw_chatbook.runtime_policy.bootstrap as bootstrap_module
 from tldw_chatbook.app import TldwCli
@@ -81,11 +82,7 @@ def _configure_full_app_library_startup(
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(
-        app_module,
-        "get_cli_setting",
-        get_cli_setting_without_splash,
-    )
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
     async def skip_model_catalog_refresh() -> None:
         return None
@@ -155,7 +152,7 @@ async def test_full_app_wiring_uses_unavailable_store_when_secure_store_is_missi
     app_with_cleanup: TldwCli,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import tldw_chatbook.app as app_module
+    from tldw_chatbook import app_service_wiring
     from tldw_chatbook.runtime_policy.server_credentials import (
         CredentialStoreUnavailable,
         UnavailableServerCredentialStore,
@@ -169,7 +166,7 @@ async def test_full_app_wiring_uses_unavailable_store_when_secure_store_is_missi
         )
 
     monkeypatch.setattr(
-        app_module,
+        app_service_wiring,
         "build_default_server_credential_store",
         raise_unavailable,
     )

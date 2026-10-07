@@ -51,6 +51,14 @@ from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
         ("openai", "gpt-5.6-terra", "thinking_budget_tokens", "unsupported"),
         ("moonshot", "kimi-k3", "reasoning_effort", "supported"),
         ("zai", "glm-5.2", "reasoning_effort", "supported"),
+        # Engine presets whose record refuses reasoning effort (TASK-33501),
+        # except a model with a thinking toggle (TASK-33502).
+        ("nvidia", "meta/llama-3.3-70b-instruct", "reasoning_effort", "unsupported"),
+        ("nvidia", "qwen/qwen3.5-397b-a17b", "reasoning_effort", "supported"),
+        # Fireworks sends reasoning effort; whether a model honours it varies.
+        ("fireworks", "accounts/fireworks/models/qwen3p8", "reasoning_effort", "unknown"),
+        ("together", "moonshotai/Kimi-K3", "reasoning_effort", "unsupported"),
+        ("cerebras", "gpt-oss-120b", "reasoning_effort", "unsupported"),
         ("anthropic", "claude-sonnet-5", "thinking_effort", "supported"),
         (
             "anthropic",
@@ -500,3 +508,36 @@ def test_provider_without_a_request_map_keeps_todays_fields(monkeypatch) -> None
     assert _ANTHROPIC_DROPPED <= supported_generation_fields(
         "anthropic", "claude-sonnet-4-5"
     )
+
+
+def test_every_engine_preset_refusing_reasoning_effort_hides_the_control() -> None:
+    """TASK-33501: the send would fail locally, so the Console must not offer it."""
+    from tldw_chatbook.provider_registry import ALL_RECORDS
+
+    refusing = [r.key for r in ALL_RECORDS if r.engine_driven and not r.reasoning_effort]
+    assert refusing
+    for key in refusing:
+        assert (
+            console_generation_control_support(key, "no-toggle-model", "reasoning_effort")
+            == "unsupported"
+        ), key
+
+
+def test_engine_presets_accepting_reasoning_effort_are_not_hidden() -> None:
+    from tldw_chatbook.provider_registry import ALL_RECORDS
+
+    accepting = [r.key for r in ALL_RECORDS if r.engine_driven and r.reasoning_effort]
+    for key in accepting:
+        assert (
+            console_generation_control_support(key, "any-model", "reasoning_effort")
+            != "unsupported"
+        ), key
+
+
+def test_nvidia_qwen_thinking_toggle_survives_the_draft_rebase() -> None:
+    """TASK-33502: the draft rebase carries reasoning effort only where it is sent."""
+    assert "reasoning_effort" in supported_generation_fields("nvidia", "qwen/qwen3.5-397b-a17b")
+    assert "reasoning_effort" not in supported_generation_fields(
+        "nvidia", "meta/llama-3.3-70b-instruct"
+    )
+

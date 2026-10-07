@@ -147,6 +147,10 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
 from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
     ConsoleVideoCapacityModal,
 )
+from tldw_chatbook.Widgets.Console.console_video_save_screens import (
+    GeneratedVideoConfirmation,
+    GeneratedVideoFileSave,
+)
 from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
     ConsoleWorkspaceFilesModal,
     WorkspaceFilesBinding,
@@ -306,7 +310,11 @@ def _workspace_files_factory() -> ConsoleWorkspaceFilesModal:
         active_workspace_name="Workspace",
         bindings=(
             WorkspaceFilesBinding(
-                "binding", "Folder", None, available=False, availability_copy="Unavailable"
+                "binding",
+                "Folder",
+                None,
+                available=False,
+                availability_copy="Unavailable",
             ),
         ),
     )
@@ -545,7 +553,8 @@ TASK2_MODAL_CONTRACTS = (
     _Task2ModalContract(
         ConsoleRunLogModal,
         lambda: ConsoleRunLogModal(
-            run_id="run-1", first_page=RunLogPage((), RunLogPageCursor(0, 0), None, 0),
+            run_id="run-1",
+            first_page=RunLogPage((), RunLogPageCursor(0, 0), None, 0),
             page_loader=lambda cursor: None,
         ),
         "#console-run-log-modal",
@@ -1020,12 +1029,16 @@ _DIRECT_SHARED_MODAL_TYPES = tuple(
     # Shared modals the Console root does NOT construct itself: each is
     # declared on the edge of the owner that actually opens it
     # (ChangeReviewScreen; the workspace create dialog -- task-18810).
+    # TASK-33622.15: the root's generated-video save now opens the
+    # quit-guarded GeneratedVideoFileSave subclass (declared on the root edge
+    # below); EnhancedFileSave itself stays reachable via TraceExportDialog.
     if contract.modal_type
     not in {
         ChangeRevertConfirmModal,
         ChangeGitCommitModal,
         ChangeGitPushModal,
         SelectDirectory,
+        EnhancedFileSave,
     }
 )
 CONSOLE_MODAL_LAUNCH_EDGES = (
@@ -1040,6 +1053,9 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
             ProjectInstructionSetupModal,
             TrajectoryScreen,
             WorkspaceCreateModal,
+            # TASK-33622.15: the generated video's Save-to-disk screens.
+            GeneratedVideoFileSave,
+            GeneratedVideoConfirmation,
         ),
         _CONSOLE_ROOT_SOURCE_PATHS,
     ),
@@ -1055,11 +1071,16 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         ("tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",),
         ("action_show_workbench_help",),
     ),
+    # TASK-33006.4: Chat settings' Change opens Switch model in pick-only
+    # mode; the Console's opener (model_switcher.open_model_picker) builds it.
     _ModalLaunchEdge(
         ConsoleSettingsModal,
-        (ConsoleEndpointTemplateModal,),
-        ("tldw_chatbook/Widgets/Console/console_settings_modal.py",),
-        ("_open_endpoint_template_modal",),
+        (ConsoleEndpointTemplateModal, ConsoleModelPopover),
+        (
+            "tldw_chatbook/Widgets/Console/console_settings_modal.py",
+            "tldw_chatbook/UI/Console_Modules/model_switcher.py",
+        ),
+        ("_open_endpoint_template_modal", "open_model_picker"),
     ),
     # task-18810: the Console workspace browser opens the shared create
     # dialog (`_create_console_workspace`), which itself opens the vendored
@@ -1196,9 +1217,7 @@ def _constructed_modal_types(
                         # omits it from ``__getattr__``/``__all__``. Mirror
                         # Python's import semantics instead of assuming every
                         # imported name is already a package attribute.
-                        bound = importlib.import_module(
-                            f"{imported_name}.{alias.name}"
-                        )
+                        bound = importlib.import_module(f"{imported_name}.{alias.name}")
                     bindings[alias.asname or alias.name] = bound
 
         class _ConstructorVisitor(ast.NodeVisitor):
@@ -1394,6 +1413,10 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         ProjectInstructionNoticeModal,
         ProjectInstructionSetupModal,
         TraceExportDialog,
+        # TASK-33622.15: quit-guarded subclasses of the shared picker and
+        # confirmation, opened only by the generated-video save.
+        GeneratedVideoFileSave,
+        GeneratedVideoConfirmation,
     }
 
     assert discovered_console_types - console_contract_types == inventory_only_types
@@ -1412,11 +1435,15 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
     # The current dev baseline grows to 49 when TASK-26042's Workspace Files
-    # owner seam joins the explicit Console launch graph.
-    assert len(reachable_modal_types) == 49
-    all_contract_types = console_contract_types | {
-        contract.modal_type for contract in TASK4_MODAL_CONTRACTS
-    } | inventory_only_types | {TrajectoryScreen}
+    # owner seam joins the explicit Console launch graph. TASK-33622.15 adds the
+    # generated video's two quit-guarded Save-to-disk screens: 49 -> 51.
+    assert len(reachable_modal_types) == 51
+    all_contract_types = (
+        console_contract_types
+        | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}
+        | inventory_only_types
+        | {TrajectoryScreen}
+    )
     assert reachable_modal_types == all_contract_types
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
@@ -1580,8 +1607,7 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
     expected_guards = {
         "ConsoleImageViewerModal": "intentional click-anywhere cancel",
         "ConsoleReviewNotesModal": (
-            "mid-edit escape closes the open editor before the second "
-            "cancel dismisses"
+            "mid-edit escape closes the open editor before the second cancel dismisses"
         ),
     }
     for contract in TASK2_MODAL_CONTRACTS:
@@ -1944,6 +1970,9 @@ async def test_settings_clean_close_sources_restore_opener_focus(source: str) ->
         await app.push_screen(modal, callback=app.results.append)
         await pilot.pause()
         if source == "visible-cancel":
+            # TASK-33006.5: Cancel is the Context view's (spec mock (b)).
+            await pilot.click("#console-settings-view-context")
+            await pilot.pause()
             await pilot.click("#console-settings-cancel")
         elif source == "escape":
             await pilot.press("escape")
@@ -1968,7 +1997,8 @@ async def test_settings_redirected_select_click_uses_real_mro_dispatch() -> None
         focused_input = modal.query_one(
             "#console-settings-temperature", ConsoleSettingsInput
         )
-        provider_select = modal.query_one("#console-settings-provider", Select)
+        # TASK-33006.4: the provider Select is gone; Streaming is a Select.
+        provider_select = modal.query_one("#console-settings-streaming", Select)
         focused_input.focus()
         await pilot.pause()
         provider_region = _settings_screen_region(provider_select)
@@ -1997,6 +2027,63 @@ async def test_settings_redirected_select_click_uses_real_mro_dispatch() -> None
         assert provider_select.expanded
         assert app.screen is modal
         assert app.results == []
+
+
+@pytest.mark.asyncio
+async def test_settings_change_pick_mode_escape_keeps_draft_and_focuses_change() -> (
+    None
+):
+    """TASK-33006.4 AC#4 (ADR-031 task-16211): Chat settings opens pick-only
+    Switch model over itself; Esc returns to Chat settings with the draft
+    unchanged and focus on Change, and Chat settings stays open."""
+    from Tests.UI.test_console_settings_model_change import (
+        pick_mode_opener,
+        real_rebase,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+        MODEL_CHANGE_ID,
+    )
+
+    app = _SettingsMROHarness()
+    app_config = {"api_settings": {"llama_cpp": {}, "openai": {"api_key": "k"}}}
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=app_config,
+        providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-5"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+        draft_rebaser=real_rebase,
+        model_picker=pick_mode_opener(
+            app, app_config, {"llama_cpp": ["model-a"], "openai": ["gpt-5"]}
+        ),
+    )
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        before = modal._draft
+        change = modal.query_one(f"#{MODEL_CHANGE_ID}", Button)
+        change.focus()
+        await pilot.press("enter")
+        for _ in range(3):
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+        switcher = app.screen
+        assert isinstance(switcher, ConsoleModelPopover) and switcher._pick_only
+        await pilot.press(*"gpt")
+        await pilot.pause()
+        await pilot.press("escape")
+        for _ in range(3):
+            await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
+        assert modal._draft is before
+        assert (modal._draft.settings.provider, modal._draft.settings.model) == (
+            "llama_cpp",
+            "model-a",
+        )
+        assert app.focused is change
 
 
 @dataclass(frozen=True)

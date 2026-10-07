@@ -24,7 +24,11 @@ from tldw_chatbook.Library.ingest_capabilities import (
 )
 from tldw_chatbook.Library.ingest_types import PreflightResult
 from tldw_chatbook.Local_Ingestion.local_file_ingestion import is_http_url
-from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise, log_origin
+from tldw_chatbook.Utils.egress import (
+    EgressBlockedError,
+    check_url_or_raise,
+    log_origin,
+)
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 
@@ -51,7 +55,9 @@ def _statted_size(path: Path) -> int | None:
         return None
 
 
-def collect_directory_files(directory: Path, scan_limit: int) -> tuple[list[Path], bool]:
+def collect_directory_files(
+    directory: Path, scan_limit: int
+) -> tuple[list[Path], bool]:
     """Expand a directory into the files an ingest submission should cover.
 
     The public seam over :func:`_collect_files`, so that submitting a folder
@@ -124,9 +130,7 @@ def _collect_files(p: Path, scan_limit: int) -> tuple[list[Path], bool, int]:
                         truncated = True
                         break
                     continue
-                sub_files, sub_truncated, sub_skipped = _collect_files(
-                    entry, remaining
-                )
+                sub_files, sub_truncated, sub_skipped = _collect_files(entry, remaining)
                 files.extend(sub_files)
                 skipped += sub_skipped
                 if sub_truncated:
@@ -182,8 +186,7 @@ _PROBE_ENABLED_KEY = "ingest_url_preflight_probe"
 #: link-local, CGNAT, multicast, cloud metadata, bad scheme, DNS failure)
 #: now produces this one string, so there is nothing left to difference.
 _UNVERIFIABLE_NOTE = (
-    "The link could not be checked ahead of time. The import will still be "
-    "attempted."
+    "The link could not be checked ahead of time. The import will still be attempted."
 )
 
 
@@ -348,9 +351,7 @@ def _probe_url(url: str) -> UrlProbe:
         return UrlProbe(error=_plain_unreachable_reason(exc))
     except Exception as exc:
         logger.debug(f"URL probe unexpected failure for {log_origin(url)}: {exc!r}")
-        return UrlProbe(
-            error="URL probe failed — the address could not be checked."
-        )
+        return UrlProbe(error="URL probe failed — the address could not be checked.")
 
 
 def analyze_path(

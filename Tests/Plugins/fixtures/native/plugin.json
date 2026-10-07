@@ -1,0 +1,7 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "review-helper",
+  "version": "1.0.0",
+  "description": "Review changes using a reusable checklist",
+  "extensions": {"io.github.rmusser01.chatbook": {"version": 1}}
+}

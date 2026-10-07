@@ -1,0 +1,40 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.       Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Say hello in two words.                                        │
+                  Context ◂  │  Q1 ● Say hello in two ✕    New tab     Temporary                             │
+   Terminal                  │                                                                               │
+ ──────────────────────────  │  ──────────────────────────────────────────────────────────────────────────   │
+ Workspaces             ▸    │  ▊ Assistant                                                               ▂  │
+ ──────────────────────────  │  ▊                                                                            │
+ Conversations          ▾    │  ▊  Hello there.                                                              │
+     Archive this chat       │  ▊                                                                            │
+      Archived chats         │  ▊                                                                            │
+     Search all chats…       │  ──────────────────────────────────────────────────────────────────────────   │
+   Say hello in two          │   User                                                                        │
+   words.                    │   Say bye in two words.                                                       │
+                             │  ──────────────────────────────────────────────────────────────────────────   │◂ Inspect
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊ Assistant                                                                  │
+  ▊  Filter      ▎           │  ▊                                                                            │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊  Goodbye friend.                                                           │
+                             │  ▊                                                                            │
+  Chats                 ▾    │  ▊                                                                            │
+   Say hello in two …  ⟳     │  ──────────────────────────────────────────────────────────────────────────   │
+   Queue 1                   │   User                                                                        │
+                             │   Name one planet.                                                            │
+ ──────────────────────────▃ │  ──────────────────────────────────────────────────────────────────────────   │
+ Character · No chats   ▸    │  ▊ Assistant  Generating…                                                     │
+ ──────────────────────────  │  ▊                                                                            │
+ Model                  ▸    │  ▊                                                                            │
+ ▼ Agent · Details           │  ▊                                                                            │
+                             │  ──────────────────────────────────────────────────────────────────────────▇  │  setup
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Queue 1/10 · Draining · Next: "Name one star."                                                     Mana       Pause
+ Status ▾   Run: Agent running.     Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...   Send disabled: type a message      Queue         Dictate   Redir
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Ctrl+P · Ctrl+Q

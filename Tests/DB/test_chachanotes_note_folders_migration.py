@@ -17,18 +17,24 @@ MANAGED_OWNER_INDEX = "idx_note_folder_memberships_managed_owner"
 
 
 def _schema_version(db: CharactersRAGDB) -> int:
-    row = db.get_connection().execute(
-        "SELECT version FROM db_schema_version WHERE schema_name = ?",
-        (db._SCHEMA_NAME,),
-    ).fetchone()
+    row = (
+        db.get_connection()
+        .execute(
+            "SELECT version FROM db_schema_version WHERE schema_name = ?",
+            (db._SCHEMA_NAME,),
+        )
+        .fetchone()
+    )
     assert row is not None
     return int(row["version"])
 
 
 def _table_names(db: CharactersRAGDB) -> set[str]:
-    rows = db.get_connection().execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table'"
-    ).fetchall()
+    rows = (
+        db.get_connection()
+        .execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .fetchall()
+    )
     return {str(row["name"]) for row in rows}
 
 
@@ -96,13 +102,13 @@ def test_v35_database_migrates_without_assigning_existing_notes(
     path = tmp_path / "v35.db"
     note_id = _seed_v35(path)
 
-    migrated = open_current_chachanotes_from_legacy(
-        path, client_id="v36-open"
-    )
+    migrated = open_current_chachanotes_from_legacy(path, client_id="v36-open")
     try:
-        count = migrated.get_connection().execute(
-            "SELECT COUNT(*) AS count FROM note_folder_memberships"
-        ).fetchone()["count"]
+        count = (
+            migrated.get_connection()
+            .execute("SELECT COUNT(*) AS count FROM note_folder_memberships")
+            .fetchone()["count"]
+        )
 
         assert _schema_version(migrated) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert migrated.get_note_by_id(note_id) is not None
@@ -111,7 +117,9 @@ def test_v35_database_migrates_without_assigning_existing_notes(
         migrated.close_connection()
 
 
-def test_database_rejects_duplicate_active_folder_normalized_path(tmp_path: Path) -> None:
+def test_database_rejects_duplicate_active_folder_normalized_path(
+    tmp_path: Path,
+) -> None:
     db = CharactersRAGDB(tmp_path / "duplicate-path.db", client_id="constraints")
     try:
         connection = db.get_connection()
@@ -217,9 +225,9 @@ def test_opening_already_v36_database_is_idempotent(tmp_path: Path) -> None:
             _schema_version(db),
             _table_names(db),
             connection.execute("SELECT COUNT(*) FROM note_folders").fetchone()[0],
-            connection.execute("SELECT COUNT(*) FROM note_folder_memberships").fetchone()[
-                0
-            ],
+            connection.execute(
+                "SELECT COUNT(*) FROM note_folder_memberships"
+            ).fetchone()[0],
         )
     finally:
         db.close_connection()
@@ -231,9 +239,9 @@ def test_opening_already_v36_database_is_idempotent(tmp_path: Path) -> None:
             _schema_version(reopened),
             _table_names(reopened),
             connection.execute("SELECT COUNT(*) FROM note_folders").fetchone()[0],
-            connection.execute("SELECT COUNT(*) FROM note_folder_memberships").fetchone()[
-                0
-            ],
+            connection.execute(
+                "SELECT COUNT(*) FROM note_folder_memberships"
+            ).fetchone()[0],
         )
         assert after == before
     finally:

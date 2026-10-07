@@ -156,8 +156,9 @@ def test_monochrome_mosaic_stays_visible_without_colour():
         return console.export_text(styles=True)
 
     # Colour path is unchanged: still carries the image, however it is drawn.
-    colour = emitted(mosaic_from_image(img, 16, 8, fit="contain"),
-                     color_system="truecolor")
+    colour = emitted(
+        mosaic_from_image(img, 16, 8, fit="contain"), color_system="truecolor"
+    )
     assert re.findall(r"\x1b\[[0-9;]*m", colour), "colour mosaic lost its colour"
 
     # Monochrome path: no colour escapes available, so the GLYPHS must carry it.

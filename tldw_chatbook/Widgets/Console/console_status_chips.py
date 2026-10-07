@@ -43,6 +43,19 @@ class ConsoleChip(Static):
     """
 
     can_focus = True
+    #: A second tooltip line naming what the chip opens (TASK-33004.7).
+    HELP = ""
+
+    def label_tooltip(self, label: str) -> Content:
+        """The full label, then this chip's ``HELP`` line when it has one.
+
+        Args:
+            label: The chip's full, unellipsized label text.
+
+        Returns:
+            Tooltip content: ``label``, plus ``HELP`` on a second line if set.
+        """
+        return Content(f"{label}\n{self.HELP}" if self.HELP else label)
 
 
 def _items_word(count: int) -> str:
@@ -73,18 +86,20 @@ class ConsoleApprovalsChip(ConsoleChip):
 
 
 class ConsoleModelChip(ConsoleChip):
-    """Provider/model chip that opens the quick model popover when activated.
+    """Provider/model chip that opens Switch model when activated.
 
     task-1670: mirrors ``ConsoleApprovalsChip``/``ConsoleScopeChip`` exactly
-    -- Enter/Space while focused, or a click, opens the same popover Alt+M
+    -- Enter/Space while focused, or a click, opens the same switcher Alt+M
     opens (``ChatScreen.action_open_console_model_popover``). Both the
     Provider and Model chips use this class; they are two views of one
-    setting, so either is a reasonable place to click.
+    setting, so either is a reasonable place to click. Its tooltip teaches
+    both model keys (ADR-031 rule 4: each is a Console binding).
     """
 
+    HELP = "Enter: Switch model (Alt+M) · Chat settings (Ctrl+O)"
     BINDINGS = [
-        Binding("enter", "open_model_popover", "Open model settings", show=False),
-        Binding("space", "open_model_popover", "Open model settings", show=False),
+        Binding("enter", "open_model_popover", "Switch model", show=False),
+        Binding("space", "open_model_popover", "Switch model", show=False),
     ]
 
     class OpenRequested(Message):
@@ -431,7 +446,7 @@ class ConsoleStatusChips(Horizontal):
         # ids). A name containing `[red]...[/]` would otherwise
         # restyle the chip strip, or raise MarkupError when unbalanced.
         chip = chip_class(label, id=id, classes=classes, markup=False)
-        chip.tooltip = Content(label)
+        chip.tooltip = chip.label_tooltip(label)
         return chip
 
     def compose(self) -> ComposeResult:
@@ -444,7 +459,9 @@ class ConsoleStatusChips(Horizontal):
                 compact=True,
             )
             collapse_button.tooltip = "Collapse status details."
-            collapse_button.remove_class(*(name for name in collapse_button.classes if name.startswith("w-")))
+            collapse_button.remove_class(
+                *(name for name in collapse_button.classes if name.startswith("w-"))
+            )
             collapse_button.set_styles(width=None)
             collapse_button.add_class("w-9")
             collapse_button.styles.min_width = 9
@@ -452,7 +469,9 @@ class ConsoleStatusChips(Horizontal):
             collapse_button.styles.line_pad = 0
             yield collapse_button
             chip_scroll = HorizontalScroll(id="console-status-chip-scroll")
-            chip_scroll.remove_class(*(name for name in chip_scroll.classes if name.startswith("h-")))
+            chip_scroll.remove_class(
+                *(name for name in chip_scroll.classes if name.startswith("h-"))
+            )
             chip_scroll.set_styles(height=None)
             chip_scroll.add_class("h-1")
             chip_scroll.styles.min_height = 1
@@ -536,7 +555,9 @@ class ConsoleStatusChips(Horizontal):
                 compact=True,
             )
             expand_button.tooltip = "Expand status details."
-            expand_button.remove_class(*(name for name in expand_button.classes if name.startswith("w-")))
+            expand_button.remove_class(
+                *(name for name in expand_button.classes if name.startswith("w-"))
+            )
             expand_button.set_styles(width=None)
             expand_button.add_class("w-9")
             expand_button.styles.min_width = 9
@@ -889,7 +910,11 @@ class ConsoleStatusChips(Horizontal):
             except NoMatches:
                 continue
             chip.update(label)
-            chip.tooltip = Content(label)
+            chip.tooltip = (
+                chip.label_tooltip(label)
+                if isinstance(chip, ConsoleChip)
+                else Content(label)
+            )
         chip_emphasis = {
             "#console-sources-chip": state.sources_active,
             "#console-tools-chip": state.tools_active,

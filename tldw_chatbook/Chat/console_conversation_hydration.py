@@ -66,6 +66,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Utils.timestamps import as_utc
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 __all__ = [
@@ -311,6 +312,63 @@ def console_messages_from_conversation_tree(
 
     _batch_fetch_resume_attachments(db, messages)
     return messages
+
+
+def _refresh_console_message_parents(
+    nodes: Sequence[ConsoleChatMessage], rows: Sequence[Mapping[str, Any]]
+) -> None:
+    """Mutate current durable parents, keeping absent truly-empty rows transparent.
+
+    Unresolved or malformed ancestry leaves the supplied structural link intact.
+    Only successfully resolved skipped chains are cached, within this one refresh.
+    """
+    raw_by_id = {str(row["id"]): row for row in rows if row.get("id") is not None}
+    retained = {
+        str(node.persisted_message_id)
+        for node in nodes
+        if node.persisted_message_id is not None
+    }
+    resolved: dict[str, str | None] = {}
+    for node in nodes:
+        if node.persisted_message_id is None:
+            continue
+        node_id = str(node.persisted_message_id)
+        row = raw_by_id.get(node_id)
+        if row is None:
+            continue
+        parent = (
+            str(row["parent_message_id"])
+            if row.get("parent_message_id") is not None
+            else None
+        )
+        visited = {node_id}
+        skipped: list[str] = []
+        while True:
+            if parent in visited:
+                break
+            if parent is None or parent in retained:
+                node.parent_message_id = parent
+                for ancestor in skipped:
+                    resolved[ancestor] = parent
+                break
+            if parent in resolved:
+                parent = resolved[parent]
+                continue
+            ancestor = raw_by_id.get(parent)
+            if ancestor is None or (
+                bool(str(ancestor.get("content") or ""))
+                or isinstance(ancestor.get("image_data"), (bytes, bytearray))
+                or ancestor.get("assistant_generation_state") is not None
+                or ancestor.get("provider_continuation_json") is not None
+            ):
+                break
+            visited.add(parent)
+            skipped.append(parent)
+            parent = (
+                str(ancestor["parent_message_id"])
+                if ancestor.get("parent_message_id") is not None
+                else None
+            )
 
 
 async def load_console_conversation_tree(
@@ -701,9 +759,22 @@ async def hydrate_console_session(
         character_system_template=roleplay_context.character_system_template,
         **({"prepared_data": prepared_data} if prepared_data is not None else {}),
         activate=False,
+        prepare_progress=False,
     )
     session.persona_system_template = roleplay_context.persona_system_template
+    # Opening a saved chat is not a use of it. Keep the row's last change as
+    # the session's recency, as a session restored at startup keeps its saved
+    # updated_at (Switch model RECENT, the conversation switcher's ages).
+    stored_updated_at = as_utc(conversation.get("last_modified"))
+    if stored_updated_at is not None:
+        session.updated_at = stored_updated_at.isoformat()
     try:
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        try:
+            await store.prepare_progress_inbox_owned(session.id)
+        except MessageError:
+            pass  # Saved report refusal does not invalidate the native chat.
         await store.hydrate_session_library_policy(session.id)
         await store.reconcile_pending_workspace_projection(session.id)
         if activate:

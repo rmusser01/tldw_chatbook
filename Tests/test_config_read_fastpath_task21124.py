@@ -106,9 +106,7 @@ def test_read_after_write_sees_the_new_value():
         assert config_module.save_setting_to_cli_config(
             "task21124_probe", "freshness", value
         )
-        assert (
-            config_module.get_cli_setting("task21124_probe", "freshness") == value
-        )
+        assert config_module.get_cli_setting("task21124_probe", "freshness") == value
 
 
 def test_write_path_is_coalesced_to_one_disk_parse(monkeypatch):

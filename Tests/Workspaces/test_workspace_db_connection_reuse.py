@@ -35,7 +35,9 @@ def connection_spy(monkeypatch):
     return opened
 
 
-def test_repeated_reads_open_no_new_connections(tmp_path: Path, connection_spy, request):
+def test_repeated_reads_open_no_new_connections(
+    tmp_path: Path, connection_spy, request
+):
     service = LocalWorkspaceRegistryService(
         WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="client-1")
     )
@@ -74,9 +76,7 @@ def test_failed_transaction_rolls_back_and_connection_stays_usable(
     assert rows and rows[0].name == "Alpha"
     # ...and the held connection keeps working for writes afterwards.
     service.create_workspace(workspace_id="ws-b", name="Beta")
-    assert any(
-        w.workspace_id == "ws-b" for w in service.list_workspaces()
-    )
+    assert any(w.workspace_id == "ws-b" for w in service.list_workspaces())
 
 
 def test_each_thread_gets_its_own_connection(request, tmp_path: Path):
@@ -105,6 +105,4 @@ def test_each_thread_gets_its_own_connection(request, tmp_path: Path):
         t.join()
 
     assert not errors, f"cross-thread use failed: {errors}"
-    assert seen["t0"] is not seen["t1"], (
-        "two threads shared one sqlite connection"
-    )
+    assert seen["t0"] is not seen["t1"], "two threads shared one sqlite connection"

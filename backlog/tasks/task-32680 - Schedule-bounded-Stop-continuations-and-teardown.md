@@ -1,9 +1,11 @@
 ---
 id: TASK-32680
 title: Schedule bounded Stop continuations and teardown
-status: To Do
-assignee: []
+status: Done
+assignee:
+  - '@codex'
 created_date: '2026-09-16 04:25'
+updated_date: '2026-10-02 02:49'
 labels:
   - plugins
   - implementation
@@ -25,8 +27,32 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Stop proposals combine into at most one scheduler turn keyed by parent turn and event, with three-turn and 120-second chain caps and inherited restrictions.
-- [ ] #2 Foreground user work, vetoes, update drain, revocation, closure and uncertain dispatch prevent stale continuation or automatic replay; continuations do not fire UserPromptSubmit.
-- [ ] #3 Interrupt and SessionEnd are bounded observations after admission sealing, cannot prompt/connect or extend cleanup, and revoked plugin handlers are suppressed.
-- [ ] #4 Mounted and viewless tests exercise continuation admission, deduplication, concurrent settlement and teardown with legacy hook behavior preserved.
+- [x] #1 Stop proposals combine into at most one scheduler turn keyed by parent turn and event, with three-turn and 120-second chain caps and inherited restrictions.
+- [x] #2 Foreground user work, vetoes, update drain, revocation, closure and uncertain dispatch prevent stale continuation or automatic replay; continuations do not fire UserPromptSubmit.
+- [x] #3 Interrupt and SessionEnd are bounded observations after admission sealing, cannot prompt/connect or extend cleanup, and revoked plugin handlers are suppressed.
+- [x] #4 Mounted and viewless tests exercise continuation admission, deduplication, concurrent settlement and teardown with legacy hook behavior preserved.
 <!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR paths: backlog/decisions/163-expanded-console-hook-runtime.md; backlog/decisions/162-managed-agent-plugins.md; backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md
+Reason: implements accepted scheduler continuation admission, durable deduplication receipts and teardown custody through existing queue/runtime owners.
+1. Port reviewed H5 fixtures with current profile/worker/resource ownership and establish real scheduler RED after accepted ordinary Send.
+2. Integrate reviewed H5 increment preserving maintenance gates, dispatch recovery, exact hook consent, transformed input carriers and current schema contracts.
+3. Qualify bounded chains, inherited budgets, human priority, concurrency/deduplication and uncertain dispatch, actual mounted Send/Stop at supported sizes, viewless teardown and migration/reopen.
+4. Run targeted legacy and affected queue/dispatch neighbors, token governance, lint/format and shared diagnostic comparison; self-review ACs, record evidence/limits, complete via CLI and commit.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented bounded Stop scheduling through existing queue/runtime owners, atomic v74 deduplication receipts, inherited budgets, untrusted machine input and fixed Interrupt/SessionEnd observation windows. Preserved actual cancellation and maintenance custody; reused finite worker connection retirement. Final targeted H5 qualification: 105 passed in 453.52s, no warnings/skips; 133 queue/dispatch/maintenance controls passed and 1,000 real turns passed in 465.05s. Additional archive/fleet/log controls: 85 passed, two failures reproduced on frozen pre-H5 production; pre-existing dispatch/Stop fixture failures also recorded without weakening guards. New hooks/tests Ruff+format, parse, whitespace and shared diagnostic comparison pass; exact v74 wheel resource verified. ADR-162/163/063 apply. Evidence and platform limits: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
+
+PR #2946 derived-artifact repair registers the existing continuation table in the SQL identifier allowlist and pins the actual populated conversation DELETE cascade query plan without ANALYZE. Migration/runtime ownership is unchanged; the focused repaired-runtime plus migration group passes 7 cases. Existing ADR-163 applies; exact evidence is in the integration report.
+
+PR #2946 rebased onto dev 84247cb843 with production repairs unchanged. Fixture controls retain the collection-time private profile, real coordinator binding, full immutable snapshots plus owned turn attribution and bounded worker entry. All 203 selected Console cases pass across retained/isolated corrected runs; final teardown passes 13 cases in 431.771s with no skips, preserving exact cancellation, revocation, resource settlement and no replay under the existing best-effort observer deadline. Mounted collapse/resize and all four pending-Stop size variants pass; boot 22 passes at census 1031/1033 with unchanged limits. ADR-162/163/197 apply; no new ADR. Exact failed-run dispositions, artifacts and scope limits are in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
+
+PR #2946 current-dev integration supersedes the historical v74 receipt resource above: dev 27e718f01d owns the unchanged v74 failure-reason migration; continuation receipts now migrate v74 to v75. Genuine v73/v74 upgrade, populated failure-reason preservation, receipt rollback/reopen, uncertain dispatch and cascade controls pass in the complete 25-case hook-compaction/receipt run (31.102s). Actual core and combined subscriptions recovery catalogs add exactly two receipt records, preserve all existing records and require v75; standalone subscriptions remains unchanged. The wheel contains exact v75 receipt SQL and dev v74 SQL. A covering recovery run retains one unrelated dormant-pet constructor failure reproduced on frozen dev; no guard or xfail was changed. ADR-163/052 apply; evidence: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
+<!-- SECTION:NOTES:END -->

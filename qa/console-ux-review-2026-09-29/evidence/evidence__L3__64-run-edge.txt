@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meet
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                               Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Reply with exactly these tw...                                                                         │
+                  Context ◂  │   Say hi in three wo…  ✕  Reply with one wor…  ✕       ◌ Chat 3        ✕ ● Reply with exactly… ✕    New tab     Temp▸ │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                         ✕  │
+ Workspaces             ▸    │                                                                                                                       │
+ ──────────────────────────  │                                                                                                                       │
+ Conversations          ▾    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+   New conversation          │   User                                                                                                                │
+     Archive this chat       │   Reply with exactly these two words: build failed                                                                    │
+      Archived chats         │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+     Search all chats…       │  ▊ Assistant                                                                                                          │
+   Reply with exactly        │  ▊                                                                                                                    │
+   these tw...               │  ▊  build failed                                                                                                      │
+                             │  ▊                                                                                                                    │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ▊                                                                                                                    │
+  ▊  Filter      ▎           │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │◂ Inspect
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │   User                                                                                                                │
+                             │   Name a river.                                                                                                       │
+  Chats                 ▾    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+   Reply with exactl…  ⟳     │  ▊ Assistant                                                                                                          │
+   Chat 3              💬    │  ▊                                                                                                                    │
+   Reply with one wo…  💬    │  ▊  The Amazon River.                                                                                                 │
+   Say hi in three w…  💬    │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+ ──────────────────────────  │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ Character · No chats   ▸    │   User                                                                                                                │
+ ──────────────────────────  │   Name a lake.                                                                                                        │
+ Model                  ▸    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ──────────────────────────  │  ▊ Assistant  Generating…                                                                                             │
+ Agent                  ▸    │  ▊                                                                                                                    │
+ ──────────────────────────  │  ▊                                                                                                                    │
+ Details                ▸    │  ▊                                                                                                                    │
+                             │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  setup
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Agent running.     Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                           Send disabled: type a message      Queue         Dictate   Redir
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

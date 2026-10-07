@@ -18,13 +18,24 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ConsoleSubmitResult,
+        ContextCompactionHold,
+        ContinuationRestoreTarget,
+        ProviderContinuationSidecar,
+        ProviderThinkingSidecar,
+        ThinkingHistoryPolicy,
+    )
 
 from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import image_url_part
 from tldw_chatbook.Chat.console_context_policy import (
+    CompactionFailureBehavior,
     ContextCarryForwardMode,
     ContextCompactionMode,
     ResolvedConsoleContextPolicy,
@@ -41,6 +52,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemoryCoverageKind,
     MemoryOriginKind,
     MemorySelectionKind,
+    validate_branch_memory_commit,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_prepared_request import (
@@ -403,6 +415,231 @@ class CompactionTransactionResult:
     terminal: CompactionTerminal
     memory: ConsoleMemoryRecord | None = field(default=None, repr=False)
     reason: str | None = None
+    # TASK-33621.3 (appended, defaulted -- legacy callers unchanged): what the
+    # attempt reported spending, whether a provider summary call was made at
+    # all, and whether an earlier failure suppressed this automatic attempt
+    # before any call -- so failure copy can disclose spend honestly.
+    usage: ProviderUsage | None = None
+    attempted: bool = False
+    suppressed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CompactionRetryFence:
+    """What must change before a failed automatic compaction may bill again.
+
+    TASK-33621.3 AC#5. ``settings_key`` digests every input that changes what
+    one summary call would do: provider, model, prompt, the compaction policy
+    except its failure behavior, the model window, and the effective memory.
+    ``history`` is the durable history before the active request. A later
+    fence stays blocked while its settings match and it only APPENDED turns
+    after that history; an edit, delete, branch switch, memory change or
+    policy change lifts the block. ``route`` names the provider and model the
+    summary call goes to: each route keeps its own pause, so a failed Compact
+    now on the auxiliary model never replaces the pause the sends' model set.
+    ``request`` is the active request itself, from its user turn on (empty
+    when the fence has none), so a request that resumes the paused latest
+    exchange -- Continue, regenerate -- stays covered.
+    """
+
+    conversation_id: str
+    settings_key: str
+    history: tuple[DurableMessageSnapshot, ...] = field(repr=False)
+    route: str = ""
+    request: tuple[DurableMessageSnapshot, ...] = field(default=(), repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _FailedCompaction:
+    """One conversation's last failed attempt: sizes, digests and ids only.
+
+    ``base_length``/``base_digest`` fence the history before the paused
+    history's latest user turn, and ``latest_exchange`` holds one digest per
+    row from that turn on, keyed by message id. They let the pause cover a
+    request that RESUMES that exchange instead of appending to it.
+    """
+
+    settings_key: str
+    history_length: int
+    history_digest: str
+    reason: str
+    base_length: int | None = None
+    base_digest: str = ""
+    latest_exchange: tuple[tuple[str, str], ...] = ()
+
+    @classmethod
+    def from_fence(
+        cls, fence: CompactionRetryFence, reason: str
+    ) -> _FailedCompaction:
+        """Record a failed attempt on ``fence``.
+
+        Args:
+            fence: The retry fence the failed attempt was made on.
+            reason: The failure reason the suppressed copy reports.
+
+        Returns:
+            The pause, with the latest exchange recorded when the fenced
+            history has a user turn.
+        """
+
+        history = fence.history
+        failed = cls(
+            settings_key=fence.settings_key,
+            history_length=len(history),
+            history_digest=_persisted_prefix_digest(history),
+            reason=reason,
+        )
+        user_positions = [i for i, row in enumerate(history) if row.role == "user"]
+        if not user_positions:
+            return failed
+        base = user_positions[-1]
+        return replace(
+            failed,
+            base_length=base,
+            base_digest=_persisted_prefix_digest(history[:base]),
+            latest_exchange=tuple(
+                (row.message_id, _persisted_prefix_digest((row,)))
+                for row in history[base:]
+            ),
+        )
+
+    def blocks(self, fence: CompactionRetryFence) -> bool:
+        """Return whether ``fence`` must stay paused (AC#5).
+
+        Args:
+            fence: The fence of the automatic attempt about to be made.
+
+        Returns:
+            True while the settings match and the attempt either only
+            appended turns after the paused history, or resumes its latest
+            exchange: its history is the paused history before that
+            exchange's user turn, its request starts at that same turn, and
+            every paused row the request still carries is unchanged. A
+            Continue carries the reply it continues, so editing that reply
+            lifts the pause; a regenerate replaces it and does not.
+        """
+
+        if fence.settings_key != self.settings_key:
+            return False
+        if (
+            len(fence.history) >= self.history_length
+            and _persisted_prefix_digest(fence.history[: self.history_length])
+            == self.history_digest
+        ):
+            return True
+        if (
+            self.base_length is None
+            or not fence.request
+            or len(fence.history) != self.base_length
+            or fence.request[0].message_id != self.latest_exchange[0][0]
+            or _persisted_prefix_digest(fence.history) != self.base_digest
+        ):
+            return False
+        paused = dict(self.latest_exchange)
+        return all(
+            _persisted_prefix_digest((row,)) == paused[row.message_id]
+            for row in fence.request
+            if row.message_id in paused
+        )
+
+
+def effective_memory_identity(
+    effective: EffectiveMemoryResult,
+) -> tuple[EffectiveMemoryKind, str | None, str | None]:
+    """Return the kind, generated memory id and legacy boundary in effect.
+
+    Args:
+        effective: The effective memory selected for a conversation.
+
+    Returns:
+        ``(kind, memory_id, legacy_boundary_message_id)``; the id is None
+        without a generated memory and the boundary None without a legacy
+        prefix. Equal tuples mean the same memory is in effect.
+    """
+
+    return (
+        effective.kind,
+        effective.memory.memory_id if effective.memory is not None else None,
+        effective.legacy.boundary_message_id if effective.legacy is not None else None,
+    )
+
+
+def compaction_retry_fence(
+    conversation_id: str,
+    resolution: ConsoleProviderResolution,
+    prompt: CompactionPromptSnapshot,
+    resolved: ResolvedConsoleContextPolicy,
+    effective: EffectiveMemoryResult,
+    snapshots: Sequence[DurableMessageSnapshot],
+    *,
+    active_request: bool = True,
+) -> CompactionRetryFence:
+    """Capture the retry fence for one automatic compaction decision.
+
+    Args:
+        conversation_id: Durable conversation the attempt belongs to.
+        resolution: Provider resolution the summary call would use.
+        prompt: The versioned compaction prompt.
+        resolved: The resolved context policy for this request.
+        effective: The effective memory selected for this request.
+        snapshots: The durable active lineage, active request included.
+        active_request: True for a send or Retry, whose last user turn is
+            the request being prepared. False for Compact now and a
+            micro-compaction tick: only an incomplete last user turn (an
+            unsent message waiting in response recovery) is then a request;
+            a complete latest exchange is history, so editing it lifts the
+            pause like an edit to any earlier turn.
+
+    Returns:
+        A fence whose history excludes the active request, so a Retry or a
+        fresh send after a failure compares only the turns that existed then;
+        the request rows ride along separately.
+    """
+
+    user_positions = [i for i, row in enumerate(snapshots) if row.role == "user"]
+    pending = bool(user_positions) and (
+        active_request
+        or not _is_complete_durable_unit(snapshots[user_positions[-1] :])
+    )
+    split = user_positions[-1] if pending else len(snapshots)
+    history = tuple(snapshots[:split])
+    kind, memory_id, legacy_boundary = effective_memory_identity(effective)
+    settings = {
+        "provider": resolution.provider,
+        "model": resolution.model or "",
+        "prompt": prompt.digest,
+        "policy": repr(
+            replace(
+                resolved.policy,
+                failure_behavior=CompactionFailureBehavior.STOP_AND_ASK,
+            )
+        ),
+        # The model window, not the effective budget: in Automatic budget
+        # mode that budget moves with every request's own length, which
+        # would lift the block on every send.
+        "window": resolved.model_context_window_tokens,
+        "memory": [
+            kind.value,
+            memory_id,
+            effective.memory.revision if effective.memory is not None else None,
+            legacy_boundary,
+            # A legacy summary has no revision: digest its text, as the
+            # repository's memory fence does, so editing it on a fixed
+            # boundary still lifts the pause.
+            (
+                _digest_json(effective.legacy.summary_text)
+                if effective.legacy is not None
+                else None
+            ),
+        ],
+    }
+    return CompactionRetryFence(
+        conversation_id,
+        _digest_json(settings),
+        history,
+        route=f"{resolution.provider}/{resolution.model or ''}",
+        request=tuple(snapshots[split:]),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1863,6 +2100,9 @@ class ConsoleCompactionService:
         # the capability for the resolution (no bridged provider does today
         # -- this is the seam a future gateway capability flips).
         self._native_compaction_delegation = native_compaction_delegation is True
+        # TASK-33621.3: the last FAILED attempt per conversation and route.
+        # In memory only: the pause lasts for this app session.
+        self._failed_compactions: dict[str, dict[str, _FailedCompaction]] = {}
 
     async def summarize_manual(
         self,
@@ -1873,6 +2113,7 @@ class ConsoleCompactionService:
         prompt: CompactionPromptSnapshot,
         current_admission: Callable[[], BranchMemoryCommit | None],
         prepare_projection: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
+        hooks=None,
     ) -> CompactionTransactionResult:
         """Execute one exact manual prefix/range summary and guarded commit."""
         if not _manual_admission_matches(
@@ -1920,6 +2161,28 @@ class ConsoleCompactionService:
             completion = None
             summary_engine = "local"
             for attempt_index, attempt_messages in enumerate(message_attempts):
+                if hooks is not None:
+                    try:
+                        attempt_messages = await hooks.before(
+                            attempt_messages, plan.requested_output_cap
+                        )
+                    except asyncio.CancelledError:
+                        self._finish(
+                            operation_id,
+                            AuxiliaryAttemptStatus.CANCELLED,
+                            started_tick,
+                            failure_reason="cancelled",
+                        )
+                        raise
+                    except Exception as exc:  # noqa: BLE001 -- hook boundary
+                        return self._end(
+                            operation_id,
+                            AuxiliaryAttemptStatus.FAILED,
+                            started_tick,
+                            "required_pre_compact_failed",
+                            error_type=type(exc).__name__,
+                            attempted=False,
+                        )
                 # Same executor-thread ceiling as compact()'s bound above;
                 # additionally a FOCUSED plan may spend up to 2x the bound
                 # (steered + unsteered attempts each get the full timeout).
@@ -1934,35 +2197,33 @@ class ConsoleCompactionService:
                         operation_id,
                         AuxiliaryAttemptStatus.CANCELLED,
                         started_tick,
+                        failure_reason="cancelled",
                     )
                     raise
                 except TimeoutError:
                     # TASK-26016: same bound as automatic compaction -- a hung
                     # manual summarize wedged the run-state at VALIDATING.
-                    self._finish(
-                        operation_id,
-                        AuxiliaryAttemptStatus.TIMED_OUT,
-                        started_tick,
-                    )
                     logger.warning(
                         "console_manual_compaction_auxiliary_timed_out timeout_s={}",
                         self._auxiliary_timeout,
                     )
-                    return CompactionTransactionResult(
-                        CompactionTerminal.FAILED, reason="auxiliary_timed_out"
+                    return self._end(
+                        operation_id,
+                        AuxiliaryAttemptStatus.TIMED_OUT,
+                        started_tick,
+                        "auxiliary_timed_out",
                     )
                 except Exception as exc:
-                    self._finish(
-                        operation_id,
-                        AuxiliaryAttemptStatus.FAILED,
-                        started_tick,
-                    )
                     logger.warning(
                         "console_manual_compaction_auxiliary_failed error_type={}",
                         type(exc).__name__,
                     )
-                    return CompactionTransactionResult(
-                        CompactionTerminal.FAILED, reason="auxiliary_provider_failed"
+                    return self._end(
+                        operation_id,
+                        AuxiliaryAttemptStatus.FAILED,
+                        started_tick,
+                        "auxiliary_provider_failed",
+                        error_type=type(exc).__name__,
                     )
                 summary = completion.text.strip()
                 if summary and not _contains_reserved_envelope(summary):
@@ -1977,14 +2238,12 @@ class ConsoleCompactionService:
                 completion.usage.output if completion.usage is not None else None
             )
             if not summary or _contains_reserved_envelope(summary):
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
+                    "invalid_summary_output",
                     usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="invalid_summary_output"
                 )
 
             try:
@@ -2008,15 +2267,12 @@ class ConsoleCompactionService:
                     reported_output is not None
                     and reported_output > plan.requested_output_cap
                 ):
-                    self._finish(
+                    return self._end(
                         operation_id,
                         AuxiliaryAttemptStatus.FAILED,
                         started_tick,
+                        "invalid_summary_output",
                         usage=completion.usage,
-                    )
-                    return CompactionTransactionResult(
-                        CompactionTerminal.FAILED,
-                        reason="invalid_summary_output",
                     )
                 ceiling = after.capacity.effective_input_ceiling_tokens
                 covered_raw = max(
@@ -2025,19 +2281,16 @@ class ConsoleCompactionService:
                     - after.accounting.compactable_tokens,
                 )
             except Exception as exc:
-                self._finish(
-                    operation_id,
-                    AuxiliaryAttemptStatus.FAILED,
-                    started_tick,
-                    usage=completion.usage,
-                )
                 logger.warning(
                     "console_manual_compaction_projection_failed error_type={}",
                     type(exc).__name__,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED,
-                    reason="summary_projection_failed",
+                return self._end(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    "summary_projection_failed",
+                    usage=completion.usage,
                 )
             if (
                 after.known_overflow
@@ -2047,15 +2300,12 @@ class ConsoleCompactionService:
                 or after.accounting.total_input_tokens >= plan.before_tokens
                 or covered_raw <= after.accounting.memory_tokens
             ):
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
+                    "summary_did_not_make_progress",
                     usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED,
-                    reason="summary_did_not_make_progress",
                 )
 
             try:
@@ -2063,14 +2313,13 @@ class ConsoleCompactionService:
             except Exception:
                 current = None
             if current != admission:
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.STALE,
                     started_tick,
+                    "admission_changed",
                     usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.STALE, reason="admission_changed"
+                    terminal=CompactionTerminal.STALE,
                 )
 
             memory = replace(
@@ -2119,30 +2368,29 @@ class ConsoleCompactionService:
             try:
                 committed = self._repository.commit_memory_selection_if_current(commit)
             except Exception as exc:
-                self._finish(
-                    operation_id,
-                    AuxiliaryAttemptStatus.FAILED,
-                    started_tick,
-                    usage=completion.usage,
-                )
                 logger.warning(
                     "console_manual_compaction_commit_failed error_type={}",
                     type(exc).__name__,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="memory_commit_failed"
+                return self._end(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    "memory_commit_failed",
+                    usage=completion.usage,
+                    error_type=type(exc).__name__,
                 )
             if not committed:
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.STALE,
                     started_tick,
+                    "branch_memory_changed_before_commit",
                     usage=completion.usage,
+                    terminal=CompactionTerminal.STALE,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.STALE,
-                    reason="branch_memory_changed_before_commit",
-                )
+            if hooks is not None:
+                hooks.committed(memory)
             self._finish(
                 operation_id,
                 AuxiliaryAttemptStatus.SUCCEEDED,
@@ -2152,6 +2400,8 @@ class ConsoleCompactionService:
             return CompactionTransactionResult(
                 CompactionTerminal.SUCCEEDED,
                 memory=memory,
+                usage=completion.usage,
+                attempted=True,
             )
 
     async def compact(
@@ -2165,6 +2415,71 @@ class ConsoleCompactionService:
         current_admission: Callable[[], CompactionAdmission | None],
         prepare_main: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
         prefix_messages: Sequence[DurableMessageSnapshot],
+        retry_fence: CompactionRetryFence | None = None,
+        honor_failure_latch: bool = True,
+        hooks=None,
+    ) -> CompactionTransactionResult:
+        """Run one admitted automatic compaction transaction.
+
+        TASK-33621.3: with a ``retry_fence``, a billed attempt that FAILED
+        suppresses every later automatic attempt on the same fence -- no
+        provider call, no ledger row -- until the conversation or its
+        compaction settings change (AC#5). ``honor_failure_latch=False`` is
+        the explicit user action (Compact now), which may always try again.
+        A pause is kept per ``retry_fence.route`` (provider and model).
+        """
+        conversation_id = admission.conversation_id
+        failed = (
+            self._failed_compactions.get(conversation_id, {}).get(retry_fence.route)
+            if retry_fence is not None
+            else None
+        )
+        if (
+            retry_fence is not None
+            and honor_failure_latch
+            and failed is not None
+            and failed.blocks(retry_fence)
+        ):
+            logger.info("console_compaction_retry_suppressed reason={}", failed.reason)
+            return CompactionTransactionResult(
+                CompactionTerminal.FAILED, reason=failed.reason, suppressed=True
+            )
+        result = await self._compact_once(
+            admission=admission,
+            branch_commit=branch_commit,
+            plan=plan,
+            resolution=resolution,
+            prompt=prompt,
+            current_admission=current_admission,
+            prepare_main=prepare_main,
+            prefix_messages=prefix_messages,
+            hooks=hooks,
+        )
+        if result.terminal is CompactionTerminal.SUCCEEDED:
+            self._failed_compactions.pop(conversation_id, None)
+        elif (
+            retry_fence is not None
+            and result.attempted
+            and result.terminal is CompactionTerminal.FAILED
+        ):
+            routes = self._failed_compactions.setdefault(conversation_id, {})
+            routes[retry_fence.route] = _FailedCompaction.from_fence(
+                retry_fence, result.reason or "compaction_failed"
+            )
+        return result
+
+    async def _compact_once(
+        self,
+        *,
+        admission: CompactionAdmission,
+        branch_commit: BranchMemoryCommit,
+        plan: CompactionPlan,
+        resolution: ConsoleProviderResolution,
+        prompt: CompactionPromptSnapshot,
+        current_admission: Callable[[], CompactionAdmission | None],
+        prepare_main: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
+        prefix_messages: Sequence[DurableMessageSnapshot],
+        hooks=None,
     ) -> CompactionTransactionResult:
         if not _automatic_admission_matches(
             admission=admission,
@@ -2174,9 +2489,23 @@ class ConsoleCompactionService:
             prompt=prompt,
             prefix_messages=prefix_messages,
         ):
+            logger.warning(
+                "console_compaction_failed reason=invalid_automatic_admission"
+            )
             return CompactionTransactionResult(
                 CompactionTerminal.FAILED,
                 reason="invalid_automatic_admission",
+            )
+        try:
+            validate_branch_memory_commit(branch_commit)
+        except ValueError as exc:
+            logger.warning(
+                "console_compaction_failed reason=memory_commit_failed "
+                "status=not_started error_type={}",
+                type(exc).__name__,
+            )
+            return CompactionTransactionResult(
+                CompactionTerminal.FAILED, reason="memory_commit_failed"
             )
         lock = self._locks.setdefault(admission.conversation_id, asyncio.Lock())
         if lock.locked():
@@ -2209,11 +2538,34 @@ class ConsoleCompactionService:
             # released -- the user-facing wedge is fixed. Upgrade path: cap
             # the provider HTTP timeout at/below this bound for auxiliary
             # calls in the gateway.
+            auxiliary_messages = plan.auxiliary_messages
+            if hooks is not None:
+                try:
+                    auxiliary_messages = await hooks.before(
+                        auxiliary_messages, plan.requested_output_cap
+                    )
+                except asyncio.CancelledError:
+                    self._finish(
+                        operation_id,
+                        AuxiliaryAttemptStatus.CANCELLED,
+                        started_tick,
+                        failure_reason="cancelled",
+                    )
+                    raise
+                except Exception as exc:  # noqa: BLE001 -- hook boundary
+                    return self._end(
+                        operation_id,
+                        AuxiliaryAttemptStatus.FAILED,
+                        started_tick,
+                        "required_pre_compact_failed",
+                        error_type=type(exc).__name__,
+                        attempted=False,
+                    )
             summary_engine = "local"
             try:
                 completion, summary_engine = await self._summary_completion(
                     resolution=resolution,
-                    messages=plan.auxiliary_messages,
+                    messages=auxiliary_messages,
                     max_output_tokens=plan.requested_output_cap,
                     route=ConsoleRequestRoute.AUTO_COMPACTION,
                 )
@@ -2225,6 +2577,7 @@ class ConsoleCompactionService:
                     operation_id,
                     AuxiliaryAttemptStatus.CANCELLED,
                     started_tick,
+                    failure_reason="cancelled",
                 )
                 raise
             except TimeoutError:
@@ -2232,51 +2585,44 @@ class ConsoleCompactionService:
                 # after completion), so the prior memory state is intact and
                 # the ordinary FAILED terminal routes into
                 # CompactionFailureBehavior (AC#3/AC#4).
-                self._finish(
-                    operation_id,
-                    AuxiliaryAttemptStatus.TIMED_OUT,
-                    started_tick,
-                )
                 logger.warning(
                     "console_compaction_auxiliary_timed_out timeout_s={}",
                     self._auxiliary_timeout,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="auxiliary_timed_out"
+                return self._end(
+                    operation_id,
+                    AuxiliaryAttemptStatus.TIMED_OUT,
+                    started_tick,
+                    "auxiliary_timed_out",
                 )
-            except Exception:
-                self._finish(
+            except Exception as exc:
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="auxiliary_provider_failed"
+                    "auxiliary_provider_failed",
+                    error_type=type(exc).__name__,
                 )
 
             summary = completion.text.strip()
-            reported_output = (
-                completion.usage.output if completion.usage is not None else None
-            )
+            usage = completion.usage
+            reported_output = usage.output if usage is not None else None
             if not summary or _contains_reserved_envelope(summary):
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
-                    usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="invalid_summary_output"
+                    "invalid_summary_output",
+                    usage=usage,
                 )
             if current_admission() != admission:
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.STALE,
                     started_tick,
-                    usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.STALE, reason="admission_changed"
+                    "admission_changed",
+                    usage=usage,
+                    terminal=CompactionTerminal.STALE,
                 )
 
             try:
@@ -2310,47 +2656,39 @@ class ConsoleCompactionService:
                     reported_output is not None
                     and reported_output > plan.requested_output_cap
                 ):
-                    self._finish(
+                    return self._end(
                         operation_id,
                         AuxiliaryAttemptStatus.FAILED,
                         started_tick,
-                        usage=completion.usage,
-                    )
-                    return CompactionTransactionResult(
-                        CompactionTerminal.FAILED,
-                        reason="invalid_summary_output",
+                        "invalid_summary_output",
+                        usage=usage,
                     )
                 after_conversation = (
                     after.accounting.memory_tokens + after.accounting.compactable_tokens
                 )
             except Exception as exc:
-                self._finish(
-                    operation_id,
-                    AuxiliaryAttemptStatus.FAILED,
-                    started_tick,
-                    usage=completion.usage,
-                )
                 logger.warning(
                     "console_compaction_projection_failed error_type={}",
                     type(exc).__name__,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED,
-                    reason="summary_projection_failed",
+                return self._end(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    "summary_projection_failed",
+                    usage=usage,
                 )
             if (
                 after.known_overflow
                 or after.accounting.total_input_tokens >= plan.before_input_tokens
                 or after_conversation > plan.target_conversation_tokens
             ):
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
-                    usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="summary_did_not_make_progress"
+                    "summary_did_not_make_progress",
+                    usage=usage,
                 )
 
             record = replace(
@@ -2386,36 +2724,40 @@ class ConsoleCompactionService:
             commit = replace(branch_commit, memory=record)
             try:
                 committed = self._repository.commit_memory_selection_if_current(commit)
-            except Exception:
-                self._finish(
+            except Exception as exc:
+                # TASK-33621.3: this used to be a bare except that discarded
+                # the cause -- a live-session lineage fault billed every send
+                # and left nothing in the log to say why.
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
-                    usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="memory_commit_failed"
+                    "memory_commit_failed",
+                    usage=usage,
+                    error_type=type(exc).__name__,
                 )
             if not committed:
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.STALE,
                     started_tick,
-                    usage=completion.usage,
+                    "branch_memory_changed_before_commit",
+                    usage=usage,
+                    terminal=CompactionTerminal.STALE,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.STALE,
-                    reason="branch_memory_changed_before_commit",
-                )
+            if hooks is not None:
+                hooks.committed(record)
             self._finish(
                 operation_id,
                 AuxiliaryAttemptStatus.SUCCEEDED,
                 started_tick,
-                usage=completion.usage,
+                usage=usage,
             )
             return CompactionTransactionResult(
                 CompactionTerminal.SUCCEEDED,
                 memory=record,
+                usage=usage,
+                attempted=True,
             )
 
     async def summarize_span_to_text(
@@ -2512,18 +2854,56 @@ class ConsoleCompactionService:
         started_tick: float,
         *,
         usage: ProviderUsage | None = None,
+        failure_reason: str | None = None,
     ) -> None:
         elapsed_ms = max(0, int((self._monotonic() - started_tick) * 1000))
         pricing = self._pricing_provenance(usage)
-        self._repository.finish_auxiliary_attempt(
-            operation_id,
-            status=status,
-            finished_at=self._now().isoformat(),
-            elapsed_ms=elapsed_ms,
-            usage=usage,
-            pricing=pricing,
-        )
+        finish_kwargs: dict[str, Any] = {
+            "status": status,
+            "finished_at": self._now().isoformat(),
+            "elapsed_ms": elapsed_ms,
+            "usage": usage,
+            "pricing": pricing,
+        }
+        if failure_reason is not None:
+            finish_kwargs["failure_reason"] = failure_reason
+        self._repository.finish_auxiliary_attempt(operation_id, **finish_kwargs)
         logger.info("console_compaction_auxiliary_finished")
+
+    def _end(
+        self,
+        operation_id: str,
+        status: AuxiliaryAttemptStatus,
+        started_tick: float,
+        reason: str,
+        *,
+        usage: ProviderUsage | None = None,
+        terminal: CompactionTerminal = CompactionTerminal.FAILED,
+        error_type: str | None = None,
+        attempted: bool = True,
+    ) -> CompactionTransactionResult:
+        """Finish a started attempt that did not succeed, recording why.
+
+        TASK-33621.3: the reason reaches the ledger row AND the log (content-
+        free: a reason code, the terminal status, and at most an exception
+        class name), and the result carries the reported usage so the caller
+        can disclose what the failed call spent.
+        """
+        self._finish(
+            operation_id, status, started_tick, usage=usage, failure_reason=reason
+        )
+        if terminal is CompactionTerminal.STALE:
+            logger.info("console_compaction_stale reason={}", reason)
+        else:
+            logger.warning(
+                "console_compaction_failed reason={} status={} error_type={}",
+                reason,
+                status.value,
+                error_type or "none",
+            )
+        return CompactionTransactionResult(
+            terminal, reason=reason, usage=usage, attempted=attempted
+        )
 
     @staticmethod
     def _pricing_provenance(
@@ -2662,3 +3042,1144 @@ def _digest_json(value: Any) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+class ConsoleCompactionPreflight:
+    """Request compaction preflight with named live dependencies (ADR-220)."""
+
+    def __init__(
+        self,
+        *,
+        read_controller__agent_bridge: Callable[[], Any],
+        read_controller__agent_runtime_enabled: Callable[[], Any],
+        read_controller__append_failure_system_row: Callable[[], Any],
+        read_controller__apply_conversation_memory_preflight: Callable[[], Any],
+        read_controller__assess_request_capacity_only: Callable[[], Any],
+        read_controller__automatic_memory_admission: Callable[[], Any],
+        read_controller__auxiliary_compaction_resolution: Callable[[], Any],
+        read_controller__block_context_preflight: Callable[[], Any],
+        read_controller__blocked_visible_copy: Callable[[], Any],
+        read_controller__compaction_admission: Callable[[], Any],
+        read_controller__compaction_service: Callable[[], Any],
+        read_controller__context_accounting_by_session: Callable[[], Any],
+        read_controller__context_overflow_alert: Callable[[], Any],
+        read_controller__context_repository: Callable[[], Any],
+        read_controller__durable_context_snapshots: Callable[[], Any],
+        read_controller__global_context_policy_overrides: Callable[[], Any],
+        read_controller__hooks_for_compaction: Callable[[], Any],
+        read_controller__provider_continuation_history_for_resolution: Callable[
+            [], Any
+        ],
+        read_controller__provider_messages_for_session: Callable[[], Any],
+        read_controller__provider_selection_for_session: Callable[[], Any],
+        read_controller__resolve_for_send_bounded: Callable[[], Any],
+        read_controller__select_session_effective_memory: Callable[[], Any],
+        read_controller_context_control_inputs: Callable[[], Any],
+        read_controller_provider_gateway: Callable[[], Any],
+        read_controller_run_state_for: Callable[[], Any],
+        read_controller_store: Callable[[], Any],
+        read_global_Any: Callable[[], Any],
+        read_global_CompactionDecision: Callable[[], Any],
+        read_global_CompactionFailureBehavior: Callable[[], Any],
+        read_global_CompactionPromptSnapshot: Callable[[], Any],
+        read_global_CompactionTerminal: Callable[[], Any],
+        read_global_ConsoleContextCapacity: Callable[[], Any],
+        read_global_ConsoleSubmitResult: Callable[[], Any],
+        read_global_ContextCarryForwardMode: Callable[[], Any],
+        read_global_ContextCompactionHold: Callable[[], Any],
+        read_global_ContextCompactionRepresentation: Callable[[], Any],
+        read_global_ContinuationConflictError: Callable[[], Any],
+        read_global_EffectiveMemoryKind: Callable[[], Any],
+        read_global_Mapping: Callable[[], Any],
+        read_global_NATIVE_MESSAGE_ID_KEY: Callable[[], Any],
+        read_global_PROVIDER_CONTINUATION_RECOVERY_REQUIRED: Callable[[], Any],
+        read_global_PreparedConsoleRequest: Callable[[], Any],
+        read_global_ProviderArtifactTraceProvenance: Callable[[], Any],
+        read_global_TraceProvenanceSource: Callable[[], Any],
+        read_global_TraceTransformKind: Callable[[], Any],
+        read_global__context_overflow_cause: Callable[[], Any],
+        read_global__flatten_preflight_messages: Callable[[], Any],
+        read_global_asyncio: Callable[[], Any],
+        read_global_compactable_units_after: Callable[[], Any],
+        read_global_compaction_retry_fence: Callable[[], Any],
+        read_global_compaction_transform_provenance: Callable[[], Any],
+        read_global_complete_durable_units: Callable[[], Any],
+        read_global_decide_compaction: Callable[[], Any],
+        read_global_effective_memory_identity: Callable[[], Any],
+        read_global_frozen_policy_from_provenance: Callable[[], Any],
+        read_global_get_internal_prompt: Callable[[], Any],
+        read_global_is_vision_capable: Callable[[], Any],
+        read_global_logger: Callable[[], Any],
+        read_global_max_history_images: Callable[[], Any],
+        read_global_merge_context_policy: Callable[[], Any],
+        read_global_plan_compaction: Callable[[], Any],
+        read_global_project_effective_memory: Callable[[], Any],
+        read_global_replace: Callable[[], Any],
+        read_global_resolve_context_policy: Callable[[], Any],
+        read_global_resolve_micro_escalation: Callable[[], Any],
+        read_global_tagged_memory_message: Callable[[], Any],
+        read_global_tagged_visual_memory_message: Callable[[], Any],
+    ) -> None:
+        self.read_controller__agent_bridge = read_controller__agent_bridge
+        self.read_controller__agent_runtime_enabled = (
+            read_controller__agent_runtime_enabled
+        )
+        self.read_controller__append_failure_system_row = (
+            read_controller__append_failure_system_row
+        )
+        self.read_controller__apply_conversation_memory_preflight = (
+            read_controller__apply_conversation_memory_preflight
+        )
+        self.read_controller__assess_request_capacity_only = (
+            read_controller__assess_request_capacity_only
+        )
+        self.read_controller__automatic_memory_admission = (
+            read_controller__automatic_memory_admission
+        )
+        self.read_controller__auxiliary_compaction_resolution = (
+            read_controller__auxiliary_compaction_resolution
+        )
+        self.read_controller__block_context_preflight = (
+            read_controller__block_context_preflight
+        )
+        self.read_controller__blocked_visible_copy = (
+            read_controller__blocked_visible_copy
+        )
+        self.read_controller__compaction_admission = (
+            read_controller__compaction_admission
+        )
+        self.read_controller__compaction_service = read_controller__compaction_service
+        self.read_controller__context_accounting_by_session = (
+            read_controller__context_accounting_by_session
+        )
+        self.read_controller__context_overflow_alert = (
+            read_controller__context_overflow_alert
+        )
+        self.read_controller__context_repository = read_controller__context_repository
+        self.read_controller__durable_context_snapshots = (
+            read_controller__durable_context_snapshots
+        )
+        self.read_controller__global_context_policy_overrides = (
+            read_controller__global_context_policy_overrides
+        )
+        self.read_controller__hooks_for_compaction = (
+            read_controller__hooks_for_compaction
+        )
+        self.read_controller__provider_continuation_history_for_resolution = (
+            read_controller__provider_continuation_history_for_resolution
+        )
+        self.read_controller__provider_messages_for_session = (
+            read_controller__provider_messages_for_session
+        )
+        self.read_controller__provider_selection_for_session = (
+            read_controller__provider_selection_for_session
+        )
+        self.read_controller__resolve_for_send_bounded = (
+            read_controller__resolve_for_send_bounded
+        )
+        self.read_controller__select_session_effective_memory = (
+            read_controller__select_session_effective_memory
+        )
+        self.read_controller_context_control_inputs = (
+            read_controller_context_control_inputs
+        )
+        self.read_controller_provider_gateway = read_controller_provider_gateway
+        self.read_controller_run_state_for = read_controller_run_state_for
+        self.read_controller_store = read_controller_store
+        self.read_global_Any = read_global_Any
+        self.read_global_CompactionDecision = read_global_CompactionDecision
+        self.read_global_CompactionFailureBehavior = (
+            read_global_CompactionFailureBehavior
+        )
+        self.read_global_CompactionPromptSnapshot = read_global_CompactionPromptSnapshot
+        self.read_global_CompactionTerminal = read_global_CompactionTerminal
+        self.read_global_ConsoleContextCapacity = read_global_ConsoleContextCapacity
+        self.read_global_ConsoleSubmitResult = read_global_ConsoleSubmitResult
+        self.read_global_ContextCarryForwardMode = read_global_ContextCarryForwardMode
+        self.read_global_ContextCompactionHold = read_global_ContextCompactionHold
+        self.read_global_ContextCompactionRepresentation = (
+            read_global_ContextCompactionRepresentation
+        )
+        self.read_global_ContinuationConflictError = (
+            read_global_ContinuationConflictError
+        )
+        self.read_global_EffectiveMemoryKind = read_global_EffectiveMemoryKind
+        self.read_global_Mapping = read_global_Mapping
+        self.read_global_NATIVE_MESSAGE_ID_KEY = read_global_NATIVE_MESSAGE_ID_KEY
+        self.read_global_PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
+            read_global_PROVIDER_CONTINUATION_RECOVERY_REQUIRED
+        )
+        self.read_global_PreparedConsoleRequest = read_global_PreparedConsoleRequest
+        self.read_global_ProviderArtifactTraceProvenance = (
+            read_global_ProviderArtifactTraceProvenance
+        )
+        self.read_global_TraceProvenanceSource = read_global_TraceProvenanceSource
+        self.read_global_TraceTransformKind = read_global_TraceTransformKind
+        self.read_global__context_overflow_cause = read_global__context_overflow_cause
+        self.read_global__flatten_preflight_messages = (
+            read_global__flatten_preflight_messages
+        )
+        self.read_global_asyncio = read_global_asyncio
+        self.read_global_compactable_units_after = read_global_compactable_units_after
+        self.read_global_compaction_retry_fence = read_global_compaction_retry_fence
+        self.read_global_compaction_transform_provenance = (
+            read_global_compaction_transform_provenance
+        )
+        self.read_global_complete_durable_units = read_global_complete_durable_units
+        self.read_global_decide_compaction = read_global_decide_compaction
+        self.read_global_effective_memory_identity = (
+            read_global_effective_memory_identity
+        )
+        self.read_global_frozen_policy_from_provenance = (
+            read_global_frozen_policy_from_provenance
+        )
+        self.read_global_get_internal_prompt = read_global_get_internal_prompt
+        self.read_global_is_vision_capable = read_global_is_vision_capable
+        self.read_global_logger = read_global_logger
+        self.read_global_max_history_images = read_global_max_history_images
+        self.read_global_merge_context_policy = read_global_merge_context_policy
+        self.read_global_plan_compaction = read_global_plan_compaction
+        self.read_global_project_effective_memory = read_global_project_effective_memory
+        self.read_global_replace = read_global_replace
+        self.read_global_resolve_context_policy = read_global_resolve_context_policy
+        self.read_global_resolve_micro_escalation = read_global_resolve_micro_escalation
+        self.read_global_tagged_memory_message = read_global_tagged_memory_message
+        self.read_global_tagged_visual_memory_message = (
+            read_global_tagged_visual_memory_message
+        )
+
+    async def compact_context_now(
+        self, session_id: str, *, micro: bool = False
+    ) -> tuple[bool, str]:
+        """Run one user-initiated bounded compaction without sending a turn.
+
+        TASK-25910: ``micro=True`` is the per-turn micro-compaction pass --
+        same assembly, but the preflight only escalates a below-trigger
+        AUTOMATIC decision (never ASK) and caps the plan at the single
+        oldest exchange; every refusal is silent for that caller.
+        """
+        if not self.read_controller_run_state_for()(session_id).is_send_allowed:
+            return False, "Wait for the active run to finish before compacting."
+        owner = next(
+            (
+                item
+                for item in self.read_controller_store().sessions()
+                if item.id == session_id
+            ),
+            None,
+        )
+        if owner is None or owner.persisted_conversation_id is None:
+            return False, "Send or save this conversation before compacting it."
+        try:
+            # Review #2: the OWNING session's provider, never the viewed
+            # tab's -- a background micro fold can fire on a session the
+            # user has switched away from.
+            main_selection = self.read_controller__provider_selection_for_session()(
+                session_id
+            )
+            resolution = await self.read_controller__resolve_for_send_bounded()(
+                main_selection
+            )
+        except Exception:
+            return False, "The active provider could not be prepared for compaction."
+        if not getattr(resolution, "ready", False):
+            return False, self.read_controller__blocked_visible_copy()(
+                getattr(resolution, "visible_copy", "")
+            )
+        # TASK-26024: route the compaction summary to a cheaper auxiliary
+        # model when configured (fallback to this resolution otherwise).
+        resolution = await self.read_controller__auxiliary_compaction_resolution()(
+            main_selection, resolution
+        )
+        overrides, global_overrides, before_memory = (
+            self.read_controller_context_control_inputs()(session_id)
+        )
+        requested_representation = self.read_global_merge_context_policy()(
+            global_overrides=global_overrides,
+            conversation_overrides=overrides,
+        ).compaction_representation
+        try:
+            continuation_sidecar, continuation_target = (
+                self.read_controller__provider_continuation_history_for_resolution()(
+                    session_id, resolution
+                )
+            )
+        except self.read_global_ContinuationConflictError():
+            return False, self.read_global_PROVIDER_CONTINUATION_RECOVERY_REQUIRED()
+        (
+            _messages,
+            blocked_result,
+        ) = await self.read_controller__apply_conversation_memory_preflight()(
+            session_id=session_id,
+            resolution=resolution,
+            provider_messages=self.read_controller__provider_messages_for_session()(
+                session_id, annotate_ids=True
+            ),
+            assistant_message_id="",
+            agent_tools_enabled=False,
+            force_compaction=not micro,
+            manual_action=True,
+            micro_compaction=micro,
+            continuation_sidecar=continuation_sidecar,
+            continuation_target=continuation_target,
+        )
+        if blocked_result is not None:
+            return False, blocked_result.visible_copy
+        _overrides, _global, after_memory = (
+            self.read_controller_context_control_inputs()(session_id)
+        )
+        if after_memory.kind is self.read_global_EffectiveMemoryKind().RAW or (
+            self.read_global_effective_memory_identity()(before_memory)
+            == self.read_global_effective_memory_identity()(after_memory)
+        ):
+            if (
+                requested_representation
+                is self.read_global_ContextCompactionRepresentation().VISUAL_TRANSCRIPT
+                and self.read_global_is_vision_capable()(
+                    resolution.provider, resolution.model or ""
+                )
+            ):
+                return (
+                    True,
+                    "Visual transcript fits and will be regenerated locally for each request; transcript unchanged.",
+                )
+            return False, "There are not enough older complete turns to compact yet."
+        return True, "Conversation memory updated; transcript messages were unchanged."
+
+    async def _apply_conversation_memory_preflight(
+        self,
+        *,
+        session_id: str,
+        resolution: ConsoleProviderResolution,
+        provider_messages: list[dict[str, Any]],
+        assistant_message_id: str,
+        agent_tools_enabled: bool,
+        force_compaction: bool = False,
+        manual_action: bool = False,
+        micro_compaction: bool = False,
+        continuation_sidecar: tuple[ProviderContinuationSidecar, ...] = (),
+        continuation_target: ContinuationRestoreTarget | None = None,
+        thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
+        thinking_policy: ThinkingHistoryPolicy = "auto",
+        assessment_sink: "Callable[[ContextCompactionHold, CompactionDecision, str | None], None] | None" = None,
+        uncommitted_user_message_id: str | None = None,
+        ask_bypassed: bool = False,
+    ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
+        """Revalidate memory and optionally run one automatic summary call.
+
+        TASK-34350: ``assessment_sink`` turns this into a side-effect-free
+        probe -- it receives the decision and its numbers, and the request is
+        returned unchanged before anything compacts or blocks.
+        ``ask_bypassed`` is the user's one-shot "Send without compacting" for
+        a send held at the threshold.
+        """
+        from tldw_chatbook.Chat.console_visual_transcript import (
+            count_semantic_images,
+            plan_visual_compaction,
+            render_visual_transcript,
+            resolve_effective_compaction_representation,
+        )
+
+        def blocked(visible_copy: str) -> self.read_global_ConsoleSubmitResult():
+            if manual_action:
+                return self.read_global_ConsoleSubmitResult()(False, True, visible_copy)
+            return self.read_controller__block_context_preflight()(
+                session_id=session_id,
+                assistant_message_id=assistant_message_id,
+                visible_copy=visible_copy,
+            )
+
+        repository = self.read_controller__context_repository()
+        service = self.read_controller__compaction_service()
+        prepare = getattr(
+            self.read_controller_provider_gateway(), "prepare_chat_request", None
+        )
+        owner = next(
+            (
+                item
+                for item in self.read_controller_store().sessions()
+                if item.id == session_id
+            ),
+            None,
+        )
+        if (
+            repository is None
+            or service is None
+            or not callable(prepare)
+            or owner is None
+        ):
+            return provider_messages, None
+        snapshots = (
+            self.read_controller__durable_context_snapshots()(
+                session_id, uncommitted_user_message_id=uncommitted_user_message_id
+            )
+            if owner.persisted_conversation_id is not None
+            else None
+        )
+        if not snapshots:
+            if assessment_sink is not None and not owner.ephemeral:
+                # TASK-34350: a durable chat's first message is assessed for
+                # capacity alone (nothing to compact yet), so a request that
+                # cannot fit is refused before commit, like a later one.
+                self.read_controller__assess_request_capacity_only()(
+                    session_id=session_id,
+                    owner=owner,
+                    resolution=resolution,
+                    provider_messages=provider_messages,
+                    prepare=prepare,
+                    agent_tools_enabled=agent_tools_enabled,
+                    assessment_sink=assessment_sink,
+                )
+            return provider_messages, None
+        conversation_id = owner.persisted_conversation_id
+        effective = self.read_controller__select_session_effective_memory()(
+            session_id,
+            conversation_id,
+            snapshots,
+        )
+        projection = self.read_global_project_effective_memory()(
+            provider_messages, effective
+        )
+        memory = effective.memory
+        retained_messages = list(projection.rows)
+        memory_rows = projection.memory
+
+        tools: list[self.read_global_Mapping()[str, self.read_global_Any()]] = []
+        if agent_tools_enabled and self.read_controller__agent_bridge() is not None:
+            preview = getattr(
+                self.read_controller__agent_bridge(), "preview_tool_schemas", None
+            )
+            if callable(preview):
+                try:
+                    tools = list(preview())
+                except Exception:
+                    tools = []
+        prepared_before = prepare(
+            resolution,
+            retained_messages,
+            tools=tools,
+            apply_safety_window=False,
+            continuation_target=continuation_target,
+            continuation_sidecar=continuation_sidecar,
+            continuation_owner_key=(
+                self.read_global_NATIVE_MESSAGE_ID_KEY()
+                if continuation_sidecar
+                else None
+            ),
+            thinking_sidecar=thinking_sidecar,
+            thinking_policy=thinking_policy,
+            thinking_owner_key=(
+                self.read_global_NATIVE_MESSAGE_ID_KEY() if thinking_sidecar else None
+            ),
+        )
+        semantic = prepared_before.semantic
+        if memory_rows:
+            memory_provenance = (
+                self.read_global_replace()(
+                    semantic.provenance,
+                    memory=(
+                        self.read_global_ProviderArtifactTraceProvenance()(
+                            self.read_global_TraceProvenanceSource().CONVERSATION_MEMORY,
+                            self.read_global_frozen_policy_from_provenance()(
+                                semantic.provenance
+                            ),
+                        ),
+                    ),
+                )
+                if semantic.provenance is not None
+                else None
+            )
+            semantic = self.read_global_replace()(
+                semantic,
+                memory=memory_rows,
+                provenance=memory_provenance,
+            )
+            prepared_before = prepare(
+                resolution,
+                semantic,
+                apply_safety_window=False,
+                continuation_target=continuation_target,
+            )
+        capacity = prepared_before.capacity
+        # TASK-26019: this accounting IS the request's own (AC#2); the
+        # breakdown surface reads the latest copy, no re-estimation.
+        self.read_controller__context_accounting_by_session()[session_id] = (
+            prepared_before.accounting
+        )
+        mandatory_tokens = (
+            prepared_before.accounting.non_compactable_tokens
+            - prepared_before.accounting.memory_tokens
+        )
+        try:
+            global_overrides = self.read_controller__global_context_policy_overrides()()
+        except Exception:
+            global_overrides = None
+        resolved = self.read_global_resolve_context_policy()(
+            capacity=self.read_global_ConsoleContextCapacity()(
+                model_context_window_tokens=capacity.context_window_tokens,
+                model_window_verified=capacity.safety_verified,
+                provider_input_cap_tokens=capacity.provider_input_cap_tokens,
+                response_reservation_tokens=capacity.effective_response_tokens,
+                safety_margin_tokens=capacity.safety_margin_tokens,
+                mandatory_input_tokens=mandatory_tokens,
+            ),
+            global_overrides=global_overrides,
+            conversation_overrides=owner.context_policy_overrides,
+        )
+
+        def prepare_main(request: self.read_global_PreparedConsoleRequest()):
+            return prepare(
+                resolution,
+                request,
+                apply_safety_window=False,
+                continuation_target=continuation_target,
+            )
+
+        units = (
+            self.read_global_complete_durable_units()(snapshots)
+            if effective.kind is self.read_global_EffectiveMemoryKind().GENERATED_RANGE
+            else self.read_global_compactable_units_after()(
+                snapshots,
+                boundary_message_id=(
+                    memory.boundary_message_id if memory is not None else None
+                ),
+            )
+        )
+        decision = self.read_global_decide_compaction()(
+            resolved,
+            conversation_tokens=(
+                prepared_before.accounting.memory_tokens
+                + prepared_before.accounting.compactable_tokens
+            ),
+            compactable_units=len(units),
+        )
+        if effective.kind is self.read_global_EffectiveMemoryKind().LEGACY_PREFIX and (
+            force_compaction
+            or decision
+            in {
+                self.read_global_CompactionDecision().ASK,
+                self.read_global_CompactionDecision().AUTOMATIC,
+            }
+        ):
+            decision = self.read_global_CompactionDecision().NON_COMPACTABLE
+        elif force_compaction and units:
+            decision = self.read_global_CompactionDecision().AUTOMATIC
+        # TASK-25910: the escalation ruling is a pure, pinned function in
+        # console_context_compaction (review Critical 2026-09-01: the
+        # inline version was an uncovered runtime NameError). Every micro
+        # pass is capped to the single oldest exchange or silently no-ops.
+        micro_escalated = False
+        if micro_compaction:
+            ruling = self.read_global_resolve_micro_escalation()(
+                decision,
+                units_present=bool(units),
+                compaction_mode=resolved.policy.compaction_mode,
+                effective_kind=effective.kind,
+            )
+            if ruling is None:
+                return self.read_global__flatten_preflight_messages()(semantic), None
+            decision, micro_escalated = ruling
+        if assessment_sink is not None:
+            budget = resolved.effective_conversation_budget_tokens or 0
+            assessment_sink(
+                self.read_global_ContextCompactionHold()(
+                    session_id=session_id,
+                    used_tokens=(
+                        prepared_before.accounting.memory_tokens
+                        + prepared_before.accounting.compactable_tokens
+                    ),
+                    trigger_tokens=int(budget * resolved.policy.trigger_ratio),
+                    budget_tokens=budget,
+                    # Only a budget the window sets rests on its estimate; a
+                    # custom budget below capacity does not (live 2026-10-04).
+                    estimated=(
+                        capacity.limit_source == "estimated"
+                        and resolved.effective_conversation_budget_tokens
+                        == resolved.available_conversation_capacity_tokens
+                    ),
+                ),
+                decision,
+                self.read_controller__context_overflow_alert()(
+                    decision, resolved, capacity, prepared_before, resolution
+                ),
+            )
+            return provider_messages, None
+        self.read_global_logger().info("console_context_policy_decision")
+        if decision in {
+            self.read_global_CompactionDecision().OFF,
+            self.read_global_CompactionDecision().BELOW_TRIGGER,
+        }:
+            return self.read_global__flatten_preflight_messages()(semantic), None
+        if ask_bypassed and decision in {
+            self.read_global_CompactionDecision().ASK,
+            self.read_global_CompactionDecision().AUTOMATIC,
+        }:
+            # The user's answer was "do not compact this send" (or "compacted
+            # already"); a policy changed to Automatic meanwhile must not
+            # compact it anyway (Qodo #2 on PR #3003).
+            return self.read_global__flatten_preflight_messages()(semantic), None
+        if decision is self.read_global_CompactionDecision().ASK:
+            # A composer send is held before it is committed (TASK-34350);
+            # this is the path for sends that cannot show the hold card.
+            result = blocked(
+                (
+                    "Conversation context reached its compaction threshold. "
+                    "Use Compact now in Conversation settings > Context and "
+                    "memory, then send again."
+                )
+            )
+            return provider_messages, result
+        if decision in {
+            self.read_global_CompactionDecision().UNKNOWN_WINDOW,
+            self.read_global_CompactionDecision().NON_COMPACTABLE,
+        }:
+            # A missing compaction threshold or an empty set of replaceable
+            # units is not itself a provider overflow.  Unknown/new models
+            # historically remained sendable with an explicit unverified
+            # label, and reaching a policy high-water mark while the exact
+            # request still fits must not turn that advisory threshold into
+            # an admission failure.  Block only when the immutable prepared
+            # request proves that the effective input ceiling is exceeded.
+            alert = self.read_controller__context_overflow_alert()(
+                decision, resolved, capacity, prepared_before, resolution
+            )
+            if alert is None:
+                return self.read_global__flatten_preflight_messages()(semantic), None
+            return provider_messages, blocked(alert)
+
+        requested_representation = resolved.policy.compaction_representation
+        if effective.kind is self.read_global_EffectiveMemoryKind().GENERATED_RANGE:
+            requested_representation = (
+                self.read_global_ContextCompactionRepresentation().TEXT_SUMMARY
+            )
+        vision_available = False
+        if (
+            requested_representation
+            is not self.read_global_ContextCompactionRepresentation().TEXT_SUMMARY
+        ):
+            try:
+                vision_available = self.read_global_is_vision_capable()(
+                    resolution.provider, resolution.model or ""
+                )
+            except Exception:
+                vision_available = False
+        effective_representation, visual_fallback_reason = (
+            resolve_effective_compaction_representation(
+                requested_representation,
+                vision_available=vision_available,
+            )
+        )
+
+        if (
+            effective_representation
+            is self.read_global_ContextCompactionRepresentation().VISUAL_TRANSCRIPT
+        ):
+            budget = resolved.effective_conversation_budget_tokens
+            visual_plan = None
+            if budget is not None:
+                try:
+                    visual_plan = await self.read_global_asyncio().to_thread(
+                        plan_visual_compaction,
+                        semantic=semantic,
+                        prepared_before=prepared_before,
+                        durable_units=units,
+                        budget_tokens=budget,
+                        target_ratio=resolved.policy.target_ratio,
+                        max_images=self.read_global_max_history_images()(
+                            resolution.provider, resolution.model or ""
+                        ),
+                        keep_latest_exchange=(
+                            resolved.policy.carry_forward_mode
+                            is self.read_global_ContextCarryForwardMode().MEMORY_WITH_LATEST_EXCHANGE
+                        ),
+                        prepare_main=prepare_main,
+                    )
+                except Exception:
+                    visual_fallback_reason = "local_visual_render_failed"
+            if visual_plan is not None and visual_plan.plan is not None:
+                self.read_global_logger().info("console_visual_compaction_prepared")
+                return self.read_global__flatten_preflight_messages()(
+                    visual_plan.plan.semantic
+                ), None
+            effective_representation = (
+                self.read_global_ContextCompactionRepresentation().TEXT_SUMMARY
+            )
+            if visual_fallback_reason is None:
+                visual_fallback_reason = (
+                    visual_plan.reason
+                    if visual_plan is not None
+                    else "visual_compaction_unavailable"
+                )
+
+        if visual_fallback_reason is not None:
+            self.read_global_logger().info(
+                "console_visual_compaction_fell_back_to_text"
+            )
+
+        prompt = self.read_global_CompactionPromptSnapshot()(
+            self.read_global_get_internal_prompt()("console.rewind_summarize")
+        )
+
+        def prepare_auxiliary(messages, output_cap):
+            return prepare(
+                self.read_global_replace()(
+                    resolution,
+                    streaming=False,
+                    max_tokens=output_cap,
+                ),
+                list(messages),
+                apply_safety_window=False,
+            )
+
+        try:
+            max_visual_inputs = (
+                self.read_global_max_history_images()(
+                    resolution.provider, resolution.model or ""
+                )
+                if self.read_global_is_vision_capable()(
+                    resolution.provider, resolution.model or ""
+                )
+                else 0
+            )
+        except Exception:
+            max_visual_inputs = 0
+
+        planned = self.read_global_plan_compaction()(
+            semantic=semantic,
+            prepared_before=prepared_before,
+            durable_units=units,
+            resolved_policy=resolved,
+            prompt=prompt,
+            effective_memory=effective,
+            max_visual_inputs=max_visual_inputs,
+            prepare_main=prepare_main,
+            prepare_auxiliary=prepare_auxiliary,
+            max_units=1 if micro_escalated else None,
+        )
+        if micro_escalated and planned.plan is None:
+            # An unprofitable single-exchange fold (too small to beat the
+            # summary cap) just waits for a later tick -- never a blocked
+            # notice from a background pass.
+            return self.read_global__flatten_preflight_messages()(semantic), None
+        if planned.plan is None:
+            if not manual_action and (
+                resolved.policy.failure_behavior
+                is self.read_global_CompactionFailureBehavior().OMIT_OLDER_CONTEXT
+            ):
+                return self.read_global__flatten_preflight_messages()(semantic), None
+            # ADR-097: failure copy is first-use work, outside boot/mount.
+            from .console_compaction_failure import compaction_failure_copy
+
+            return provider_messages, blocked(
+                compaction_failure_copy(
+                    planned.reason or "plan_unreachable", manual=manual_action
+                )
+            )
+
+        admission = self.read_controller__compaction_admission()(
+            session_id=session_id,
+            resolution=resolution,
+            prompt=prompt,
+        )
+        if admission is None:
+            return provider_messages, blocked(
+                "Conversation changed before compaction could start."
+            )
+        branch_commit = self.read_controller__automatic_memory_admission()(
+            session_id=session_id,
+            snapshots=snapshots,
+            plan=planned.plan,
+            effective=effective,
+            resolution=resolution,
+            prompt=prompt,
+        )
+        if branch_commit is None:
+            return provider_messages, blocked(
+                "Conversation changed before compaction could start."
+            )
+        boundary_index = next(
+            index
+            for index, snapshot in enumerate(snapshots)
+            if snapshot.message_id == planned.plan.boundary_message_id
+        )
+        hooks = await self.read_controller__hooks_for_compaction()(
+            session_id,
+            resolution,
+            reason="automatic",
+            current=lambda: (
+                self.read_controller__compaction_admission()(
+                    session_id=session_id,
+                    resolution=resolution,
+                    prompt=prompt,
+                )
+                == admission
+            ),
+        )
+        transaction = await service.compact(
+            admission=admission,
+            branch_commit=branch_commit,
+            plan=planned.plan,
+            resolution=resolution,
+            prompt=prompt,
+            current_admission=lambda: self.read_controller__compaction_admission()(
+                session_id=session_id,
+                resolution=resolution,
+                prompt=prompt,
+            ),
+            prepare_main=prepare_main,
+            prefix_messages=snapshots[: boundary_index + 1],
+            retry_fence=self.read_global_compaction_retry_fence()(
+                conversation_id,
+                resolution,
+                prompt,
+                resolved,
+                effective,
+                snapshots,
+                active_request=not manual_action,
+            ),
+            honor_failure_latch=micro_compaction or not manual_action,
+            hooks=hooks,
+        )
+        if hooks is not None:
+            try:
+                await hooks.finish()
+                await hooks.lifecycle.wait(hooks.owner)
+            except Exception:  # noqa: BLE001 -- hook boundary
+                return provider_messages, blocked(
+                    "Required compaction hook failed; committed memory is retained."
+                )
+            finally:
+                if hooks.reason == "manual" and (
+                    hooks.lifecycle._handoff is None
+                    or hooks.lifecycle._handoff[0] != hooks.owner
+                ):
+                    hooks.lifecycle.close_scope(hooks.owner)
+        if transaction.terminal is self.read_global_CompactionTerminal().SUCCEEDED:
+            memory_rows_after: tuple[
+                self.read_global_Mapping()[str, self.read_global_Any()], ...
+            ] = (
+                self.read_global_tagged_memory_message()(
+                    transaction.memory.summary_text
+                ),
+            )
+            remaining_provenance = planned.plan.remaining_semantic.provenance
+            text_memory_provenance = (
+                self.read_global_compaction_transform_provenance()(
+                    semantic.provenance,
+                    selected_units=len(planned.plan.selected_units),
+                    transform=self.read_global_TraceTransformKind().TEXT_COMPACTION,
+                    source=self.read_global_TraceProvenanceSource().CONTEXT_SUMMARY,
+                )
+                if semantic.provenance is not None
+                else None
+            )
+            hybrid_visual_added = False
+            if (
+                effective_representation
+                is self.read_global_ContextCompactionRepresentation().HYBRID
+            ):
+                try:
+                    image_limit = self.read_global_max_history_images()(
+                        resolution.provider, resolution.model or ""
+                    )
+                    remaining_image_capacity = image_limit - count_semantic_images(
+                        planned.plan.remaining_semantic
+                    )
+                    if remaining_image_capacity > 0:
+                        artifact = await self.read_global_asyncio().to_thread(
+                            render_visual_transcript,
+                            planned.plan.selected_units,
+                            summarized_prefix_digest=(
+                                transaction.memory.summarized_prefix_digest
+                            ),
+                            max_pages=remaining_image_capacity,
+                        )
+                        visual_row = self.read_global_tagged_visual_memory_message()(
+                            [page.png_bytes for page in artifact.pages],
+                            # Wire integrity (exact PNG bytes), not renderer identity.
+                            page_hashes=[page.png_sha256 for page in artifact.pages],
+                        )
+                        visual_memory_provenance = (
+                            self.read_global_compaction_transform_provenance()(
+                                semantic.provenance,
+                                selected_units=len(planned.plan.selected_units),
+                                transform=self.read_global_TraceTransformKind().HYBRID_COMPACTION,
+                                source=self.read_global_TraceProvenanceSource().VISUAL_TRANSCRIPT,
+                                include_memory=False,
+                            )
+                            if semantic.provenance is not None
+                            else None
+                        )
+                        hybrid_semantic = self.read_global_replace()(
+                            planned.plan.remaining_semantic,
+                            memory=memory_rows_after + (visual_row,),
+                            provenance=(
+                                self.read_global_replace()(
+                                    remaining_provenance,
+                                    memory=(
+                                        text_memory_provenance,
+                                        visual_memory_provenance,
+                                    ),
+                                )
+                                if remaining_provenance is not None
+                                and text_memory_provenance is not None
+                                and visual_memory_provenance is not None
+                                else None
+                            ),
+                        )
+                        hybrid_prepared = prepare_main(hybrid_semantic)
+                        hybrid_conversation_tokens = (
+                            hybrid_prepared.accounting.memory_tokens
+                            + hybrid_prepared.accounting.compactable_tokens
+                        )
+                        if (
+                            not hybrid_prepared.known_overflow
+                            and hybrid_conversation_tokens
+                            <= planned.plan.target_conversation_tokens
+                        ):
+                            memory_rows_after += (visual_row,)
+                            hybrid_visual_added = True
+                except Exception:
+                    pass
+                if not hybrid_visual_added:
+                    self.read_global_logger().info(
+                        "console_visual_compaction_fell_back_to_text"
+                    )
+            final_memory_provenance = (
+                (
+                    text_memory_provenance,
+                    self.read_global_compaction_transform_provenance()(
+                        semantic.provenance,
+                        selected_units=len(planned.plan.selected_units),
+                        transform=self.read_global_TraceTransformKind().HYBRID_COMPACTION,
+                        source=self.read_global_TraceProvenanceSource().VISUAL_TRANSCRIPT,
+                        include_memory=False,
+                    ),
+                )
+                if hybrid_visual_added
+                and semantic.provenance is not None
+                and text_memory_provenance is not None
+                else (
+                    (text_memory_provenance,)
+                    if text_memory_provenance is not None
+                    else ()
+                )
+            )
+            after = self.read_global_replace()(
+                planned.plan.remaining_semantic,
+                memory=memory_rows_after,
+                provenance=(
+                    self.read_global_replace()(
+                        remaining_provenance, memory=final_memory_provenance
+                    )
+                    if remaining_provenance is not None
+                    else None
+                ),
+            )
+            return self.read_global__flatten_preflight_messages()(after), None
+        omit = not manual_action and (
+            resolved.policy.failure_behavior
+            is self.read_global_CompactionFailureBehavior().OMIT_OLDER_CONTEXT
+        )
+        from .console_compaction_failure import transaction_failure_copy
+
+        note = transaction_failure_copy(transaction, manual=manual_action, omitted=omit)
+        if not omit:
+            return provider_messages, blocked(note)
+        if transaction.attempted:  # TASK-33621.3: disclose the billed call once.
+            self.read_controller__append_failure_system_row()(session_id, note)
+        return self.read_global__flatten_preflight_messages()(semantic), None
+
+    async def _assess_context_compaction(
+        self,
+        *,
+        session_id: str,
+        resolution: ConsoleProviderResolution,
+        provider_messages: list[dict[str, Any]],
+        uncommitted_user_message_id: str | None,
+    ) -> tuple[ContextCompactionHold | None, str | None]:
+        """Probe whether this exact request would stop at Ask or cannot fit.
+
+        Runs the real preflight as a side-effect-free assessment (TASK-34350).
+        A probe failure never blocks the send: the stream preflight still
+        runs and owns every refusal.
+
+        Args:
+            session_id: The sending session.
+            resolution: The resolved provider for this send.
+            provider_messages: The assembled request, current draft included.
+            uncommitted_user_message_id: The send's own optimistic echo.
+
+        Returns:
+            ``(hold, alert)``: the hold numbers when the decision is Ask, and
+            the alert copy when compacting cannot make the request fit.
+        """
+
+        captured: list[
+            tuple[
+                self.read_global_ContextCompactionHold(),
+                self.read_global_CompactionDecision(),
+                str | None,
+            ]
+        ] = []
+        try:
+            continuation_sidecar, continuation_target = (
+                self.read_controller__provider_continuation_history_for_resolution()(
+                    session_id, resolution
+                )
+            )
+            await self.read_controller__apply_conversation_memory_preflight()(
+                session_id=session_id,
+                resolution=resolution,
+                provider_messages=list(provider_messages),
+                assistant_message_id="",
+                agent_tools_enabled=(
+                    self.read_controller__agent_runtime_enabled()
+                    and self.read_controller__agent_bridge() is not None
+                ),
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_target,
+                assessment_sink=lambda hold, decision, alert: captured.append(
+                    (hold, decision, alert)
+                ),
+                uncommitted_user_message_id=uncommitted_user_message_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - the stream preflight decides
+            self.read_global_logger().warning(
+                "Console compaction hold assessment unavailable; exception_type={}",
+                type(exc).__name__,
+            )
+            return None, None
+        if not captured:
+            return None, None
+        hold, decision, alert = captured[0]
+        return (
+            hold if decision is self.read_global_CompactionDecision().ASK else None
+        ), alert
+
+    def _assess_request_capacity_only(
+        self,
+        *,
+        session_id: str,
+        owner: Any,
+        resolution: ConsoleProviderResolution,
+        provider_messages: list[dict[str, Any]],
+        prepare: Callable[..., Any],
+        agent_tools_enabled: bool,
+        assessment_sink: Callable[..., None],
+    ) -> None:
+        """Report a request's capacity verdict when there is no history yet."""
+
+        tools: list[self.read_global_Mapping()[str, self.read_global_Any()]] = []
+        if agent_tools_enabled and self.read_controller__agent_bridge() is not None:
+            preview = getattr(
+                self.read_controller__agent_bridge(), "preview_tool_schemas", None
+            )
+            if callable(preview):
+                try:
+                    tools = list(preview())
+                except Exception:
+                    tools = []
+        prepared = prepare(
+            resolution, list(provider_messages), tools=tools, apply_safety_window=False
+        )
+        capacity = prepared.capacity
+        try:
+            global_overrides = self.read_controller__global_context_policy_overrides()()
+        except Exception:
+            global_overrides = None
+        resolved = self.read_global_resolve_context_policy()(
+            capacity=self.read_global_ConsoleContextCapacity()(
+                model_context_window_tokens=capacity.context_window_tokens,
+                model_window_verified=capacity.safety_verified,
+                provider_input_cap_tokens=capacity.provider_input_cap_tokens,
+                response_reservation_tokens=capacity.effective_response_tokens,
+                safety_margin_tokens=capacity.safety_margin_tokens,
+                mandatory_input_tokens=(
+                    prepared.accounting.non_compactable_tokens
+                    - prepared.accounting.memory_tokens
+                ),
+            ),
+            global_overrides=global_overrides,
+            conversation_overrides=owner.context_policy_overrides,
+        )
+        decision = self.read_global_decide_compaction()(
+            resolved,
+            conversation_tokens=(
+                prepared.accounting.memory_tokens
+                + prepared.accounting.compactable_tokens
+            ),
+            compactable_units=0,
+        )
+        budget = resolved.effective_conversation_budget_tokens or 0
+        assessment_sink(
+            self.read_global_ContextCompactionHold()(
+                session_id=session_id,
+                used_tokens=(
+                    prepared.accounting.memory_tokens
+                    + prepared.accounting.compactable_tokens
+                ),
+                trigger_tokens=int(budget * resolved.policy.trigger_ratio),
+                budget_tokens=budget,
+                estimated=False,
+            ),
+            decision,
+            self.read_controller__context_overflow_alert()(
+                decision, resolved, capacity, prepared, resolution
+            ),
+        )
+
+    def _context_overflow_alert(
+        self,
+        decision: CompactionDecision,
+        resolved: Any,
+        capacity: Any,
+        prepared_before: Any,
+        resolution: ConsoleProviderResolution,
+    ) -> str | None:
+        """Alert copy for a request compacting cannot make fit, else None.
+
+        Shared by the stream preflight and the pre-commit assessment so the
+        two cannot disagree (TASK-34350).
+        """
+
+        if decision not in {
+            self.read_global_CompactionDecision().UNKNOWN_WINDOW,
+            self.read_global_CompactionDecision().NON_COMPACTABLE,
+        }:
+            return None
+        if not prepared_before.known_overflow:
+            return None
+        if (
+            resolved.policy.failure_behavior
+            is self.read_global_CompactionFailureBehavior().OMIT_OLDER_CONTEXT
+        ):
+            return None
+        # Lazy (ADR-097 UI-ready census): needed only when a send cannot fit.
+        from tldw_chatbook.Chat.console_context_budget_copy import (
+            MODEL_WINDOW_SETTING,
+            context_overflow_alert_copy,
+        )
+
+        cause = self.read_global__context_overflow_cause()(decision, resolved, capacity)
+        if cause is not None:
+            return context_overflow_alert_copy(
+                cause,
+                model=resolution.model or "the selected model",
+                window_tokens=capacity.context_window_tokens,
+                window_estimated=capacity.limit_source == "estimated",
+                response_tokens=capacity.effective_response_tokens,
+                input_ceiling_tokens=capacity.effective_input_ceiling_tokens,
+            )
+        limiting_reason = (
+            resolved.validation_errors[0]
+            if resolved.validation_errors
+            else "The effective model input ceiling is unavailable."
+        )
+        return (
+            "This request cannot fit the selected model. "
+            f"{limiting_reason} Summarizing older turns cannot make "
+            "enough room. Set the model's context window in "
+            f"{MODEL_WINDOW_SETTING}, or reduce mandatory context or "
+            "the response maximum."
+        )

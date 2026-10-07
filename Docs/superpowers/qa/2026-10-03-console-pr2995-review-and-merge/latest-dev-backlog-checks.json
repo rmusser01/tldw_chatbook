@@ -1,0 +1,16 @@
+[
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_backlog_task_ids.py"
+    ],
+    "exit": 0
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_backlog_task_files.py"
+    ],
+    "exit": 0
+  }
+]

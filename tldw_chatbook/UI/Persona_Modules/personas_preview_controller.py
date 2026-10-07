@@ -17,13 +17,17 @@ from ...Character_Chat.Character_Chat_Lib import (
     compose_character_card_text,
     replace_placeholders,
 )
+from ...Chat.console_chat_controller import (
+    build_console_provider_selection_from_settings,
+)
 from ...Chat.console_chat_models import (
     ConsoleProviderSelection,
+    ConsoleWorkspaceContext,
     fold_greeting_into_system_prompt,
 )
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...Chat.console_session_settings import build_default_console_session_settings
-from ...Chat.provider_catalog import PROVIDER_DISPLAY_NAMES
+from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
@@ -268,14 +272,21 @@ class PersonasPreviewController:
             ).warning("Could not close the preview provider gateway.")
 
     @staticmethod
-    def _provider_label(provider_key: str) -> str:
-        """Human-readable display name for a provider config key."""
-        key = str(provider_key or "").strip()
-        if not key:
-            return ""
-        return PROVIDER_DISPLAY_NAMES.get(
-            key.lower(), key.replace("_", " ").replace("-", " ").title()
-        )
+    def _provider_label(
+        provider_key: str, config: Mapping[str, Any] | None = None
+    ) -> str:
+        """Human-readable display name for a provider config key.
+
+        Args:
+            provider_key: Provider config key or ``custom-ep:`` registry id.
+            config: The caller's loaded app config; a registry id needs it to
+                show its entry's name.
+
+        Returns:
+            The display name as plain text; the preview's readout and status
+            lines render it literally (TASK-34400).
+        """
+        return provider_display_name(str(provider_key or ""), config)
 
     def provider_readout(self) -> tuple[str, str]:
         """Compute the pre-send provider readout from current config.
@@ -301,13 +312,13 @@ class PersonasPreviewController:
         if not char_provider:
             if chat_provider:
                 text = (
-                    f"Provider: {self._provider_label(chat_provider)} / "
+                    f"Provider: {self._provider_label(chat_provider, config)} / "
                     f"{chat_model or 'default model'} (Console default)"
                 )
                 return text, chat_provider
             return "Provider: none configured - use Configure", ""
         text = (
-            f"Provider: {self._provider_label(char_provider)} / "
+            f"Provider: {self._provider_label(char_provider, config)} / "
             f"{char_model or 'default model'}"
         )
         # Note the fallback target only when it is a distinct provider. A
@@ -317,7 +328,7 @@ class PersonasPreviewController:
         if chat_provider and chat_provider.lower() != char_provider.lower():
             text += (
                 " - Console default if unavailable: "
-                f"{self._provider_label(chat_provider)}"
+                f"{self._provider_label(chat_provider, config)}"
             )
         return text, char_provider
 
@@ -588,7 +599,8 @@ class PersonasPreviewController:
             defaults_key: Defaults section to resolve through Console settings.
 
         Returns:
-            Provider selection carrying effective endpoint and generation fields.
+            The Console builder's selection for the section (TASK-33004.2),
+            without its system prompt; an empty provider for an unset section.
         """
         raw_defaults = config.get(defaults_key, {})
         defaults = raw_defaults if isinstance(raw_defaults, Mapping) else {}
@@ -609,26 +621,19 @@ class PersonasPreviewController:
             provider=provider,
             model=explicit_model,
         )
-        return ConsoleProviderSelection(
-            provider=settings.provider,
-            base_url=settings.base_url,
-            explicit_model=explicit_model,
-            configured_model=None if explicit_model else settings.model,
-            temperature=settings.temperature,
-            top_p=settings.top_p,
-            min_p=settings.min_p,
-            top_k=settings.top_k,
-            max_tokens=settings.max_tokens,
-            seed=settings.seed,
-            presence_penalty=settings.presence_penalty,
-            frequency_penalty=settings.frequency_penalty,
-            reasoning_effort=settings.reasoning_effort,
-            reasoning_summary=settings.reasoning_summary,
-            verbosity=settings.verbosity,
-            thinking_effort=settings.thinking_effort,
-            thinking_budget_tokens=settings.thinking_budget_tokens,
-            streaming=settings.streaming,
+        if not settings.provider:
+            # Unset section: no provider to build from. The builder would
+            # default it to llama.cpp; the preview falls back to
+            # chat_defaults instead (task-425).
+            return ConsoleProviderSelection(provider="", explicit_model=explicit_model)
+        selection = build_console_provider_selection_from_settings(
+            settings,
+            app_config=settings_config,
+            workspace_context=ConsoleWorkspaceContext(),
+            legacy_model=explicit_model,
         )
+        # The preview sends its own prompt (build_preview_system_prompt).
+        return dataclasses.replace(selection, system_prompt=None)
 
     async def _resolve_selection_with_fallback(
         self,
@@ -754,8 +759,10 @@ class PersonasPreviewController:
             pane.set_status("Running")
         # Repaint the readout with the provider/model that actually resolved,
         # so it reflects reality (incl. a fallback) rather than config intent.
+        raw_config = getattr(self.screen.app_instance, "app_config", {}) or {}
+        config = raw_config if isinstance(raw_config, Mapping) else {}
         resolved_readout = (
-            f"Provider: {self._provider_label(resolution.provider)} / "
+            f"Provider: {self._provider_label(resolution.provider, config)} / "
             f"{resolution.model or 'default model'}"
         )
         if fallback_provider:

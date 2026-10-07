@@ -181,16 +181,6 @@
 }
 
 /* Chat Sidebar - Prompts Section */
-#chat-prompts-collapsible Input,
-#chat-prompts-collapsible ListView,
-#chat-prompts-collapsible Button {
-    margin-bottom: $ds-space-stack; /* Consistent spacing */
-}
-#chat-prompt-list-view { /* ID for the prompt list in chat sidebar */
-    height: $ds-size-8; /* Adjust as needed */
-    border: round $ds-surface-raised;
-    margin-bottom: $ds-space-stack;
-}
 .loaded-prompt-area { /* Container for loaded prompt details in chat sidebar */
     margin-top: $ds-space-stack;
     padding: $ds-space-0 $ds-space-inline;   /* Padding for content inside */

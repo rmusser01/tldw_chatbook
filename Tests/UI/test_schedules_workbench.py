@@ -512,7 +512,7 @@ async def test_task_detail_notifications_row_explains_its_permanent_read_only_st
 @pytest.mark.asyncio
 async def test_task_detail_frequency_group_no_longer_wastes_padding_rows():
     """31712 AC#4: an EXPANDED `DetailGroup`'s own region height must equal
-    border(1) + title(3) + its rows' own content height -- no leftover
+    border(1) + title(1) + its rows' own content height -- no leftover
     blank rows from Textual's `Collapsible`/`Contents` body chrome (the
     widget-tier `padding-bottom: 1`, the app-wide `margin-bottom: 1` /
     `border: tall` / `Contents { padding: 1 }` rules all leaked through
@@ -520,8 +520,11 @@ async def test_task_detail_frequency_group_no_longer_wastes_padding_rows():
 
     The Frequency group renders exactly 4 `DetailValueRow`s (Repeat/At/
     Timezone/Notifications) for a recurring reminder -- this pins the
-    group's total height to 1 + 3 + 4 = 8, which the OLD chrome inflated
-    to 12 (revert-check: this assertion fails against the pre-fix CSS)."""
+    group's total height to 1 + 1 + 4 = 6, which the OLD chrome inflated
+    to 12 (revert-check: this assertion fails against the pre-fix CSS).
+    TASK-33003.1 rewrote the pin from 8: the title used to be 3 rows only
+    because `_conversations.tcss`'s leaked `Collapsible > CollapsibleTitle
+    { height: 3 }` reached it, and that rule is retired."""
     async with _BareTaskDetailApp().run_test(size=(80, 60)) as pilot:
         detail = pilot.app.query_one(TaskDetail)
         detail.set_task(_frequency_reminder())
@@ -529,8 +532,8 @@ async def test_task_detail_frequency_group_no_longer_wastes_padding_rows():
 
         group = detail.query_one("#scheduling-detail-group-frequency")
         assert group.collapsed is False
-        assert group.region.height == 8, (
-            f"Frequency group height {group.region.height} != 8 -- "
+        assert group.region.height == 6, (
+            f"Frequency group height {group.region.height} != 6 -- "
             "Collapsible/Contents chrome is leaking blank rows again"
         )
 

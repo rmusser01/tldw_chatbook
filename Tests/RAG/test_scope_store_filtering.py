@@ -235,7 +235,9 @@ class TestChromaWhereTranslation:
     def test_single_key_uses_in_operator(self, tmp_path):
         store, fake = self._store_with_fake_collection(tmp_path)
 
-        store.search(_query_vec(), top_k=5, metadata_allowlist={"source_id": {"2", "1"}})
+        store.search(
+            _query_vec(), top_k=5, metadata_allowlist={"source_id": {"2", "1"}}
+        )
 
         assert fake.last_query_kwargs["where"] == {"source_id": {"$in": ["1", "2"]}}
 

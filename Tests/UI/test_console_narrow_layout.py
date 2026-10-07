@@ -280,18 +280,24 @@ async def test_console_header_subtitle_yields_width_before_fixed_controls() -> N
                 "#console-auto-speak",
                 "#console-hands-free-label",
                 "#console-hands-free-switch",
-                "#workbench-header-status",
             )
         )
+        badge = console.query_one("#workbench-header-status", Static)
         await pilot.pause()
         wide_subtitle_width = subtitle.region.width
         wide_fixed_widths = tuple(widget.region.width for widget in fixed)
+        # TASK-33005.3 review round 1 (rewritten on purpose): the badge reads
+        # the readiness word, and below single-pane width the short status,
+        # so it is no longer one of the fixed-width controls.
+        assert _static_text(badge) == "Ready · not tested"
 
         await pilot.resize_terminal(60, 30)
         await pilot.pause(0.2)
 
         assert subtitle.region.width < wide_subtitle_width
         assert tuple(widget.region.width for widget in fixed) == wide_fixed_widths
+        assert _static_text(badge) == "Ready"
+        assert badge.region.x + badge.region.width == 60 - 1
         assert str(subtitle.styles.text_overflow) == "ellipsis"
         painted = _compositor_text(host.export_screenshot(simplify=True))
         assert "Speak replies" in painted
@@ -331,6 +337,26 @@ async def test_console_recovery_controls_resize_bar_one_two_one() -> None:
         assert bar.region.height == 1
         assert retry.display is False
         assert resume.display is False
+
+
+@pytest.mark.asyncio
+async def test_recovery_sync_during_teardown_skips_pruned_buttons() -> None:
+    """Qodo #2947 follow-on: teardown prunes the buttons before their row, and a
+    hook refresh still in flight then synced into them, failing its worker
+    (3 of 3 xdist runs once a model switch refreshed the session list)."""
+    app = _build_test_app()
+    host = ConsoleLayoutHarness(app)
+
+    async with host.run_test(size=(90, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-auto-speak-retry")
+        bar = console.query_one("#console-control-bar")
+        await console.query_one("#console-auto-speak-retry", Button).remove()
+        await console.query_one("#console-auto-speak-resume", Button).remove()
+
+        bar.sync_auto_speak(enabled=True, paused=True, retry_available=True)
+
+        assert bar.auto_speak_paused is True
 
 
 @pytest.mark.asyncio
@@ -457,8 +483,7 @@ async def test_scope_row_never_paints_a_bare_label(size):
         painted_label = label.render_line(0).text.rstrip()
 
         assert painted_label.startswith("Scope:"), (
-            f"scope label not painted; got {painted_label!r} "
-            f"(region={label.region})"
+            f"scope label not painted; got {painted_label!r} (region={label.region})"
         )
         value = painted_label[len("Scope:") :].strip()
         assert value, (
@@ -567,9 +592,7 @@ async def test_responsive_collapse_posts_notice_once_per_rail():
             for message, _ in notifications
         ), f"expected a Context collapse notice, got {notifications}"
         context_notices = [
-            (message, kw)
-            for message, kw in notifications
-            if "Context" in message
+            (message, kw) for message, kw in notifications if "Context" in message
         ]
         assert len(context_notices) == 1, "notice must fire once, not per tick"
 
@@ -579,8 +602,6 @@ async def test_responsive_collapse_posts_notice_once_per_rail():
         await pilot.resize_terminal(90, 42)
         await _wait_for_condition(pilot, lambda: left_rail.display is False)
         context_notices = [
-            (message, kw)
-            for message, kw in notifications
-            if "Context" in message
+            (message, kw) for message, kw in notifications if "Context" in message
         ]
         assert len(context_notices) == 1, "once per session per rail"

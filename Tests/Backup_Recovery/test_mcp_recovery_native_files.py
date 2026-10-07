@@ -53,3 +53,52 @@ def test_mcp_source_rechecks_path_using_the_descriptor_backend(
             recovery_activation._read(source)
     else:
         assert recovery_activation._read(source)[1] == b"[general]\n"
+
+
+@pytest.mark.parametrize("owner", ["mcp.local", "mcp.permissions", "mcp.context"])
+def test_unavailable_fresh_mcp_projection_preserves_originals_and_config_dependency(
+    tmp_path, monkeypatch, owner
+):
+    from tldw_chatbook.Backup_Recovery.models import (
+        DISCOVERY_CONTEXT_KEY,
+        DiscoveryContext,
+        storage_logical_id,
+    )
+    from tldw_chatbook.Backup_Recovery.profile_paths import user_data_dir
+    from tldw_chatbook.MCP.recovery import recovery_adapters
+
+    context = DiscoveryContext(tmp_path / "config.toml", "selected")
+    config = {
+        DISCOVERY_CONTEXT_KEY: context,
+        "paths": {"data_dir": str(tmp_path / "data")},
+    }
+    adapter = next(item for item in recovery_adapters() if item.owner_id == owner)
+    source = user_data_dir(config) / adapter.leaf
+    source.parent.mkdir(parents=True, mode=0o700)
+    source.write_bytes(b'{"historical":true}')
+    source.chmod(0o600)
+    if owner == "mcp.permissions":
+        backup = source.with_name(source.name + ".bak")
+        backup.write_bytes(b"historical corruption evidence")
+        backup.chmod(0o600)
+    before = {p: p.read_bytes() for p in source.parent.iterdir()}
+
+    def unavailable(*args):
+        raise ValueError("projection_generation_unavailable")
+
+    monkeypatch.setattr(recovery_activation, "inventory_path", unavailable)
+    items = adapter.discover(config)
+
+    assert {item.path for item in items[:-1]} == set(before)
+    assert all(item.status == "included" for item in items[:-1])
+    fresh = items[-1]
+    assert (fresh.owner, fresh.logical_id, fresh.path, fresh.status) == (
+        owner,
+        storage_logical_id(context, owner, "fresh"),
+        None,
+        "unavailable",
+    )
+    assert all(
+        item.dependencies == (storage_logical_id(context, "config"),) for item in items
+    )
+    assert before == {p: p.read_bytes() for p in source.parent.iterdir()}

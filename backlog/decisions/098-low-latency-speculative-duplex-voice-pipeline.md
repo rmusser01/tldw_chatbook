@@ -1,6 +1,7 @@
 # ADR-098: Use provisional turns over one app-owned AEC duplex pipeline
 
 Status: Accepted after three-pass spec review and user-approved final correction
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 
 Date: 2026-08-28
 

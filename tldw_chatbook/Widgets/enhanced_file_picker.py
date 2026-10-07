@@ -34,7 +34,9 @@ from ..Third_Party.textual_fspicker.parts.directory_navigation import (
     DirectoryEntry,
     DirectoryEntryStyling,
 )
-from ..Third_Party.textual_fspicker.parts.progressive_directory_navigation import FileRecord
+from ..Third_Party.textual_fspicker.parts.progressive_directory_navigation import (
+    FileRecord,
+)
 from ..Third_Party.textual_fspicker.path_maker import MakePath
 from ..Third_Party.textual_fspicker.safe_tests import is_dir
 from ..Utils.path_validation import validate_path_simple
@@ -67,7 +69,7 @@ class RecentLocations:
         try:
             recent_data = get_cli_setting("filepicker", f"recent_{self.context}", [])
             if isinstance(recent_data, list):
-                self._recent = recent_data[:self.max_items]
+                self._recent = recent_data[: self.max_items]
             else:
                 self._recent = []
         except Exception as e:
@@ -79,7 +81,9 @@ class RecentLocations:
         if self._recent is None:
             return
         try:
-            save_setting_to_cli_config("filepicker", f"recent_{self.context}", self._recent)
+            save_setting_to_cli_config(
+                "filepicker", f"recent_{self.context}", self._recent
+            )
         except Exception as e:
             logger.error(f"Failed to save recent locations: {e}")
 
@@ -103,15 +107,18 @@ class RecentLocations:
         self._recent = [item for item in self._recent if item.get("path") != path_str]
 
         # Add to front
-        self._recent.insert(0, {
-            "path": path_str,
-            "name": path.name,
-            "type": file_type,
-            "timestamp": utc_now_iso()
-        })
+        self._recent.insert(
+            0,
+            {
+                "path": path_str,
+                "name": path.name,
+                "type": file_type,
+                "timestamp": utc_now_iso(),
+            },
+        )
 
         # Trim to max
-        self._recent = self._recent[:self.max_items]
+        self._recent = self._recent[: self.max_items]
         if persist:
             self.save_to_config()
 
@@ -167,9 +174,11 @@ class BookmarksManager:
         ]
 
         # Add platform-specific paths
-        if os.name == 'posix':  # Unix/Linux/Mac
+        if os.name == "posix":  # Unix/Linux/Mac
             if (home / "Pictures").exists():
-                bookmarks.append({"name": "Pictures", "path": str(home / "Pictures"), "icon": "🖼️"})
+                bookmarks.append(
+                    {"name": "Pictures", "path": str(home / "Pictures"), "icon": "🖼️"}
+                )
 
         # Filter out non-existent directories
         return [b for b in bookmarks if Path(b["path"]).exists()]
@@ -182,7 +191,9 @@ class BookmarksManager:
     def load_from_config(self):
         """Load bookmarks from config"""
         try:
-            saved_bookmarks = get_cli_setting("filepicker", f"bookmarks_{self.context}", None)
+            saved_bookmarks = get_cli_setting(
+                "filepicker", f"bookmarks_{self.context}", None
+            )
             if saved_bookmarks is None:
                 # First time - use defaults
                 self._bookmarks = self._default_bookmarks.copy()
@@ -202,7 +213,9 @@ class BookmarksManager:
             # would break the constructor's I/O-free guarantee (task-261).
             return
         try:
-            save_setting_to_cli_config("filepicker", f"bookmarks_{self.context}", self._bookmarks)
+            save_setting_to_cli_config(
+                "filepicker", f"bookmarks_{self.context}", self._bookmarks
+            )
         except Exception as e:
             logger.error(f"Failed to save bookmarks: {e}")
 
@@ -228,7 +241,7 @@ class BookmarksManager:
             "name": name or path.name,
             "path": path_str,
             "icon": icon,
-            "custom": True  # Mark as user-added
+            "custom": True,  # Mark as user-added
         }
 
         self._bookmarks.append(bookmark)
@@ -322,6 +335,7 @@ class PathBreadcrumbs(Horizontal):
 
     class PathChanged(Message):
         """Emitted when a breadcrumb is clicked"""
+
         def __init__(self, path: Path) -> None:
             self.path = path
             super().__init__()
@@ -348,7 +362,7 @@ class PathBreadcrumbs(Horizontal):
 
         parts = self.current_path.parts
         for i, part in enumerate(parts):
-            partial_path = Path(*parts[:i+1])
+            partial_path = Path(*parts[: i + 1])
 
             # Create button for each part
             btn = Button(part, variant="default", classes="breadcrumb-button")
@@ -362,7 +376,7 @@ class PathBreadcrumbs(Horizontal):
     @on(Button.Pressed)
     def handle_breadcrumb_click(self, event: Button.Pressed):
         """Handle clicks on breadcrumb buttons"""
-        if hasattr(event.button, 'data'):
+        if hasattr(event.button, "data"):
             self.post_message(self.PathChanged(event.button.data))
 
 
@@ -396,6 +410,7 @@ class DirectorySearch(Horizontal):
 
     class SearchChanged(Message):
         """Emitted when search text changes"""
+
         def __init__(self, query: str) -> None:
             self.query = query
             super().__init__()
@@ -417,7 +432,9 @@ class DirectorySearch(Horizontal):
         self.post_message(self.SearchChanged(""))
 
 
-def _make_glob_filter(patterns: Union[str, List[str], Tuple[str, ...]]) -> Callable[[Path], bool]:
+def _make_glob_filter(
+    patterns: Union[str, List[str], Tuple[str, ...]],
+) -> Callable[[Path], bool]:
     """Build a case-insensitive path filter from glob patterns.
 
     Args:
@@ -676,7 +693,10 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
 
     class SearchCountChanged(Message):
         """Posted when the number of visible options changes."""
-        def __init__(self, navigation: DirectoryNavigation, count: int, query: str) -> None:
+
+        def __init__(
+            self, navigation: DirectoryNavigation, count: int, query: str
+        ) -> None:
             self.navigation = navigation
             self.count = count
             self.query = query
@@ -688,6 +708,7 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
         entries hidden by the dotfile/show-hidden rule -- see the counting
         logic in ``_repopulate_display``.
         """
+
         def __init__(self, navigation: DirectoryNavigation, count: int) -> None:
             self.navigation = navigation
             self.count = count
@@ -695,6 +716,7 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
 
     class ToggleSelection(Message):
         """Posted when the user asks to toggle the highlighted entry."""
+
         def __init__(self, navigation: DirectoryNavigation) -> None:
             self.navigation = navigation
             super().__init__()
@@ -822,7 +844,16 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
         digits are reserved for the screen's bookmark-jump bindings unless a
         type-ahead prefix is already active.
         """
-        if event.key in ("up", "down", "pageup", "pagedown", "home", "end", "enter", "backspace"):
+        if event.key in (
+            "up",
+            "down",
+            "pageup",
+            "pagedown",
+            "home",
+            "end",
+            "enter",
+            "backspace",
+        ):
             return
 
         if event.key == "space":
@@ -885,9 +916,7 @@ class EnhancedDirectoryNavigation(DirectoryNavigation):
         )
         self.post_message(self.FilterHiddenCountChanged(self, self._filter_hidden))
 
-    def _on_option_list_option_selected(
-        self, event: OptionList.OptionSelected
-    ) -> None:
+    def _on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Select-only (task-430 AC#2): a single-click / OptionSelected
         highlights and, for a file, fills the filename input; it never
         auto-navigates a directory (opening is a separate action).
@@ -945,7 +974,9 @@ SearchableDirectoryNavigation = EnhancedDirectoryNavigation
 class EnhancedFileDialog(BaseFileDialog):
     """Enhanced file picker with keyboard shortcuts, recent files, breadcrumbs, bookmarks, and search"""
 
-    DEFAULT_CSS = BaseFileDialog.DEFAULT_CSS + """
+    DEFAULT_CSS = (
+        BaseFileDialog.DEFAULT_CSS
+        + """
     .hidden {
         display: none;
     }
@@ -1198,6 +1229,7 @@ class EnhancedFileDialog(BaseFileDialog):
         display: none;
     }
     """
+    )
 
     BINDINGS = [
         Binding("ctrl+b", "toggle_bookmarks", "Show bookmarks"),
@@ -1211,7 +1243,10 @@ class EnhancedFileDialog(BaseFileDialog):
         # base binding -- no handler suppression needed (unlike message
         # dispatch, see ``_SUPPRESSED_BASE_HANDLERS`` below).
         Binding("escape", "smart_dismiss", "Close", show=False),
-        *[Binding(str(n), f"jump_bookmark('{n}')", f"Bookmark {n}", show=False) for n in range(1, 10)],
+        *[
+            Binding(str(n), f"jump_bookmark('{n}')", f"Bookmark {n}", show=False)
+            for n in range(1, 10)
+        ],
     ]
 
     SAFE_MODAL_CONTENT = "#enhanced-file-dialog"
@@ -1298,7 +1333,7 @@ class EnhancedFileDialog(BaseFileDialog):
 
     @staticmethod
     def _normalize_filters(
-        filters: Optional[Union[Filters, List[str], Tuple[str, ...]]]
+        filters: Optional[Union[Filters, List[str], Tuple[str, ...]]],
     ) -> Optional[Filters]:
         """Convert legacy list/tuple filters into a ``Filters`` instance.
 
@@ -1401,7 +1436,9 @@ class EnhancedFileDialog(BaseFileDialog):
                     with VerticalScroll(id="bookmarks-panel"):
                         with Horizontal(classes="bookmarks-header"):
                             yield Label("⭐ Bookmarks", classes="section-title")
-                            yield Button("➕", id="add-bookmark", classes="bookmark-button")
+                            yield Button(
+                                "➕", id="add-bookmark", classes="bookmark-button"
+                            )
                         yield ListView(id="bookmarks-list")
 
                 with Vertical(id="filepicker-main"):
@@ -1414,7 +1451,9 @@ class EnhancedFileDialog(BaseFileDialog):
                     with Horizontal(id="path-input-container", classes="hidden"):
                         yield PathInput(placeholder="Enter path...", id="path-input")
                         yield Button("Go", id="go-to-path", variant="primary")
-                        yield Button("Cancel", id="cancel-path-input", variant="default")
+                        yield Button(
+                            "Cancel", id="cancel-path-input", variant="default"
+                        )
 
                     # Search container (hidden by default)
                     with Horizontal(id="search-container"):
@@ -1438,7 +1477,9 @@ class EnhancedFileDialog(BaseFileDialog):
                         if sys.platform == "win32":
                             yield DriveNavigation(self._location)
                         with Vertical(id="file-list-pane"):
-                            yield Static(self._file_list_header(), id="file-list-header")
+                            yield Static(
+                                self._file_list_header(), id="file-list-header"
+                            )
                             yield SearchableDirectoryNavigation(self._location)
 
                     yield Static(
@@ -1759,9 +1800,7 @@ class EnhancedFileDialog(BaseFileDialog):
         if self.context == "character_import":
             self._selected_path = event.path
             try:
-                self.query_one(
-                    EnhancedDirectoryNavigation
-                ).refresh_selection_markers()
+                self.query_one(EnhancedDirectoryNavigation).refresh_selection_markers()
             except Exception:
                 pass
         try:
@@ -1861,7 +1900,10 @@ class EnhancedFileDialog(BaseFileDialog):
                     if drive_letter := MakePath.of(chosen).drive:
                         # Ensure DriveNavigation is present before querying
                         try:
-                            from ..Third_Party.textual_fspicker.parts import DriveNavigation
+                            from ..Third_Party.textual_fspicker.parts import (
+                                DriveNavigation,
+                            )
+
                             drive_nav = self.query_one(DriveNavigation)
                             drive_nav.drive = drive_letter
                         except Exception:  # QueryError if not present
@@ -1998,7 +2040,9 @@ class EnhancedFileDialog(BaseFileDialog):
             max_visible = self._MAX_VISIBLE_BREADCRUMBS
             if len(parts) > max_visible:
                 # Root + ellipsis + tail so the current directory is visible.
-                visible_indices = [0] + list(range(len(parts) - max_visible + 2, len(parts)))
+                visible_indices = [0] + list(
+                    range(len(parts) - max_visible + 2, len(parts))
+                )
             else:
                 visible_indices = list(range(len(parts)))
 
@@ -2045,7 +2089,10 @@ class EnhancedFileDialog(BaseFileDialog):
             recent = self.recent_locations.get_recent()
             if not recent:
                 empty_item = ListItem(
-                    Label("No recent files yet. Open a file to see it here.", classes="recent-item empty-state")
+                    Label(
+                        "No recent files yet. Open a file to see it here.",
+                        classes="recent-item empty-state",
+                    )
                 )
                 empty_item.data = None
                 recent_list.append(empty_item)
@@ -2081,7 +2128,7 @@ class EnhancedFileDialog(BaseFileDialog):
                 empty_item = ListItem(
                     Label(
                         "No bookmarks. Press Ctrl+D to bookmark the current directory.",
-                        classes="bookmark-item empty-state"
+                        classes="bookmark-item empty-state",
                     )
                 )
                 empty_item.data = None
@@ -2098,7 +2145,7 @@ class EnhancedFileDialog(BaseFileDialog):
                     Horizontal(
                         Label(icon, classes="bookmark-item-icon"),
                         Label(name, classes="bookmark-item"),
-                        classes="bookmark-container"
+                        classes="bookmark-container",
                     )
                 )
                 list_item.data = path
@@ -2128,8 +2175,7 @@ class EnhancedFileDialog(BaseFileDialog):
     def _file_list_header(self) -> RenderableType:
         """Return a column header matching DirectoryEntry's layout."""
         show_selection_marker = (
-            getattr(self, "multi_select", False)
-            or self.context == "character_import"
+            getattr(self, "multi_select", False) or self.context == "character_import"
         )
         return _ResponsiveDirectoryRow(
             marker="" if show_selection_marker else None,
@@ -2244,7 +2290,7 @@ class EnhancedFileDialog(BaseFileDialog):
     @on(ListView.Selected, "#bookmarks-list")
     def handle_bookmark_selection(self, event: ListView.Selected):
         """Handle selection from bookmarks list."""
-        if hasattr(event.item, 'data') and event.item.data is not None:
+        if hasattr(event.item, "data") and event.item.data is not None:
             path = Path(event.item.data)
             if path.exists():
                 dir_nav = self.query_one(SearchableDirectoryNavigation)
@@ -2292,7 +2338,9 @@ class EnhancedFileDialog(BaseFileDialog):
             pass
 
     @on(SearchableDirectoryNavigation.SearchCountChanged)
-    def _on_search_count_changed(self, event: SearchableDirectoryNavigation.SearchCountChanged) -> None:
+    def _on_search_count_changed(
+        self, event: SearchableDirectoryNavigation.SearchCountChanged
+    ) -> None:
         """Update the search status label and no-match notice."""
         try:
             status = self.query_one("#search-status", Label)
@@ -2332,7 +2380,9 @@ class EnhancedFileDialog(BaseFileDialog):
             pass
 
     @on(SearchableDirectoryNavigation.ToggleSelection)
-    def _on_toggle_selection(self, event: SearchableDirectoryNavigation.ToggleSelection) -> None:
+    def _on_toggle_selection(
+        self, event: SearchableDirectoryNavigation.ToggleSelection
+    ) -> None:
         """Toggle selection for the currently highlighted file."""
         self.action_toggle_selection()
 
@@ -2435,13 +2485,12 @@ class EnhancedFileOpen(EnhancedFileDialog):
         from textual.widgets import Select
 
         if not self.multi_select:
-            yield PathInput(placeholder=self._filename_placeholder(), id="filename-input")
+            yield PathInput(
+                placeholder=self._filename_placeholder(), id="filename-input"
+            )
         if self.filters:
             yield Select(
-                self.filters.selections,
-                prompt="File type",
-                value=0,
-                id="file-filter"
+                self.filters.selections, prompt="File type", value=0, id="file-filter"
             )
 
 
@@ -2487,10 +2536,7 @@ class EnhancedFileSave(EnhancedFileDialog):
         )
         if self.filters:
             yield Select(
-                self.filters.selections,
-                prompt="File type",
-                value=0,
-                id="file-filter"
+                self.filters.selections, prompt="File type", value=0, id="file-filter"
             )
 
 

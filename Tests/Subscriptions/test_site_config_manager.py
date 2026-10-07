@@ -11,7 +11,10 @@ tmp_path files -- never the real user config/data dirs.
 import sqlite3
 from contextlib import closing
 
-from tldw_chatbook.Subscriptions.site_config_manager import SiteConfig, SiteConfigManager
+from tldw_chatbook.Subscriptions.site_config_manager import (
+    SiteConfig,
+    SiteConfigManager,
+)
 
 
 def test_fresh_db_manager_can_save_and_load_config(request, tmp_path):

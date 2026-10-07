@@ -76,7 +76,9 @@ def test_answer_synthesis_override_reaches_transport(scratch_config, monkeypatch
     # aggregate_results' map phase chunk-summarizes via Summarization_General_Lib.analyze
     # (task-1356) before the reduce/synthesis call below -- mock it so this test never
     # makes a real (if fast-failing) LLM dispatch.
-    monkeypatch.setattr(Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary")
+    monkeypatch.setattr(
+        Summarization_General_Lib, "analyze", lambda *a, **k: "chunk summary"
+    )
 
     WebSearch_APIs.aggregate_results(
         {"1": {"content": "some content", "reasoning": "because"}},
@@ -91,7 +93,9 @@ def test_answer_synthesis_override_reaches_transport(scratch_config, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_result_relevance_eval_override_reaches_transport(scratch_config, monkeypatch):
+async def test_result_relevance_eval_override_reaches_transport(
+    scratch_config, monkeypatch
+):
     from tldw_chatbook.Web_Scraping import WebSearch_APIs
 
     scratch_config(
@@ -120,7 +124,9 @@ async def test_result_relevance_eval_override_reaches_transport(scratch_config, 
 
 
 @pytest.mark.asyncio
-async def test_result_summarization_override_reaches_transport(scratch_config, monkeypatch):
+async def test_result_summarization_override_reaches_transport(
+    scratch_config, monkeypatch
+):
     from tldw_chatbook.Web_Scraping import WebSearch_APIs
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib
 
@@ -156,5 +162,7 @@ async def test_result_summarization_override_reaches_transport(scratch_config, m
         api_endpoint="openai",
     )
 
-    assert captured.get("custom_prompt_arg", "").startswith("CUSTOM SUMMARIZE what is love")
+    assert captured.get("custom_prompt_arg", "").startswith(
+        "CUSTOM SUMMARIZE what is love"
+    )
     assert "scraped body" in captured["custom_prompt_arg"]

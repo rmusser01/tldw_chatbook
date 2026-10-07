@@ -17,6 +17,7 @@ from loguru import logger
 from tldw_chatbook.Backup_Recovery.activation import execution_scope
 from tldw_chatbook.Metrics.metrics_logger import log_counter
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
+
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (emergency_stop imports at its read site.)
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (scheduler_heartbeat imports at its write site.)
 from tldw_chatbook.Scheduling.constants import (
@@ -66,6 +67,7 @@ class QueueReloadToken:
     """Identity for one scheduler queue-reload request."""
 
     value: int
+
 
 #: Why a dispatch was late (`_report_lateness_cause`). These three strings are
 #: simultaneously branch outcomes, the `cause` label on the
@@ -325,9 +327,7 @@ class SchedulerLoop:
         if should_wake:
             reload_event.set()
 
-    def wait_for_reload_blocking(
-        self, token: QueueReloadToken, timeout: float
-    ) -> bool:
+    def wait_for_reload_blocking(self, token: QueueReloadToken, timeout: float) -> bool:
         """Block for at most ``timeout`` seconds for ``token`` to be loaded."""
         deadline = time.monotonic() + max(timeout, 0.0)
         with self._reload_condition:
@@ -340,9 +340,7 @@ class SchedulerLoop:
                 self._reload_condition.wait(remaining)
             return True
 
-    async def wait_for_reload(
-        self, token: QueueReloadToken, timeout: float
-    ) -> bool:
+    async def wait_for_reload(self, token: QueueReloadToken, timeout: float) -> bool:
         """Wait asynchronously and boundedly for ``token`` to be loaded."""
         return await asyncio.to_thread(
             self.wait_for_reload_blocking, token, timeout=timeout
@@ -473,7 +471,9 @@ class SchedulerLoop:
                 reload_event.clear()
                 with (
                     self._maintenance_operation(),
-                    execution_scope(("db.scheduled_tasks",), self.db.db_path) as allowed,
+                    execution_scope(
+                        ("db.scheduled_tasks",), self.db.db_path
+                    ) as allowed,
                 ):
                     if not allowed:
                         return
@@ -493,8 +493,7 @@ class SchedulerLoop:
                     await self.tick()
                 with self._reload_condition:
                     reload_pending = (
-                        self._reload_requested_serial
-                        > self._reload_acknowledged_serial
+                        self._reload_requested_serial > self._reload_acknowledged_serial
                     )
                 if reload_pending:
                     continue
@@ -563,9 +562,7 @@ class SchedulerLoop:
             except Exception:  # noqa: BLE001 -- observation never breaks the loop
                 logger.debug("scheduler heartbeat offload failed")
 
-    def _record_heartbeat(
-        self, tick_at: datetime, *, error: str | None
-    ) -> None:
+    def _record_heartbeat(self, tick_at: datetime, *, error: str | None) -> None:
         """Persist one liveness snapshot (TASK-26025). Never raises."""
         if error is None:
             self._last_success_at = tick_at

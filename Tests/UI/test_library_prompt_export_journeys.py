@@ -28,6 +28,7 @@ from tldw_chatbook.Prompt_Management.Prompts_Interop import (
     parse_markdown_prompts_from_content,
 )
 from tldw_chatbook.Third_Party.textual_fspicker import FileSave
+from tldw_chatbook.UI.Library_Modules import library_file_export
 from tldw_chatbook.Third_Party.textual_fspicker.file_dialog import FileNameInput
 
 
@@ -153,8 +154,13 @@ async def _inline_result(host, screen, pilot, expected):
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 async def test_copy_and_export_round_trip_through_visible_actions(
-    tmp_path, kind, size, theme
+    tmp_path, monkeypatch, kind, size, theme
 ):
+    # TASK-34000.3: the receipt names the destination's folder as the picker
+    # shows it (``~`` for home). The export goes to the sandbox home so the
+    # receipt reads ``~/roundtrip.md`` and fits the one-line status region;
+    # a pytest tmp path would be clipped there, as a 100-character path is.
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     db, prompt_id, _, host = _export_host(tmp_path, theme, kind)
     original = db.fetch_prompt_details(prompt_id)
     destination = tmp_path / "roundtrip.md"
@@ -188,7 +194,7 @@ async def test_copy_and_export_round_trip_through_visible_actions(
         )
         await _returned_to_export(host, screen, pilot)
         await _inline_result(
-            host, screen, pilot, "Prompt exported successfully to roundtrip.md"
+            host, screen, pilot, "Prompt exported successfully to ~/roundtrip.md"
         )
         written = destination.read_text(encoding="utf-8")
         assert written == copied
@@ -230,15 +236,17 @@ async def test_copy_and_export_failures_keep_editor_ready_for_retry(
         await _activate_more_action(screen, pilot, "copy")
         _assert_round_trip(host.clipboard, original)
 
-        write_text = Path.write_text
+        # TASK-34000.3: the export writes through the shared seam's atomic
+        # writer, not ``Path.write_text``; inject the failure there.
+        write_export_text = library_file_export.write_export_text
 
-        def fail_destination(path, *args, **kwargs):
+        def fail_destination(path, content, **kwargs):
             if path == destination:
                 raise OSError("private failure detail must not be shown")
-            return write_text(path, *args, **kwargs)
+            return write_export_text(path, content, **kwargs)
 
         with monkeypatch.context() as patch:
-            patch.setattr(Path, "write_text", fail_destination)
+            patch.setattr(library_file_export, "write_export_text", fail_destination)
             host._notifications.clear()
             dialog, filename = await _open_export(host, screen, pilot)
             await _save_to(host, dialog, filename, pilot, destination)
@@ -288,6 +296,7 @@ async def test_export_result_after_navigation_preserves_current_status(tmp_path,
         assert screen._prompts_state.status == current_status
         notes = list(host._notifications)
         assert [note.message for note in notes] == [
-            "Prompt exported successfully to earlier.md"
+            "Prompt exported successfully to "
+            f"{library_file_export.describe_export_destination(destination)}"
         ]
         assert notes[0].severity == "information"

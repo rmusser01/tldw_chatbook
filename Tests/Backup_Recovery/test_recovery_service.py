@@ -102,6 +102,49 @@ def test_service_preserves_exact_nonsecret_capture_review_for_retry(tmp_path):
         service.close()
 
 
+@pytest.mark.parametrize("coverage", ["complete", "manual", "partial"])
+def test_backup_result_preserves_readiness_after_real_archive_publication(
+    tmp_path, helper_resource_root, monkeypatch, coverage
+):
+    import json
+
+    from tldw_chatbook.Backup_Recovery import capture_service
+
+    monkeypatch.setattr(crypto, "_package_resource_root", lambda: helper_resource_root)
+    capture = captured(tmp_path, partial=coverage == "partial")
+    document = json.loads(capture.manifest_bytes)
+    document["credential_policy"] = "include"
+    if coverage == "manual":
+        issue = "credential_manual_recovery_required:fixture"
+        document["report"]["lines"].append(issue)
+        capture = replace(
+            capture,
+            inventory=replace(capture.inventory, complete=False, issues=(issue,)),
+        )
+    capture = replace(capture, manifest_bytes=json.dumps(document).encode())
+    monkeypatch.setattr(capture_service, "capture", lambda *args, **kwargs: capture)
+    monkeypatch.setattr(
+        RecoveryService, "backup_capability", lambda *args, **kwargs: (True, "")
+    )
+    destination = tmp_path / "service.tldw-backup.zip.age"
+    service = RecoveryService(tmp_path / "control")
+    try:
+        operation = service.start_backup(
+            (),
+            "scope",
+            destination,
+            options={"encrypted": True, "credential_mode": "include"},
+            password=b"disposable-password",
+        )
+        state = service.wait(operation, timeout=30)
+        assert state["state"] == "succeeded"
+        assert state["result"]["archive_verified"] and destination.is_file()
+        assert state["result"]["complete"] is (coverage == "complete")
+        assert not capture.root.exists()
+    finally:
+        service.close()
+
+
 def test_service_explains_pause_timeout_without_exposing_internal_text(tmp_path):
     from tldw_chatbook.Backup_Recovery.admission import AdmissionTimeout
 

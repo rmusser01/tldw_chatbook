@@ -562,14 +562,21 @@ class CostTracker:
 
 def _maintenance_entry(kind="request"):
     """Retain direct entry/preflight and permit accepted task continuations."""
+
     def decorate(function):
         @wraps(function)
         async def call(self, *args, **kwargs):
             task = asyncio.current_task()
             depth = self._maintenance_calls.get(task, 0)
             event = args[0] if args else kwargs.get("event")
-            allowed_stop = kind == "release" or (kind == "playback" and event is not None and event.action in {"stop", "pause"})
-            if self._maintenance_paused and not (depth or task in self._active_tasks or allowed_stop):
+            allowed_stop = kind == "release" or (
+                kind == "playback"
+                and event is not None
+                and event.action in {"stop", "pause"}
+            )
+            if self._maintenance_paused and not (
+                depth or task in self._active_tasks or allowed_stop
+            ):
                 if kind == "utterance":
                     kwargs["on_finished"](False)
                 elif callable(getattr(event, "report_outcome", None)):
@@ -583,7 +590,9 @@ def _maintenance_entry(kind="request"):
                     self._maintenance_calls[task] = depth
                 else:
                     self._maintenance_calls.pop(task, None)
+
         return call
+
     return decorate
 
 
@@ -708,10 +717,14 @@ class TTSEventHandler:
     def maintenance_ready(self) -> bool:
         """Account for native artifact work and future cleanup mutations."""
         return not (
-            self._maintenance_calls or self._active_tasks
-            or self._retained_tts_io_tasks or self._retained_tts_cleanup_tasks
-            or self._pending_legacy_cleanup_timers or self._artifact_cleanup_retry
-            or self._active_file_playback_task or self._active_stream_playback_owner
+            self._maintenance_calls
+            or self._active_tasks
+            or self._retained_tts_io_tasks
+            or self._retained_tts_cleanup_tasks
+            or self._pending_legacy_cleanup_timers
+            or self._artifact_cleanup_retry
+            or self._active_file_playback_task
+            or self._active_stream_playback_owner
             or self._legacy_handoff_stop_events
         )
 
@@ -984,19 +997,25 @@ class TTSEventHandler:
                 finished.set_result(played and state == "stopped")
 
         owner = TTSPlaybackLifecycle(
-            message_id=f"buddy-{uuid4().hex}", request_id=1,
-            validator=validator, callback=report,
+            message_id=f"buddy-{uuid4().hex}",
+            request_id=1,
+            validator=validator,
+            callback=report,
         )
         try:
             if not owner.is_current():
                 return False
             resolution = await self._resolve_speech_request_identity(
-                text=text, assistant_kind=assistant_kind, character_ref=character_ref,
+                text=text,
+                assistant_kind=assistant_kind,
+                character_ref=character_ref,
             )
             if not owner.is_current():
                 return False
             prepared = await self._prepare_tts_text(
-                text, owner.message_id, playback_lifecycle=owner,
+                text,
+                owner.message_id,
+                playback_lifecycle=owner,
             )
             if prepared is None or not owner.is_current():
                 return False
@@ -1006,8 +1025,11 @@ class TTSEventHandler:
                     owner.report_terminal("failed")
 
             await self._admit_tts_generation(
-                text=prepared, message_id=owner.message_id, voice=None,
-                resolution=resolution, outcome_callback=generation_finished,
+                text=prepared,
+                message_id=owner.message_id,
+                voice=None,
+                resolution=resolution,
+                outcome_callback=generation_finished,
                 expected_destination_fingerprint=expected_destination_fingerprint,
                 playback_lifecycle=owner,
             )
@@ -1015,9 +1037,13 @@ class TTSEventHandler:
                 return False
             return await finished
         finally:
-            await self.handle_tts_playback(TTSPlaybackEvent(
-                action="stop", message_id=owner.message_id, playback_lifecycle=owner,
-            ))
+            await self.handle_tts_playback(
+                TTSPlaybackEvent(
+                    action="stop",
+                    message_id=owner.message_id,
+                    playback_lifecycle=owner,
+                )
+            )
 
     @_maintenance_entry("utterance")
     async def speak_utterance(
@@ -1882,7 +1908,8 @@ class TTSEventHandler:
 
         admission_authorizer = (
             authorize_destination
-            if expected_destination_fingerprint is not None or playback_lifecycle is not None
+            if expected_destination_fingerprint is not None
+            or playback_lifecycle is not None
             else None
         )
 
@@ -3586,7 +3613,8 @@ class TTSEventHandler:
                 lambda: (player.get_current_file(), player.get_state())
             )
             if current != audio_file or state not in {
-                PlaybackState.PLAYING, PlaybackState.PAUSED,
+                PlaybackState.PLAYING,
+                PlaybackState.PAUSED,
             }:
                 return
             await asyncio.sleep(0.05)
@@ -3609,14 +3637,16 @@ class TTSEventHandler:
             loop.call_soon_threadsafe(lifecycle.report, "playing")
 
         try:
-            finished = await self._run_blocking_tts_io(partial(
-                _play_legacy_clip_and_await_completion,
-                get_audio_player(),
-                audio_file,
-                timeout_seconds=_LEGACY_PLAYBACK_POLL_MAX_SECONDS,
-                stop_requested=stop_requested,
-                on_started=report_started,
-            ))
+            finished = await self._run_blocking_tts_io(
+                partial(
+                    _play_legacy_clip_and_await_completion,
+                    get_audio_player(),
+                    audio_file,
+                    timeout_seconds=_LEGACY_PLAYBACK_POLL_MAX_SECONDS,
+                    stop_requested=stop_requested,
+                    on_started=report_started,
+                )
+            )
             await asyncio.sleep(0)
             if stop_requested.is_set():
                 lifecycle.report_terminal("stopped")
@@ -3938,9 +3968,9 @@ class TTSEventHandler:
                     self._last_played = (event.message_id or "adhoc", audio_file)
                 # Schedule cleanup after playback
                 self._schedule_legacy_playback_cleanup(event.message_id)
-                self._retain_active_task(asyncio.create_task(
-                    self._await_legacy_playback(audio_file)
-                ))
+                self._retain_active_task(
+                    asyncio.create_task(self._await_legacy_playback(audio_file))
+                )
             else:
                 logger.warning(f"Audio file not found for message {event.message_id}")
 

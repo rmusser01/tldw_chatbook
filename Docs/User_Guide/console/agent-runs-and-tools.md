@@ -66,14 +66,14 @@ answer · 12s` for a question, or `Waiting for your confirmation · 12s` for
 a skill/worktree confirm — instead of `Thinking…`, since a decision only
 you can make outranks whatever the model's last step happened to be — and
 the "Run:" status chip above the composer reads the same kind-aware line.
-The Inspector's `Live work` row and the pinned authority summary's `Run`
-fact stay approval-specific, though: they read "Waiting for your approval"
-only while an actual approval card (not a question or confirm) is mounted,
-and otherwise show their ordinary copy — `Generating…`, or no active work —
-even while a question or confirm card is the one genuinely pending. The
-elapsed figure
-advances while you watch. The line is live-only — it vanishes the moment
-the reply's own text arrives, and a conversation you reopen later shows the
+The Inspector's `Live work` row uses the same waiting copy. Its `Approvals`
+count and the pinned authority summary's `Run` fact cover tool-approval rounds
+for the viewed conversation, including approvals queued behind another card.
+Questions and skill/worktree confirmations do not increase that count. Older
+integrations can show an approval without attaching it to a conversation; when
+it is the only pending tool decision, the Inspector and Files attention count
+it while you decide. The elapsed figure advances while you watch. The line is live-only — it vanishes
+the moment the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. During a fleet turn, while the primary
 waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
 (the count of running sub-agents and their longest-running tool) instead of
@@ -161,9 +161,14 @@ its rows and actions is unchanged.
 **In the status chips** (above the composer) — "Tools: N ready" counts the
 tools available to the agent (the chip stays hidden until tools are counted,
 which happens after your first send), and
-"Approvals: N pending" counts tool calls waiting on you. The Approvals chip is
-clickable: it jumps you to the pending approval card (with nothing pending it
-just says "No approval is pending."). A mutation already in **Finishing** is
+"Approvals: N pending" counts outstanding tool-approval rounds in the viewed
+conversation; a round may contain several calls. Chat-creation confirmations
+use "Waiting for your confirmation" and do not count as tool approvals.
+The Approvals chip is
+clickable: it jumps to the visible decision card, preferring an approval when
+one is displayed. If approvals are queued behind a skill confirmation, review
+reaches that confirmation first. With no decision visible it says
+"No approval is pending." A mutation already in **Finishing** is
 status, not a pending decision, so it no longer contributes to this count.
 
 ## Features & controls
@@ -249,7 +254,7 @@ Region     Which regions? (pick any)
   turn, leaving the question up for you to answer on the card.
 - The card never grabs focus from something you are typing. If you need to
   reach it from the keyboard, the inspector's **Review approval** action
-  focuses the question card when no approval is pending.
+  focuses the question card when no approval card is displayed.
 - By default the question waits as long as it takes. To make an unanswered
   question expire instead, set `ask_user_timeout_seconds` under `[console]`
   in your config; the card then shows *Auto-continues in m:ss* and the run
@@ -274,6 +279,15 @@ cannot be saved, the failed run explains that the checkout is retained for
 manual review. It may be absent from the recovery picker when no ownership row
 was saved. Chatbook does not delete or adopt an unrecorded checkout automatically.
 
+
+### Approval controls in small terminals
+
+When the chat column is narrow or Console uses its short-height layout, the
+existing decision Select sits above the **Approve once** and **Deny** pair.
+The bulk bar puts **Deny all** first, followed by **Approve all** and **Submit**.
+Review details scroll inside the card so those actions stay visible. Tab brings
+the optional denial-reason field into view. Resizing preserves the current
+choice and focus; taller, wider layouts restore the original arrangement.
 
 ### Consecutive tool denials
 
@@ -318,6 +332,17 @@ Each pending tool call gets its own row, one full-width line at a time: the
 `server · tool` header, the arguments the call wants to run with, the decision
 controls, and — under the controls — a line spelling out what the decision
 you have highlighted actually commits you to.
+
+While a call runs, supported skill scripts show stdout/stderr and native MCP stdio tools show their progress messages. The existing three-line preview and expandable **Live output** details refresh without replacing the row. MCP progress is status information, not a partial result. Other tools continue to show their result when they finish.
+
+Live text is bounded and kept only in the current session. The final result replaces it; Stop or timeout keeps captured partial text in the expanded details with the interruption outcome. A stopped Console wait does not claim that an abandoned worker was killed.
+
+Expand **Reason if denied (optional)** on a row to add a reason. Enter up to 1,000 characters
+before using the row's fast **Deny** button, or select **Deny** and **Submit**.
+**Deny all** keeps each row's own reason; review the rows and then **Submit**.
+The model receives the reason as quoted, explicitly user-authored text in that
+call's refusal. Leaving it empty keeps the existing refusal. A reason does not
+change permissions, apply to an approved sibling, or create a new audit log.
 
 The five decisions, with the scope line each one shows:
 
@@ -401,7 +426,7 @@ approval"; the inspector's **Review approval** button is the same route. A
 session tab wearing the **◆** marker (the status legend reads "● running · ◆
 needs approval · ✓ finished · ✗ failed") routes straight to whichever
 decision card is actually pending — approval, question, skill-install, or
-skill-script confirm, checked in that precedence (a worktree-merge confirm
+skill-script or chat-creation confirm, checked in that precedence (a worktree-merge confirm
 has no card wired on this screen) — when you press it: the session is
 activated first — a parked round only mounts its card once its session is
 the one you are viewing — and the usual "press the active tab to rename it"
@@ -535,9 +560,32 @@ stdout. Typical uses: a `PreToolUse` guard that denies risky tool calls, a
 notification script that reacts to an approval waiting or a run finishing,
 or a `UserPromptSubmit` hook that injects extra context into a turn.
 
-v1 is **config-file only** — there is no Settings UI for hooks yet; a
-dedicated settings sub-screen lands in the next PR, and the `config.toml`
-schema below is the contract it will edit.
+Open the **Hooks icon beside Settings** on Console to inspect saved commands
+and current permissions. Its count includes enabled definitions needing review
+and errors needing attention. **Needs review** lists outstanding items; **All
+hooks** also shows approved and disabled definitions. Expand **Details** to see
+the exact JSON argument array, event, matcher, and timeout.
+
+The next actual **Send** pauses for one-time review of existing, new, or changed
+enabled hooks before accepting your draft. Select definitions and choose
+**Allow selected**, or choose **Allow all**. Partial approval leaves review open.
+**Not now**, Escape, or **Manage in Settings** cancels that Send and keeps the
+draft. Approval is remembered for the exact definition across restarts; saving
+a hook does not approve it. Revoke and **Disable now** apply immediately to
+future launches. Revocation does not terminate a process already running.
+
+Use **F9 Settings → Expert → Hooks** to add, edit, enable, disable, or remove
+hooks. Edits are staged until **Save**; **Revert** reloads the current saved
+configuration under the usual discard confirmation. **Review saved hooks**
+keeps unsaved edits and reviews saved definitions. New hooks start disabled.
+The command editor accepts a JSON array of arguments, never a shell string.
+Invalid originals and unknown configuration fields are retained. A malformed
+section or list can be repaired explicitly in Advanced Config.
+
+If a save or permission write fails, review reports the failure. A saved file
+with failed runtime publication reports **refresh pending**; **Retry refresh**
+refreshes that file instead of replaying the write. Resetting invalid permission
+state requires confirmation and removes all grants.
 
 **The six events.** Each firing delivers one JSON document: a common
 envelope — `hook_event`, `session_id`, `run_id`, `timestamp`, `cwd` — plus
@@ -561,9 +609,8 @@ carries `run_id` null — the run-state seam it fires from has no run
 identity — so correlate a `Stop` with its run through the same session's
 earlier `PostToolUse`/`SubagentStop` firings. Another: the envelope's
 `cwd` — and the working directory the hook process itself runs in — is
-always the global `[console] workspace_root` (or the app's working
-directory when unset); the per-session cwd override arrives with the
-settings sub-screen PR.
+supplied by the firing runtime when it has a bound run workspace; otherwise
+it falls back to `[console] workspace_root` or the app's working directory.
 
 **Configuring hooks** in `config.toml`:
 
@@ -572,23 +619,32 @@ settings sub-screen PR.
 enabled = true          # master switch; false disables every firing
 
 [[hooks.hook]]
+id = "my-guard"        # optional stable identity; guided saves assign opaque IDs
+enabled = true         # optional per-hook switch; default true
 event = "PreToolUse"    # one of the six names; unknown = validation error
 matcher = "fs_*"        # optional, tool-name glob
 command = ["/usr/local/bin/guard.sh", "--strict"]   # argv; required, non-empty
 timeout_s = 10          # optional, default 10
 ```
 
-Validation is fail-loud: an unknown event name, a `matcher` on a non-tool
-event, an empty or non-list `command`, or a non-positive `timeout_s` each
-disable that one hook with a logged warning — never a silent no-op. Hook
-config is re-validated from the app's loaded configuration on every fire:
-edits land when settings are reloaded/saved (F9 Settings) or the app
-restarts, and flipping `enabled = false` and reloading stops every hook on
-the next fire. Non-boolean `enabled` values disable hooks. Matching: `matcher` is a glob against the tool name
-(`fs_*`, `mcp__github__*`); no matcher means the hook fires for every
-call. It is only valid on `PreToolUse` / `PostToolUse` — the other events
-have no tool name to match, and configuring one there is a validation
-error.
+Invalid enabled definitions remain visible and block the next Send until repaired
+or explicitly disabled. A malformed master switch also requires attention.
+Disabled malformed rows remain visible without execution authority. Saved
+configuration and private local consent are rechecked at admission and immediately
+before process creation, so a changed or revoked command cannot use a captured
+old approval. Matching remains a case-sensitive glob against the tool name
+(`fs_*`, `mcp__github__*`); no matcher matches every tool. It is valid only for
+`PreToolUse` and `PostToolUse`.
+
+Consent is held in private local `hook_permissions.json`, scoped to the canonical
+config path and exact event, ordered arguments, matcher, and normalized timeout.
+Portable backups exclude this consent and its lock; restored configurations
+require fresh local review.
+Identical legacy rows have separate occurrences; removing an occurrence retires
+the group's approvals. Guided saves preserve consent only for complete unchanged
+groups when assigning IDs. A supplied ID or an `approved` field grants nothing.
+Editing an executable at the same path is outside this definition review; revoke
+and review it again when its behavior changes.
 
 **Verdict rules — hooks can only deny.** Just two events are blocking
 (`UserPromptSubmit`, `PreToolUse`), and neither can *grant* anything: an
@@ -611,8 +667,9 @@ restrictions, never permissions.
   budget) as context for the turn — disclosed in the transcript as its own
   System row marked as hook-origin, never silently merged into your
   message.
-  This event **fails open**: a broken hook logs a warning and the send
-  proceeds — a misconfigured convenience hook must not brick the composer.
+  After consent succeeds, execution failures for this event **fail open**:
+  a broken hook logs a warning and the send proceeds. Missing or changed consent
+  is a separate refusal and always keeps the Send blocked.
 
 Precedence: stdout that parses as a JSON object with a `decision` key wins
 over the exit code (exit 2 is shorthand for the event's blocking
@@ -1155,6 +1212,61 @@ oversize entry with a note and keeps your draft so you can shorten it.
 The **primary** agent has no steering input — you steer it by talking to
 it — and inline (non-fleet) sub-agents cannot be steered at all.
 
+#### Queued child progress
+
+Children can report findings for the supervisor to collect. **Read progress**
+shows complete reports without consuming them; navigation shows pending counts
+without report bodies. Discard removes only the selected report IDs and does
+not stop a child or erase copies already collected into a conversation.
+While discard saves its change, inspection and navigation keep showing the
+last committed queue. Closing the progress view does not cancel that discard.
+Closing the chat revokes child sending immediately. A discard already in
+progress can finish during chat close; other saved reports remain available
+when the chat is reopened. Navigation remains responsive while a saved report
+change finishes during chat close, restore or app shutdown.
+
+Saved chats retain pending reports across close, reopen, and app restart.
+Reports belong to that chat's local database, including when detailed trace
+capture is off. Reopening restores the queue and grants a fresh supervisor
+reader; it never restores child send authority. Automatic collection includes
+only reports from the current work chain. A manual reader may collect older
+reports explicitly.
+
+Temporary chats keep reports in memory. **Save** commits the chat and its
+pending reports together; cancelling or failing Save keeps the original queue.
+Closing an unsaved chat or restarting the app loses its reports. Existing queue
+limits apply without evicting older reports. When the live cache is full, saved
+reports stay in the database and navigation still shows their count. Close
+another chat to free capacity, then reopen **Read progress** to load them.
+If a collection checkpoint becomes
+uncertain, collection stops instead of replaying reports automatically.
+
+When automatic wakes are enabled, pending child progress can request a
+supervisor turn after the current primary finishes. Progress and completed
+results share the same finite automatic-work budget, coalescing window,
+manual-send priority and run slots. The notice lists report IDs and asks the
+supervisor to call `read_agent_messages`; it never includes report bodies or
+grants approval. Reading or discarding before admission cancels that report's
+wake request. An accepted report can wake once while remaining manually
+readable, and interrupted attempts wait for review after restart. After saving
+a temporary chat that already received a progress wake, a restart also requires
+review before that chain can wake again. Its saved reports remain readable.
+
+#### Messages between live siblings
+
+A fleet child can use `list_peer_agents` to discover attached live siblings
+from its exact parent and work chain, then `send_to_peer(handle_id, message)`
+to share a finding. A message is limited to 2,000 characters. Peer sends and
+supervisor reports share the child's 32-message lifetime allowance, and a
+full recipient steering queue refuses new messages without dropping old ones.
+
+The receipt says **queued**, not consumed. The sibling receives the message
+at its next model boundary, after any pending tool results. Peer messages are
+untrusted context and grant no approvals or tool access. Only generated source
+IDs and delivery metadata appear in steps and run logs; the body is provider
+context. Cancellation or owner replacement revokes the channel. Peer sending
+never starts or resumes a finished child.
+
 #### Continuing a finished sub-agent
 
 Once a child has **finished**, steering is over — but the supervisor can
@@ -1463,6 +1575,9 @@ app. If you have set a positive `[mcp] approval_timeout_seconds`, it
 still expires the request on schedule — being away does not buy the
 request extra time. The shipped default is `0`, which means no deadline:
 the request waits for you.
+The same setting governs live MCP confirmation requests: unset, invalid, zero,
+or negative values have no deadline; a positive value sets the approval ceiling.
+Stopping a wait still clears it, and does not grant permission to execute a tool.
 
 **The card is rendered and answerable the first time you open Console —
 no session switch needed.** (Fixed as task-17500, 2026-08-17.) As first
@@ -1807,17 +1922,38 @@ session-tweaked values.
 In the running example the Kimi parent plans and reviews, and only the
 implementation children drop to `custom-ep:qwen-local` / `qwen3.8-27b`.
 
-**Resume pins the target.** The resolved provider, model, base URL, and
-merged params are frozen onto the child's run row at spawn time, and
-[continuing a finished sub-agent](#continuing-a-finished-sub-agent)
-reuses that snapshot — editing the preset, the endpoint entry, or the
-config defaults afterwards retargets *new* spawns only, never a resumed
-child (the snapshot is not re-validated, so an edit to something invalid
-cannot break a continuation). The one boundary: children spawned before
-this feature shipped carry no snapshot, so their continuations keep the
-old behavior — the parent's provider with the preset's *live* model — and
-never acquire a snapshot. Only fresh spawns and snapshotted continuations
-honor routing.
+**Preset fallback.** In **Settings ▸ Agents**, the preset's **Fallback models**
+field accepts one explicit `provider/model` pair per line, in attempt order:
+
+```text
+openai/alternate-model
+custom-ep:qwen-local/qwen3.8-27b
+```
+
+Leave it empty to disable fallback; at most eight alternates are allowed.
+The same provider with a different model is valid. Each alternate uses its
+own configured or default endpoint and rebuilt sampling params. A fresh child
+may switch on typed rate-limit, overload, timeout, or unavailable-model
+failures before any proposed tool batch, including a refused batch. Authentication
+errors, arbitrary HTTP 400/404 responses, and diagnostic text do not authorize a
+switch. Attempts share the child's existing token, model-call, wall-time and
+automatic-work budgets and fleet slot.
+
+**Resume pins the target.** Preset fallback freezes each target's provider,
+model, configured/default base URL, execution family and merged params before
+admission. The active target is saved before its first dispatch; the original
+resolved target remains audit history. [Continuing a finished
+sub-agent](#continuing-a-finished-sub-agent) reuses the saved active target and
+does not reopen the preset fallback chain. Editing the preset, endpoint URL,
+execution family or config defaults cannot redirect that saved target.
+Credentials are not persisted in this snapshot. When the gateway resolves a
+routed send, it checks the current credential and readiness settings; a deleted
+`custom-ep:` entry is refused before a readiness probe or family credential
+lookup. Existing owned Console resolutions retain their normal call-local
+credential semantics. Children spawned before routing shipped carry no snapshot,
+so their continuations keep the old behavior — the parent's provider with the
+preset's *live* model — and never acquire a snapshot. Only fresh spawns and
+snapshotted continuations honor routing.
 
 **Headless boundary.** Routing to a `custom-ep:` target requires Console
 — the headless `chat_api_call` path raises on `custom-ep:` ids. Routing
@@ -1829,15 +1965,18 @@ the configured default and reports each one's resolved provider/model
 and readiness — it catches config rot (deleted endpoint slugs, missing
 credentials) before a run does. It reads the *saved* configuration, not
 unsaved form edits — save first, then test. At spawn time a refusal is
-loud: the supervisor model gets a tool error of the form `[code]
-message`, no fleet slot is consumed, and there is no automatic fallback
+loud: the supervisor model gets a tool error of the form `[code] (level)
+message`, for example `[unknown_endpoint_slug] (preset) ...`; no fleet slot is consumed, and there is no automatic fallback
 to another provider. The codes: `override_disabled` (ad-hoc args while
 the flag is off), `provider_not_allowlisted`, `unknown_endpoint_slug` (a
 deleted `custom-ep:` slug), `unknown_provider`, `no_model_resolved`
 (routed to a provider with no model anywhere in the chain), and
 `provider_not_ready` (missing credential or incomplete provider config).
-The resolved target is stored on the run row. Displaying that target in
-the Agent rail is tracked separately in TASK-32497.
+The Agent rail shows each child's frozen provider and model, for example
+`custom-ep:qwen-local · qwen3.8-27b`, during and after the run. Reopened
+runs use the saved target. If an explicit fallback is selected before tools
+run, the rail follows that selected target. Legacy rows without a snapshot show
+**Target unavailable** rather than infer a target from the current preset.
 
 ### Project instructions before tools run
 
@@ -1945,75 +2084,92 @@ source ▸ Tool gates ▸ **Character cards (character_\*)**.
 
 ### Chat creation tools (fork_chat / new_chat)
 
-An agent can prepare a parallel workstream for you instead of tangling two
-threads inside one conversation: `fork_chat` copies the current chat's active
-message history verbatim into a brand-new chat, and `new_chat` creates a
-fresh, empty one. Both take a short `title`, an `opening_prompt`, and
-optional standing `instructions` (the new chat's system prompt). Neither
-tool is available to sub-agents — only the primary agent you're talking to
-proposes chats.
+A Console agent can propose a fresh chat with `new_chat`, or copy the
+current active message branch with `fork_chat`. Both accept a `title`, an
+`opening_prompt`, and optional standing `instructions`. Sub-agents can fork a
+chat or create a draft in the same workspace; each request needs fresh
+confirmation. Casual destinations and bounded starts are available only to
+primary agents. Your current chat, workspace, composer and focus stay in place.
 
-- **Every call asks first.** A confirm card appears above the transcript —
-  "An agent wants to fork this chat: <title>" (or "…create a new chat: …")
-  — showing the full facts before anything is created: for a fork, how many
-  messages it would copy and from which chat; which agent run asked for it;
-  the exact opening prompt ("Opening prompt (draft for the input box):");
-  and any instructions. When the agent didn't name the new chat, the card
-  shows the default title it would get ("Fork of <source chat>" for a fork,
-  "New Chat" otherwise). Buttons: **Allow** / **Allow for this session** /
-  **Deny**. A round that never gets answered — you stop the run, or the
-  card is torn down — fails closed as a denial: nothing is created.
-- **"Allow for this session" is per tool and ends with the session.**
-  `fork_chat` and `new_chat` are remembered separately, a remembered tool
-  skips its card for the rest of the Console session, and the next session
-  starts fresh with cards again. There is no "Always allow" — chat creation
-  is never remembered past the session.
-- **The opening prompt is a draft, not a message.** It lands in the new
-  chat's input box for you to review, edit, and send yourself — it is never
-  sent automatically, and the source chat is untouched. An unopened draft
-  survives an app restart: it is stored with the conversation and reloads
-  the first time you open that chat; once the chat has been opened, the
-  draft is never re-filled again.
-- **The fork is a snapshot at the moment of the call.** The agent's
-  in-progress reply — the very reply proposing the workstreams — is *not*
-  in the fork, nor is the tool call's own marker; only what was already on
-  the active branch is copied. To fork from an earlier point, rewind first,
-  then ask.
-- **The new chat opens in the background.** It is created in the same
-  workspace (a fork keeps the source chat's workspace scope), your current
-  view does not switch away from the chat you're in, a toast announces it
-  ("Forked chat created: <title>" / "New chat created: <title>"), and the
-  workspace's chat listing shows the new row immediately.
-- **Character chats keep their persona.** Forking a character-bound chat
-  with agent `instructions` is refused — the tool error tells the agent to
-  fork without instructions. A character fork otherwise carries the
-  character and its persona over.
-- **Temporary chats can't be forked.** `fork_chat` on an unsaved
-  (ephemeral) chat is refused with "the current chat is temporary; nothing
-  to fork" — save the chat first. `new_chat` always creates a durable chat.
-  An empty history is likewise refused with "nothing to fork yet; use
-  new_chat".
-- **Two denials turn the tool off for the rest of the run.** After you deny
-  the same tool twice, further calls in that run fail immediately with
-  "the user declined twice; chat creation is disabled for the rest of this
-  run" — the agent is told once and is expected not to retry.
-- **Forks record their lineage.** The new chat stores its parent
-  conversation and the fork point, and the copy preserves the active branch
-  verbatim — nothing is removed from or renumbered in the source chat.
-- A `title` longer than 120 characters is truncated to 120 (not refused);
-  an `opening_prompt` or `instructions` over 20,000 characters comes back
-  as a tool error the agent can fix and re-propose (a fresh card, since
-  nothing was created).
+`new_chat` has two independent options:
+
+| Option | Values | Default |
+| --- | --- | --- |
+| `destination` | `same_workspace`, `casual` | `same_workspace` |
+| `mode` | `draft`, `start` | `draft` |
+
+A casual chat is saved outside named workspaces. A same-workspace chat uses the
+requesting chat's workspace, including casual scope when the source is casual.
+The fresh chat uses destination assistant and generation defaults. Explicit
+nonblank instructions replace its standing prompt. Source personas, folder
+bindings, staged inputs and permissions do not transfer. A destination without a
+configured provider still saves its draft; reopening uses the ordinary
+unconfigured-provider fallback until you choose settings.
+
+- **Approval shows the whole request.** The card shows destination, draft/start
+  mode, assistant/model, true requesting run, complete opening prompt and
+  standing instructions, labeling supplied instructions as an explicit override.
+  An unavailable workspace Persona falls back to the plain assistant with a notice.
+  Choose **Allow**, **Allow for this session**, or
+  **Deny**. A stale decision after Stop cannot create a chat. Closing the source tab
+  cancels its pending confirmation. Switching tabs keeps the decision with its
+  source tab; delayed updates cannot replace another tab's live confirmation.
+- **Remembered approval is specific.** For `new_chat`, it covers the same live
+  source session, resolved destination and mode, including later supplied opening
+  prompts and instructions without another card. Allowing a workspace draft
+  does not allow a casual draft or a start. Grants end with the session or app
+  restart. A new required approval needs a visible Console card.
+- **Saved launch status stays visible.** Chat rows and History retain Draft,
+  Started, Not started, or Review required after reopening. Blocked or uncertain
+  starts appear in the existing attention activity while the handoff is unresolved.
+  A successful manual Send consumes the handoff and clears that launch attention;
+  the original launch label remains in chat rows and History. These saved labels
+  never start or retry work.
+- **Drafts remain editable and durable.** New-chat drafts save edits and explicit
+  clears, including after opening and across restart. They remain drafts until
+  accepted consumption or explicit discard. Older unversioned handoffs, including
+  existing forks, retain their earlier first-open behavior.
+- **Start requests one background turn.** A start needs a nonblank opening
+  prompt. It uses the source's shared automatic allowance and shares automatic
+  capacity with fleet wakes, preserving a manual slot. Normal provider readiness,
+  project instructions, capture, retrieval, hooks and permissions still apply.
+  Slash and @ text in the handoff are literal input. The transcript labels the
+  request **Agent handoff**; it cannot authorize profile changes as a human prompt.
+- **The outcome says what happened.** `draft` means saved for later;
+  `not_started` means saved but blocked or refused before acceptance; `started`
+  confirms both durable acceptance receipts; `review_required` means ownership
+  or dispatch could not be confirmed. Provider work may still be running after
+  `started`. Capacity or approval pauses leave a draft and add no retry timer.
+  Never repeat creation to recover a known saved chat: open it and use Send or
+  the existing recovery controls. An explicit human Retry creates manual work
+  while retaining the original machine provenance and earlier charges.
+- **Manual intent wins before acceptance.** Editing, clearing, manual Send or
+  source cancellation withdraws a still-prepared start. After acceptance, the
+  target is independent of source Stop and can be stopped or closed itself.
+  Interrupted work never replays automatically after restart.
+- **Forks retain their existing contract.** A fork copies only the active history
+  already committed when requested, keeps its source workspace/assistant and
+  records parent lineage. The in-progress proposal is excluded. Character forks
+  refuse replacement instructions. Unsaved chats or empty histories cannot be
+  forked. Fork opening prompts remain drafts; `destination` and `mode` apply only
+  to `new_chat`.
+- **Limits are bounded.** New-chat titles over 120 characters and prompt or
+  instruction fields over 20,000 characters are refused before approval. Fork
+  titles retain their existing truncation behavior. Two denials disable that tool
+  for the rest of the run, across new-chat destinations and modes.
 
 ### Routing a created chat onto a specific provider (TASK-32874)
 
-`fork_chat` and `new_chat` accept two OPTIONAL routing argument groups;
-without them the new chat uses your normal defaults (nothing changes from
-the base behavior):
+`fork_chat` and `new_chat` accept two optional routing argument groups.
+A fresh `new_chat` uses destination defaults as its base, including when an
+override omits the provider or model. Fork routing keeps its existing source
+settings as the base. With no routing arguments, each tool follows its normal
+creation behavior:
 
 - `preset` — the name of a routed agent preset (Settings > Agents); the
-  new chat starts on that preset's provider/model. Presets are
-  user-authored, so this is always available when routed presets exist.
+  new chat uses that preset's provider/model and configured generation
+  parameters. Presets are user-authored, so this is available when routed
+  presets exist. Routing does not copy the preset's persona or instructions.
 - `provider` / `model` — ad-hoc target selection. These are
   model-generated and therefore gated exactly like `spawn_subagent`
   overrides: they require `[agents] spawn_override_enabled = true` AND the
@@ -2033,6 +2189,15 @@ extra tools the agent can call. The Inspector's **MCP** row (under Tools)
 shows their state: "N tools ready", or "N servers enabled, not connected" when
 servers are configured but unreachable. MCP tool calls go through the same
 "Approval required" card as everything else.
+
+Some servers describe a tool's arguments with a rule at the top of the schema,
+such as "give either `id` or `name`" (`anyOf`, `oneOf`, `allOf`, `enum`,
+`const` or `not`). OpenAI and Anthropic reject any request containing such a
+schema, so Console removes those top-level rules before it sends the tool to
+the model. When the rule only says which arguments to give, Console adds it
+to the tool's description instead (for example "Argument rule: provide at
+least one of id or name."), so the model still sees it. The tool is still
+offered; checking each call it receives remains the server's job.
 
 ### Web research tools
 
@@ -2294,7 +2459,8 @@ briefing content remains Console-only.
 
 ### Stopping & leaving
 
-- **Stop** (appears next to Send while a run is active) stops **this tab's
+- **Stop** (appears at the right end of the composer row while a run is
+  active; **Ctrl+G** or `/stop` do the same) stops **this tab's
   run only** — other tabs keep going, and (with the shipped
   `[agents] subagents_outlive_turn = true`) so do this run's own
   sub-agents: Stop cancels the supervisor's turn, not its fleet — see
@@ -2534,6 +2700,20 @@ Enter). Tab-fleet keys (Ctrl+T, Alt+1…9, Ctrl+K) are covered in
   session); it then reads "Tools: N ready".
 - Tab status markers clear as soon as you visit the tab — a missing `✓` just
   means you already looked.
+- **"The provider rejected the tool definition for <tool>…"** The provider
+  checked the tools sent with your message and refused one of them before the
+  model ran, so the reply fails the same way on every model. Choosing another
+  model will not help. What the message suggests depends on the tool:
+  - A name starting `mcp__` is a tool from an MCP server: turn that server
+    off on the [MCP screen](../mcp.md), then send again.
+  - Any other name is one of Chatbook's own tools, so the rejection is a
+    Chatbook bug; please report it. If the tool's group has a switch on the
+    MCP screen (for built-in local tools, **Local workspace, web, and
+    Watchlists tools**), turning it off lets you send meanwhile.
+  - If the provider blames a tool without naming it, the message says "one
+    of the tool definitions sent with this request" and that choosing
+    another model is unlikely to help. A tool from an MCP server is the
+    likeliest cause.
 
 —
 *Verified against dev @ ff435772c — 2026-07-31. Named agents section added

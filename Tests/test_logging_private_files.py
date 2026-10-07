@@ -34,16 +34,22 @@ def _select_log_name(
         config,
         "get_cli_setting",
         lambda section, key, default=None: (
-            selected_name
-            if section == "logging" and key == "log_filename"
-            else default
+            selected_name if section == "logging" and key == "log_filename" else default
         ),
     )
 
 
 @pytest.mark.parametrize(
     "selected_name",
-    ["", " ", ".", "..", "../outside/escape.log", "nested/escape.log", r"nested\escape.log"],
+    [
+        "",
+        " ",
+        ".",
+        "..",
+        "../outside/escape.log",
+        "nested/escape.log",
+        r"nested\escape.log",
+    ],
 )
 def test_log_filename_rejects_non_basename_values_without_creating_parents(
     monkeypatch: pytest.MonkeyPatch,
@@ -178,8 +184,7 @@ def test_unsafe_file_sink_is_omitted_without_removing_other_handlers(
     assert installed is False
     assert collecting in logger.handlers
     assert not any(
-        isinstance(handler, PrivateRotatingFileHandler)
-        for handler in logger.handlers
+        isinstance(handler, PrivateRotatingFileHandler) for handler in logger.handlers
     )
     assert outside.read_text(encoding="utf-8") == "preserve"
     assert collecting.messages
@@ -357,9 +362,7 @@ def test_file_sink_redacts_secret_shapes_before_they_reach_disk(
 ) -> None:
     """AC-1/AC-3: each shape is written to disk through the real sink, redacted."""
 
-    logging.getLogger("tldw_chatbook.tests.sink").info(
-        message, extra=_METADATA_MARKED
-    )
+    logging.getLogger("tldw_chatbook.tests.sink").info(message, extra=_METADATA_MARKED)
 
     written = _read_sink(private_sink)
 
@@ -396,9 +399,7 @@ def test_file_sink_leaves_secret_free_records_intact(private_sink: Path) -> None
     written" assertion above would still be green.
     """
     message = "ordinary startup record with no credential in it"
-    logging.getLogger("tldw_chatbook.tests.sink").info(
-        message, extra=_METADATA_MARKED
-    )
+    logging.getLogger("tldw_chatbook.tests.sink").info(message, extra=_METADATA_MARKED)
 
     written = _read_sink(private_sink)
 

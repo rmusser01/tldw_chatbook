@@ -81,12 +81,20 @@ def normalize_probe_provider_key(provider: object) -> str:
 
 
 def connect_error_is_refused(error: BaseException) -> bool:
-    """Return whether an exception chain contains ECONNREFUSED."""
+    """Return whether an exception chain contains ECONNREFUSED.
+
+    A host name with several addresses (``localhost`` is ::1 and 127.0.0.1)
+    fails as an exception group of per-address errors; those count too.
+    """
     current: BaseException | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         if isinstance(current, OSError) and current.errno == errno.ECONNREFUSED:
+            return True
+        if isinstance(current, BaseExceptionGroup) and any(
+            connect_error_is_refused(inner) for inner in current.exceptions
+        ):
             return True
         current = current.__cause__ or current.__context__
     return False

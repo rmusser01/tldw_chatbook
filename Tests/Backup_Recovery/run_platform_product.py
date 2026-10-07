@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import importlib.metadata
 import json
 import os
@@ -15,8 +16,11 @@ import struct
 import subprocess  # nosec B404 - fixed local commands and arguments only
 import sys
 import tarfile
-from collections.abc import Iterable
+import tempfile
+from collections.abc import Iterable, Mapping
+from contextlib import closing
 from pathlib import Path
+from uuid import uuid4
 
 from defusedxml import ElementTree as ET
 
@@ -222,6 +226,12 @@ _SELECTABLE_GROUP_TESTS = (
     "Tests/UI/test_backup_data_groups.py",
 )
 _PRODUCT_SELECTIONS = {
+    "native-credentials-source": (
+        "Tests/ProductionApp/test_native_credential_recovery.py::test_native_credential_source",
+    ),
+    "native-credentials-destination": (
+        "Tests/ProductionApp/test_native_credential_recovery.py::test_native_credential_destinations",
+    ),
     "full": (
         *_PRODUCT_TESTS,
         "Tests/Backup_Recovery/test_default_service_replacement.py",
@@ -238,6 +248,31 @@ _PRODUCT_SELECTIONS = {
     "plain": _RESTORE_DIAGNOSTIC_TESTS,
     "qodo-review": (
         _PRODUCT_TESTS[1] + "[plain]",
+        "Tests/RuntimePolicy/test_server_credentials.py",
+        "Tests/RuntimePolicy/test_server_credentials_lane_a.py",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_run_refuses_missing_transfer_root_before_effects",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_child_deadline_preserves_failure_and_discards_output",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_child_canary_streams_are_never_persisted_or_exported",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_child_environment_preserves_backend_and_bus",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_mac_child_selects_private_keychain_with_exact_home",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_pytest_child_keeps_environment_and_publishes_no_raw_logs",
+        "Tests/Backup_Recovery/test_native_credential_runner.py::test_native_child_thread_samples_publish_only_safe_late_frames",
+        "Tests/Backup_Recovery/test_thread_diagnostics.py",
+        "Tests/Backup_Recovery/test_activation_mcp_remote.py",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_only_windows_reviewed_instance_lock_is_observed_without_body_read",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_malformed_instance_lock_declarations_keep_the_body_hash",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_windows_ordinary_and_sqlite_files_keep_exact_byte_hashes",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_windows_instance_lock_keeps_native_drift_refusal",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_windows_instance_lock_checks_pinned_before_named_and_after_state",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_windows_preserved_lock_uses_reviewed_config_after_publication",
+        "Tests/Backup_Recovery/test_restore_plan.py::test_windows_instance_observation_binds_mode_without_normalizing_it",
+        "Tests/Backup_Recovery/test_credential_profile_scopes.py",
+        "Tests/Backup_Recovery/test_preserved_absent_scope.py",
+        "Tests/Backup_Recovery/test_publication_finalization.py::test_pending_checks_do_not_repeat_held_namespace_overlap",
+        "Tests/Backup_Recovery/test_builtin_later_snapshot.py::test_shared_legacy_later_preview_retains_authenticated_member_dependencies",
+        "Tests/Backup_Recovery/test_builtin_later_snapshot.py::test_shared_builtin_later_preview_and_execution_preserve_both_profile_trees",
+        "Tests/Backup_Recovery/test_builtin_later_snapshot.py::test_legacy_snapshot_alias_root_accepts_only_authenticated_own_member_removal",
+        "Tests/Backup_Recovery/test_builtin_later_snapshot.py::test_legacy_snapshot_alias_root_refuses_other_dependency_changes",
         "Tests/Backup_Recovery/test_credentials.py::test_excluded_url_credentials_are_removed_from_staged_config",
         "Tests/Backup_Recovery/test_credentials.py::test_config_secret_is_removed_without_mutating_source",
         "Tests/Backup_Recovery/test_credentials.py::test_staged_current_and_history_leave_source_untouched",
@@ -350,6 +385,151 @@ _ALLOWED_ENVIRONMENT = frozenset(
         "WINDIR",
     }
 )
+_NATIVE_CREDENTIAL_BACKENDS = {
+    "Darwin": "keyring.backends.macOS.Keyring",
+    "Linux": "keyring.backends.SecretService.Keyring",
+    "Windows": "keyring.backends.Windows.WinVaultKeyring",
+}
+_NATIVE_CREDENTIAL_ENVIRONMENT = (
+    "PYTHON_KEYRING_BACKEND",
+    "TLDW_NATIVE_CREDENTIAL_ROOT",
+    "TLDW_NATIVE_MAC_KEYCHAIN",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "KEYRING_PROPERTY_PREFERRED_COLLECTION",
+    "TLDW_CREDENTIAL_TRANSFER_ROOT",
+    "RUNNER_ENVIRONMENT",
+    "RUNNER_OS",
+)
+_LINUX_CREDENTIAL_COLLECTION = "/org/freedesktop/secrets/collection/login"
+_NATIVE_SQLITE_OWNERS = frozenset(
+    {
+        "db.chachanotes.primary",
+        "chat.attachments",
+        "notes.sync_bindings",
+        "notes.file_notes",
+        "study.local",
+        "quiz.local",
+        "recovered.media",
+    }
+)
+_NATIVE_SQLITE_ISSUES = frozenset(
+    {
+        "cancelled",
+        "invalid_domain_reference",
+        "invalid_managed_membership",
+        "invalid_recovered_asset",
+        "invalid_recovered_reference",
+        "invalid_recovered_tombstone",
+        "invalid_sqlite_integrity",
+        "missing_required_asset",
+        "recovered_operation_pending",
+        "sqlite_resource_limit",
+        "sqlite_security_unavailable",
+        "sqlite_validation_unavailable",
+        "unsupported_domain_reference",
+        "unsupported_schema",
+        "unsupported_schema_policy",
+        "unsupported_schema_version",
+        "unsupported_sqlite_owner",
+    }
+)
+_NATIVE_INVENTORY_ISSUES = frozenset(
+    {
+        "unsupported_owner",
+        "invalid_status",
+        "unsupported",
+        "unavailable",
+        "missing_required",
+        "duplicate_logical_id",
+        "unvalidated_deletion",
+        "missing_identity",
+        "unsupported_path_kind",
+        "undeclared_alias",
+        "shared_identity_mismatch",
+        "overlapping_owner_roots",
+        "dependency_unavailable",
+        "config_parse_failure",
+        "config_discovery_failure",
+        "invalid_shared_declaration",
+        "shared_identity_unavailable",
+    }
+)
+
+
+def validate_native_credential_environment() -> str:
+    """Refuse personal stores, fallback backends and foreign SecretService buses.
+
+    This check performs no credential writes and never creates or unlocks a
+    collection. Call it in every fixture-writing process before native access.
+    """
+    environment = os.environ
+    system = platform.system()
+    expected = _NATIVE_CREDENTIAL_BACKENDS.get(system)
+    if expected is None or environment.get("PYTHON_KEYRING_BACKEND") != expected:
+        raise RuntimeError("native_credential_backend_selection_required")
+    if system == "Linux":
+        root_value = environment.get("TLDW_NATIVE_CREDENTIAL_ROOT", "")
+        root = Path(root_value)
+        if not root_value or not root.is_absolute() or root.resolve() != root:
+            raise RuntimeError("native_credential_private_session_required")
+        info = root.lstat()
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) != 0o700
+        ):
+            raise RuntimeError("native_credential_session_not_private")
+        address = environment.get("DBUS_SESSION_BUS_ADDRESS", "")
+        if not re.fullmatch(
+            re.escape(f"unix:path={root / 'bus'}") + r"(?:,guid=[0-9a-f]{32})?",
+            address,
+        ):
+            raise RuntimeError("native_credential_foreign_session_bus")
+        bus = (root / "bus").lstat()
+        if not stat.S_ISSOCK(bus.st_mode) or bus.st_uid != os.getuid():
+            raise RuntimeError("native_credential_foreign_session_socket")
+        if (
+            environment.get("KEYRING_PROPERTY_PREFERRED_COLLECTION")
+            != _LINUX_CREDENTIAL_COLLECTION
+        ):
+            raise RuntimeError("native_credential_private_collection_required")
+        import secretstorage
+        from jeepney.bus_messages import message_bus
+
+        with closing(secretstorage.dbus_init()) as connection:
+            # A collection query can auto-activate another daemon before the
+            # explicitly unlocked private daemon has finished starting.
+            owner = connection.send_and_get_reply(
+                message_bus.NameHasOwner("org.freedesktop.secrets")
+            )
+            if len(owner.body) != 1 or owner.body[0] is not True:
+                raise RuntimeError("native_credential_service_not_running")
+            collection = secretstorage.Collection(
+                connection, _LINUX_CREDENTIAL_COLLECTION
+            )
+            if collection.is_locked():
+                raise RuntimeError("native_credential_session_locked")
+    elif not (
+        environment.get("GITHUB_ACTIONS") == "true"
+        and environment.get("RUNNER_ENVIRONMENT") == "github-hosted"
+        and environment.get("RUNNER_OS")
+        == {"Darwin": "macOS", "Windows": "Windows"}[system]
+    ):
+        raise RuntimeError("native_credential_disposable_runner_required")
+
+    import keyring
+
+    module, name = expected.rsplit(".", 1)
+    backend = keyring.get_keyring()
+    if type(backend) is not getattr(importlib.import_module(module), name):
+        raise RuntimeError("native_credential_fallback_backend_refused")
+    if backend.priority <= 0:
+        raise RuntimeError("native_credential_backend_unavailable")
+    if system == "Linux" and (
+        getattr(backend, "preferred_collection", None) != _LINUX_CREDENTIAL_COLLECTION
+    ):
+        raise RuntimeError("native_credential_collection_continuity_lost")
+    return expected
 
 
 def _sha256(path: Path) -> str:
@@ -363,10 +543,17 @@ def _sha256(path: Path) -> str:
 
 def _write_json(path: Path, value: object) -> None:
     """Write one deterministic JSON receipt."""
-    path.write_text(
-        json.dumps(value, indent=2, sort_keys=True, default=str) + "\n",
-        encoding="utf-8",
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=f".{path.name}-", suffix=".tmp", dir=path.parent
     )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            output.write(
+                json.dumps(value, indent=2, sort_keys=True, default=str) + "\n"
+            )
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def _run_git(workspace: Path, *arguments: str) -> str:
@@ -637,7 +824,9 @@ def _windows_ancestor_receipt(workspace: Path, private_root: Path) -> dict[str, 
     return receipt
 
 
-def _private_environment(workspace: Path, private_root: Path) -> dict[str, str]:
+def _private_environment(
+    workspace: Path, private_root: Path, *, native_credentials: bool = False
+) -> dict[str, str]:
     """Build a credential-free, offline environment rooted below runner temp."""
     environment = {
         key: value
@@ -680,6 +869,15 @@ def _private_environment(workspace: Path, private_root: Path) -> dict[str, str]:
         HF_HUB_DISABLE_TELEMETRY="1",
         TRANSFORMERS_OFFLINE="1",
     )
+    if native_credentials:
+        validate_native_credential_environment()
+        environment.update(
+            {
+                name: os.environ[name]
+                for name in _NATIVE_CREDENTIAL_ENVIRONMENT
+                if name in os.environ
+            }
+        )
     return environment
 
 
@@ -711,9 +909,7 @@ def _sanitize_file(
                 path_value.replace("\\", "/"),
                 path_value.replace("/", "\\"),
             }
-            variants.update(
-                value.replace("\\", "\\\\") for value in tuple(variants)
-            )
+            variants.update(value.replace("\\", "\\\\") for value in tuple(variants))
             for value in sorted(variants, key=len, reverse=True):
                 content = content.replace(value, replacement)
     destination.write_text(
@@ -742,6 +938,340 @@ def _junit_result(path: Path) -> dict[str, object]:
     return {"collected": len(cases), "skipped": skipped, "failed": failed}
 
 
+def _native_failure_metadata(record: Mapping[str, object]) -> dict[str, object]:
+    """Project strictly bounded exception/code metadata, never messages or locals."""
+    kind, frames = record["error_class"], record["frames"]
+    if (
+        not isinstance(kind, str)
+        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", kind)
+        or not isinstance(frames, list)
+        or len(frames) > 64
+    ):
+        raise RuntimeError("unsafe_native_failure_metadata")
+    projected = []
+    for frame in frames:
+        filename, function, line = frame["file"], frame["function"], frame["line"]
+        if (
+            not isinstance(filename, str)
+            or not re.fullmatch(
+                r"[A-Za-z0-9_.-]{1,125}\.py|<(?:string|stdin)>|<frozen [A-Za-z_][A-Za-z0-9_.]{0,99}>",
+                filename,
+            )
+            or not isinstance(function, str)
+            or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]{0,127}|<(?:module|lambda|genexpr|listcomp|dictcomp|setcomp)>",
+                function,
+            )
+            or type(line) is not int
+            or not 1 <= line <= 1_000_000
+        ):
+            raise RuntimeError("unsafe_native_failure_frame")
+        projected.append({"file": filename, "function": function, "line": line})
+    result = {"error_class": kind, "frames": projected}
+    for field, allowed in (("errno", {13}), ("winerror", {5, 32, 33})):
+        value = record.get(field)
+        if type(value) is int and value in allowed:
+            result[field] = value
+    target_kind = record.get("target_kind")
+    if isinstance(target_kind, str) and target_kind in {
+        "declared_shm",
+        "declared_wal",
+        "declared_main",
+        "declared_instance_lock",
+        "other",
+        "ambiguous",
+    }:
+        result["target_kind"] = target_kind
+    if "issue" in record:
+        from tldw_chatbook.Backup_Recovery.recovery_service import issue_code
+
+        issue = record["issue"]
+        result["issue"] = (
+            issue
+            if isinstance(issue, str)
+            and issue
+            in {
+                "cancelled",
+                "review_required",
+                "compression_review_required",
+                "encryption_unavailable",
+                "encryption_failed",
+            }
+            else issue_code(ValueError(issue))
+        )
+    for field, allowed in (
+        ("sqlite_owner", _NATIVE_SQLITE_OWNERS),
+        ("sqlite_issue", _NATIVE_SQLITE_ISSUES),
+    ):
+        value = record.get(field)
+        if isinstance(value, str) and value in allowed:
+            result[field] = value
+    inventory = record.get("inventory")
+    if isinstance(inventory, Mapping):
+        from tldw_chatbook.Backup_Recovery.data_groups import group_for_owner
+        from tldw_chatbook.Backup_Recovery.inventory import BLOCKING
+
+        issues = inventory.get("issues", ())
+        issues = (
+            {
+                value
+                for value in issues
+                if isinstance(value, str) and value in _NATIVE_INVENTORY_ISSUES
+            }
+            if isinstance(issues, (list, tuple))
+            else set()
+        )
+        blocking = set()
+        rows = inventory.get("blocking", ())
+        for row in rows if isinstance(rows, (list, tuple)) else ():
+            if not isinstance(row, Mapping):
+                continue
+            owner, status = row.get("owner"), row.get("status")
+            if (
+                isinstance(owner, str)
+                and isinstance(status, str)
+                and (
+                    group_for_owner(owner) is not None
+                    or owner in {"unknown", "sqlite.transient"}
+                )
+                and status in BLOCKING
+            ):
+                blocking.add((owner, status))
+        result["inventory"] = {
+            "issues": sorted(issues)[:32],
+            "blocking": [
+                {"owner": owner, "status": status}
+                for owner, status in sorted(blocking)[:64]
+            ],
+        }
+    return result
+
+
+def _record_native_failure(
+    root: Path, error: BaseException, *, metadata: Mapping[str, object] | None = None
+) -> None:
+    """Record metadata without allowing an observation error to mask the failure."""
+    try:
+        from Tests.Backup_Recovery.thread_diagnostics import _error_metadata
+        from tldw_chatbook.Backup_Recovery.recovery_service import issue_code
+
+        optional = dict(metadata or {})
+        optional.pop("target_kind", None)
+        try:
+            from tldw_chatbook.Backup_Recovery import archive_reader, restore_plan
+            from tldw_chatbook.Backup_Recovery.capture import _item_validator
+            from tldw_chatbook.Backup_Recovery.config_adapter import _InstanceLock
+            from tldw_chatbook.Backup_Recovery.models import Inventory
+            from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+            from tldw_chatbook.Backup_Recovery.publication import _sidecar_main
+
+            trace = error.__traceback__ if isinstance(error, OSError) else None
+            for _ in range(64):
+                if trace is None:
+                    break
+                observed = trace.tb_next
+                hashed = observed.tb_next if observed is not None else None
+                if (
+                    trace.tb_frame.f_code is restore_plan._fingerprint.__code__
+                    and observed is not None
+                    and observed.tb_frame.f_code is restore_plan._observed.__code__
+                    and hashed is not None
+                    and hashed.tb_frame.f_code is archive_reader._hash.__code__
+                    and hashed.tb_next is None
+                ):
+                    path = trace.tb_frame.f_locals.get("path")
+                    target = trace.tb_frame.f_locals.get("target")
+                    if (
+                        isinstance(path, Path)
+                        and path == observed.tb_frame.f_locals.get("path")
+                        and path == hashed.tb_frame.f_locals.get("path")
+                        and type(target) is Inventory
+                    ):
+                        owners = {row.owner_id: row for row in install_adapters()}
+                        matches = [row for row in target.items if row.path == path]
+                        kinds, mains = set(), []
+                        for item in matches:
+                            if (
+                                sum(
+                                    row.logical_id == item.logical_id
+                                    for row in target.items
+                                )
+                                != 1
+                            ):
+                                kinds.add("ambiguous")
+                                continue
+                            if item.owner == "sqlite.transient":
+                                candidates = [
+                                    row
+                                    for row in target.items
+                                    if item.dependencies == (row.logical_id,)
+                                ]
+                                try:
+                                    main = _sidecar_main(item, target.items, owners)
+                                except ValueError:
+                                    kinds.add("ambiguous")
+                                    continue
+                                if len(candidates) != 1 or main.status != "included":
+                                    kinds.add("ambiguous")
+                                    continue
+                                kinds.add(
+                                    "declared_shm"
+                                    if path == Path(str(main.path) + "-shm")
+                                    else "declared_wal"
+                                )
+                            elif item.owner == "runtime.instance_lock":
+                                parts = item.logical_id.split(":")
+                                config_id = (
+                                    item.logical_id.removesuffix(item.owner) + "config"
+                                )
+                                configs = [
+                                    row
+                                    for row in target.items
+                                    if row.logical_id == config_id
+                                ]
+                                meta = item.metadata
+                                kinds.add(
+                                    "declared_instance_lock"
+                                    if type(owners.get(item.owner)) is _InstanceLock
+                                    and len(parts) == 3
+                                    and parts[0] == "profile"
+                                    and parts[1]
+                                    and parts[2] == item.owner
+                                    and path.name == ".instance.lock"
+                                    and item.status == "intentionally_excluded"
+                                    and item.dependencies == (config_id,)
+                                    and len(configs) == 1
+                                    and configs[0].owner == "config"
+                                    and configs[0].status == "included"
+                                    and configs[0].path is not None
+                                    and meta is not None
+                                    and (
+                                        meta.root_id,
+                                        meta.parent_id,
+                                        meta.relative_path,
+                                        meta.kind,
+                                        meta.policy,
+                                    )
+                                    == (item.logical_id, None, "", "file", "private")
+                                    else "ambiguous"
+                                )
+                                continue
+                            else:
+                                adapter = owners.get(item.owner)
+                                policy = (
+                                    _item_validator(adapter, item).schema_policy()
+                                    if adapter
+                                    else None
+                                )
+                                if (
+                                    item.status != "included"
+                                    or policy is None
+                                    or not policy.schema_sql
+                                ):
+                                    kinds.add("other")
+                                    continue
+                                main = item
+                                kinds.add("declared_main")
+                            mains.append(main)
+                        if len(mains) > 1 and not all(
+                            row.path == mains[0].path
+                            and row.shared_group
+                            and row.shared_group == mains[0].shared_group
+                            for row in mains
+                        ):
+                            kinds.add("ambiguous")
+                        optional["target_kind"] = (
+                            next(iter(kinds))
+                            if len(kinds) == 1
+                            else "ambiguous"
+                            if kinds
+                            else "other"
+                        )
+                    break
+                trace = trace.tb_next
+        except Exception:  # noqa: BLE001 - optional classification cannot hide the failure.
+            optional.pop("target_kind", None)
+        record = _native_failure_metadata(
+            {**optional, **_error_metadata(error), "issue": issue_code(error)}
+        )
+        _write_json(root / f"{os.getpid()}-{uuid4().hex}.json", record)
+    except Exception:  # noqa: BLE001 - preserve the original private failure.
+        return
+
+
+def install_native_failure_hook() -> None:
+    """Observe uncaught child failures before the product script starts."""
+    root = Path(os.environ["TLDW_NATIVE_FAILURE_ROOT"])
+    previous = sys.excepthook
+
+    def observe(kind, error, trace):
+        _record_native_failure(root, error)
+        previous(kind, error, trace)
+
+    sys.excepthook = observe
+
+
+class NativeCredentialFailures:
+    """Record outer pytest failures that never reach sys.excepthook."""
+
+    def pytest_exception_interact(self, node, call, report):
+        if call.excinfo is not None:
+            _record_native_failure(
+                Path(os.environ["TLDW_NATIVE_FAILURE_ROOT"]), call.excinfo.value
+            )
+
+
+def _publish_native_failures(private_root: Path, artifacts: Path) -> None:
+    """Revalidate private observations and publish only class and code locations."""
+    failures = []
+    for path in sorted((private_root / "native-failures").glob("*.json")):
+        if path.is_symlink():
+            raise RuntimeError("unsafe_native_failure_receipt")
+        failures.append(
+            _native_failure_metadata(json.loads(path.read_text(encoding="utf-8")))
+        )
+    children = []
+    for path in sorted(
+        (private_root / "native-failures" / "child-stacks").glob("*.json")
+    ):
+        label = re.fullmatch(
+            r"(setup|capture|transfer|rollback|negative|read|read-rollback)--(default|retargeted)--[1-9][0-9]{0,9}",
+            path.stem,
+        )
+        if path.is_symlink() or label is None:
+            raise RuntimeError("unsafe_native_child_diagnostic")
+        snapshots = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(snapshots, list):
+            raise TypeError("unsafe_native_child_samples")
+        samples = []
+        for snapshot in snapshots[-4:]:
+            if not isinstance(snapshot, list) or len(snapshot) > 32:
+                raise RuntimeError("unsafe_native_child_threads")
+            samples.append(
+                [
+                    {
+                        "frames": _native_failure_metadata(
+                            {
+                                "error_class": "ThreadSnapshot",
+                                "frames": thread["frames"],
+                            }
+                        )["frames"]
+                    }
+                    for thread in snapshot
+                ]
+            )
+        children.append({"route": label[1], "role": label[2], "samples": samples})
+    if failures or children:
+        _write_json(
+            artifacts / "native-failures.json",
+            {
+                "schema": 1,
+                "failures": failures,
+                **({"children": children} if children else {}),
+            },
+        )
+
+
 def _run_pytest_phase(
     *,
     workspace: Path,
@@ -752,6 +1282,7 @@ def _run_pytest_phase(
     tests: tuple[str, ...],
     noconftest: bool,
     timeout_seconds: int,
+    native_credentials: bool = False,
 ) -> dict[str, object]:
     """Run one fixed pytest phase and retain its sanitized log and JUnit receipt."""
     prefix = "native-" if phase == "native" else ""
@@ -763,15 +1294,34 @@ def _run_pytest_phase(
         "keyring.set_keyring(Keyring()); import pytest, sys; "
         "raise SystemExit(pytest.main(sys.argv[1:]))"
     )
+    if native_credentials:
+        failure_root = private_root / "native-failures"
+        failure_root.mkdir(mode=0o700, exist_ok=True)
+        environment = {**environment, "TLDW_NATIVE_FAILURE_ROOT": str(failure_root)}
+        (workspace / "sitecustomize.py").write_text(
+            "from Tests.Backup_Recovery.run_platform_product import install_native_failure_hook\n"
+            "install_native_failure_hook()\n",
+            encoding="utf-8",
+        )
+        bootstrap = (
+            "from Tests.network_guard import install; install(); "
+            "from Tests.Backup_Recovery.run_platform_product import "
+            "validate_native_credential_environment, NativeCredentialFailures; "
+            "validate_native_credential_environment(); import pytest, sys; "
+            "raise SystemExit(pytest.main(sys.argv[1:], plugins=[NativeCredentialFailures()]))"
+        )
     command = [sys.executable, "-c", bootstrap]
     if noconftest:
         command.append("--noconftest")
+    if environment.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD") == "1":
+        command.extend(("-p", "pytest_asyncio.plugin", "-p", "pytest_timeout"))
     command.extend(
         (
             *tests,
             "-vv",
-            "--tb=long",
-            "--timeout=2400",
+            "--tb=no" if native_credentials else "--tb=long",
+            *(("--show-capture=no",) if native_credentials else ()),
+            f"--timeout={timeout_seconds if native_credentials else 2400}",
             f"--basetemp={private_root / f'{phase}-pytest'}",
             f"--junitxml={raw_junit}",
         )
@@ -793,10 +1343,16 @@ def _run_pytest_phase(
             output.write(f"\n{phase.upper()} PYTEST PHASE TIMED OUT\n")
             pytest_returncode = 124
 
-    _sanitize_file(raw_log, artifacts / raw_log.name, private_root=private_root)
+    if native_credentials:
+        _publish_native_failures(private_root, artifacts)
+    if not native_credentials:
+        _sanitize_file(raw_log, artifacts / raw_log.name, private_root=private_root)
     junit = {"collected": 0, "skipped": [], "failed": [], "parse_error": None}
     if raw_junit.is_file():
-        _sanitize_file(raw_junit, artifacts / raw_junit.name, private_root=private_root)
+        if not native_credentials:
+            _sanitize_file(
+                raw_junit, artifacts / raw_junit.name, private_root=private_root
+            )
         try:
             junit.update(_junit_result(raw_junit))
         except (OSError, ET.ParseError) as error:
@@ -808,6 +1364,116 @@ def _run_pytest_phase(
         "pytest_returncode": pytest_returncode,
         "junit": junit,
     }
+
+
+def _native_runtime_receipt(source: Mapping[str, object]) -> dict[str, object]:
+    """Validate and project only public native runtime and artifact identity."""
+    fields = (
+        "schema",
+        "status",
+        "system",
+        "release",
+        "machine",
+        "python",
+        "backend",
+        "revision",
+        "wheel_sha256",
+    )
+    receipt = {name: source[name] for name in fields}
+    if (
+        type(receipt["schema"]) is not int
+        or receipt["schema"] != 1
+        or receipt["status"] != "passed"
+        or receipt["system"] not in _NATIVE_CREDENTIAL_BACKENDS
+        or receipt["backend"] != _NATIVE_CREDENTIAL_BACKENDS[receipt["system"]]
+    ):
+        raise RuntimeError("invalid_native_credential_runtime_receipt")
+    for name in ("release", "machine", "python"):
+        if not isinstance(receipt[name], str) or not re.fullmatch(
+            r"[A-Za-z0-9_.+()-]{1,128}", receipt[name]
+        ):
+            raise RuntimeError("invalid_native_credential_runtime_field")
+    for name, length in (("revision", 40), ("wheel_sha256", 64)):
+        if not isinstance(receipt[name], str) or not re.fullmatch(
+            rf"[0-9a-f]{{{length}}}", receipt[name]
+        ):
+            raise RuntimeError("invalid_native_credential_identity_hash")
+    return receipt
+
+
+def _publish_native_credential_artifacts(
+    transfer_root: Path, artifacts: Path, product_selection: str
+) -> int:
+    """Publish encrypted synthetic transfers and strict value-free receipts only."""
+    outbound = transfer_root / "outbound"
+    if product_selection == "native-credentials-source":
+        pending = []
+        for system in _NATIVE_CREDENTIAL_BACKENDS:
+            basename = f"source-{system.lower()}"
+            path = outbound / f"{basename}.json"
+            if not path.is_file():
+                continue
+            archive = outbound / f"{basename}.age"
+            if path.is_symlink() or archive.is_symlink() or not archive.is_file():
+                raise RuntimeError("unsafe_native_credential_transfer")
+            source = json.loads(path.read_text(encoding="utf-8"))
+            receipt = _native_runtime_receipt(source)
+            if receipt["system"] != system or source["archive"] != archive.name:
+                raise RuntimeError("native_credential_transfer_identity_mismatch")
+            digest = _sha256(archive)
+            with archive.open("rb") as stream:
+                encrypted = stream.read(22) == b"age-encryption.org/v1\n"
+            if not encrypted or source["archive_sha256"] != digest:
+                raise RuntimeError("native_credential_transfer_not_verified_encrypted")
+            receipt.update(archive=archive.name, archive_sha256=digest)
+            pending.append((archive, path, receipt))
+        for archive, path, receipt in pending:
+            shutil.copyfile(archive, artifacts / archive.name)
+            _write_json(artifacts / path.name, receipt)
+        return len(pending)
+
+    path = outbound / "destination-results.json"
+    if not path.is_file():
+        return 0
+    if path.is_symlink():
+        raise RuntimeError("unsafe_native_credential_destination_receipt")
+    source = json.loads(path.read_text(encoding="utf-8"))
+    receipt = _native_runtime_receipt(source)
+    results = []
+    for result in source["results"]:
+        source_system = result["source_system"]
+        if (
+            source_system not in _NATIVE_CREDENTIAL_BACKENDS
+            or result["destination_system"] != receipt["system"]
+            or not isinstance(result["archive_sha256"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", result["archive_sha256"])
+        ):
+            raise RuntimeError("invalid_native_credential_direction_receipt")
+        projected = {
+            name: result[name]
+            for name in ("source_system", "destination_system", "archive_sha256")
+        }
+        for name in ("isolated", "original_retained", "replacement", "rollback"):
+            if result[name] is not True:
+                raise RuntimeError("invalid_native_credential_equality_receipt")
+            projected[name] = result[name]
+        for name in ("captured", "manual_required", "unavailable"):
+            if type(result[name]) is not int or result[name] < 0:
+                raise RuntimeError("invalid_native_credential_count_receipt")
+            projected[name] = result[name]
+        if result["captured"] == 0 or result["unavailable"] != 0:
+            raise RuntimeError("native_credential_capture_not_complete")
+        results.append(projected)
+    if (
+        len(results) != 3
+        or {row["source_system"] for row in results} != set(_NATIVE_CREDENTIAL_BACKENDS)
+        or type(source["negative_checks"]) is not int
+        or source["negative_checks"] < 0
+    ):
+        raise RuntimeError("incomplete_native_credential_destination_receipt")
+    receipt.update(results=results, negative_checks=source["negative_checks"])
+    _write_json(artifacts / path.name, receipt)
+    return len(results)
 
 
 def _installed_receipts(private_root: Path) -> list[dict[str, object]]:
@@ -879,12 +1545,76 @@ def run(
 ) -> int:
     """Execute the finite qualification and retain safe failure evidence."""
     product_tests = _PRODUCT_SELECTIONS[product_selection]
+    native_credentials = product_selection.startswith("native-credentials-")
+    if native_credentials:
+        if not os.environ.get("TLDW_CREDENTIAL_TRANSFER_ROOT"):
+            raise RuntimeError("native_credential_transfer_root_required")
+        validate_native_credential_environment()
     workspace = workspace.resolve()
     evidence_root = evidence_root.resolve()
     artifacts = evidence_root / "artifacts"
     artifacts.mkdir(parents=True, exist_ok=True, mode=0o700)
     private_root = _create_private_root(evidence_root)
     source_copy, archive_sha256 = _copy_tracked_source(workspace, private_root)
+
+    if native_credentials:
+        environment = _private_environment(
+            source_copy, private_root, native_credentials=True
+        )
+        environment["TLDW_NATIVE_CREDENTIAL_REVISION"] = _run_git(
+            workspace, "rev-parse", "HEAD"
+        )
+        transfer_root = Path(environment["TLDW_CREDENTIAL_TRANSFER_ROOT"])
+        phase = _run_pytest_phase(
+            workspace=source_copy,
+            private_root=private_root,
+            artifacts=artifacts,
+            environment=environment,
+            phase="product",
+            tests=product_tests,
+            noconftest=True,
+            timeout_seconds=(
+                180 if product_selection == "native-credentials-destination" else 80
+            )
+            * 60,
+            native_credentials=True,
+        )
+        installed = _installed_receipts(private_root)
+        junit = phase["junit"]
+        failed = bool(
+            phase["pytest_returncode"]
+            or junit["parse_error"]
+            or junit["skipped"]
+            or junit["failed"]
+            or junit["collected"] < len(product_tests)
+            or not installed
+        )
+        published = 0
+        if not failed:
+            published = _publish_native_credential_artifacts(
+                transfer_root, artifacts, product_selection
+            )
+            failed = published != (
+                1 if product_selection == "native-credentials-source" else 3
+            )
+        summary = {
+            "schema": 1,
+            "product_selection": product_selection,
+            "status": "failed" if failed else "passed",
+            "revision": environment["TLDW_NATIVE_CREDENTIAL_REVISION"],
+            "source_archive_sha256": archive_sha256,
+            "backend": environment["PYTHON_KEYRING_BACKEND"],
+            "pytest_returncode": phase["pytest_returncode"],
+            "collected": junit["collected"],
+            "failed": len(junit["failed"]),
+            "skipped": len(junit["skipped"]),
+            "junit_available": junit["parse_error"] is None,
+            "installed_package_receipts": len(installed),
+            "published_directions": published,
+        }
+        _write_json(artifacts / "summary.json", summary)
+        _write_json(artifacts / "artifact-sha256.json", _artifact_hashes(artifacts))
+        return 1 if failed else 0
 
     _write_json(
         artifacts / "source-receipt.json",

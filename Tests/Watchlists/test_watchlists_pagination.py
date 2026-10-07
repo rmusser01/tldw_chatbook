@@ -75,9 +75,7 @@ def _page(
     rows = _items(ids, day=day)
     if cursor is None and has_more and rows:
         last = rows[-1]
-        cursor = WatchlistItemCursor(
-            str(last["effective_date"]), int(last["item_id"])
-        )
+        cursor = WatchlistItemCursor(str(last["effective_date"]), int(last["item_id"]))
     return WatchlistItemPage(
         items=rows,
         has_more=has_more,
@@ -160,11 +158,14 @@ async def test_next_uses_committed_watermark_and_cursor_and_deduplicates():
         }
         assert [row["item_id"] for row in screen._loaded_items] == [0]
         assert screen._items_snapshot.page_count == 2
-        assert sum(
-            row["item_id"] == 1
-            for page in screen._items_snapshot.pages
-            for row in page
-        ) == 1
+        assert (
+            sum(
+                row["item_id"] == 1
+                for page in screen._items_snapshot.pages
+                for row in page
+            )
+            == 1
+        )
 
 
 @pytest.mark.asyncio
@@ -363,7 +364,9 @@ async def test_refresh_requests_a_new_first_page_and_preserves_reader():
         controller.list_reader_items_page.reset_mock()
 
         screen.handle_refresh_items_requested(RefreshItemsRequested())
-        await _wait_until(pilot, lambda: controller.list_reader_items_page.await_count == 1)
+        await _wait_until(
+            pilot, lambda: controller.list_reader_items_page.await_count == 1
+        )
         await _wait_until(pilot, lambda: not screen._items_page_loading)
 
         kwargs = controller.list_reader_items_page.await_args.kwargs
@@ -574,9 +577,7 @@ async def test_refresh_preserves_search_authority_until_transactional_outcome(
 
         controller.list_reader_items_page.side_effect = refresh_page
         screen._supersede_items_query_intent()
-        task = asyncio.create_task(
-            screen._replace_items_snapshot(reason="refresh")
-        )
+        task = asyncio.create_task(screen._replace_items_snapshot(reason="refresh"))
         await _wait_until(pilot, entered.is_set)
 
         assert screen._items_snapshot is prior_snapshot
@@ -639,7 +640,9 @@ async def test_query_replacement_keeps_old_rows_and_reader_until_commit(
         controller.list_reader_items_page.reset_mock()
         controller.list_reader_items_page.side_effect = pending
         if reason == "filter":
-            screen.handle_items_filter_changed(ItemsFilterChanged(status_filter, search))
+            screen.handle_items_filter_changed(
+                ItemsFilterChanged(status_filter, search)
+            )
         else:
             screen._items_search_query = search
             task = asyncio.create_task(screen._replace_items_snapshot(reason="search"))
@@ -685,11 +688,14 @@ async def test_query_pin_is_cached_and_deduplicated_across_page_replay(reason):
         assert 4 in screen._items_snapshot.seen_ids
         assert await screen._load_next_items_page() is True
         assert [row["item_id"] for row in screen._loaded_items] == [2]
-        assert sum(
-            row["item_id"] == 4
-            for page in screen._items_snapshot.pages
-            for row in page
-        ) == 1
+        assert (
+            sum(
+                row["item_id"] == 4
+                for page in screen._items_snapshot.pages
+                for row in page
+            )
+            == 1
+        )
 
         controller.list_reader_items_page.reset_mock()
         assert await screen._present_cached_items_page(0) is True
@@ -730,11 +736,14 @@ async def test_full_query_pin_caches_displaced_terminal_row(reason):
         assert await screen._load_next_items_page() is True
         assert [row["item_id"] for row in screen._loaded_items] == [1]
         assert screen._items_snapshot.pending_items == ()
-        assert sum(
-            row["item_id"] == 1
-            for page in screen._items_snapshot.pages
-            for row in page
-        ) == 1
+        assert (
+            sum(
+                row["item_id"] == 1
+                for page in screen._items_snapshot.pages
+                for row in page
+            )
+            == 1
+        )
         assert await screen._load_next_items_page() is False
         assert controller.list_reader_items_page.await_count == 0
 
@@ -987,7 +996,9 @@ async def test_one_mutation_path_patches_every_cached_projection_without_query()
         assert await screen._load_next_items_page() is True
         controller.list_reader_items_page.reset_mock()
 
-        screen._patch_committed_items_after_mutation(4, status="reviewed", is_flagged=True)
+        screen._patch_committed_items_after_mutation(
+            4, status="reviewed", is_flagged=True
+        )
 
         cached = screen._items_snapshot.page(0)[0]
         assert cached["status"] == "reviewed"
@@ -1072,8 +1083,7 @@ def test_same_source_under_different_parents_has_distinct_query_identity():
     )
 
     keys = {
-        screen._items_page_key(scope=scope, status="all", search="")
-        for scope in scopes
+        screen._items_page_key(scope=scope, status="all", search="") for scope in scopes
     }
 
     assert len(keys) == len(scopes)
@@ -1102,9 +1112,7 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
         screen._wc_loaded = True
         screen._local_watchlist_count = 1
         screen._refresh_centre_header_for_scope()
-        await _wait_until(
-            pilot, lambda: bool(screen.query("#wc-watchlists-summary"))
-        )
+        await _wait_until(pilot, lambda: bool(screen.query("#wc-watchlists-summary")))
         prior_scope = screen.tree_scope
         prior_rows = screen._loaded_items
         open_item = prior_rows[0]
@@ -1123,9 +1131,7 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
         async def replacement(**_kwargs):
             entered.set()
             await release.wait()
-            return _page(
-                [9], high_water=9, snapshot_count=23, has_more=True
-            )
+            return _page([9], high_water=9, snapshot_count=23, has_more=True)
 
         controller.list_reader_items_page.reset_mock()
         controller.list_reader_items_page.side_effect = replacement
@@ -1160,14 +1166,10 @@ async def test_atomic_scope_keeps_committed_reader_until_first_page_mounts(
             result = await original_publish(*args, **kwargs)
             if kwargs.get("atomic_batch"):
                 committed_paint.update(
-                    heading=_static_text(
-                        screen.query_one("#wc-watchlists-summary")
-                    ),
+                    heading=_static_text(screen.query_one("#wc-watchlists-summary")),
                     inspector_scope=inspector.scope,
                     inspector_labels=list(inspector.breadcrumb_labels),
-                    tree_scope=screen.query_one(
-                        "#wl-tree", WatchlistTree
-                    ).active_scope,
+                    tree_scope=screen.query_one("#wl-tree", WatchlistTree).active_scope,
                     rows=[row["item_id"] for row in pane.items],
                     snapshot_count=screen._items_snapshot_count,
                     page_number=pane.page_number,
@@ -1231,9 +1233,7 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         screen._wc_loaded = True
         screen._local_watchlist_count = 1
         screen._refresh_centre_header_for_scope()
-        await _wait_until(
-            pilot, lambda: bool(screen.query("#wc-watchlists-summary"))
-        )
+        await _wait_until(pilot, lambda: bool(screen.query("#wc-watchlists-summary")))
         prior_scope = screen.tree_scope
         prior_selected_scope = screen.selected_scope
         prior_snapshot = screen._items_snapshot
@@ -1268,8 +1268,9 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         tree = screen.query_one("#wl-tree", WatchlistTree)
         await _wait_until(
             pilot,
-            lambda: "1 source"
-            in _static_text(screen.query_one("#wc-watchlists-summary")),
+            lambda: (
+                "1 source" in _static_text(screen.query_one("#wc-watchlists-summary"))
+            ),
         )
         prior_heading = _static_text(screen.query_one("#wc-watchlists-summary"))
         screen.app_instance.notify = Mock()
@@ -1311,8 +1312,7 @@ async def test_pending_scope_failure_retains_committed_scope_and_names_both():
         assert content.item is open_item
         assert content.position == prior_content_position
         screen.app_instance.notify.assert_called_once_with(
-            "Couldn't open Candidate [A] under All Unread; still showing "
-            "All Sources.",
+            "Couldn't open Candidate [A] under All Unread; still showing All Sources.",
             severity="error",
             markup=False,
         )
@@ -1467,9 +1467,7 @@ async def test_pending_scope_only_newest_request_can_publish():
             kind="source", source_id=9, parent_context="unread"
         )
         releases["unread"].set()
-        await _wait_until(
-            pilot, lambda: screen.tree_scope.parent_context == "unread"
-        )
+        await _wait_until(pilot, lambda: screen.tree_scope.parent_context == "unread")
         assert returned == ["unread"]
         assert screen._pending_tree_scope is None
         assert screen.tree_scope == TreeScope(

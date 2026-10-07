@@ -78,11 +78,9 @@ async def test_consolidated_dialog_actions_keep_focus_and_cancel(
             await pilot.pause()
             control.disabled = False
             await pilot.pause()
-        if kind == "markdown":
-            # This existing dialog exposes Cancel but has no Escape binding.
-            await pilot.click("#console-save-markdown-cancel")
-        else:
-            await pilot.press("escape")
+        # TASK-33621.12: the markdown prompt used to be the one dialog here
+        # without an Escape binding, so this test clicked its Cancel instead.
+        await pilot.press("escape")
         await pilot.pause()
         assert modal not in app.screen_stack
         assert result == [None]

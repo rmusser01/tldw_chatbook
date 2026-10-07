@@ -1,0 +1,115 @@
+{
+  "tested_source": "ba3831f6e46218fabe0a24635c8e917b22287e0d",
+  "dev_base": "5980da9c12aa8257db2b3176bd5962b6b6ce00db",
+  "buddy_cases_passed": 16,
+  "mcp_provider_and_character_wiring_cases_passed": 96,
+  "incoming_character_boundary_cases_included": 9,
+  "mcp_toast_regression_cases_passed": 1,
+  "combined_cases_passed": 113,
+  "elapsed_seconds": 64.77,
+  "preflight_guards_passed": 11,
+  "reviewed_patches_preserved": 8,
+  "all_patches_identical": true,
+  "full_suite_run": false,
+  "paid_provider_calls": false,
+  "log_sha256": "4fc06834e43187a50842596e01a4bc5abb40ccbf92df6b045e15ec7323b151b7",
+  "preflight_log_sha256": "48a7e70be9ce3535b7457bb830f85382a32287d733c002ed0c44ccba3f747f5b",
+  "profiles": {
+    "fresh": {
+      "profile": "fresh",
+      "headless": true,
+      "workspace_explicit_none": true,
+      "workspace_explicit_none_before": false,
+      "workspace_explicit_none_after": true,
+      "schema_version": 73,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "source_commit": "ba3831f6e46218fabe0a24635c8e917b22287e0d",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        }
+      }
+    },
+    "upgrade": {
+      "profile": "upgrade",
+      "headless": true,
+      "workspace_explicit_none": true,
+      "workspace_explicit_none_before": false,
+      "workspace_explicit_none_after": true,
+      "schema_version": 73,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "source_commit": "ba3831f6e46218fabe0a24635c8e917b22287e0d",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1",
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        }
+      }
+    }
+  },
+  "profile_receipt_sha256": {
+    "fresh": "408d929864cfe68f8965dd7647d310a56a9da34ddd95d3c24a5bb44537c623e5",
+    "upgrade": "cfc23a4e6bbf918d192e176de22e7b16a7aba845999664873a514ff0c390dd53"
+  }
+}

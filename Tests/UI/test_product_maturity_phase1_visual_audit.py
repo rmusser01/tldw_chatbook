@@ -7,11 +7,11 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
 
 import pytest
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import (
     MainNavigationBar,
@@ -209,7 +209,9 @@ async def _assert_visual_snapshot_is_healthy(
     app: "TldwCli", destination_id: str, size_label: str, pilot
 ) -> None:
     nav_bar = app.screen.query_one(MainNavigationBar)
-    nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(".nav-button"))
+    nav_ids = tuple(
+        button.id.removeprefix("nav-") for button in nav_bar.query(".nav-button")
+    )
     assert nav_ids == TOP_LEVEL_DESTINATION_IDS
     assert nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active")
     overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)
@@ -242,7 +244,7 @@ async def test_clean_run_top_level_visual_snapshots_survive_terminal_size(
 ) -> None:
     app = _build_clean_visual_audit_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
             _initial_screen_name, initial_tab, initial_screen_class = (
                 app._resolve_screen_navigation_target("home")

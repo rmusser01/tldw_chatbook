@@ -261,7 +261,9 @@ class VirtualizedRawContent(ScrollView):
         if self.wrap_index is None:
             return
         # ds-runtime: wrapped document rows bounded by the measured parent region
-        self.set_styles(height=min(self.wrap_index.virtual_height, self._visible_row_cap()))
+        self.set_styles(
+            height=min(self.wrap_index.virtual_height, self._visible_row_cap())
+        )
 
     def sync_search(self, query: str, match_index: int) -> None:
         """Restyle the visible rows for a new query or active match.

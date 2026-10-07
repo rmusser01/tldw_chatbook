@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 from textual.widgets import Button, Checkbox, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 
@@ -152,7 +153,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
     app._initial_tab_value = "home"
 
     with (
-        patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting),
+        patch_app_global("get_cli_setting", side_effect=_test_cli_setting),
         patch("tldw_chatbook.config.get_cli_setting", side_effect=_test_cli_setting),
     ):
         async with app.run_test(size=(180, 50)) as pilot:
@@ -164,7 +165,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
                 ),
             )
             home_text = _screen_text(app)
-            assert "Model: Blocked" in home_text
+            assert "Model: Not set up" in home_text
             assert "RAG: Missing sources" in home_text
             assert "Set up Console model" in home_text
             assert "Console needs a working model before live AI tasks." in home_text
@@ -216,8 +217,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             # enumerate what the screen manages).
             assert (
                 "MCP (Model Context Protocol) lets chatbook use external "
-                "tools — most people never need to change anything here."
-                in mcp_text
+                "tools — most people never need to change anything here." in mcp_text
             )
             assert "scoped tools" not in mcp_text
             assert (
@@ -306,7 +306,8 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             # landing copy is the surviving empty/no-source cue (design: the
             # canvas empty state carries the landing-page guidance).
             assert (
-                "Search everything, pick a section, or add something new." in library_text
+                "Search everything, pick a section, or add something new."
+                in library_text
             )
 
 

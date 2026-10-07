@@ -504,6 +504,7 @@ def normalize_prompt_list(
     payload: Any, *, backend: str, page: int = 1, per_page: int = 10
 ) -> dict[str, Any]:
     """Normalize paginated prompt list responses from local DBs or the server API."""
+
     def page_int(value: Any, *, field: str) -> int:
         if isinstance(value, bool) or not isinstance(value, (int, str)):
             raise TypeError(f"{field} must be an integer.")

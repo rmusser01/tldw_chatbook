@@ -111,7 +111,15 @@ Within an interview, **Skip** skips only the current question. **Cancel** opens
 **Leave interview**: choose **Continue interview** to return, **Keep draft** to
 exit and retain the encrypted draft, or **Discard draft** to exit and destroy
 its draft key. A memory-only interview cannot be kept, so it offers only
-continue or discard. You may also finish early. The draft and transcript objects
+continue or discard, and **Ctrl+Q** during one asks **Discard interview and
+quit?** first (**Continue interview** returns to it). Once you have chosen
+**Discard draft**, or a draft cleanup is running, Ctrl+Q does not ask again: it
+says the interview is still being discarded (or cleaned up) and stays open;
+press it again once the interview has closed (pressed again before that, it asks
+**Quit while still working?**; **Wait** stays). An encrypted draft
+already holds your submitted answers, so quitting keeps it without asking;
+text typed but not yet submitted is not kept, the same as **Keep draft**. You may also
+finish early. The draft and transcript objects
 are local and are not Personal Context Sync payloads. Adaptive requests still
 send the material described above to the configured provider. Drafts expire
 after 30 days and are destroyed after a successful final review. If protected

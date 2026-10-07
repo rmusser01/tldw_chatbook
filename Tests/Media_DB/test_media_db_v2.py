@@ -254,9 +254,8 @@ def test_permanent_delete_success_logs_only_fixed_metadata(tmp_path, caplog):
             "Media mutation operation=permanent_delete status=started count=1",
             "Media mutation operation=permanent_delete status=committed count=1",
         )
-        assert (
-            "Media FTS mutation operation=delete status=committed count=1"
-            in tuple(record.getMessage() for record in caplog.records)
+        assert "Media FTS mutation operation=delete status=committed count=1" in tuple(
+            record.getMessage() for record in caplog.records
         )
     finally:
         db.close_connection()
@@ -347,14 +346,13 @@ def test_permanent_delete_fts_failure_logs_categories_without_private_values(
                 assert sql == "DELETE FROM media_fts WHERE rowid = ?"
                 assert params == (target_id,)
                 reached_fts_sink.append(target_id)
-                raise sqlite3.OperationalError(
-                    f"{private_exception} | {private_sql}"
-                )
+                raise sqlite3.OperationalError(f"{private_exception} | {private_sql}")
 
         def fail_after_media_delete(conn, media_id):
-            assert conn.execute(
-                "SELECT 1 FROM Media WHERE id = ?", (media_id,)
-            ).fetchone() is None
+            assert (
+                conn.execute("SELECT 1 FROM Media WHERE id = ?", (media_id,)).fetchone()
+                is None
+            )
             return original_delete_fts(_FailingFTSConnection(), media_id)
 
         db._delete_fts_media = fail_after_media_delete
@@ -853,8 +851,7 @@ class TestDatabaseCRUDAndSync:
             for absent_table in ("ReadingProgress", "MediaReadItLaterState"):
                 assert (
                     old_db.execute_query(
-                        "SELECT 1 FROM sqlite_master "
-                        "WHERE type = 'table' AND name = ?",
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
                         (absent_table,),
                     ).fetchone()
                     is None
@@ -997,9 +994,7 @@ class TestDatabaseCRUDAndSync:
         conn = sqlite3.connect(path)
         conn.row_factory = sqlite3.Row
         try:
-            assert conn.execute(
-                "SELECT version FROM schema_version"
-            ).fetchone()[0] == 1
+            assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 1
             assert (
                 conn.execute(
                     "SELECT 1 FROM sqlite_master "
@@ -1062,16 +1057,12 @@ class TestDatabaseCRUDAndSync:
             if operation == "delete":
                 hard_delete_events += 1
                 if hard_delete_events == 2:
-                    raise sqlite3.OperationalError(
-                        "injected hard-delete audit failure"
-                    )
+                    raise sqlite3.OperationalError("injected hard-delete audit failure")
             return original_log_sync_event(
                 conn, entity, entity_uuid, operation, version, payload
             )
 
-        monkeypatch.setattr(
-            db_instance, "_log_sync_event", fail_final_audit_event
-        )
+        monkeypatch.setattr(db_instance, "_log_sync_event", fail_final_audit_event)
 
         with pytest.raises(DatabaseError, match="Failed to perform hard deletion"):
             db_instance.hard_delete_old_media(days_old=-1)
@@ -1282,9 +1273,7 @@ class TestReimportAfterTrash:
         )
         assert cursor.fetchone()[0] == 1
 
-    def test_reimport_identical_content_at_new_url_canonicalizes_url(
-        self, file_db
-    ):
+    def test_reimport_identical_content_at_new_url_canonicalizes_url(self, file_db):
         """Review round 1 (Important #1): the identical-content restore path
         (A.1.a, metadata-only update) must ALSO canonicalize ``url`` to the
         just-imported path, not just reset ``is_trash``/``trash_date``.
@@ -1390,9 +1379,7 @@ class TestRestoreTrashedIsOptIn:
         row = file_db.get_media_by_id(media_id, include_trash=True)
         assert row["is_trash"] == 1, "a non-opted-in caller must not restore the row"
 
-    def test_default_restore_trashed_leaves_content_hash_match_untouched(
-        self, file_db
-    ):
+    def test_default_restore_trashed_leaves_content_hash_match_untouched(self, file_db):
         """Mirrors I1(b)/I1(c): a caller that only ever matches by content
         hash (no url leg, or a url leg that missed) must not resurrect a
         trashed row either, when it doesn't opt in."""
@@ -1800,9 +1787,7 @@ class TestReimportAfterTrashKeywords:
     is ``[]`` either way); this class now covers all three: not supplied
     (preserve), non-empty (apply), and explicit empty (clear)."""
 
-    def test_restore_with_keywords_omitted_preserves_existing_keywords(
-        self, file_db
-    ):
+    def test_restore_with_keywords_omitted_preserves_existing_keywords(self, file_db):
         url = "file:///keywords/preserve.txt"
         media_id, _, _ = file_db.add_media_with_keywords(
             title="preserve.txt",
@@ -1986,9 +1971,7 @@ class TestReimportAfterTrashCombined:
     reversal) all at once, where the per-finding tests above each isolate
     a single dimension."""
 
-    def test_restore_with_chunks_keywords_and_canonical_url_all_at_once(
-        self, file_db
-    ):
+    def test_restore_with_chunks_keywords_and_canonical_url_all_at_once(self, file_db):
         canonical_url = "https://example.com/deep-dive"
         content = "identical bytes for the combined C1+I2+I3 regression"
         media_id, _, _ = file_db.add_media_with_keywords(

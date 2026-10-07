@@ -100,8 +100,7 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
     _THRESHOLD_GUIDANCE: dict[str, tuple[str, str]] = {
         "no_items": (
             "Not used",
-            "Not used for this condition -- it fires whenever a run yields "
-            "zero items.",
+            "Not used for this condition -- it fires whenever a run yields zero items.",
         ),
         "error_rate_above": (
             "0.5 = 50%",
@@ -302,9 +301,13 @@ class RulesPane(RecomposeCaptureGuard, Vertical):
         if not name:
             self.app.notify("Rule name is required.", severity="error")
             return
-        condition_type = str(self.query_one("#rules-create-condition", Select).value or "no_items")
+        condition_type = str(
+            self.query_one("#rules-create-condition", Select).value or "no_items"
+        )
         threshold_text = self.query_one("#rules-create-threshold", Input).value.strip()
-        severity = str(self.query_one("#rules-create-severity", Select).value or "warning")
+        severity = str(
+            self.query_one("#rules-create-severity", Select).value or "warning"
+        )
         enabled = self.query_one("#rules-create-enabled", Switch).value
         condition_value: dict[str, Any] = {}
         if threshold_text:

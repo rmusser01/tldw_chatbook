@@ -142,6 +142,7 @@ from typing import Any, Dict, Iterable, TYPE_CHECKING
 
 import re
 import time
+from types import SimpleNamespace
 from time import monotonic as _run_log_clock
 
 from loguru import logger
@@ -431,6 +432,9 @@ def console_turn_activity_text(
     children: Sequence[Any] = (),
     pending_approval: bool = False,
     pending_copy: str = "",
+    turn_started_at: float | None = None,
+    self_hosted: bool = False,
+    reply_streaming: bool = False,
 ) -> str:
     """Return the live activity line for one in-flight Console turn.
 
@@ -501,6 +505,12 @@ def console_turn_activity_text(
         pending_approval: Whether an approval-like round is outstanding for
             this session (``ConsoleChatController.has_pending_approval_
             round``) -- never inferred from a tool name.
+        turn_started_at: TASK-34100.5 -- when the view first saw this
+            turn running; the elapsed base before any call usage exists.
+        self_hosted: Whether the session's provider is self-hosted; only
+            then does a long first-token wait add the cold-load hint.
+        reply_streaming: Review A-F6 -- with nothing published, whether the
+            viewed transcript already streams a real answer (no wait copy).
         pending_copy: Qodo #4 -- the waiting label for the KIND of round
             actually outstanding (``console_chat_models.console_pending_
             round_copy_for``): "Waiting for your answer" for an ask_user
@@ -528,7 +538,11 @@ def console_turn_activity_text(
             else CONSOLE_TURN_ACTIVITY_SETUP
         )
     if getattr(snapshot, "status", "idle") != "running":
-        return ""
+        if turn_started_at is None or getattr(snapshot, "status", "idle") != "idle":
+            return ""
+        # TASK-34100.5: nothing published for this conversation yet (its
+        # first send) -- still time the wait from when the view saw it run.
+        snapshot = SimpleNamespace(status="running", steps=(), turn_usage=None)
     step = next(
         (
             candidate
@@ -553,15 +567,37 @@ def console_turn_activity_text(
         if fleet:
             return fleet
     usage = getattr(snapshot, "turn_usage", None)
+    if usage is None and turn_started_at is not None:
+        usage = SimpleNamespace(
+            started_at=turn_started_at, output_tokens=0, source="local"
+        )
     usage_label = _live_usage_label(usage)
     if step is None:
         label = CONSOLE_GENERATING_PLACEHOLDER
         started_at = getattr(usage, "started_at", None)
-        elapsed = (
-            _format_fleet_elapsed(max(0.0, now - started_at))
-            if started_at is not None
-            else ""
-        )
+        waited = max(0.0, now - started_at) if started_at is not None else None
+        elapsed = _format_fleet_elapsed(waited) if waited is not None else ""
+        output = getattr(usage, "output_tokens", 0)
+        if (
+            waited is not None
+            and waited >= _FIRST_TOKEN_HINT_AFTER_SECONDS
+            and (type(output) is not int or output < _FIRST_TOKEN_MIN_OUTPUT)
+            and not reply_streaming
+        ):
+            # TASK-34100.5 AC#5: the answer has not started (a cold local
+            # model still processing the prompt streams at most a stray
+            # delta) -- say so; a self-hosted model gets the cold-load hint.
+            # The line rides the reply's one-line header (64 cells at
+            # 120x40), so it stays short; the composer's Stop ends the wait.
+            return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
+                segment
+                for segment in (
+                    CONSOLE_TURN_ACTIVITY_FIRST_TOKEN,
+                    elapsed,
+                    _FIRST_TOKEN_HINT if self_hosted else "",
+                )
+                if segment
+            )
         segments = (label, elapsed, usage_label)
         return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
             segment for segment in segments if segment
@@ -584,6 +620,67 @@ def console_turn_activity_text(
     return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
         segment for segment in segments if segment
     )
+
+
+def _viewed_provider_is_self_hosted(controller: Any, session_id: Any) -> bool:
+    """Whether the viewed session's provider is self-hosted (review A-F6)."""
+    store = getattr(controller, "store", None)
+    read = getattr(store, "session_settings", None)
+    if not callable(read) or not session_id:
+        return False
+    try:
+        provider = getattr(read(session_id), "provider", None)
+    except Exception:  # noqa: BLE001 -- the hint is optional copy
+        return False
+    from tldw_chatbook.Chat.provider_readiness import is_self_hosted_provider
+
+    return is_self_hosted_provider(provider)
+
+
+def _viewed_reply_is_streaming(controller: Any, session_id: Any) -> bool:
+    """Whether the viewed transcript already streams a real answer (A-F6).
+
+    Read only when the bridge published nothing for the turn, so the view
+    has no output count: the newest assistant row must be streaming and
+    hold the published path's floor (``_FIRST_TOKEN_MIN_OUTPUT`` tokens,
+    ~4 characters each, whitespace ignored -- a stray delta is not one).
+    Thinking counts as the answer under way (review round 2, R2-F2): it
+    streams into the row's thinking envelope while the row stays
+    ``pending`` with no content, and the published path counts it too.
+    """
+    store = getattr(controller, "store", None)
+    read = getattr(store, "read_only_messages_for_session", None)
+    if not callable(read) or not session_id:
+        return False
+    try:
+        messages = read(session_id)
+    except Exception:  # noqa: BLE001 -- the wait copy is optional
+        return False
+    for message in reversed(messages):
+        if getattr(message, "role", None) is ConsoleMessageRole.ASSISTANT:
+            status = getattr(message, "status", "")
+            text = "".join(str(getattr(message, "content", "") or "").split())
+            blocks = getattr(getattr(message, "thinking", None), "blocks", ()) or ()
+            thought = "".join(
+                "".join(str(getattr(block, "text", "") or "").split())
+                for block in blocks
+            )
+            floor = _FIRST_TOKEN_MIN_OUTPUT * 4
+            return (status == "streaming" and len(text) >= floor) or (
+                status in ("pending", "streaming") and len(thought) >= floor
+            )
+    return False
+
+
+#: TASK-34100.5 AC#5: the first-token wait copy and when it replaces
+#: "Generating…" (a warm model answers well inside this).
+_FIRST_TOKEN_HINT_AFTER_SECONDS = 15.0
+#: Live run (llama.cpp, CPU, 4.4k-token prompt, 2026-10-03): stray deltas
+#: during prompt processing read "~1-2 local output tok" for 3+ minutes.
+_FIRST_TOKEN_MIN_OUTPUT = 8
+CONSOLE_TURN_ACTIVITY_FIRST_TOKEN = "Waiting for a reply"
+#: Live at 120x40 the header fits ~58 cells of activity (review round 1).
+_FIRST_TOKEN_HINT = "model may be loading"
 
 
 def _live_usage_label(usage: Any) -> str:
@@ -641,7 +738,13 @@ def _fleet_row_from_handle(
         elapsed = _format_fleet_elapsed(max(0.0, end - handle.started_at))
         if elapsed:
             primary = f"{primary} · {elapsed}"
-    secondary = (handle.error or handle.result or handle.task or "").strip()
+    target = (
+        f"{handle.resolved_provider} · {handle.resolved_model}"
+        if handle.resolved_provider and handle.resolved_model
+        else "Target unavailable"
+    )
+    detail = (handle.error or handle.result or handle.task or "").strip()
+    secondary = f"{target} · {detail}" if detail else target
     usage_segment = ""
     if status not in TERMINAL_RUN_STATUSES:
         usage_segment = _live_usage_label(getattr(live_snapshot, "turn_usage", None))
@@ -680,9 +783,7 @@ def _fleet_row_from_handle(
         row_id=handle.handle_id,
         primary_text=primary,
         secondary_text=secondary,
-        wrap_secondary=bool(
-            usage_segment or (unread and status in TERMINAL_RUN_STATUSES)
-        ),
+        wrap_secondary=True,
         status=status,
         clickable=bool(handle.run_id),
         cancellable=status not in TERMINAL_RUN_STATUSES,
@@ -727,11 +828,18 @@ def _fleet_row_from_summary(
         f"{glyph} ~{elapsed} · {summary.text}" if elapsed else f"{glyph} {summary.text}"
     )
     budget = _budget_token_label(summary.budget_tokens)
-    secondary = f"{summary.detail} · {budget}" if summary.detail else budget
+    target = (
+        f"{summary.resolved_provider} · {summary.resolved_model}"
+        if summary.resolved_provider and summary.resolved_model
+        else "Target unavailable"
+    )
+    detail = f"{summary.detail} · {budget}" if summary.detail else budget
+    secondary = f"{target} · {detail}"
     return InspectorSectionRow(
         row_id=row_id,
         primary_text=primary.strip(),
         secondary_text=secondary,
+        wrap_secondary=True,
         status=status,
         clickable=bool(summary.run_id),
     )
@@ -856,6 +964,10 @@ class ConsoleAgentController:
         self._console_agent_full_log_probe_generation = 0
         self._console_agent_full_log_probe_pending: int | None = None
         self._console_agent_full_log_probe_worker: Any = None
+        #: TASK-34100.5 AC#5: when this view first saw the viewed session's
+        #: run active -- the elapsed base while the bridge has published no
+        #: usage yet (a just-created conversation's first send).
+        self._console_turn_seen_active: tuple[Any, float] | None = None
         self._console_agent_full_log_retry_at = 0.0
         #: The batched `[N Sub-Agents]` badge-count cache and its two
         #: invalidation keys. Also cluster-private.
@@ -1022,8 +1134,14 @@ class ConsoleAgentController:
 
         controller = self._console_chat_controller
         run_state = getattr(controller, "run_state", None) if controller else None
+        # getattr/vars: partial gate doubles call this unbound (see below).
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
+            vars(self)["_console_turn_seen_active"] = None
             return ""
+        viewed = getattr(getattr(controller, "store", None), "active_session_id", None)
+        seen = getattr(self, "_console_turn_seen_active", None)
+        if seen is None or seen[0] != viewed:
+            seen = vars(self)["_console_turn_seen_active"] = (viewed, time.monotonic())
         bridge = self._console_agent_bridge
         if bridge is None:
             return ""
@@ -1063,12 +1181,20 @@ class ConsoleAgentController:
                 pending_copy = console_pending_round_copy_for(
                     controller, session_id or ""
                 )
+        now = time.monotonic()
         return console_turn_activity_text(
             snapshot,
-            now=time.monotonic(),
+            now=now,
             children=children,
             pending_approval=pending_approval,
             pending_copy=pending_copy,
+            turn_started_at=seen[1],
+            self_hosted=_viewed_provider_is_self_hosted(controller, viewed),
+            reply_streaming=(
+                getattr(snapshot, "status", "idle") == "idle"
+                and now - seen[1] >= _FIRST_TOKEN_HINT_AFTER_SECONDS
+                and _viewed_reply_is_streaming(controller, viewed)
+            ),
         )
 
     def console_turn_activity_abandon_action(self) -> str:
@@ -1505,17 +1631,35 @@ class ConsoleAgentController:
         )
 
         bridge = self._ensure_console_agent_bridge()
-        conversation_id = self._progress_owner_id()
-        native_session_id = self._console_chat_controller.store.active_session_id
-        store = getattr(bridge, "message_store", None)
-        inbox = store.get_inbox(conversation_id) if store and conversation_id else None
+        controller = self._console_chat_controller
+        if controller is None:
+            return
+        native = controller.store
+        native_session_id = native.active_session_id
+        conversation_id = (
+            native.progress_owner_id(native_session_id) if native_session_id else None
+        )
+        store = None
+        inbox = None
+
+        def prepare() -> None:
+            nonlocal inbox, store
+            store = getattr(bridge, "message_store", None)
+            native.prepare_progress_inbox(native_session_id, message_store=store)
+            with native.progress_owner_scope(
+                native_session_id, message_store=store
+            ) as owner:
+                if owner != conversation_id:
+                    raise MessageError("unavailable")
+                inbox = store.get_inbox(owner) if store and owner else None
 
         def require_current_owner() -> None:
             if (
                 inbox is None
                 or not self._screen.is_mounted
-                or self._console_chat_controller.store.active_session_id
-                != native_session_id
+                or self._console_chat_controller is None
+                or self._console_chat_controller.store is not native
+                or native.active_session_id != native_session_id
                 or self._progress_owner_id() != conversation_id
                 or store.get_inbox(conversation_id) is not inbox
             ):
@@ -1535,6 +1679,7 @@ class ConsoleAgentController:
                     conversation_id=conversation_id,
                     load=load,
                     discard=discard,
+                    prepare=prepare,
                 )
             )
 

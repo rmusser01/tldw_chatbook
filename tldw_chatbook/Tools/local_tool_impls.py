@@ -271,9 +271,12 @@ def _list_relative_directory(
 ) -> str:
     """List a pinned-root-relative directory without opening an absolute path."""
     target = workspace / relative
-    if not _relative_target_is_safe(
-        relative, workspace, sensitive_exclusions, is_directory=True
-    ) or not target.is_dir():
+    if (
+        not _relative_target_is_safe(
+            relative, workspace, sensitive_exclusions, is_directory=True
+        )
+        or not target.is_dir()
+    ):
         raise LocalToolError(f"not a directory: {display_path or relative}")
     scanned: list[Path] = []
     scan_capped = False
@@ -290,9 +293,7 @@ def _list_relative_directory(
             continue
         scanned.append(entry)
     entries = sorted(scanned, key=lambda p: (p.is_file(), p.name.lower()))
-    lines = [
-        f"{p.name}/" if p.is_dir() else p.name for p in entries[:max_entries]
-    ]
+    lines = [f"{p.name}/" if p.is_dir() else p.name for p in entries[:max_entries]]
     remaining = len(entries) - max_entries
     if remaining > 0:
         lines.append(f"… ({remaining} more entries, truncated)")
@@ -371,9 +372,12 @@ def _read_relative_file(
             or binary.
     """
     target = workspace / relative
-    if not _relative_target_is_safe(
-        relative, workspace, sensitive_exclusions, is_directory=False
-    ) or not target.is_file():
+    if (
+        not _relative_target_is_safe(
+            relative, workspace, sensitive_exclusions, is_directory=False
+        )
+        or not target.is_file()
+    ):
         raise LocalToolError(f"file not found: {display_path or relative}")
     file_size = target.stat().st_size
     if file_size > MAX_READ_FILE_BYTES:
@@ -394,8 +398,12 @@ def _read_relative_file(
         if start >= len(lines):
             body = f"(offset {offset} is past end of file; {len(lines)} lines total)"
         else:
-            window = lines[start:] if limit is None else lines[start:start + max(limit, 0)]
-            body = "\n".join(f"{i}\t{line}" for i, line in enumerate(window, start=start + 1))
+            window = (
+                lines[start:] if limit is None else lines[start : start + max(limit, 0)]
+            )
+            body = "\n".join(
+                f"{i}\t{line}" for i, line in enumerate(window, start=start + 1)
+            )
             if len(body) > MAX_READ_CHARS:
                 body = body[:MAX_READ_CHARS] + "\n… [truncated]"
     if content_stamps:
@@ -556,9 +564,7 @@ def _write_relative_file(
         )
     summary = f"wrote {len(content)} characters to {shown}"
     if content_stamps and not dry_run:
-        summary += (
-            f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
-        )
+        summary += f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
     return summary
 
 
@@ -572,10 +578,7 @@ def _read_write_target(target: Path, shown: str) -> bytes | None:
         before = os.lstat(target)
     except FileNotFoundError:
         return None
-    if (
-        not stat_module.S_ISREG(before.st_mode)
-        or stat_module.S_ISLNK(before.st_mode)
-    ):
+    if not stat_module.S_ISREG(before.st_mode) or stat_module.S_ISLNK(before.st_mode):
         raise LocalToolError(f"write target is not a regular file: {shown}")
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     if hasattr(os, "O_NOFOLLOW"):
@@ -836,7 +839,9 @@ def _acquire_expected_target_lock(
         descriptor = os.open(filename, flags, dir_fd=parent_fd)
         handle = os.fdopen(descriptor, "r+b", buffering=0)
     except OSError:
-        raise LocalToolError("write precondition failed: target digest changed") from None
+        raise LocalToolError(
+            "write precondition failed: target digest changed"
+        ) from None
     _lock_expected_target(handle)
     try:
         _assert_expected_target_is_current(
@@ -874,16 +879,17 @@ def _assert_expected_target_is_current(
     try:
         current_fd = os.open(filename, flags, dir_fd=parent_fd)
     except OSError:
-        raise LocalToolError("write precondition failed: target digest changed") from None
+        raise LocalToolError(
+            "write precondition failed: target digest changed"
+        ) from None
     try:
         current_info = os.fstat(current_fd)
     finally:
         os.close(current_fd)
-    if (
-        (locked_info.st_dev, locked_info.st_ino)
-        != (current_info.st_dev, current_info.st_ino)
-        or locked_digest != expected_sha256
-    ):
+    if (locked_info.st_dev, locked_info.st_ino) != (
+        current_info.st_dev,
+        current_info.st_ino,
+    ) or locked_digest != expected_sha256:
         raise LocalToolError("write precondition failed: target digest changed")
 
 
@@ -1016,9 +1022,7 @@ def _edit_relative_file(
     n = count if replace_all else 1
     summary = f"made {n} replacement{'s' if n != 1 else ''} in {shown}"
     if content_stamps:
-        summary += (
-            f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
-        )
+        summary += f"\nsha256: {hashlib.sha256(data).hexdigest()}\nsize: {len(data)}"
     return summary
 
 
@@ -1186,7 +1190,11 @@ def _grep_relative_files(
         except (UnicodeDecodeError, OSError):
             continue  # binary/unreadable — skip
         rel = str(relative)
-        hits = [f"{i}:{line}" for i, line in enumerate(text.splitlines(), 1) if rx.search(line)]
+        hits = [
+            f"{i}:{line}"
+            for i, line in enumerate(text.splitlines(), 1)
+            if rx.search(line)
+        ]
         if not hits:
             continue
         if mode == "content":
@@ -1212,16 +1220,16 @@ def _relative_target_is_safe(
 ) -> bool:
     """Require both lexical and resolved targets to be admissible for I/O."""
     try:
-        if _is_relative_sensitive_path(
-            relative, exclusions, is_directory=is_directory
-        ):
+        if _is_relative_sensitive_path(relative, exclusions, is_directory=is_directory):
             return False
         resolved_workspace = workspace.resolve()
         resolved = (workspace / relative).resolve()
         if not resolved.is_relative_to(resolved_workspace):
             return False
         return not _is_relative_sensitive_path(
-            resolved.relative_to(resolved_workspace), exclusions, is_directory=is_directory
+            resolved.relative_to(resolved_workspace),
+            exclusions,
+            is_directory=is_directory,
         )
     except (OSError, RuntimeError, ValueError):
         # Python <= 3.12 raises RuntimeError for a symlink loop (3.13+:
@@ -1250,8 +1258,7 @@ def _is_relative_sensitive_path(
         if kind == "file" and parts == value_parts:
             return True
         if kind == "direct_children" and (
-            not is_directory
-            and parts[:-1] == value_parts
+            not is_directory and parts[:-1] == value_parts
         ):
             return True
         if kind == "name" and not is_directory and relative.name.casefold() == value:

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
-from dataclasses import dataclass, field
+import secrets
+from collections.abc import Callable, Collection
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from enum import StrEnum
-from threading import RLock
-from typing import TYPE_CHECKING, Collection, Literal, Protocol
+from itertools import count
+from threading import Lock, RLock
+from typing import TYPE_CHECKING, Literal, Protocol, get_args
 from unicodedata import category as unicode_category
 
 from .provider_endpoint_contract import canonical_connection_identity
@@ -24,8 +30,10 @@ EndpointFacet = Literal[
     "changed_since_test",
 ]
 ModelFacet = Literal["missing", "confirmed", "unconfirmed"]
+#: TASK-33005.3: "listing_accepted" -- the provider's authenticated model
+#: listing accepted the key; "authenticated" -- a paid generation succeeded.
 CredentialFacet = Literal[
-    "not_required", "missing", "present_unverified", "authenticated"
+    "not_required", "missing", "present_unverified", "listing_accepted", "authenticated"
 ]
 GenerationFacet = Literal[
     "not_tested", "testing", "succeeded", "failed", "changed_since_test"
@@ -82,9 +90,11 @@ _PROBE_ENDPOINT_FACETS = frozenset(
     {"reachable", "unreachable", "model_listing_unavailable"}
 )
 _MODEL_FACETS = frozenset({"missing", "confirmed", "unconfirmed"})
-_CREDENTIAL_FACETS = frozenset(
-    {"not_required", "missing", "present_unverified", "authenticated"}
-)
+_CREDENTIAL_FACETS = frozenset(get_args(CredentialFacet))
+#: Providers whose model listing answers without a valid key, so a listing
+#: never proves the key it was sent (ADR-012 amendment, spec §5): OpenRouter
+#: (ADR-020) and NVIDIA NIM (unauthenticated probe, provider_registry.py).
+PUBLIC_MODEL_LISTING_PROVIDER_KEYS = frozenset({"openrouter", "nvidia"})
 _GENERATION_FACETS = frozenset(
     {"not_tested", "testing", "succeeded", "failed", "changed_since_test"}
 )
@@ -267,7 +277,10 @@ class ProviderReadinessSnapshot:
             raise ValueError("Configuration issue is invalid.")
         if self.configuration == "configured" and self.configuration_issue is not None:
             raise ValueError("Configured readiness cannot include an issue.")
-        if self.configuration == "incomplete" and self.credential == "authenticated":
+        if self.configuration == "incomplete" and self.credential in {
+            "listing_accepted",
+            "authenticated",
+        }:
             raise ValueError("Incomplete readiness cannot authenticate credentials.")
         if self.endpoint == "unreachable":
             return
@@ -425,9 +438,15 @@ class ProviderProbeResult:
     endpoint: EndpointFacet
     model_ids: tuple[str, ...]
     category: EndpointFailureCategory | None = None
+    #: TASK-33005.3: the listing authenticated the key it was sent.
+    key_accepted: bool = False
 
     def __post_init__(self) -> None:
         _validate_probe_result(self.endpoint, self.model_ids, self.category)
+        if type(self.key_accepted) is not bool or (
+            self.key_accepted and self.endpoint != "reachable"
+        ):
+            raise ValueError("Only a listing that answered can accept a key.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -468,10 +487,24 @@ class ProviderTestEvidence:
     credential: CredentialFacet = "not_required"
     generation: GenerationFacet = "not_tested"
     generation_category: GenerationFailureCategory | None = None
+    #: TASK-33005.1: local time the endpoint fact (the listing) was observed,
+    #: for "reachable HH:MM" and a listing's "verified HH:MM". Not equality.
+    observed_at: datetime | None = field(default=None, compare=False)
+    #: TASK-33005.3: local time of the generation fact, so a paid test never
+    #: restamps when the listing answered. Not part of equality.
+    generation_observed_at: datetime | None = field(default=None, compare=False)
+    #: Qodo #2958 (appended last): the model the generation test sent. A paid
+    #: test proves only that model; listing and key facts are model-free.
+    generation_model: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.identity) is not ProviderDraftIdentity:
             raise ValueError("Provider evidence identity is invalid.")
+        for observed in (self.observed_at, self.generation_observed_at):
+            if observed is not None and (
+                type(observed) is not datetime or observed.utcoffset() is None
+            ):
+                raise ValueError("Provider evidence observation time is invalid.")
         if (
             type(self.endpoint) is not str
             or self.endpoint not in _EVIDENCE_ENDPOINT_FACETS
@@ -497,6 +530,10 @@ class ProviderTestEvidence:
             or self.generation_category not in _GENERATION_FAILURE_CATEGORIES
         ):
             raise ValueError("Provider evidence generation category is invalid.")
+        if self.generation_model is not None and (
+            type(self.generation_model) is not str or not self.generation_model
+        ):
+            raise ValueError("Provider evidence generation model is invalid.")
 
         if self.endpoint == "reachable":
             if self.category is not None:
@@ -523,7 +560,38 @@ class ProviderTestEvidence:
             self.generation_category,
             credential_required=self.identity.credential_source != "none",
         )
+        if (
+            normalized_credential == "listing_accepted"
+            and self.identity.provider_key in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
+        ):
+            normalized_credential = "present_unverified"  # Spec §5, AC#4.
         object.__setattr__(self, "credential", normalized_credential)
+        if normalized_credential == "listing_accepted" and self.endpoint != "reachable":
+            raise ValueError("Only a listing that answered can accept a key.")
+
+    def for_model(self, model: str | None) -> ProviderTestEvidence:
+        """This evidence as it applies to ``model`` (Qodo #2958).
+
+        A paid generation result belongs to the model it sent; the listing
+        and key facts are the connection's, whatever the model.
+
+        Args:
+            model: The selected model id, or ``None``.
+
+        Returns:
+            ``self``, or a copy whose generation reads not tested.
+        """
+        if self.generation not in {"succeeded", "failed"} or (
+            self.generation_model == model
+        ):
+            return self
+        return replace(
+            self,
+            generation="not_tested",
+            generation_category=None,
+            generation_model=None,
+            generation_observed_at=None,
+        )
 
 
 class _MutationResult(Protocol):
@@ -534,10 +602,19 @@ class _MutationResult(Protocol):
     conflict: bool
 
 
+#: TASK-33005.1: process-wide begin order. The shared owner keeps the result
+#: of the probe that BEGAN last, so a slow probe settling late on one surface
+#: never overwrites a newer one from another (and a clock step cannot either).
+_BEGIN_ORDER = count(1)
+
+
 class _ProviderTestToken:
     """Opaque, single-use capability for settling one current probe."""
 
-    __slots__ = ()
+    __slots__ = ("order",)
+
+    def __init__(self) -> None:
+        self.order = next(_BEGIN_ORDER)
 
     def __repr__(self) -> str:
         return "<ProviderTestToken>"
@@ -546,7 +623,10 @@ class _ProviderTestToken:
 class _ProviderGenerationTestToken:
     """Opaque, single-use capability for settling one generation probe."""
 
-    __slots__ = ()
+    __slots__ = ("order",)
+
+    def __init__(self) -> None:
+        self.order = next(_BEGIN_ORDER)
 
     def __repr__(self) -> str:
         return "<ProviderGenerationTestToken>"
@@ -562,9 +642,19 @@ class _ProviderEvidenceSaveLease:
 
 
 class ProviderTestEvidenceStore:
-    """Thread-safe process-local owner of latest-generation probe evidence."""
+    """Thread-safe draft-scoped owner of one surface's latest probe evidence.
 
-    def __init__(self) -> None:
+    TASK-33005.1: a store built with ``app`` (a callable returning the running
+    app) publishes every observed fact to that app's
+    :class:`ProviderConnectionEvidence` and reads the other surfaces' facts
+    back for an exact connection. A rebound earlier result (a
+    ``ProviderTestEvidence`` outcome) was published when it was observed, so
+    it is not published again. Without ``app`` the store is draft-only.
+    """
+
+    def __init__(self, app: Callable[[], object] | None = None) -> None:
+        self._app = app
+        self._shared_owner: ProviderConnectionEvidence | None = None
         self._lock = RLock()
         self._operation_epoch = 0
         self._generation_operation_epoch = 0
@@ -576,12 +666,14 @@ class ProviderTestEvidenceStore:
         self._current_generation_token: _ProviderGenerationTestToken | None = None
         self._current_generation_token_epoch: int | None = None
         self._current_generation_identity: ProviderDraftIdentity | None = None
+        self._current_generation_model: str | None = None
         self._generation_settling: tuple[ProviderDraftIdentity, int] | None = None
         self._generation_cancel_restore: (
             tuple[
                 ProviderDraftIdentity,
                 Literal["succeeded", "failed"],
                 GenerationFailureCategory | None,
+                str | None,
             ]
             | None
         ) = None
@@ -661,21 +753,32 @@ class ProviderTestEvidenceStore:
             ):
                 return False
             self._settling = None
-            self._evidence = _replace_endpoint_evidence(
-                self._evidence,
-                identity=identity,
-                endpoint=evidence.endpoint,
-                model_ids=evidence.model_ids,
-                category=evidence.category,
+            settled = replace(
+                _replace_endpoint_evidence(
+                    self._evidence,
+                    identity=identity,
+                    endpoint=evidence.endpoint,
+                    model_ids=evidence.model_ids,
+                    category=evidence.category,
+                    credential=evidence.credential,
+                ),
+                # A rebound earlier observation keeps its own time.
+                observed_at=evidence.observed_at or _local_now(),
             )
+            self._evidence = settled
             self._advance_operation()
-            return True
+        if type(outcome) is not ProviderTestEvidence:
+            self._publish(settled, token.order, generation=False)
+        return True
 
-    def begin_generation(self, identity: ProviderDraftIdentity) -> object:
+    def begin_generation(
+        self, identity: ProviderDraftIdentity, model: str | None = None
+    ) -> object:
         """Start an exact-identity generation probe and return its token.
 
         Args:
             identity: Exact provider draft identity that owns the probe.
+            model: The model the test sends; its result verifies only it.
 
         Returns:
             Opaque token required to settle or cancel this probe.
@@ -700,6 +803,7 @@ class ProviderTestEvidenceStore:
                         identity,
                         evidence.generation,
                         evidence.generation_category,
+                        evidence.generation_model,
                     )
                     if evidence is not None
                     and evidence.identity == identity
@@ -711,18 +815,25 @@ class ProviderTestEvidenceStore:
             self._current_generation_token = token
             self._current_generation_token_epoch = self._generation_operation_epoch
             self._current_generation_identity = identity
+            self._current_generation_model = (
+                model.strip() or None if isinstance(model, str) else None
+            )
             self._evidence = _replace_generation_evidence(
                 self._evidence,
                 identity=identity,
                 generation="testing",
                 category=None,
+                model=self._current_generation_model,
             )
             return token
 
     def settle_generation(self, token: object, outcome: object) -> bool:
         """Attach a bounded generation result only to its exact current draft."""
 
-        supported_outcome = type(outcome) is ProviderGenerationProbeResult
+        supported_outcome = type(outcome) in {
+            ProviderGenerationProbeResult,
+            ProviderTestEvidence,
+        }
         with self._lock:
             if (
                 type(token) is not _ProviderGenerationTestToken
@@ -732,6 +843,7 @@ class ProviderTestEvidenceStore:
             ):
                 return False
             identity = self._current_generation_identity
+            model = self._current_generation_model
             claim_epoch = self._current_generation_token_epoch
             self._current_generation_token = None
             self._current_generation_token_epoch = None
@@ -748,7 +860,9 @@ class ProviderTestEvidenceStore:
             self._reject_generation_settlement(settlement_claim)
             return False
         try:
-            generation, category = _generation_evidence_from_exact_outcome(outcome)
+            generation, category, observed_at = _generation_evidence_from_exact_outcome(
+                identity, outcome
+            )
         except ValueError:
             self._reject_generation_settlement(settlement_claim)
             return False
@@ -762,27 +876,47 @@ class ProviderTestEvidenceStore:
             ):
                 return False
             self._generation_settling = None
-            self._evidence = _replace_generation_evidence(
-                self._evidence,
-                identity=identity,
-                generation=generation,
-                category=category,
+            settled = replace(
+                _replace_generation_evidence(
+                    self._evidence,
+                    identity=identity,
+                    generation=generation,
+                    category=category,
+                    # A rebound earlier result keeps the model it tested.
+                    model=(
+                        outcome.generation_model
+                        if type(outcome) is ProviderTestEvidence
+                        else model
+                    ),
+                ),
+                generation_observed_at=observed_at or _local_now(),
             )
+            self._evidence = settled
             self._generation_cancel_restore = None
             self._advance_generation_operation()
-            return True
+        if type(outcome) is not ProviderTestEvidence:
+            self._publish(settled, token.order, endpoint=False)
+        return True
 
     def evidence_for(
         self, identity: ProviderDraftIdentity
     ) -> ProviderTestEvidence | None:
-        """Return evidence only for the exact semantic identity supplied."""
+        """Return evidence only for the exact semantic identity supplied.
+
+        A linked store falls back to another surface's settled result for the
+        same connection, re-stamped with ``identity`` -- but never for an
+        identity ``begin`` would refuse (TASK-33001.3's invariant).
+        """
 
         if type(identity) is not ProviderDraftIdentity:
             return None
         with self._lock:
-            if self._evidence is None or self._evidence.identity != identity:
+            if self._evidence is not None and self._evidence.identity == identity:
+                return self._evidence
+            if identity.draft_generation < self._latest_generation:
                 return None
-            return self._evidence
+        shared = self._shared()
+        return shared.evidence_for(identity) if shared is not None else None
 
     def latest_evidence(self) -> ProviderTestEvidence | None:
         """Return the latest bounded snapshot for changed-since-test projection."""
@@ -808,6 +942,7 @@ class ProviderTestEvidenceStore:
                 identity=identity,
                 generation="changed_since_test",
                 category=None,
+                model=evidence.generation_model,
             )
             self._save_lease = None
             self._generation_cancel_restore = None
@@ -874,6 +1009,7 @@ class ProviderTestEvidenceStore:
                     identity=restore[0],
                     generation=restore[1],
                     category=restore[2],
+                    model=restore[3],
                 )
             self._advance_generation_operation()
             return True
@@ -955,17 +1091,33 @@ class ProviderTestEvidenceStore:
             self._clear_all_test_state()
             self._advance_generation_operation()
             if can_preserve and evidence is not None:
-                self._evidence = ProviderTestEvidence(
-                    saved_identity,
-                    evidence.endpoint,
-                    evidence.model_ids,
-                    evidence.category,
-                    evidence.credential,
-                    evidence.generation,
-                    evidence.generation_category,
-                )
+                self._evidence = replace(evidence, identity=saved_identity)
             self._advance_operation()
-            return can_preserve
+        shared = self._shared() if can_preserve else None
+        if shared is not None:
+            shared.carry(tested_identity, saved_identity)
+        return can_preserve
+
+    def _shared(self) -> ProviderConnectionEvidence | None:
+        """Resolve (once) the app's shared owner; ``None`` keeps this draft-only."""
+
+        if self._shared_owner is None and self._app is not None:
+            self._shared_owner = shared_connection_evidence(self._app)
+        return self._shared_owner
+
+    def _publish(
+        self,
+        evidence: ProviderTestEvidence,
+        order: int,
+        *,
+        endpoint: bool = True,
+        generation: bool = True,
+    ) -> None:
+        shared = self._shared()
+        if shared is not None:
+            shared.publish(
+                evidence, order=order, endpoint=endpoint, generation=generation
+            )
 
     def _reject_settlement(
         self,
@@ -1072,6 +1224,252 @@ class ProviderTestEvidenceStore:
         self._save_lease = None
 
 
+#: Per-process salt: a revision means nothing outside this process.
+_CREDENTIAL_REVISION_SALT = secrets.token_bytes(32)
+_OWNER_ATTRIBUTE = "_provider_connection_evidence"
+_OWNER_CREATION_LOCK = Lock()
+
+
+def connection_credential_revision(credential: object) -> int:
+    """Return the secret-free revision of one resolved provider credential.
+
+    TASK-33005.1: every surface stamps this into
+    ``ProviderDraftIdentity.credential_revision`` -- computed from the key a
+    send would use (``ProviderReadiness.api_key`` for saved state, the typed
+    value for a draft) -- so one saved credential compares equal in Chat
+    settings, Settings and the Console, and changing it changes the
+    connection. A salted HMAC, so the number never reveals the key.
+
+    Args:
+        credential: The resolved credential, or ``None`` when none is sent.
+
+    Returns:
+        ``0`` when there is no credential, else a positive 56-bit integer.
+    """
+
+    if type(credential) is not str or not credential:
+        return 0
+    digest = hmac.new(
+        _CREDENTIAL_REVISION_SALT, credential.encode("utf-8"), hashlib.sha256
+    ).digest()
+    return int.from_bytes(digest[:7], "big") + 1
+
+
+class ProviderConnectionEvidence:
+    """Process-memory settled evidence, one record per provider connection.
+
+    TASK-33005.1 / ADR-033: a narrow owner attached to the app (see
+    :func:`provider_connection_evidence`), never persisted. A connection is a
+    ``ProviderDraftIdentity`` without its surface-local ``draft_generation``:
+    provider, custom endpoint id, canonical endpoint, credential source and
+    :func:`connection_credential_revision`. Surfaces publish observed facts
+    through their draft stores; the Console reads here directly. A reader
+    only ever gets its own connection's record: an unsaved draft's result
+    stays with that draft, and a changed connection reads as untested here
+    (the surface still holding the older result marks it changed since test).
+    """
+
+    def __init__(self) -> None:
+        self._lock = RLock()
+        # ponytail: one record per connection ever tested this process; it
+        # only grows with explicit tests, so no eviction until that matters.
+        self._records: dict[tuple[object, ...], ProviderTestEvidence] = {}
+        #: Per connection: begin order of the endpoint and generation facts held.
+        self._orders: dict[tuple[object, ...], tuple[int, int]] = {}
+        self._version = 0
+
+    @property
+    def version(self) -> int:
+        """Monotonic count of record changes, for cheap change polling."""
+
+        return self._version
+
+    def publish(
+        self,
+        evidence: ProviderTestEvidence,
+        *,
+        order: int,
+        endpoint: bool = True,
+        generation: bool = True,
+    ) -> bool:
+        """Merge the observed facets of ``evidence`` into its connection's record.
+
+        Only terminal facts move (a ``testing`` or changed-since-test marker is
+        a surface's draft state). Each facet keeps the observation whose probe
+        began last, whenever it settled.
+
+        Args:
+            evidence: The settled evidence.
+            order: Begin order of the probe that observed it (its token's).
+            endpoint: Whether to take the endpoint facet.
+            generation: Whether to take the generation facet.
+
+        Returns:
+            Whether the record changed.
+        """
+
+        if type(evidence) is not ProviderTestEvidence or type(order) is not int:
+            return False
+        take_endpoint = endpoint and evidence.endpoint in _PROBE_ENDPOINT_FACETS
+        take_generation = generation and evidence.generation in {"succeeded", "failed"}
+        with self._lock:
+            return self._merge(
+                evidence.identity,
+                evidence,
+                order if take_endpoint else 0,
+                order if take_generation else 0,
+            )
+
+    def carry(
+        self, tested: ProviderDraftIdentity, saved: ProviderDraftIdentity
+    ) -> bool:
+        """Give the connection a Save produced the tested connection's facts.
+
+        Called only after a save that wrote exactly the tested values (the
+        draft store's rebase), e.g. a typed key that is now the stored key.
+        Each fact keeps its begin order, so a newer result is never replaced.
+
+        Args:
+            tested: The draft connection the facts were observed for.
+            saved: The connection the save produced from those same values.
+
+        Returns:
+            Whether the saved connection's record changed.
+        """
+
+        if {type(tested), type(saved)} != {ProviderDraftIdentity}:
+            return False
+        with self._lock:
+            key = _connection_key(tested)
+            record = self._records.get(key)
+            if record is None:
+                return False
+            return self._merge(saved, record, *self._orders[key])
+
+    def evidence_for(
+        self, identity: ProviderDraftIdentity
+    ) -> ProviderTestEvidence | None:
+        """Return ``identity``'s connection record re-stamped with it, else ``None``."""
+
+        if type(identity) is not ProviderDraftIdentity:
+            return None
+        with self._lock:
+            record = self._records.get(_connection_key(identity))
+        return None if record is None else replace(record, identity=identity)
+
+    def _merge(
+        self,
+        identity: ProviderDraftIdentity,
+        evidence: ProviderTestEvidence,
+        endpoint_order: int,
+        generation_order: int,
+    ) -> bool:
+        """Take each offered facet (order > 0) that began after the held one."""
+
+        key = _connection_key(identity)
+        record = self._records.get(key)
+        # The record keeps its first identity, so both facets stay one record.
+        identity = (
+            record.identity if record else replace(identity, draft_generation=0)
+        )
+        held_endpoint, held_generation = self._orders.get(key, (0, 0))
+        merged = record
+        times: dict[str, datetime] = {}  # Each fact keeps its own time (AC#9).
+        if endpoint_order > held_endpoint:
+            held_endpoint = endpoint_order
+            merged = _replace_endpoint_evidence(
+                merged,
+                identity=identity,
+                endpoint=evidence.endpoint,
+                model_ids=evidence.model_ids,
+                category=evidence.category,
+                credential=evidence.credential,
+            )
+            times["observed_at"] = evidence.observed_at or _local_now()
+        if generation_order > held_generation:
+            held_generation = generation_order
+            merged = _replace_generation_evidence(
+                merged,
+                identity=identity,
+                generation=evidence.generation,
+                category=evidence.generation_category,
+                model=evidence.generation_model,
+            )
+            times["generation_observed_at"] = (
+                evidence.generation_observed_at or _local_now()
+            )
+        if merged is record:
+            return False
+        self._orders[key] = (held_endpoint, held_generation)
+        merged = replace(merged, **times)
+        if merged == record and all(
+            getattr(record, name) == value for name, value in times.items()
+        ):
+            return False  # Same facts at the same time: nothing for readers.
+        self._records[key] = merged
+        self._version += 1
+        return True
+
+
+def provider_connection_evidence(owner: object) -> ProviderConnectionEvidence:
+    """Return the one connection evidence owner attached to an app process.
+
+    Mirrors ``process_provider_test_evidence_store`` (TTS): a private
+    attribute on the running app, so a restart starts with nothing tested.
+
+    Args:
+        owner: The running app (any object that can carry the attribute).
+
+    Returns:
+        The owner's ``ProviderConnectionEvidence``, created on first use.
+    """
+
+    existing = getattr(owner, _OWNER_ATTRIBUTE, None)
+    if type(existing) is ProviderConnectionEvidence:
+        return existing
+    with _OWNER_CREATION_LOCK:
+        existing = getattr(owner, _OWNER_ATTRIBUTE, None)
+        if type(existing) is not ProviderConnectionEvidence:
+            existing = ProviderConnectionEvidence()
+            setattr(owner, _OWNER_ATTRIBUTE, existing)
+        return existing
+
+
+def shared_connection_evidence(
+    app: Callable[[], object],
+) -> ProviderConnectionEvidence | None:
+    """Return the running app's owner, or ``None`` when there is no app.
+
+    Args:
+        app: Returns the running app (``lambda: self.app`` on a widget).
+
+    Returns:
+        The shared owner, or ``None`` for bare screens and units.
+    """
+
+    try:
+        return provider_connection_evidence(app())
+    except (AttributeError, RuntimeError):  # NoActiveAppError is a RuntimeError.
+        return None
+
+
+def _connection_key(identity: ProviderDraftIdentity) -> tuple[object, ...]:
+    return (
+        identity.provider_key,
+        identity.custom_endpoint_id,
+        identity.connection_identity,
+        # Revision 0 sends no key, whichever source names it: Chat settings
+        # reads an explicit credential_source, Settings what resolves, and
+        # they differ only when nothing does (e.g. "stored" with no key).
+        identity.credential_source if identity.credential_revision else "none",
+        identity.credential_revision,
+    )
+
+
+def _local_now() -> datetime:
+    return datetime.now().astimezone()
+
+
 def _validate_model_ids(model_ids: object) -> None:
     if type(model_ids) is not tuple:
         raise ValueError("Model IDs must be a tuple.")
@@ -1171,16 +1569,32 @@ def _evidence_from_exact_outcome(
         outcome.endpoint,
         outcome.model_ids,
         outcome.category,
+        credential="listing_accepted" if outcome.key_accepted else "not_required",
     )
 
 
 def _generation_evidence_from_exact_outcome(
+    identity: ProviderDraftIdentity,
     outcome: object,
-) -> tuple[Literal["succeeded", "failed"], GenerationFailureCategory | None]:
+) -> tuple[
+    Literal["succeeded", "failed"],
+    GenerationFailureCategory | None,
+    datetime | None,
+]:
+    if type(outcome) is ProviderTestEvidence:
+        # A rebound earlier result: same draft, and it keeps its own time.
+        if outcome.identity != identity:
+            raise ValueError("Generation evidence identity does not match the token.")
+        _validate_generation_result(outcome.generation, outcome.generation_category)
+        return (
+            outcome.generation,
+            outcome.generation_category,
+            outcome.generation_observed_at,
+        )
     if type(outcome) is not ProviderGenerationProbeResult:
         raise ValueError("Provider generation result type is invalid.")
     _validate_generation_result(outcome.generation, outcome.category)
-    return outcome.generation, outcome.category
+    return outcome.generation, outcome.category, None
 
 
 def _replace_endpoint_evidence(
@@ -1190,17 +1604,21 @@ def _replace_endpoint_evidence(
     endpoint: EndpointFacet,
     model_ids: tuple[str, ...],
     category: EndpointFailureCategory | None,
+    credential: CredentialFacet = "not_required",
 ) -> ProviderTestEvidence:
+    # The listing's key verdict moves with the endpoint fact it came from; any
+    # other credential state is re-derived (a paid success stays authenticated).
+    credential = "listing_accepted" if credential == "listing_accepted" else "not_required"
     if evidence is None or evidence.identity != identity:
-        return ProviderTestEvidence(identity, endpoint, model_ids, category)
-    return ProviderTestEvidence(
-        identity,
-        endpoint,
-        model_ids,
-        category,
-        evidence.credential,
-        evidence.generation,
-        evidence.generation_category,
+        return ProviderTestEvidence(
+            identity, endpoint, model_ids, category, credential=credential
+        )
+    return replace(
+        evidence,
+        endpoint=endpoint,
+        model_ids=model_ids,
+        category=category,
+        credential=credential,
     )
 
 
@@ -1210,6 +1628,7 @@ def _replace_generation_evidence(
     identity: ProviderDraftIdentity,
     generation: GenerationFacet,
     category: GenerationFailureCategory | None,
+    model: str | None = None,
 ) -> ProviderTestEvidence:
     if evidence is None or evidence.identity != identity:
         return ProviderTestEvidence(
@@ -1223,15 +1642,13 @@ def _replace_generation_evidence(
             ),
             generation=generation,
             generation_category=category,
+            generation_model=model,
         )
-    return ProviderTestEvidence(
-        identity,
-        evidence.endpoint,
-        evidence.model_ids,
-        evidence.category,
-        evidence.credential,
-        generation,
-        category,
+    return replace(
+        evidence,
+        generation=generation,
+        generation_category=category,
+        generation_model=model,
     )
 
 

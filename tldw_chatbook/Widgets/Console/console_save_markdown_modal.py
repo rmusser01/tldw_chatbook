@@ -2,8 +2,15 @@
 
 Mirrors ``ConsoleWorkspaceRenameModal``'s contract: pushes with a callback
 receiving the entered string or None on cancel/dismiss. The default value is
-a slugified ``~/Downloads/<title>.md``; the screen validates the entered
+a slugified ``~/Downloads/<title>.md``; the caller validates the entered
 path before writing.
+
+TASK-33621.12 (G3-02): this was the only Console modal without the
+``SafeModalDismissMixin`` contract -- no Escape binding, no
+``SAFE_MODAL_CONTENT`` (so no backdrop cancel), and Cancel/Save called
+``dismiss()`` directly, discarding the opener focus the mixin captures. Esc,
+Cancel, a backdrop click and Save now all close through the dismiss-once
+path, which returns focus to whatever was focused under the prompt.
 """
 
 from __future__ import annotations
@@ -36,6 +43,9 @@ def markdown_filename_slug(title: str) -> str:
 
 class ConsoleSaveMarkdownModal(SafeModalDismissMixin, ModalScreen["str | None"]):
     """Prompt for the .md destination path."""
+
+    SAFE_MODAL_CONTENT = "#console-save-markdown-box"
+    BINDINGS = [("escape", "request_safe_cancel", "Cancel")]
 
     BUNDLED_CSS = """
     ConsoleSaveMarkdownModal {
@@ -88,9 +98,9 @@ class ConsoleSaveMarkdownModal(SafeModalDismissMixin, ModalScreen["str | None"])
         self.query_one("#console-save-markdown-input", Input).focus()
 
     @on(Button.Pressed, "#console-save-markdown-cancel")
-    def _cancel(self, event: Button.Pressed) -> None:
+    async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()
-        self.dismiss(None)
+        await self.request_safe_cancel(source="button")
 
     @on(Button.Pressed, "#console-save-markdown-save")
     def _save(self, event: Button.Pressed) -> None:
@@ -104,5 +114,8 @@ class ConsoleSaveMarkdownModal(SafeModalDismissMixin, ModalScreen["str | None"])
 
     def _submit(self) -> None:
         value = self.query_one("#console-save-markdown-input", Input).value.strip()
-        if value:
-            self.dismiss(value)
+        if not value:
+            # Save with nothing to save to used to do nothing at all.
+            self.app.notify("Enter a file path to save to.", severity="warning")
+            return
+        self.dismiss_safe_once(value)

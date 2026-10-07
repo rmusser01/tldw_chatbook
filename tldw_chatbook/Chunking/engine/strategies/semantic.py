@@ -21,9 +21,7 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
     natural semantic boundaries in the text.
     """
 
-    def __init__(self,
-                 language: str = 'en',
-                 similarity_threshold: float = 0.3):
+    def __init__(self, language: str = "en", similarity_threshold: float = 0.3):
         """
         Initialize semantic chunking strategy.
 
@@ -45,7 +43,9 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
         # Check dependencies
         self._check_dependencies()
 
-        logger.debug(f"SemanticChunkingStrategy initialized with threshold: {similarity_threshold}")
+        logger.debug(
+            f"SemanticChunkingStrategy initialized with threshold: {similarity_threshold}"
+        )
 
     def _check_dependencies(self):
         """Check if required dependencies are available."""
@@ -64,10 +64,11 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
         # Check NLTK
         try:
             import nltk
+
             self._nltk_available = True
             # Verify punkt presence but do not auto-download; fall back later if missing
             try:
-                nltk.data.find('tokenizers/punkt')
+                nltk.data.find("tokenizers/punkt")
             except LookupError:
                 logger.info(
                     "NLTK punkt tokenizer not found; will use simple fallback sentence splitting."
@@ -79,11 +80,7 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
                 "Install with: pip install nltk"
             )
 
-    def chunk(self,
-              text: str,
-              max_size: int,
-              overlap: int = 0,
-              **options) -> list[str]:
+    def chunk(self, text: str, max_size: int, overlap: int = 0, **options) -> list[str]:
         """
         Chunk text based on semantic similarity.
 
@@ -112,12 +109,14 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
         # Import here to avoid import errors if not available
 
         # Get options
-        options.get('unit', 'words')
-        tokenizer_name = options.get('tokenizer_name_or_path') or options.get('tokenizer_name')
+        options.get("unit", "words")
+        tokenizer_name = options.get("tokenizer_name_or_path") or options.get(
+            "tokenizer_name"
+        )
         if isinstance(tokenizer_name, str) and tokenizer_name.strip():
             self._tokenizer_name = tokenizer_name.strip()
-        options.get('similarity_threshold', self.similarity_threshold)
-        options.get('min_chunk_size', max_size // 2)
+        options.get("similarity_threshold", self.similarity_threshold)
+        options.get("min_chunk_size", max_size // 2)
 
         chunk_spans = self._chunk_text_with_spans(text, max_size, overlap, **options)
         return [chunk for chunk, _start, _end in chunk_spans]
@@ -145,12 +144,16 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
         from sklearn.metrics.pairwise import cosine_similarity
 
         # Get options
-        unit = options.get('unit', 'words')
-        tokenizer_name = options.get('tokenizer_name_or_path') or options.get('tokenizer_name')
+        unit = options.get("unit", "words")
+        tokenizer_name = options.get("tokenizer_name_or_path") or options.get(
+            "tokenizer_name"
+        )
         if isinstance(tokenizer_name, str) and tokenizer_name.strip():
             self._tokenizer_name = tokenizer_name.strip()
-        similarity_threshold = options.get('similarity_threshold', self.similarity_threshold)
-        min_chunk_size = options.get('min_chunk_size', max_size // 2)
+        similarity_threshold = options.get(
+            "similarity_threshold", self.similarity_threshold
+        )
+        min_chunk_size = options.get("min_chunk_size", max_size // 2)
 
         # Split into sentences with source spans
         sentences_with_spans = self._split_sentences_with_spans(text)
@@ -158,7 +161,9 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
             return []
 
         # Filter out empty sentences while preserving spans
-        valid = [(s, start, end) for s, start, end in sentences_with_spans if s and s.strip()]
+        valid = [
+            (s, start, end) for s, start, end in sentences_with_spans if s and s.strip()
+        ]
         if not valid:
             return []
 
@@ -212,7 +217,9 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
                 # Handle overlap
                 if overlap > 0 and len(current_chunk) > overlap:
                     current_chunk = current_chunk[-overlap:]
-                    current_size = sum(self._count_units(s, unit) for s, _s0, _e0 in current_chunk)
+                    current_size = sum(
+                        self._count_units(s, unit) for s, _s0, _e0 in current_chunk
+                    )
                 else:
                     current_chunk = []
                     current_size = 0
@@ -224,8 +231,8 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
             # Check semantic similarity with next sentence
             if i + 1 < len(valid):
                 # Calculate cosine similarity
-                current_vector = sentence_vectors[i:i + 1]
-                next_vector = sentence_vectors[i + 1:i + 2]
+                current_vector = sentence_vectors[i : i + 1]
+                next_vector = sentence_vectors[i + 1 : i + 2]
 
                 try:
                     similarity = cosine_similarity(current_vector, next_vector)[0, 0]
@@ -234,16 +241,19 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
                     similarity = 1.0  # Assume high similarity on error
 
                 # Break if similarity is low and chunk is large enough
-                if (similarity < similarity_threshold and
-                        current_size >= min_chunk_size and
-                        current_chunk):
-
+                if (
+                    similarity < similarity_threshold
+                    and current_size >= min_chunk_size
+                    and current_chunk
+                ):
                     _emit_chunk(current_chunk)
 
                     # Handle overlap
                     if overlap > 0 and len(current_chunk) > overlap:
                         current_chunk = current_chunk[-overlap:]
-                        current_size = sum(self._count_units(s, unit) for s, _s0, _e0 in current_chunk)
+                        current_size = sum(
+                            self._count_units(s, unit) for s, _s0, _e0 in current_chunk
+                        )
                     else:
                         current_chunk = []
                         current_size = 0
@@ -279,22 +289,22 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
 
             # Language mapping for NLTK
             nltk_lang_map = {
-                'en': 'english',
-                'es': 'spanish',
-                'fr': 'french',
-                'de': 'german',
-                'it': 'italian',
-                'pt': 'portuguese',
-                'nl': 'dutch',
-                'pl': 'polish',
-                'ru': 'russian',
-                'tr': 'turkish'
+                "en": "english",
+                "es": "spanish",
+                "fr": "french",
+                "de": "german",
+                "it": "italian",
+                "pt": "portuguese",
+                "nl": "dutch",
+                "pl": "polish",
+                "ru": "russian",
+                "tr": "turkish",
             }
 
-            nltk_language = nltk_lang_map.get(self.language, 'english')
+            nltk_language = nltk_lang_map.get(self.language, "english")
 
             try:
-                tokenizer = nltk.data.load(f'tokenizers/punkt/{nltk_language}.pickle')
+                tokenizer = nltk.data.load(f"tokenizers/punkt/{nltk_language}.pickle")
                 spans = list(tokenizer.span_tokenize(text))
                 results = []
                 for start, end in spans:
@@ -316,7 +326,7 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
         # Fallback: regex-based sentence splitting with spans
         import re
 
-        sentence_pattern = r'(?<=[.!?])\s+(?=[A-Z])'
+        sentence_pattern = r"(?<=[.!?])\s+(?=[A-Z])"
         spans: list[tuple[str, int, int]] = []
         pos = 0
         for match in re.finditer(sentence_pattern, text):
@@ -371,11 +381,11 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
         Returns:
             Unit count
         """
-        if unit == 'words':
+        if unit == "words":
             return len(text.split())
-        elif unit == 'characters':
+        elif unit == "characters":
             return len(text)
-        elif unit == 'tokens':
+        elif unit == "tokens":
             # Try to use a tokenizer if available
             try:
                 tokenizer_name = self._tokenizer_name or "gpt2"
@@ -414,6 +424,7 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
             # Prefer tiktoken when available
             try:
                 import tiktoken  # type: ignore
+
                 try:
                     enc = tiktoken.encoding_for_model(name)
                 except Exception:
@@ -422,26 +433,30 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
                 self._tokenizer_type = "tiktoken"
                 return self._tokenizer
             except Exception as tiktoken_error:
-                logger.debug("Semantic chunker tiktoken initialization failed; trying transformers fallback", exc_info=tiktoken_error)
+                logger.debug(
+                    "Semantic chunker tiktoken initialization failed; trying transformers fallback",
+                    exc_info=tiktoken_error,
+                )
             # Fallback to transformers (local-only)
             try:
                 from transformers import AutoTokenizer  # type: ignore
+
                 tok = AutoTokenizer.from_pretrained(name, local_files_only=True)  # nosec B615
                 self._tokenizer = tok
                 self._tokenizer_type = "transformers"
                 return self._tokenizer
             except Exception as e:
-                logger.debug(f"Tokenizer load failed for '{name}', using fallback approximation: {e}")
+                logger.debug(
+                    f"Tokenizer load failed for '{name}', using fallback approximation: {e}"
+                )
                 self._tokenizer_failed_names.add(name)
                 self._tokenizer = None
                 self._tokenizer_type = None
                 return None
 
-    def chunk_generator(self,
-                       text: str,
-                       max_size: int,
-                       overlap: int = 0,
-                       **options) -> Generator[str, None, None]:
+    def chunk_generator(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ) -> Generator[str, None, None]:
         """
         Generator version of chunk method.
 
@@ -461,11 +476,9 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
         chunks = self.chunk(text, max_size, overlap, **options)
         yield from chunks
 
-    def chunk_with_metadata(self,
-                           text: str,
-                           max_size: int,
-                           overlap: int = 0,
-                           **options) -> list[ChunkResult]:
+    def chunk_with_metadata(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ) -> list[ChunkResult]:
         """
         Chunk text and return results with metadata.
 
@@ -490,17 +503,16 @@ class SemanticChunkingStrategy(BaseChunkingStrategy):
                 word_count=len(chunk_text.split()),
                 sentence_count=len(self._split_sentences(chunk_text)),
                 language=self.language,
-                method='semantic',
+                method="semantic",
                 options={
-                    'similarity_threshold': options.get('similarity_threshold', self.similarity_threshold),
-                    'unit': options.get('unit', 'words'),
-                    'overlap': overlap
-                }
+                    "similarity_threshold": options.get(
+                        "similarity_threshold", self.similarity_threshold
+                    ),
+                    "unit": options.get("unit", "words"),
+                    "overlap": overlap,
+                },
             )
 
-            results.append(ChunkResult(
-                text=chunk_text,
-                metadata=metadata
-            ))
+            results.append(ChunkResult(text=chunk_text, metadata=metadata))
 
         return results

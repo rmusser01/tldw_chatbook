@@ -2,6 +2,7 @@
 
 Date: 2026-07-26
 Status: accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Relates to: TASK-723 (workspace-settings UX review, finding m3)
 
 ## Context

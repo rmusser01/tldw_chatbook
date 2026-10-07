@@ -79,6 +79,7 @@ async def test_existing_watchdog_is_armed_before_first_app_owned_drain(
     request, monkeypatch
 ):
     import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_lifecycle as app_lifecycle_module
 
     app = object.__new__(app_module.TldwCli)
     events = []
@@ -94,7 +95,7 @@ async def test_existing_watchdog_is_armed_before_first_app_owned_drain(
 
     app._shutdown_app_owned_lifecycles = drain
     monkeypatch.setattr(
-        app_module, "arm_exit_watchdog", lambda **kwargs: events.append("watchdog")
+        app_lifecycle_module, "arm_exit_watchdog", lambda **kwargs: events.append("watchdog")
     )
     monkeypatch.setattr(App, "_shutdown", textual_shutdown)
     task = asyncio.create_task(app._shutdown())

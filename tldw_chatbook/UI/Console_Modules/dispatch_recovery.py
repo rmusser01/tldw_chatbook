@@ -41,6 +41,10 @@ def derive_dispatch_recovery_presentation(
 
     if recovery is None:
         return ConsoleDispatchRecoveryPresentation(False, "", "", ())
+    # TASK-34100.5 AC#3: a turn refused before dispatch reads "Not sent".
+    from tldw_chatbook.Chat.console_predispatch_block import presented_owner
+
+    recovery = presented_owner(recovery) or recovery
     return ConsoleDispatchRecoveryPresentation(
         visible=True,
         visible_copy=recovery.visible_copy,

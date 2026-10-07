@@ -91,7 +91,7 @@ def test_console_return_target_round_trip_and_outcome_allowlist() -> None:
         "session_id": "session-1",
         "settings_revision": 2,
         "active_view": "model",
-        "focus_control_id": "console-settings-model-picker",
+        "focus_control_id": "console-settings-model-change",
         "return_revision": 7,
         "outcome": "credential_saved",
     }
@@ -132,6 +132,10 @@ def test_return_contracts_are_frozen_and_validate_shape() -> None:
         "console-settings-api-key",
         "console-settings-context-view",
         "console-settings-model",
+        # TASK-33006.4 deleted the provider picker and the model search.
+        "console-settings-provider",
+        "console-settings-provider-picker",
+        "console-settings-model-picker",
         "bad",
         "x" * 129,
     ],
@@ -151,8 +155,7 @@ def test_return_target_rejects_focus_outside_bounded_allowlist(focus: str) -> No
 @pytest.mark.parametrize(
     "focus",
     [
-        "console-settings-provider",
-        "console-settings-model-picker",
+        "console-settings-model-change",
         "console-settings-base-url",
         "console-settings-temperature",
         "console-settings-max-tokens",

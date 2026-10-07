@@ -43,7 +43,7 @@ from copy import deepcopy
 from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from textual.widgets import (
@@ -57,6 +57,8 @@ from textual.widgets import (
     Static,
 )
 
+from Tests.private_profile import private_profile_test
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_product_maturity_phase1_first_run import (
     _prepare_clean_environment,
@@ -98,7 +100,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     build_first_run_model_discovery_key,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-    _PICKER_MODEL_LIMIT,
     FirstRunSetupWizard,
     ModelStep,
     NotesSyncStep,
@@ -109,6 +110,7 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     VoiceSetupStep,
     _SettlingGuardedConfirmationDialog,
 )
+from tldw_chatbook.UI.Wizards.first_run_model_step import _PICKER_MODEL_LIMIT
 
 
 #: Ceiling for a settle wait, not a performance assertion (TASK-24652).
@@ -217,8 +219,7 @@ def _live_console_projection(console: ChatScreen) -> dict[str, object]:
     return {
         "active_session_id": store.active_session_id,
         "sessions": tuple(
-            _live_first_chat_session_snapshot(session)
-            for session in store.sessions()
+            _live_first_chat_session_snapshot(session) for session in store.sessions()
         ),
         "provider_label": str(
             console.query_one("#console-provider-label", Static).renderable
@@ -257,8 +258,10 @@ async def _open_settings_diagnostics(pilot) -> None:
     _press(app.screen, "#nav-settings")
     await _wait_until(
         pilot,
-        lambda: app.current_tab == "settings"
-        and app.screen.__class__.__name__ == "SettingsScreen",
+        lambda: (
+            app.current_tab == "settings"
+            and app.screen.__class__.__name__ == "SettingsScreen"
+        ),
     )
     await pilot.pause(0.2)
     _press(app.screen, "#settings-category-diagnostics")
@@ -282,7 +285,7 @@ async def test_fresh_config_splash_disabled_wizard_auto_offers(
     """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -307,7 +310,7 @@ async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -318,9 +321,7 @@ async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
             await pilot.pause(0.2)
             assert (
                 app.screen.query_one(SetupWizardContainer)
-                .steps[
-                    app.screen.query_one(SetupWizardContainer).current_step
-                ]
+                .steps[app.screen.query_one(SetupWizardContainer).current_step]
                 .config.id
                 == STEP_PROVIDER
             )
@@ -360,10 +361,10 @@ async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
             # test environment with no reachable local servers.
             await _wait_until(
                 pilot,
-                lambda: app.app_config.get(WIZARD_STATE_SECTION, {}).get(
-                    SETUP_STARTED_KEY
-                )
-                is True,
+                lambda: (
+                    app.app_config.get(WIZARD_STATE_SECTION, {}).get(SETUP_STARTED_KEY)
+                    is True
+                ),
             )
 
     # Prove it is a REAL write, not just the in-memory mirror: read the same
@@ -371,9 +372,7 @@ async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
     from tldw_chatbook.config import load_cli_config_and_ensure_existence
 
     persisted_config = load_cli_config_and_ensure_existence(force_reload=True)
-    assert (
-        persisted_config.get(WIZARD_STATE_SECTION, {}).get(SETUP_STARTED_KEY) is True
-    )
+    assert persisted_config.get(WIZARD_STATE_SECTION, {}).get(SETUP_STARTED_KEY) is True
 
     # Next boot: a fresh TldwCli instance reading that SAME real persisted
     # checkpoint must offer bounded recovery and must NOT directly re-push
@@ -382,7 +381,7 @@ async def test_escape_exit_setup_dismisses_and_next_boot_offers_recovery(
     app2.app_config = persisted_config
     app2._initial_tab_value = "chat"
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app2.run_test(size=(140, 40)) as pilot2:
             await _wait_until(
                 pilot2,
@@ -468,7 +467,9 @@ async def test_successful_step_checkpoints_once_after_commit_before_navigation()
     container.track = TRACK_QUICK
     container.active_ids = (STEP_PROVIDER, STEP_MODEL)
     container._set_advancing = lambda active: None
-    container._next_active_index = lambda current: container._step_index_for_id(STEP_MODEL)
+    container._next_active_index = lambda current: container._step_index_for_id(
+        STEP_MODEL
+    )
     container.show_step = lambda index: events.append("navigate")
 
     async def checkpoint(next_step_id):
@@ -857,7 +858,9 @@ async def test_resume_marks_attempt_before_pushing_restored_wizard(monkeypatch):
         ("mirror", settings, deletes)
     )
     fake._handle_first_run_wizard_result = lambda result: None
-    fake.push_screen = lambda screen, callback: events.append(("push", screen, callback))
+    fake.push_screen = lambda screen, callback: events.append(
+        ("push", screen, callback)
+    )
 
     def save(settings, *, delete_keys=None):
         events.append(("save", settings, delete_keys))
@@ -872,9 +875,7 @@ async def test_resume_marks_attempt_before_pushing_restored_wizard(monkeypatch):
     pushed_wizard = events[2][1]
     assert pushed_wizard.resume_draft.active_step_id == STEP_MODEL
     assert pushed_wizard.resume_draft.resume_attempted is True
-    assert pushed_wizard.resume_draft.values["provider"] == {
-        "provider_value": "openai"
-    }
+    assert pushed_wizard.resume_draft.values["provider"] == {"provider_value": "openai"}
 
 
 @pytest.mark.asyncio
@@ -956,7 +957,7 @@ async def test_recovery_save_failure_reprompts_then_succeeds_once(
 
     monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", save)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "SetupRecoveryDialog"
@@ -967,10 +968,13 @@ async def test_recovery_save_failure_reprompts_then_succeeds_once(
                 pilot, lambda: type(app.screen).__name__ == "SetupRecoveryDialog"
             )
             assert save_attempts == 1
-            assert sum(
-                type(screen).__name__ == "SetupRecoveryDialog"
-                for screen in app.screen_stack
-            ) == 1
+            assert (
+                sum(
+                    type(screen).__name__ == "SetupRecoveryDialog"
+                    for screen in app.screen_stack
+                )
+                == 1
+            )
 
             _press(app.screen, "#setup-recovery-resume")
             await _wait_until(
@@ -979,10 +983,13 @@ async def test_recovery_save_failure_reprompts_then_succeeds_once(
             await pilot.pause(0.2)
 
             assert save_attempts >= 2
-            assert sum(
-                type(screen).__name__ == "FirstRunSetupWizard"
-                for screen in app.screen_stack
-            ) == 1
+            assert (
+                sum(
+                    type(screen).__name__ == "FirstRunSetupWizard"
+                    for screen in app.screen_stack
+                )
+                == 1
+            )
             assert not any(
                 type(screen).__name__ == "SetupRecoveryDialog"
                 for screen in app.screen_stack
@@ -1051,7 +1058,7 @@ async def test_sparse_model_resume_preserves_persisted_prefill(
     draft = read_setup_draft(app.app_config)
     assert draft is not None and STEP_MODEL not in draft.values
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
@@ -1059,17 +1066,19 @@ async def test_sparse_model_resume_preserves_persisted_prefill(
             await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
             await _wait_until(
                 pilot,
-                lambda: app.screen.query_one(SetupWizardContainer)
-                .steps[app.screen.query_one(SetupWizardContainer).current_step]
-                .config.id
-                == STEP_MODEL,
+                lambda: (
+                    app.screen.query_one(SetupWizardContainer)
+                    .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                    .config.id
+                    == STEP_MODEL
+                ),
             )
             model_step = app.screen.query_one(SetupWizardContainer).steps[
-                app.screen.query_one(SetupWizardContainer)._step_index_for_id(STEP_MODEL)
+                app.screen.query_one(SetupWizardContainer)._step_index_for_id(
+                    STEP_MODEL
+                )
             ]
-            assert model_step.get_step_data() == {
-                "model_id": "persisted-prefill-model"
-            }
+            assert model_step.get_step_data() == {"model_id": "persisted-prefill-model"}
             assert (
                 model_step.query_one("#setup-model-custom", Input).value
                 == "persisted-prefill-model"
@@ -1090,7 +1099,7 @@ async def test_sparse_appearance_resume_preserves_persisted_theme(
     draft = read_setup_draft(app.app_config)
     assert draft is not None and STEP_APPEARANCE not in draft.values
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
@@ -1098,10 +1107,12 @@ async def test_sparse_appearance_resume_preserves_persisted_theme(
             await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
             await _wait_until(
                 pilot,
-                lambda: app.screen.query_one(SetupWizardContainer)
-                .steps[app.screen.query_one(SetupWizardContainer).current_step]
-                .config.id
-                == STEP_APPEARANCE,
+                lambda: (
+                    app.screen.query_one(SetupWizardContainer)
+                    .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                    .config.id
+                    == STEP_APPEARANCE
+                ),
             )
             appearance = app.screen.query_one(SetupWizardContainer).steps[
                 app.screen.query_one(SetupWizardContainer)._step_index_for_id(
@@ -1129,7 +1140,7 @@ async def test_partial_appearance_restore_preserves_absent_splash_sibling(
     draft = read_setup_draft(app.app_config)
     assert draft is not None
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
@@ -1137,15 +1148,15 @@ async def test_partial_appearance_restore_preserves_absent_splash_sibling(
             await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
             await _wait_until(
                 pilot,
-                lambda: app.screen.query_one(SetupWizardContainer)
-                .steps[app.screen.query_one(SetupWizardContainer).current_step]
-                .config.id
-                == STEP_APPEARANCE,
+                lambda: (
+                    app.screen.query_one(SetupWizardContainer)
+                    .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                    .config.id
+                    == STEP_APPEARANCE
+                ),
             )
             container = app.screen.query_one(SetupWizardContainer)
-            appearance = container.steps[
-                container._step_index_for_id(STEP_APPEARANCE)
-            ]
+            appearance = container.steps[container._step_index_for_id(STEP_APPEARANCE)]
             splash_buttons = [
                 button
                 for button in appearance.query("#setup-splash-choice RadioButton")
@@ -1179,7 +1190,7 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
     draft = read_setup_draft(app.app_config)
     assert draft is not None
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
@@ -1187,17 +1198,21 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
             await app.push_screen(FirstRunSetupWizard(app, resume_draft=draft))
             await _wait_until(
                 pilot,
-                lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
-                and app.screen.query_one(SetupWizardContainer)
-                .steps[app.screen.query_one(SetupWizardContainer).current_step]
-                .config.id
-                == "appearance",
+                lambda: (
+                    type(app.screen).__name__ == "FirstRunSetupWizard"
+                    and app.screen.query_one(SetupWizardContainer)
+                    .steps[app.screen.query_one(SetupWizardContainer).current_step]
+                    .config.id
+                    == "appearance"
+                ),
             )
             container = app.screen.query_one(SetupWizardContainer)
             assert container.track == "full"
             assert container.wizard_data[STEP_PROVIDER]["provider_value"] == "openai"
             assert app.screen.query_one("#setup-track-full", RadioButton).value is True
-            assert app.screen.query_one("#setup-track-quick", RadioButton).value is False
+            assert (
+                app.screen.query_one("#setup-track-quick", RadioButton).value is False
+            )
 
             provider_step = container.steps[container._step_index_for_id(STEP_PROVIDER)]
             assert provider_step.selected_provider_key == "openai"
@@ -1236,9 +1251,7 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
             ]
             assert selected_splash == ["Surprise me (random)"]
 
-            protect_step = container.steps[
-                container._step_index_for_id(STEP_PROTECT)
-            ]
+            protect_step = container.steps[container._step_index_for_id(STEP_PROTECT)]
             assert protect_step.get_step_data() == {"encryption_enabled": True}
             assert "Encryption enabled" in str(
                 protect_step.query_one("#setup-protect-status", Static).renderable
@@ -1266,7 +1279,7 @@ async def test_resume_control_restore_failure_keeps_attempt_marker(
 
     monkeypatch.setattr(SetupWizardContainer, "_restore_radio_selection", fail_restore)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
@@ -1290,7 +1303,9 @@ def test_resume_target_mount_failure_log_is_value_free_and_does_not_clear(
         values={"model": {"model_id": "draft-private-model-value"}},
         resume_attempted=True,
     )
-    target = SimpleNamespace(config=SimpleNamespace(id=STEP_MODEL), compose_failed=False)
+    target = SimpleNamespace(
+        config=SimpleNamespace(id=STEP_MODEL), compose_failed=False
+    )
     screen = SimpleNamespace(call_after_refresh=MagicMock())
     warning = MagicMock()
 
@@ -1343,7 +1358,7 @@ async def test_resume_target_change_before_after_refresh_keeps_attempt_marker(
 
     wizard.call_after_refresh = capture_resume_callback
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
@@ -1359,7 +1374,10 @@ async def test_resume_target_change_before_after_refresh_keeps_attempt_marker(
             assert callback.__name__ == "_clear_resume_attempt_after_target_mount"
             callback(*args)
             if scheduled:
-                await scheduled.pop()
+                # TASK-34100.1: run_wizard_worker hands run_worker a callable
+                # that wraps the coroutine; calling it gives the coroutine.
+                work = scheduled.pop()
+                await (work() if callable(work) else work)
             await pilot.pause(0.2)
 
             assert app.app_config["first_run"]["resume_attempted"] is True
@@ -1386,7 +1404,7 @@ async def test_failed_resumed_mount_leaves_attempt_and_next_launch_on_home(
 
     monkeypatch.setattr(ModelStep, "compose_step", fail_model_compose)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
@@ -1407,7 +1425,7 @@ async def test_failed_resumed_mount_leaves_attempt_and_next_launch_on_home(
     app2 = _build_test_app(first_run_setup_completed=False)
     app2.app_config = app.app_config
     app2._initial_tab_value = "chat"
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app2.run_test(size=(120, 40)) as pilot2:
             await _wait_until(
                 pilot2, lambda: getattr(app2, "_initial_screen_pushed", False) is True
@@ -1430,7 +1448,7 @@ async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
     monkeypatch.setattr(ProviderStep, "compose_step", _raising_compose_step)
     navigation_messages = _capture_navigation_messages(monkeypatch, app)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -1440,21 +1458,25 @@ async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
             await pilot.press("ctrl+n")
             await _wait_until(
                 pilot,
-                lambda: container.steps[container.current_step].config.id
-                == STEP_PROVIDER,
+                lambda: (
+                    container.steps[container.current_step].config.id == STEP_PROVIDER
+                ),
             )
 
             navigation_messages.clear()
             _press(app.screen, "#setup-step-manual")
             await _wait_until(
                 pilot,
-                lambda: type(app.screen).__name__ == "SettingsScreen"
-                and app.current_tab == "settings",
+                lambda: (
+                    type(app.screen).__name__ == "SettingsScreen"
+                    and app.current_tab == "settings"
+                ),
             )
             await _wait_until(
                 pilot,
-                lambda: getattr(app.screen, "active_category", None)
-                == "providers-models",
+                lambda: (
+                    getattr(app.screen, "active_category", None) == "providers-models"
+                ),
             )
 
             first_run = app.app_config[WIZARD_STATE_SECTION]
@@ -1494,7 +1516,7 @@ async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
         results.append(result)
         app.handle_first_run_wizard_result(result)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: getattr(app, "_initial_screen_pushed", False) is True
@@ -1516,9 +1538,11 @@ async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
             await _wait_until(pilot, lambda: bool(results))
             await _wait_until(
                 pilot,
-                lambda: type(app.screen).__name__ == "SettingsScreen"
-                and getattr(app.screen, "active_category", None)
-                == "advanced-config",
+                lambda: (
+                    type(app.screen).__name__ == "SettingsScreen"
+                    and getattr(app.screen, "active_category", None)
+                    == "advanced-config"
+                ),
             )
 
             assert results == [
@@ -1529,8 +1553,7 @@ async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
                 }
             ]
             assert (
-                app.app_config[WIZARD_STATE_SECTION].get(SETUP_COMPLETED_KEY)
-                is False
+                app.app_config[WIZARD_STATE_SECTION].get(SETUP_COMPLETED_KEY) is False
             )
             draft = read_setup_draft(app.app_config)
             assert draft is not None
@@ -1642,9 +1665,7 @@ async def test_first_run_result_callback_remounts_same_tab_home_after_completion
     receiver = SimpleNamespace(
         current_tab=TAB_HOME,
         handle_screen_navigation=AsyncMock(side_effect=record_navigation),
-        _schedule_startup_model_catalog_refresh=MagicMock(
-            side_effect=record_schedule
-        ),
+        _schedule_startup_model_catalog_refresh=MagicMock(side_effect=record_schedule),
         post_message=MagicMock(
             side_effect=AssertionError("completed navigation must use its worker")
         ),
@@ -1701,7 +1722,7 @@ async def test_full_track_skip_everything_leaves_app_usable(
     )
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -1710,8 +1731,10 @@ async def test_full_track_skip_everything_leaves_app_usable(
             assert original_home.__class__.__name__ == "HomeScreen"
             await _wait_until(
                 pilot,
-                lambda: original_home._home_content_snapshot is not None
-                and not original_home._home_content_snapshot.console_ready,
+                lambda: (
+                    original_home._home_content_snapshot is not None
+                    and not original_home._home_content_snapshot.console_ready
+                ),
             )
             container = app.screen.query_one(SetupWizardContainer)
             await pilot.pause(0.2)
@@ -1721,8 +1744,9 @@ async def test_full_track_skip_everything_leaves_app_usable(
             _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
             await _wait_until(
                 pilot,
-                lambda: container.steps[container.current_step].config.id
-                == STEP_PROVIDER,
+                lambda: (
+                    container.steps[container.current_step].config.id == STEP_PROVIDER
+                ),
             )
 
             seen_step_ids: list[str] = []
@@ -1762,19 +1786,23 @@ async def test_full_track_skip_everything_leaves_app_usable(
             _press(app.screen, "#setup-exit-home")
             await _wait_until(
                 pilot,
-                lambda: app.current_tab == TAB_HOME
-                and app.screen.__class__.__name__ == "HomeScreen"
-                and app.screen is not original_home
-                and bool(app.screen.query("#nav-console")),
+                lambda: (
+                    app.current_tab == TAB_HOME
+                    and app.screen.__class__.__name__ == "HomeScreen"
+                    and app.screen is not original_home
+                    and bool(app.screen.query("#nav-console"))
+                ),
             )
             refreshed_home = app.screen
             await _wait_until(
                 pilot,
-                lambda: refreshed_home._home_content_snapshot is not None
-                and refreshed_home._home_content_snapshot.console_ready
-                and refreshed_home._current_dashboard_input is not None
-                and refreshed_home._current_dashboard_input.console_ready
-                and bool(refreshed_home.query("#home-start-conversation")),
+                lambda: (
+                    refreshed_home._home_content_snapshot is not None
+                    and refreshed_home._home_content_snapshot.console_ready
+                    and refreshed_home._current_dashboard_input is not None
+                    and refreshed_home._current_dashboard_input.console_ready
+                    and bool(refreshed_home.query("#home-start-conversation"))
+                ),
             )
 
             # "Fully usable": the shell nav still works after the wizard.
@@ -1803,16 +1831,16 @@ async def _open_rerun_wizard_from_settings(pilot):
     assert "Run Setup Wizard" in str(run_wizard_button.label)
 
     run_wizard_button.press()
-    await _wait_until(
-        pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
-    )
+    await _wait_until(pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard")
     wizard_screen = app.screen
     assert wizard_screen.rerun is True
     await pilot.pause(0.2)
     return wizard_screen
 
 
-async def _walk_rerun_quick_track_to_summary(pilot, wizard_screen) -> "SetupWizardContainer":
+async def _walk_rerun_quick_track_to_summary(
+    pilot, wizard_screen
+) -> "SetupWizardContainer":
     # Quick track is pre-selected; walk welcome -> provider -> model ->
     # voice -> protect -> summary without picking anything (every step is
     # skip-safe; TASK-21148 keeps Protect on the track even keyless).
@@ -1833,18 +1861,16 @@ async def _open_rerun_wizard_over_console(app, pilot) -> tuple[ChatScreen, objec
         FirstRunSetupWizard(app, rerun=True),
         app.handle_first_run_wizard_result,
     )
-    await _wait_until(
-        pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
-    )
+    await _wait_until(pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard")
     wizard_screen = app.screen
     await pilot.pause(0.2)
     await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
     await _wait_until(
         pilot,
-        lambda: str(
-            wizard_screen.query_one("#setup-exit-chat", Button).label
-        )
-        == "Start chatting",
+        lambda: (
+            str(wizard_screen.query_one("#setup-exit-chat", Button).label)
+            == "Start chatting"
+        ),
     )
     return console, wizard_screen
 
@@ -1875,7 +1901,7 @@ async def test_rerun_over_settings_review_settings_returns_to_settings(
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 55)) as pilot:
             wizard_screen = await _open_rerun_wizard_from_settings(pilot)
             await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
@@ -1914,16 +1940,16 @@ async def test_rerun_over_settings_start_chatting_navigates_to_chat(
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 55)) as pilot:
             wizard_screen = await _open_rerun_wizard_from_settings(pilot)
             await _walk_rerun_quick_track_to_summary(pilot, wizard_screen)
             await _wait_until(
                 pilot,
-                lambda: str(
-                    app.screen.query_one("#setup-exit-chat", Button).label
-                )
-                == "Start chatting",
+                lambda: (
+                    str(app.screen.query_one("#setup-exit-chat", Button).label)
+                    == "Start chatting"
+                ),
             )
 
             _press(app.screen, "#setup-exit-chat")
@@ -1958,7 +1984,7 @@ async def test_mounted_wizard_producer_to_console_consumer_preserves_user_work(
         record_producer_stage,
     )
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 55)) as pilot:
             await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
             console = app.screen
@@ -1967,19 +1993,19 @@ async def test_mounted_wizard_producer_to_console_consumer_preserves_user_work(
                 session.id: _live_first_chat_session_snapshot(session)
                 for session in store.sessions()
             }
-            console, wizard_screen = await _open_rerun_wizard_over_console(
-                app, pilot
-            )
+            console, wizard_screen = await _open_rerun_wizard_over_console(app, pilot)
 
             _press(wizard_screen, "#setup-exit-chat")
             await _wait_until(pilot, lambda: len(staged) == 1)
             target_id = staged[0].session_id
             await _wait_until(
                 pilot,
-                lambda: app.screen is console
-                and store.active_session_id == target_id
-                and not app.pending_handoffs.has_pending(
-                    HandoffChannel.CONSOLE_FIRST_CHAT
+                lambda: (
+                    app.screen is console
+                    and store.active_session_id == target_id
+                    and not app.pending_handoffs.has_pending(
+                        HandoffChannel.CONSOLE_FIRST_CHAT
+                    )
                 ),
             )
 
@@ -2016,15 +2042,13 @@ async def test_mounted_wizard_stage_failure_leaves_console_and_focus_unchanged(
         fail_producer_stage,
     )
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 55)) as pilot:
             await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
             console = app.screen
             store, _user = await _seed_live_console_user_draft(console, pilot)
             console_before = _live_console_projection(console)
-            console, wizard_screen = await _open_rerun_wizard_over_console(
-                app, pilot
-            )
+            console, wizard_screen = await _open_rerun_wizard_over_console(app, pilot)
             start_button = wizard_screen.query_one("#setup-exit-chat", Button)
             start_button.focus()
             await pilot.pause()
@@ -2042,9 +2066,12 @@ async def test_mounted_wizard_stage_failure_leaves_console_and_focus_unchanged(
 
 
 @pytest.mark.asyncio
-async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
+async def test_mounted_wizard_saved_pair_change_retires_intent_without_touching_console(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """A saved provider/model change after Start chatting never applies the
+    stale handoff (TASK-34100.5: the fence is the saved pair, not the config
+    generation; an unrelated write lets the handoff apply instead)."""
     _prepare_clean_environment(monkeypatch, tmp_path)
     _persist_complete_custom_provider_setup()
     app = _build_test_app(first_run_setup_completed=True)
@@ -2056,7 +2083,13 @@ async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
         revision = real_stage(intent)
         staged.append(intent)
         assert save_settings_to_cli_config(
-            {"general": {"task5_generation_race": "published-after-stage"}}
+            {
+                "api_settings.custom": {
+                    "api_url": "http://127.0.0.1:8080/v1",
+                    "model": "model-b",
+                },
+                "chat_defaults": {"provider": "custom", "model": "model-b"},
+            }
         )
         return revision
 
@@ -2066,25 +2099,25 @@ async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
         stage_then_publish,
     )
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(180, 55)) as pilot:
             await _wait_until(pilot, lambda: isinstance(app.screen, ChatScreen))
             console = app.screen
             store, _user = await _seed_live_console_user_draft(console, pilot)
             console_before = _live_console_projection(console)
             focus_before = app.focused
-            console, wizard_screen = await _open_rerun_wizard_over_console(
-                app, pilot
-            )
+            console, wizard_screen = await _open_rerun_wizard_over_console(app, pilot)
             navigation_messages = _capture_navigation_messages(monkeypatch, app)
 
             _press(wizard_screen, "#setup-exit-chat")
             await _wait_until(pilot, lambda: len(staged) == 1)
             await _wait_until(
                 pilot,
-                lambda: app.screen is not wizard_screen
-                and app.pending_handoffs.has_pending(
-                    HandoffChannel.CONSOLE_FIRST_CHAT
+                lambda: (
+                    app.screen is not wizard_screen
+                    and not app.pending_handoffs.has_pending(
+                        HandoffChannel.CONSOLE_FIRST_CHAT
+                    )
                 ),
             )
             await _wait_until(
@@ -2099,7 +2132,7 @@ async def test_mounted_wizard_generation_race_rolls_back_and_retries_intent(
             assert all(
                 session.id != staged[0].session_id for session in store.sessions()
             )
-            assert _pending_first_chat(app) == staged[0]
+            assert _pending_first_chat(app) is None
 
 
 # ---------------------------------------------------------------------------
@@ -2120,7 +2153,7 @@ async def test_palette_setup_wizard_action_wires_result_callback(
     app = _build_test_app(first_run_setup_completed=True)
     app._initial_tab_value = "chat"
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,
@@ -2165,7 +2198,7 @@ async def test_wizard_navigation_visible_at_80x24(
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(80, 24)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -2182,7 +2215,9 @@ async def test_wizard_navigation_visible_at_80x24(
                 assert region.width > 0 and region.height > 0, (
                     f"{widget_id} has an empty region at 80x24: {region}"
                 )
-                assert region.right <= 80, f"{widget_id} clipped past column 80: {region}"
+                assert region.right <= 80, (
+                    f"{widget_id} clipped past column 80: {region}"
+                )
                 assert region.bottom <= 24, f"{widget_id} clipped past row 24: {region}"
 
             # Cross-check against the actual compositor output rather than
@@ -2203,20 +2238,36 @@ async def test_wizard_navigation_visible_at_80x24(
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(80, 24), (120, 40), (177, 45)])
 @pytest.mark.asyncio
+@private_profile_test
 async def test_voice_step_controls_are_stable_and_scroll_reachable(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     track: str,
     theme: str,
     size: tuple[int, int],
 ) -> None:
+    # TASK-34100.8 review round 2 (F9): a fresh private profile per node, so
+    # the plain command reaches these assertions; in the shared per-test
+    # sandbox every node failed setup with RecoveryRequired.
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
     app.theme = theme
+    # TASK-34100.8: the step probes a local service with one TCP connect.
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Wizards.first_run_voice_step.probe_endpoint_reachable",
+        lambda _url: False,
+    )
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
+            # The screen arrives before its container mounts; querying in that
+            # gap raised NoMatches on some nodes (a race, not a layout fault).
             await _wait_until(
-                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                pilot,
+                lambda: (
+                    type(app.screen).__name__ == "FirstRunSetupWizard"
+                    and bool(app.screen.query(SetupWizardContainer))
+                ),
             )
             container = app.screen.query_one(SetupWizardContainer)
             container.select_track(track)
@@ -2228,6 +2279,10 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
 
             step = container.steps[voice_index]
             assert isinstance(step, VoiceSetupStep)
+            # TASK-34100.8: a fresh profile starts on "No voice for now",
+            # which hides the try-it controls; picking a service shows them.
+            step._select_preset_button("setup-voice-preset-pocket")
+            await pilot.pause(0.2)
 
             # TASK-21148 (UAT V-1/V-2): the try-it controls lead the step;
             # plumbing lives under the Advanced disclosure. The primary
@@ -2256,7 +2311,13 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
                 )
 
             for control in primary_controls:
-                control.focus()
+                if control.disabled:
+                    # TASK-34100.8 review round 1 (F1): on a fresh profile the
+                    # default box is locked on (this pick IS the reply voice),
+                    # so it takes no focus; it must still scroll into view.
+                    step.scroll_to_widget(control, animate=False)
+                else:
+                    control.focus()
                 await pilot.pause(0.2)
                 _assert_reachable(control)
 
@@ -2266,7 +2327,8 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
                 step.query_one("#setup-voice-endpoint", Input),
                 step.query_one("#setup-voice-auth"),
                 step.query_one("#setup-voice-model", Input),
-                step.query_one("#setup-voice-voice", Input),
+                # TASK-34100.8: Voice is a picker (Select + "Other…").
+                step.query_one("#setup-voice-voice-select"),
             )
             assert all(c.region.width > 0 for c in advanced_controls)
             assert all(c.region.right <= size[0] for c in advanced_controls)
@@ -2315,7 +2377,7 @@ async def test_provider_key_input_visible_at_120x40_without_scrolling(
     """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -2366,7 +2428,7 @@ async def test_exact_draft_model_controls_remain_keyboard_visible_in_compact_vie
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -2440,7 +2502,7 @@ async def test_summary_five_actions_visible_and_focused_on_full_track(
     """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -2453,8 +2515,9 @@ async def test_summary_five_actions_visible_and_focused_on_full_track(
             _press(app.screen, "#wizard-next")  # Welcome -> Provider, track=full
             await _wait_until(
                 pilot,
-                lambda: container.steps[container.current_step].config.id
-                == STEP_PROVIDER,
+                lambda: (
+                    container.steps[container.current_step].config.id == STEP_PROVIDER
+                ),
             )
 
             for _ in range(10):
@@ -2520,9 +2583,7 @@ async def test_summary_five_actions_visible_and_focused_on_full_track(
                     region.y >= 0
                     and region.bottom <= size[1]
                     and region.right <= size[0]
-                ), (
-                    f"{label!r} exit button clipped at {size[0]}x{size[1]}: {region}"
-                )
+                ), f"{label!r} exit button clipped at {size[0]}x{size[1]}: {region}"
                 assert button in app.screen._compositor.visible_widgets, (
                     f"{label!r} exit button's region looked on-screen but the "
                     "compositor never painted it"
@@ -2550,7 +2611,7 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
     """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -2563,8 +2624,9 @@ async def test_speech_step_install_button_visible_at_120x40_without_scrolling(
             container = app.screen.query_one(SetupWizardContainer)
             await _wait_until(
                 pilot,
-                lambda: container.steps[container.current_step].config.id
-                == STEP_PROVIDER,
+                lambda: (
+                    container.steps[container.current_step].config.id == STEP_PROVIDER
+                ),
             )
 
             for _ in range(5):
@@ -2656,7 +2718,7 @@ async def test_external_cancel_is_keyboard_reachable_and_in_bounds_at_80_columns
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(80, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -2667,8 +2729,9 @@ async def test_external_cancel_is_keyboard_reachable_and_in_bounds_at_80_columns
             _press(app.screen, "#wizard-next")
             await _wait_until(
                 pilot,
-                lambda: container.steps[container.current_step].config.id
-                == STEP_PROVIDER,
+                lambda: (
+                    container.steps[container.current_step].config.id == STEP_PROVIDER
+                ),
             )
             while container.steps[container.current_step].config.id != "speech":
                 previous_step = container.current_step
@@ -2717,7 +2780,7 @@ async def test_external_commit_fences_back_and_finish_later_until_handoff_settle
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -2817,7 +2880,7 @@ async def test_navigation_and_focus_stay_stable_at_80x24(
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(80, 24)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -2843,7 +2906,9 @@ async def test_navigation_and_focus_stay_stable_at_80x24(
             key_input = app.screen.query_one("#setup-provider-api-key", Input)
             key_input.focus()
             await pilot.pause(0.2)
-            assert container.is_running, "focusing an off-screen widget crashed the wizard"
+            assert container.is_running, (
+                "focusing an off-screen widget crashed the wizard"
+            )
             assert app.focused is key_input
 
 
@@ -2865,7 +2930,7 @@ async def test_focus_scrolls_offscreen_widget_into_view_when_step_overflows(
     """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(100, 18)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -2949,7 +3014,7 @@ async def test_back_next_mashing_across_provider_model_does_not_double_advance(
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3012,10 +3077,10 @@ async def test_back_next_mashing_across_provider_model_does_not_double_advance(
             summary.on_show()
             await _wait_until(
                 pilot,
-                lambda: str(
-                    app.screen.query_one("#setup-exit-chat", Button).label
-                )
-                == "Start chatting",
+                lambda: (
+                    str(app.screen.query_one("#setup-exit-chat", Button).label)
+                    == "Start chatting"
+                ),
             )
             _press(app.screen, "#setup-exit-chat")
             await _wait_until(
@@ -3067,7 +3132,7 @@ async def test_ctrl_n_ctrl_b_do_not_crash_and_move_one_step(
 
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3155,7 +3220,7 @@ async def test_cold_full_track_speech_entry_keeps_keyboard_alive(
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 50)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3186,9 +3251,7 @@ async def test_cold_full_track_speech_entry_keeps_keyboard_alive(
             # The mechanism assertion above is necessary but not sufficient —
             # prove a real key event still reaches the wizard's bindings.
             await pilot.press("ctrl+b")
-            await _wait_until(
-                pilot, lambda: _current_step_id(container) == STEP_RAG
-            )
+            await _wait_until(pilot, lambda: _current_step_id(container) == STEP_RAG)
 
 
 # ---------------------------------------------------------------------------
@@ -3205,7 +3268,7 @@ async def test_step_commit_failure_renders_on_pinned_strip_and_clears(
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3221,9 +3284,7 @@ async def test_step_commit_failure_renders_on_pinned_strip_and_clears(
             monkeypatch.setattr(welcome, "commit", failing_commit)
             await _wait_until(pilot, lambda: container.can_proceed)
             _press(app.screen, "#wizard-next")
-            await _wait_until(
-                pilot, lambda: "Boom failed." in str(strip.renderable)
-            )
+            await _wait_until(pilot, lambda: "Boom failed." in str(strip.renderable))
             assert not strip.has_class("hidden")
             # Honest affordances only — no phantom "Skip this step" control.
             assert "Skip this step" not in str(strip.renderable)
@@ -3260,7 +3321,7 @@ async def test_password_dialog_failed_submit_keeps_buttons_visible_in_real_app(
     from tldw_chatbook.Widgets.password_dialog import PasswordDialog
 
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3268,8 +3329,10 @@ async def test_password_dialog_failed_submit_keeps_buttons_visible_in_real_app(
             app.push_screen(PasswordDialog(mode="setup"))
             await _wait_until(
                 pilot,
-                lambda: isinstance(app.screen, PasswordDialog)
-                and bool(app.screen.query("#password-input")),
+                lambda: (
+                    isinstance(app.screen, PasswordDialog)
+                    and bool(app.screen.query("#password-input"))
+                ),
             )
             dialog = app.screen
             dialog.query_one("#password-input", _Input).value = "a"
@@ -3277,9 +3340,7 @@ async def test_password_dialog_failed_submit_keeps_buttons_visible_in_real_app(
             dialog.query_one("#submit-button", Button).press()
             await _wait_until(
                 pilot,
-                lambda: dialog.query_one("#error-message", Static).has_class(
-                    "visible"
-                ),
+                lambda: dialog.query_one("#error-message", Static).has_class("visible"),
             )
             error = dialog.query_one("#error-message", Static)
             # With the real stylesheet loaded, the error must stay one line —
@@ -3292,9 +3353,7 @@ async def test_password_dialog_failed_submit_keeps_buttons_visible_in_real_app(
                 button = dialog.query_one(button_id, Button)
                 assert button.region.height > 0, f"{button_id} clipped (K-3)"
             await pilot.press("escape")
-            await _wait_until(
-                pilot, lambda: not isinstance(app.screen, PasswordDialog)
-            )
+            await _wait_until(pilot, lambda: not isinstance(app.screen, PasswordDialog))
 
 
 # ---------------------------------------------------------------------------
@@ -3312,7 +3371,7 @@ async def test_arrow_selection_follows_highlight_on_track_radio(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3337,7 +3396,7 @@ async def test_enter_advances_from_track_radio(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3357,7 +3416,7 @@ async def test_tab_from_step_content_reaches_next_before_cancel(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3381,7 +3440,7 @@ async def test_enter_in_model_fallback_input_advances(
     from textual.widgets import Input as _Input
 
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3399,9 +3458,7 @@ async def test_enter_in_model_fallback_input_advances(
             await pilot.pause()
             fallback.value = "some-model"
             await pilot.press("enter")
-            await _wait_until(
-                pilot, lambda: _current_step_id(container) == STEP_VOICE
-            )
+            await _wait_until(pilot, lambda: _current_step_id(container) == STEP_VOICE)
 
 
 # ---------------------------------------------------------------------------
@@ -3421,7 +3478,7 @@ async def test_local_provider_probe_feedback_is_visible_and_adjacent(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 45)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3432,16 +3489,12 @@ async def test_local_provider_probe_feedback_is_visible_and_adjacent(
             await _wait_until(
                 pilot, lambda: _current_step_id(container) == STEP_PROVIDER
             )
-            provider = next(
-                s for s in container.steps if isinstance(s, ProviderStep)
-            )
+            provider = next(s for s in container.steps if isinstance(s, ProviderStep))
             provider.select_provider("llama_cpp")
             status = provider.query_one("#setup-provider-probe-status", Static)
             # P-7: selection alone produces reachability feedback (nothing
             # listens on the endpoint in this environment).
-            await _wait_until(
-                pilot, lambda: str(status.renderable) != ""
-            )
+            await _wait_until(pilot, lambda: str(status.renderable) != "")
             # P-6: Test always ends in a visible verdict.
             provider.query_one("#setup-provider-test", Button).press()
             await _wait_until(
@@ -3474,7 +3527,7 @@ async def test_run_setup_wizard_action_opens_once(
 ) -> None:
     _prepare_clean_environment(monkeypatch, tmp_path)
     app = _build_test_app(first_run_setup_completed=True)
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await pilot.pause(0.3)
             assert type(app.screen).__name__ != "FirstRunSetupWizard"
@@ -3578,7 +3631,7 @@ async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
     """
     with _RecordingModelsServer([f"model-{index}" for index in range(128)]) as server:
         app = _build_fresh_wizard_app(monkeypatch, tmp_path)
-        with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
             async with app.run_test(size=(140, 45)) as pilot:
                 await _wait_until(
                     pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3595,17 +3648,19 @@ async def test_provider_test_button_requests_identity_encoding_from_a_real_peer(
                 )
                 provider.select_provider("llama_cpp")
                 await pilot.pause(0.3)
-                provider.query_one("#setup-provider-endpoint", Input).value = (
-                    server.base_url
-                )
+                provider.query_one(
+                    "#setup-provider-endpoint", Input
+                ).value = server.base_url
                 await pilot.pause(0.3)
 
                 status = provider.query_one("#setup-provider-probe-status", Static)
                 provider.query_one("#setup-provider-test", Button).press()
                 await _wait_until(
                     pilot,
-                    lambda: bool(server.accept_encodings)
-                    and str(status.renderable).startswith(("✗", "✓")),
+                    lambda: (
+                        bool(server.accept_encodings)
+                        and str(status.renderable).startswith(("✗", "✓"))
+                    ),
                 )
 
     assert server.accept_encodings, "the step never reached the models endpoint"
@@ -3671,7 +3726,7 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
         handoff: Which _load_models branch to exercise.
     """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 45)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3746,12 +3801,14 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
             await _wait_until(
                 pilot,
                 lambda: (
-                    (labels := [
-                        str(button.label)
-                        for button in model_step.query(
-                            "#setup-model-choice RadioButton"
-                        )
-                    ])
+                    (
+                        labels := [
+                            str(button.label)
+                            for button in model_step.query(
+                                "#setup-model-choice RadioButton"
+                            )
+                        ]
+                    )
                     and all("loading models" not in label for label in labels)
                 ),
             )
@@ -3822,7 +3879,7 @@ async def test_production_sized_catalog_reaches_the_model_picker(
         from tldw_chatbook.config import get_cli_providers_and_models
 
         app.providers_models = get_cli_providers_and_models()
-        with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+        with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
             async with app.run_test(size=(140, 45)) as pilot:
                 await _wait_until(
                     pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3839,9 +3896,9 @@ async def test_production_sized_catalog_reaches_the_model_picker(
                 )
                 provider.select_provider("llama_cpp")
                 await pilot.pause(0.4)
-                provider.query_one("#setup-provider-endpoint", Input).value = (
-                    server.base_url
-                )
+                provider.query_one(
+                    "#setup-provider-endpoint", Input
+                ).value = server.base_url
                 await pilot.pause(0.4)
 
                 _press(app.screen, "#wizard-next")
@@ -3931,7 +3988,7 @@ async def test_provider_discovery_failure_keeps_escape_exit_alive(
     """Real Enter/Enter/Escape walk: discovery fails, Escape still exits."""
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(235, 52)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -3996,7 +4053,7 @@ async def test_escape_cannot_dismiss_an_exit_dialog_that_never_painted(
     monkeypatch.setattr(
         _SettlingGuardedConfirmationDialog, "call_after_refresh", _swallow_settle
     )
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -4031,7 +4088,7 @@ async def test_enter_on_an_empty_provider_key_advances_with_a_visible_skip(
     """
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
@@ -4041,8 +4098,9 @@ async def test_enter_on_an_empty_provider_key_advances_with_a_visible_skip(
             _press(app.screen, "#wizard-next")  # Welcome -> Provider
             await _wait_until(
                 pilot,
-                lambda: container.steps[container.current_step].config.id
-                == STEP_PROVIDER,
+                lambda: (
+                    container.steps[container.current_step].config.id == STEP_PROVIDER
+                ),
             )
             provider_step = container.steps[container.current_step]
             assert isinstance(provider_step, ProviderStep)
@@ -4062,8 +4120,7 @@ async def test_enter_on_an_empty_provider_key_advances_with_a_visible_skip(
             await pilot.press("enter")
             await _wait_until(
                 pilot,
-                lambda: container.steps[container.current_step].config.id
-                == STEP_MODEL,
+                lambda: container.steps[container.current_step].config.id == STEP_MODEL,
             )
 
             for _ in range(12):

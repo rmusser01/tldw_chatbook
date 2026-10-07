@@ -1,0 +1,21 @@
+{
+  "commit": "d3b2ade44b49afc96f78c592ac271e3231472b27",
+  "parent": "fc1627e99b8722a0a69812530d950410e8356ba0",
+  "committed_paths": [
+    "Tests/Agents/test_automatic_child_scope.py",
+    "Tests/Chat/test_console_chat_start.py",
+    "Tests/Chat/test_console_close_during_durable_postcommit.py",
+    "Tests/Chat/test_console_durable_commit_diagnostics.py",
+    "Tests/Chat/test_console_durable_commit_offload.py",
+    "Tests/DB/test_automatic_chat_starts.py",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/Chat/console_chat_start.py",
+    "tldw_chatbook/Chat/message_metadata.py",
+    "tldw_chatbook/DB/automatic_work.py"
+  ],
+  "committed_source_matches_frozen_fingerprint": true,
+  "owned_worktree_paths_clean": true,
+  "index_empty": true,
+  "remaining_status": " M Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md\n M \"backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md\"\n",
+  "aggregate_sha256": "c0c6ecb2e37deb5858e455f032790eb1315d4508af42696ad1e8cc054e3271e4"
+}

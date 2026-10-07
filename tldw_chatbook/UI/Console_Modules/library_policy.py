@@ -158,9 +158,7 @@ class ConsoleLibraryPolicyController:
             raise RuntimeError("The active conversation is no longer available.")
         if session.persisted_conversation_id is None:
             return session.library_policy_holder.snapshot
-        snapshot = await self._ensure_store().hydrate_session_library_policy(
-            session.id
-        )
+        snapshot = await self._ensure_store().hydrate_session_library_policy(session.id)
         self._request_control_bar_sync()
         return snapshot
 

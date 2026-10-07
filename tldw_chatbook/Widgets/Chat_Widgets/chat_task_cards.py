@@ -35,7 +35,9 @@ class ChatTaskCards(Container):
         needs no import of the lazily-loaded card module (ADR-097).
         """
 
-        def __init__(self, answers: list[dict[str, Any]], request_id: str | None) -> None:
+        def __init__(
+            self, answers: list[dict[str, Any]], request_id: str | None
+        ) -> None:
             """Carry the answers and the round id they resolve.
 
             Args:
@@ -45,7 +47,6 @@ class ChatTaskCards(Container):
             super().__init__()
             self.answers = answers
             self.request_id = request_id
-
 
     class ChatCreateDecided(Message):
         """The chat-create card's decision (class hosted HERE so the
@@ -186,9 +187,17 @@ class ChatTaskCards(Container):
             that card mounts lazily on first use (ADR-097).
         """
         yield ("pending_approval", self._set_approval)
-        yield ("pending_skill_install", self.query_one(SkillInstallConfirmCard).set_install)
-        yield ("pending_skill_script", self.query_one(SkillScriptConfirmCard).set_script)
-        chat_create_card = self._chat_create_card(create=bool(task_state.pending_chat_create))
+        yield (
+            "pending_skill_install",
+            self.query_one(SkillInstallConfirmCard).set_install,
+        )
+        yield (
+            "pending_skill_script",
+            self.query_one(SkillScriptConfirmCard).set_script,
+        )
+        chat_create_card = self._chat_create_card(
+            create=bool(task_state.pending_chat_create)
+        )
         if chat_create_card is not None:
             yield ("pending_chat_create", chat_create_card.set_payload)
         # Generated lazily so the question card is created (mounted) only
@@ -241,8 +250,7 @@ class ChatTaskCards(Container):
         """Reconcile receipt cards without retaining tool payloads."""
         wanted = set(operation_ids)
         current = {
-            card.operation_id: card
-            for card in container.query(WatchlistsOperationCard)
+            card.operation_id: card for card in container.query(WatchlistsOperationCard)
         }
         for operation_id, card in current.items():
             if operation_id not in wanted:
@@ -251,8 +259,6 @@ class ChatTaskCards(Container):
             row = operation_rows.get(operation_id, {"id": operation_id})
             card = current.get(operation_id)
             if card is None:
-                container.mount(
-                    WatchlistsOperationCard(operation_id, operation=row)
-                )
+                container.mount(WatchlistsOperationCard(operation_id, operation=row))
             else:
                 card.set_operation(row)

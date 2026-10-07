@@ -40,7 +40,9 @@ class _CaptureApp(ConsolidatedCSSApp):
         super().__init__()
         self.captured: list[PersonaPolicyRulesChanged] = []
 
-    def on_persona_policy_rules_changed(self, message: PersonaPolicyRulesChanged) -> None:
+    def on_persona_policy_rules_changed(
+        self, message: PersonaPolicyRulesChanged
+    ) -> None:
         self.captured.append(message)
 
 
@@ -120,9 +122,7 @@ async def test_editor_rejects_malformed_kind_with_status_message():
         await _fill(pilot, "#personas-policy-name", "search_notes")
         await _click(pilot, "#personas-policy-save")
         assert app.captured == []
-        status = str(
-            pilot.app.query_one("#personas-policy-status", Static).renderable
-        )
+        status = str(pilot.app.query_one("#personas-policy-status", Static).renderable)
         assert "kind" in status.lower()
 
 
@@ -365,6 +365,7 @@ def test_switcher_suffix_degrades_silently_without_services():
 
 # ---- Import review policy-rule count -------------------------------------
 
+
 def _import_review_with_carried_persona(tmp_path, carried_persona) -> Any:
     """Import a valid archive whose pack.json carries a persona record."""
     import json
@@ -382,9 +383,7 @@ def _import_review_with_carried_persona(tmp_path, carried_persona) -> Any:
     if carried_persona is not None:
         pack = json.loads(payloads["metadata/pack.json"])
         pack["pack"]["persona"] = carried_persona
-        _replace_declared_payload(
-            payloads, "metadata/pack.json", _canonical(pack)
-        )
+        _replace_declared_payload(payloads, "metadata/pack.json", _canonical(pack))
     archive = _write_archive(tmp_path / "pack.tldw-persona-vpack", payloads)
     staging = tmp_path / "staging"
     staging.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -522,9 +521,7 @@ async def test_import_completion_surfaces_policy_rule_notice(
             "import_persona_visual_pack",
             lambda *_args, **_kwargs: _import_review(2),
         )
-        assert await screen._import_persona_visual_from_path(
-            "ruled.tldw-persona-vpack"
-        )
+        assert await screen._import_persona_visual_from_path("ruled.tldw-persona-vpack")
         notice = str(
             screen.query_one("#personas-persona-visual-notice", Static).renderable
         )

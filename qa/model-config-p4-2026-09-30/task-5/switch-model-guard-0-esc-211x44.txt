@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                    Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │        ╭─ Switch model · now: Anthropic · claude-sonnet-5 ────────────────────────────────────────────────────────────────────╮                                   │
+ ─────────────────────────────────  │        │ Find qwen                                                                                                            │                                   │
+ Workspaces                    ▸    │        │ PREVIOUS · Alt+M, Enter swaps back                                                                                   │                                   │
+ ─────────────────────────────────  │        │ ▶ qwen3:32b                    llama.cpp             ~32k  Ready · not tested           used just now in this chat   │                                   │
+ Conversations                 ▾    │        │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                              │                                   │
+        Archive this chat           │        │   qwen3:4b                     Ollama                ~32k  Ready · not tested                                        │                                   │
+          Archived chats            │        │   qwen3:8b                     Ollama                ~32k  Ready · not tested                                        │                                   │
+        Search all chats…           │        │   qwen3:14b                    Ollama                ~32k  Ready · not tested                                        │                                   │
+   Chat 1                           │        │   qwen3:30b                    Ollama                ~32k  Ready · not tested                                        │                                   │
+                                    │        │   qwen3:32b                    Ollama                ~32k  Ready · not tested                                        │                                   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │        │   qwen3:235b                   Ollama                ~32k  Ready · not tested                                        │                                   │
+  ▊  Filter visible     ▎           │        │ NEEDS SETUP · Enter opens the fix                                                                                    │                                   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │        │   @cf/qwen/qwen3.8-27b         Cloudflare Worke… AI  ~32k  Not ready · no key           Enter: add key in Settings   │                                   │
+                                    │        │   Qwen/Qwen3.7-Max             Command Code          ~32k  Not ready · no key           Enter: add key in Settings   │                                   │◂ Inspect
+   New conversation                 │        │   Qwen/Qwen3.6-Plus            Command Code          ~32k  Not ready · no key           Enter: add key in Settings   │                                   │
+  Chats                        ▾    │        │   qwen3.8-max                  OpenCode Zen          ~32k  Not ready · no key           Enter: add key in Settings   │                                   │
+   Chat 1                     💬    │        │   qwen3.8-max                  QwenCloud             ~32k  Not ready · no key           Enter: add key in Settings   │                                   │
+                                    │        │ TYPED MODEL ID · not in any catalog                                                                                  │                                   │
+ ─────────────────────────────────  │        │   qwen                         Anthropic            ~200k  Ready · not tested           typed id · in no catalog     │                                   │
+ Character · No chats          ▸    │        │ Values for qwen3:32b · llama.cpp                                                                                     │                                   │
+ ─────────────────────────────────  │        │ Temperature 1.2      edited *          Max tokens 4096     provider          Streaming On    ▼  provider             │                                   │
+ Model                         ▸    │        │ ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │                                   │
+ ─────────────────────────────────  │        │ │1 unsaved edit to this chat: Temperature.                                                                         │ │                                   │
+ Agent                         ▸    │        │ │Enter apply · d discard · Esc keep editing                                                                        │ │                                   │
+ ─────────────────────────────────  │        │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │                                   │
+ Details                       ▸    │        │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel  │                                   │
+                                    │        │  Save as model default  saves Temperature, Max tokens, Streaming                         Applies to: this chat only  │                                   │
+                                    │        ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-sonnet-5     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current $
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                              Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

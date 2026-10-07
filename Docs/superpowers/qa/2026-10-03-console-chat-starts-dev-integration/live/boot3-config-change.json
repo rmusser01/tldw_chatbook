@@ -1,0 +1,8 @@
+{
+  "time": 1791060358.596364,
+  "boot2_exit_returncode": 0,
+  "boot2_pid_absent": true,
+  "before_sha256": "ba7a88fede9c8710104b56613a78223046218678e0866c162a415949b20348b0",
+  "after_sha256": "9b0630fe2ea467b8855487a9ba0ee010987e96f26dc1f0feb63fb3b267c762a2",
+  "change": "agents.autowake_enabled false\u2192true"
+}

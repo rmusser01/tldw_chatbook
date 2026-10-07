@@ -44,6 +44,7 @@ the sandbox-proof answer, and only the `~` fallback branch below needs it:
 `HF_HUB_CACHE`, `HF_HOME` and `XDG_CACHE_HOME` are not sandboxed, so when
 one of those is set it is already the real answer.
 """
+
 from __future__ import annotations
 
 import os

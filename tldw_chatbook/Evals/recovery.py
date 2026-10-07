@@ -1,6 +1,17 @@
 """Installed local evals recovery declarations; never import runtime engines.
 
 Exact schema SQL captured from real installed constructors at task6 base 8ea52cfc0.
+
+The v6 entry (TASK-19566 F8) was captured the same way from the v6
+constructor (schema without the five inert ``version`` columns) on
+SQLite 3.50.4. A database MIGRATED v5 -> v6 by the declared steps
+validates against the same entry: SQLite's ``ALTER TABLE ... DROP
+COLUMN`` edits the stored CREATE text in place (verified empirically --
+comments and indentation survive), so fresh and migrated v6 catalogs are
+byte-identical. If a future SQLite build instead canonicalises the
+rewritten text, migrated databases would fail validation with
+``unsupported_schema`` (fail-safe, never silent) and that build's
+canonical text would need to be added as a second v6 alternative entry.
 """
 
 from contextlib import closing
@@ -66,9 +77,67 @@ _SCHEMA = (
             "CREATE TRIGGER eval_tasks_fts_update AFTER UPDATE ON eval_tasks BEGIN\n                INSERT INTO eval_tasks_fts (eval_tasks_fts, rowid, id, name, description)\n                VALUES ('delete', old.rowid, old.id, old.name, old.description);\n                INSERT INTO eval_tasks_fts (rowid, id, name, description)\n                VALUES (new.rowid, new.id, new.name, new.description);\n            END",
         ),
     ),
+    (
+        6,
+        (
+            "CREATE INDEX idx_ab_test_runs_test ON ab_test_runs (ab_test_id)",
+            "CREATE INDEX idx_ab_tests_models ON ab_tests (model_a_id, model_b_id)",
+            "CREATE INDEX idx_ab_tests_status ON ab_tests (status)",
+            "CREATE INDEX idx_ab_tests_task ON ab_tests (task_id)",
+            "CREATE INDEX idx_eval_results_run ON eval_results (run_id)",
+            "CREATE INDEX idx_eval_run_metrics_run ON eval_run_metrics (run_id)",
+            "CREATE INDEX idx_eval_runs_group ON eval_runs (run_group_id)",
+            "CREATE INDEX idx_eval_runs_model ON eval_runs (model_id)",
+            "CREATE INDEX idx_eval_runs_status ON eval_runs (status)",
+            "CREATE INDEX idx_eval_runs_task ON eval_runs (task_id)",
+            "CREATE INDEX idx_eval_tasks_deleted ON eval_tasks (deleted_at)",
+            "CREATE INDEX idx_eval_tasks_type ON eval_tasks (task_type)",
+            "CREATE INDEX idx_probe_annotations_group ON eval_probe_turn_annotations (run_group_id)",
+            "CREATE INDEX idx_probe_review_group ON eval_probe_review_state (run_group_id)",
+            "CREATE TABLE ab_test_runs (\n                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),\n                ab_test_id TEXT NOT NULL,\n                run_a_id TEXT NOT NULL,\n                run_b_id TEXT NOT NULL,\n                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                client_id TEXT NOT NULL,\n                FOREIGN KEY (ab_test_id) REFERENCES ab_tests (id),\n                FOREIGN KEY (run_a_id) REFERENCES eval_runs (id),\n                FOREIGN KEY (run_b_id) REFERENCES eval_runs (id)\n            )",
+            "CREATE TABLE ab_tests (\n                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),\n                test_id TEXT NOT NULL UNIQUE,\n                name TEXT NOT NULL,\n                description TEXT,\n                task_id TEXT NOT NULL,\n                model_a_id TEXT NOT NULL,\n                model_b_id TEXT NOT NULL,\n                config TEXT NOT NULL, -- JSON configuration\n                status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')) DEFAULT 'pending',\n                winner TEXT CHECK (winner IN ('model_a', 'model_b', 'tie', NULL)),\n                result_data TEXT, -- JSON result data\n                started_at TEXT,\n                completed_at TEXT,\n                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                client_id TEXT NOT NULL,\n                deleted_at TEXT,\n                FOREIGN KEY (task_id) REFERENCES eval_tasks (id),\n                FOREIGN KEY (model_a_id) REFERENCES eval_models (id),\n                FOREIGN KEY (model_b_id) REFERENCES eval_models (id)\n            )",
+            "CREATE TABLE eval_datasets (\n                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),\n                name TEXT NOT NULL UNIQUE,\n                description TEXT,\n                format TEXT NOT NULL CHECK (format IN ('huggingface', 'json', 'csv', 'custom')),\n                source_path TEXT NOT NULL,\n                metadata TEXT, -- JSON metadata\n                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                client_id TEXT NOT NULL,\n                deleted_at TEXT\n            )",
+            "CREATE VIRTUAL TABLE eval_datasets_fts USING fts5(\n                id UNINDEXED,\n                name,\n                description,\n                content='eval_datasets',\n                content_rowid='rowid'\n            )",
+            "CREATE TABLE 'eval_datasets_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+            "CREATE TABLE 'eval_datasets_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
+            "CREATE TABLE 'eval_datasets_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+            "CREATE TABLE 'eval_datasets_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+            "CREATE TABLE eval_models (\n                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),\n                name TEXT NOT NULL,\n                provider TEXT NOT NULL,\n                model_id TEXT NOT NULL,\n                config TEXT, -- JSON configuration for model parameters\n                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                client_id TEXT NOT NULL,\n                deleted_at TEXT,\n                UNIQUE(name, provider, model_id)\n            )",
+            "CREATE TABLE eval_probe_review_state (\n                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),\n                run_group_id TEXT NOT NULL,\n                card_id INTEGER NOT NULL,\n                probe_index INTEGER NOT NULL,\n                sample_index INTEGER NOT NULL,\n                target_id TEXT NOT NULL,\n                note TEXT NOT NULL DEFAULT '',\n                reviewed_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                client_id TEXT NOT NULL,\n                UNIQUE(run_group_id, card_id, probe_index, sample_index, target_id)\n            )",
+            "CREATE TABLE eval_probe_turn_annotations (\n                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),\n                run_group_id TEXT NOT NULL,\n                card_id INTEGER NOT NULL,\n                probe_index INTEGER NOT NULL,\n                sample_index INTEGER NOT NULL,\n                target_id TEXT NOT NULL,\n                turn_index INTEGER NOT NULL,\n                tags TEXT NOT NULL,          -- JSON list of tag slugs\n                note TEXT NOT NULL DEFAULT '',\n                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                client_id TEXT NOT NULL,\n                UNIQUE(run_group_id, card_id, probe_index, sample_index, target_id, turn_index)\n            )",
+            "CREATE TABLE eval_results (\n                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),\n                run_id TEXT NOT NULL,\n                sample_id TEXT NOT NULL,\n                input_data TEXT NOT NULL, -- JSON input data\n                expected_output TEXT,\n                actual_output TEXT,\n                logprobs TEXT, -- JSON log probabilities if available\n                metrics TEXT, -- JSON metrics for this sample\n                metadata TEXT, -- JSON additional metadata\n                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                client_id TEXT NOT NULL,\n                FOREIGN KEY (run_id) REFERENCES eval_runs (id),\n                UNIQUE(run_id, sample_id)\n            )",
+            "CREATE TABLE eval_run_metrics (\n                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),\n                run_id TEXT NOT NULL,\n                metric_name TEXT NOT NULL,\n                metric_value REAL NOT NULL,\n                metric_type TEXT NOT NULL CHECK (metric_type IN ('accuracy', 'f1', 'rouge', 'bleu', 'perplexity', 'custom')),\n                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                client_id TEXT NOT NULL,\n                FOREIGN KEY (run_id) REFERENCES eval_runs (id),\n                UNIQUE(run_id, metric_name)\n            )",
+            "CREATE TABLE eval_runs (\n                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),\n                name TEXT NOT NULL,\n                task_id TEXT NOT NULL,\n                model_id TEXT NOT NULL,\n                status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')) DEFAULT 'pending',\n                start_time TEXT,\n                end_time TEXT,\n                total_samples INTEGER,\n                completed_samples INTEGER DEFAULT 0,\n                config_overrides TEXT, -- JSON overrides for task config\n                run_group_id TEXT,\n                error_message TEXT,\n                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                client_id TEXT NOT NULL,\n                deleted_at TEXT,\n                FOREIGN KEY (task_id) REFERENCES eval_tasks (id),\n                FOREIGN KEY (model_id) REFERENCES eval_models (id)\n            )",
+            "CREATE TABLE eval_tasks (\n                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),\n                name TEXT NOT NULL UNIQUE,\n                description TEXT,\n                task_type TEXT NOT NULL CHECK (task_type IN ('question_answer', 'logprob', 'generation', 'classification')),\n                config_format TEXT NOT NULL CHECK (config_format IN ('eleuther', 'custom')),\n                config_data TEXT NOT NULL, -- JSON configuration\n                dataset_id TEXT,\n                created_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                updated_at TEXT NOT NULL DEFAULT (datetime('now', 'utc')),\n                client_id TEXT NOT NULL,\n                deleted_at TEXT,\n                FOREIGN KEY (dataset_id) REFERENCES eval_datasets (id)\n            )",
+            "CREATE VIRTUAL TABLE eval_tasks_fts USING fts5(\n                id UNINDEXED,\n                name,\n                description,\n                content='eval_tasks',\n                content_rowid='rowid'\n            )",
+            "CREATE TABLE 'eval_tasks_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+            "CREATE TABLE 'eval_tasks_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
+            "CREATE TABLE 'eval_tasks_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+            "CREATE TABLE 'eval_tasks_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+            "CREATE TRIGGER eval_datasets_fts_delete AFTER DELETE ON eval_datasets BEGIN\n                INSERT INTO eval_datasets_fts (eval_datasets_fts, rowid, id, name, description)\n                VALUES ('delete', old.rowid, old.id, old.name, old.description);\n            END",
+            "CREATE TRIGGER eval_datasets_fts_insert AFTER INSERT ON eval_datasets BEGIN\n                INSERT INTO eval_datasets_fts (rowid, id, name, description)\n                VALUES (new.rowid, new.id, new.name, new.description);\n            END",
+            "CREATE TRIGGER eval_datasets_fts_update AFTER UPDATE ON eval_datasets BEGIN\n                INSERT INTO eval_datasets_fts (eval_datasets_fts, rowid, id, name, description)\n                VALUES ('delete', old.rowid, old.id, old.name, old.description);\n                INSERT INTO eval_datasets_fts (rowid, id, name, description)\n                VALUES (new.rowid, new.id, new.name, new.description);\n            END",
+            "CREATE TRIGGER eval_tasks_fts_delete AFTER DELETE ON eval_tasks BEGIN\n                INSERT INTO eval_tasks_fts (eval_tasks_fts, rowid, id, name, description)\n                VALUES ('delete', old.rowid, old.id, old.name, old.description);\n            END",
+            "CREATE TRIGGER eval_tasks_fts_insert AFTER INSERT ON eval_tasks BEGIN\n                INSERT INTO eval_tasks_fts (rowid, id, name, description)\n                VALUES (new.rowid, new.id, new.name, new.description);\n            END",
+            "CREATE TRIGGER eval_tasks_fts_update AFTER UPDATE ON eval_tasks BEGIN\n                INSERT INTO eval_tasks_fts (eval_tasks_fts, rowid, id, name, description)\n                VALUES ('delete', old.rowid, old.id, old.name, old.description);\n                INSERT INTO eval_tasks_fts (rowid, id, name, description)\n                VALUES (new.rowid, new.id, new.name, new.description);\n            END",
+        ),
+    ),
 )
-_VERSIONS = (5,)
-_MIGRATIONS = ()
+_VERSIONS = (5, 6)
+_MIGRATIONS = (
+    (
+        5,
+        6,
+        (
+            "ALTER TABLE eval_tasks DROP COLUMN version",
+            "ALTER TABLE eval_datasets DROP COLUMN version",
+            "ALTER TABLE eval_models DROP COLUMN version",
+            "ALTER TABLE eval_runs DROP COLUMN version",
+            "ALTER TABLE ab_tests DROP COLUMN version",
+            "PRAGMA user_version = 6",
+        ),
+    ),
+)
 
 
 @dataclass(frozen=True)

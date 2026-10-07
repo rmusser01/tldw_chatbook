@@ -1,0 +1,6 @@
+# 127.0.0.1:8765 (PocketTTS default) is held by ANOTHER session's process during this QA campaign:
+COMMAND     PID        USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+python3.1 60473 macbook-dev    4u  IPv4 0x54c78d403c026d21      0t0  TCP 127.0.0.1:8765 (LISTEN)
+  PID STARTED                      COMMAND
+60473 Tue Sep 29 20:18:56 2026     /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/c28a6a75-4221-4434-989d-fbf24a73c96b/scratchpad/uxrev/schema_proxy.py 8765
+# schema_proxy.py returns 404 {"error":"unknown route"} for /v1/audio/speech (not an anthropic/openai route).

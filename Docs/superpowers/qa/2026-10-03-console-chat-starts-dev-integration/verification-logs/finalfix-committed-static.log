@@ -1,0 +1,1 @@
+HEAD 3c4c522b40091901514959061c29c092033bb874: 70 Python files (prior 68 plus session.py and affected session-controller tests) compile and pass fatal Ruff; committed equality checked when a SHA is supplied; obsolete additions absent.

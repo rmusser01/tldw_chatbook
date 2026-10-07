@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-08-25 06:15'
-updated_date: '2026-08-25 23:01'
+updated_date: '2026-10-03 20:00'
 labels:
   - ux
   - wizard
@@ -48,4 +48,6 @@ N-6: Protect always on both tracks (active_step_ids ignores key_entered); keyles
 V-1/V-2: Voice leads with purpose line + sample + Test and Hear + Use-as-default; endpoint/auth/model/voice/format/speed under an 'Advanced — endpoint, model & output' Collapsible (ids unchanged); the 12-way scroll-reachable contract rewritten to primary-immediate + advanced-after-expand.
 
 Files: FirstRunSetupWizard.py, first_run_setup_state.py, _wizards.tcss (+regenerated), Tests/Wizards/{state,wizard}, Tests/UI/live-contract, Docs/User_Guide/First_Run_Setup.md.
+
+2026-10-03 note: AC#5's mechanism (Protect always on the Quick track) is superseded by the approved setup-shape spec (Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md, D1 and rule S1; ADR-217). Quick becomes Welcome, Connect, Model, Ready, and encryption becomes an option on Ready. AC#5's guarantee stands and is now stated as rule S1: once the user leaves Welcome, the step count never changes. This task stays Done; nothing here is reopened.
 <!-- SECTION:NOTES:END -->

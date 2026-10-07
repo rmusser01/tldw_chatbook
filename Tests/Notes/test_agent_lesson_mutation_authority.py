@@ -278,7 +278,9 @@ def test_primary_approved_classified_save_consumes_authority(
     assert provider.agent_lesson_approval_count(PRIMARY.run_id) == 0
 
 
-def test_ordinary_agent_note_and_internal_note_save_keep_existing_behavior(lesson_stack):
+def test_ordinary_agent_note_and_internal_note_save_keep_existing_behavior(
+    lesson_stack,
+):
     _db, notes, service, provider = lesson_stack
     credential_like = "api_key=crediblematerial123456"
 
@@ -310,9 +312,13 @@ def test_marker_removal_after_review_fails_without_restoring_it(lesson_stack):
     from tldw_chatbook.Library.library_tool_contract import parse_public_id
 
     _, raw_note_id = parse_public_id(note_id, expected_type="note")
-    keyword = db.get_connection().execute(
-        "SELECT id FROM keywords WHERE keyword = 'agent-lesson' COLLATE BINARY"
-    ).fetchone()
+    keyword = (
+        db.get_connection()
+        .execute(
+            "SELECT id FROM keywords WHERE keyword = 'agent-lesson' COLLATE BINARY"
+        )
+        .fetchone()
+    )
     db.unlink_note_from_keyword(raw_note_id, int(keyword["id"]))
     before = _durable_snapshot(db)
 
@@ -320,9 +326,12 @@ def test_marker_removal_after_review_fails_without_restoring_it(lesson_stack):
 
     assert _error_code(result) == "approval_required"
     assert _durable_snapshot(db) == before
-    assert db.get_connection().execute(
-        "SELECT COUNT(*) FROM note_keywords WHERE note_id = ?", (raw_note_id,)
-    ).fetchone()[0] == 0
+    assert (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM note_keywords WHERE note_id = ?", (raw_note_id,))
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_marker_addition_after_review_fails_closed(lesson_stack):

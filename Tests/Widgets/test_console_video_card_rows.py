@@ -1,6 +1,9 @@
 """Transcript video-card row wiring (task-3401.5)."""
 
-from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage, ConsoleMessageRole
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+)
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.Widgets.Console.console_video_card import ConsoleVideoCardSpec
@@ -11,7 +14,9 @@ def _video_message(mid="m-vid"):
         role=ConsoleMessageRole.ASSISTANT,
         content="[video] a-red-dragon",
         video_metadata=VideoGenerationMetadata(
-            name="a-red-dragon", prompt="a red dragon", backend="minimax",
+            name="a-red-dragon",
+            prompt="a red dragon",
+            backend="minimax",
         ),
         id=mid,
     )
@@ -71,7 +76,9 @@ def test_action_kwargs_expose_file_availability():
     assert kwargs == {"video_file_available": True}
 
     transcript.set_video_card_specs({message.id: _spec(message, status="expired")})
-    assert transcript._generation_action_kwargs(message) == {"video_file_available": False}
+    assert transcript._generation_action_kwargs(message) == {
+        "video_file_available": False
+    }
 
 
 def test_plain_message_action_kwargs_stay_empty():

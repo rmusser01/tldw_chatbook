@@ -147,9 +147,7 @@ def test_jargon_rows_carry_plain_language_subtitles():
     (<=25 content cells at 170x50, title and count included)."""
     shell = build_library_shell_state(LibraryShellInput())
     subtitles = {
-        row.row_id: row.subtitle
-        for section in shell.sections
-        for row in section.rows
+        row.row_id: row.subtitle for section in shell.sections for row in section.rows
     }
     assert subtitles["browse-media"] == "your files"
     assert subtitles[LIBRARY_ROW_BROWSE_PROMPTS] == "reuse"
@@ -176,9 +174,7 @@ def test_collections_row_is_count_pending_not_count_loading():
         shell = build_library_shell_state(
             LibraryShellInput(counts_loading=counts_loading)
         )
-        rows = {
-            row.row_id: row for section in shell.sections for row in section.rows
-        }
+        rows = {row.row_id: row for section in shell.sections for row in section.rows}
         collections = rows["browse-collections"]
         assert collections.count_pending is True
         assert collections.count_loading is False
@@ -196,9 +192,7 @@ def test_short_title_fallbacks_are_set_for_the_rows_that_need_them():
     a ``short_title`` fallback; every other row's title is short enough
     that it does not need one."""
     shell = build_library_shell_state(LibraryShellInput())
-    rows = {
-        row.row_id: row for section in shell.sections for row in section.rows
-    }
+    rows = {row.row_id: row for section in shell.sections for row in section.rows}
     assert rows["browse-conversations"].short_title == "Chats"
     assert rows["browse-collections"].short_title == "Captures"
     assert rows["create-flashcards"].short_title == "Cards"
@@ -226,9 +220,7 @@ def test_counts_loading_marks_snapshot_backed_rows_but_not_collections():
     one exception: its count is fetched lazily (first canvas visit), so a
     placeholder would sit there indefinitely on the landing screen."""
     shell = build_library_shell_state(LibraryShellInput(counts_loading=True))
-    rows = {
-        row.row_id: row for section in shell.sections for row in section.rows
-    }
+    rows = {row.row_id: row for section in shell.sections for row in section.rows}
     loading_ids = {
         "browse-media",
         "browse-conversations",
@@ -562,7 +554,9 @@ def test_library_selection_count_line_names_the_action_a_zero_blocks():
     assert library_selection_count_line(0, "Export selected") == (
         "0 selected — Export selected unavailable"
     )
-    assert library_selection_count_line(0, "Export") == "0 selected — Export unavailable"
+    assert (
+        library_selection_count_line(0, "Export") == "0 selected — Export unavailable"
+    )
     assert library_selection_count_line(1, "Export selected") == "1 selected"
     assert library_selection_count_line(12, "Export selected") == "12 selected"
 

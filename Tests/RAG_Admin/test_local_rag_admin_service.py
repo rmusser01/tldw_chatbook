@@ -167,8 +167,12 @@ def test_local_rag_admin_service_filters_templates_by_builtin_flag():
     service = LocalRAGAdminService(None, chunking_service=chunking)
 
     all_names = sorted(t["name"] for t in service.list_templates())
-    custom_only = sorted(t["name"] for t in service.list_templates(include_builtin=False))
-    builtin_only = sorted(t["name"] for t in service.list_templates(include_custom=False))
+    custom_only = sorted(
+        t["name"] for t in service.list_templates(include_builtin=False)
+    )
+    builtin_only = sorted(
+        t["name"] for t in service.list_templates(include_custom=False)
+    )
 
     assert all_names == ["builtin-row", "custom-row"]
     assert custom_only == ["custom-row"]
@@ -216,7 +220,10 @@ def test_local_rag_admin_service_flags_cased_reserved_sentinel_names():
             name=name,
             description="legacy cased sentinel row",
             template_json={
-                "chunking": {"method": "words", "config": {"max_size": 2, "overlap": 0}},
+                "chunking": {
+                    "method": "words",
+                    "config": {"max_size": 2, "overlap": 0},
+                },
                 "classifier": {"media_types": ["document"]},
             },
         )

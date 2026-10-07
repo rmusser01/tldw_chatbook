@@ -938,10 +938,9 @@ class TestFirstRunProviderContracts:
 
         assert china.endpoint == default.endpoint == ""
         assert china.discovery_endpoint != default.discovery_endpoint
-        assert (
-            setup_state.build_first_run_model_discovery_key(china)
-            != setup_state.build_first_run_model_discovery_key(default)
-        )
+        assert setup_state.build_first_run_model_discovery_key(
+            china
+        ) != setup_state.build_first_run_model_discovery_key(default)
 
     def test_static_openai_builtin_discovery_identity_remains_supported(self):
         draft = setup_state.resolve_first_run_provider_draft(
@@ -2038,31 +2037,45 @@ class TestVoiceSummaryRow:
         labels = [r.label for r in build_summary_rows({}, {}, rag_deps_installed=False)]
         assert labels.index("Voice") == labels.index("Speech transcription") + 1
 
+    # TASK-34100.8 (voice-speech-06): the row names service, model and voice
+    # ("OpenAI · tts-1-hd · shimmer"). PocketTTS's preset is now its own
+    # server's /tts route on :8000. The old :8765 address with an API key is
+    # somebody's own server (Custom); with auth "none" it is the old wizard's
+    # write, pinned by test_the_old_wizards_pocket_tts_address_is_not_a_tick.
     @pytest.mark.parametrize(
         ("app_tts", "detail"),
         [
-            ({"default_provider": "omnivoice"}, "OmniVoice (default voice)"),
+            ({"default_provider": "omnivoice"}, "OmniVoice"),
+            (
+                {
+                    "default_provider": "openai",
+                    "OPENAI_BASE_URL": "http://127.0.0.1:8000/tts",
+                    "default_model": "pocket-tts",
+                    "default_voice": "alba",
+                },
+                "PocketTTS · pocket-tts · alba",
+            ),
             (
                 {
                     "default_provider": "openai",
                     "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
                 },
-                "PocketTTS (default voice)",
+                "Custom endpoint 127.0.0.1:8765 · tts-1-hd · shimmer",
             ),
             (
                 {
                     "default_provider": "openai",
                     "OPENAI_BASE_URL": "https://api.openai.com/v1/audio/speech",
                 },
-                "OpenAI (default voice)",
+                "OpenAI · tts-1-hd · shimmer",
             ),
-            ({"default_provider": "openai"}, "OpenAI (default voice)"),
+            ({"default_provider": "openai"}, "OpenAI · tts-1-hd · shimmer"),
             (
                 {
                     "default_provider": "openai",
                     "OPENAI_BASE_URL": "http://tts.lan:9000/v1/audio/speech",
                 },
-                "Custom endpoint tts.lan:9000 (default voice)",
+                "Custom endpoint tts.lan:9000 · tts-1-hd · shimmer",
             ),
             ({"default_provider": "kokoro"}, "kokoro (default voice)"),
             (
@@ -2070,7 +2083,7 @@ class TestVoiceSummaryRow:
                     "default_provider": "openai",
                     "OPENAI_BASE_URL": "https://[2001:db8::1]:8765/v1/audio/speech",
                 },
-                "Custom endpoint [2001:db8::1]:8765 (default voice)",
+                "Custom endpoint [2001:db8::1]:8765 · tts-1-hd · shimmer",
             ),
         ],
     )
@@ -2081,16 +2094,66 @@ class TestVoiceSummaryRow:
         row = self._voice({"app_tts": app_tts})
         assert (row.state, row.detail) == (ROW_CONFIGURED, detail)
 
-    def test_saved_endpoint_without_default_says_so(self):
-        """An endpoint saved without Use as default is named, not claimed as default."""
+    def test_an_endpoint_with_no_default_provider_is_the_reply_voice(self):
+        """TASK-34100.8 review round 1 (F1): with no default_provider saved the
+        runtime reads replies with the OpenAI slot, so the row must not say
+        "(saved, not the default voice)" -- that is the voice replies use."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_CONFIGURED
 
         row = self._voice(
-            {"app_tts": {"OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech"}}
+            {
+                "app_tts": {
+                    "OPENAI_BASE_URL": "http://127.0.0.1:8000/tts",
+                    "OPENAI_AUTH_MODE": "none",
+                    "default_model": "pocket-tts",
+                    "default_voice": "alba",
+                }
+            }
         )
         assert (row.state, row.detail) == (
             ROW_CONFIGURED,
-            "PocketTTS (saved, not the default voice)",
+            "PocketTTS · pocket-tts · alba",
+        )
+
+    def test_an_endpoint_saved_beside_another_default_is_named_as_extra(self):
+        """Review round 1 (F3): kokoro reads replies; the endpoint is extra."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_CONFIGURED
+
+        row = self._voice(
+            {
+                "app_tts": {
+                    "default_provider": "kokoro",
+                    "OPENAI_BASE_URL": "http://127.0.0.1:8000/tts",
+                    "OPENAI_AUTH_MODE": "none",
+                }
+            }
+        )
+        assert (row.state, row.detail) == (
+            ROW_CONFIGURED,
+            "kokoro (default voice); PocketTTS also saved",
+        )
+
+    def test_the_old_wizards_pocket_tts_address_is_not_a_tick(self):
+        """Review round 1 (F2): every profile that passed Voice untouched under
+        the old wizard holds this table, and pocket-tts never serves it."""
+        from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_ATTENTION
+
+        row = self._voice(
+            {
+                "app_tts": {
+                    "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+                    "OPENAI_AUTH_MODE": "none",
+                    "default_provider": "openai",
+                    "default_model": "tts-1-hd",
+                    "default_voice": "shimmer",
+                    "default_format": "mp3",
+                }
+            }
+        )
+        assert row.state == ROW_ATTENTION
+        assert row.detail == (
+            "PocketTTS at 127.0.0.1:8765 (from an earlier setup) can't speak — "
+            "set a voice in Settings ▸ Speech & TTS"
         )
 
     def test_loaded_config_backfill_is_not_a_choice(self):
@@ -2180,10 +2243,22 @@ class TestSummaryThreeState:
         from tldw_chatbook.Agents.builtin_tool_gate import TOOL_GATES_PANE_PATH
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
 
-        rows = {r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)}
+        rows = {
+            r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)
+        }
+        # TASK-34100.5 AC#2 (entry-exit-handoff-24): 'all off' was untrue --
+        # live, a fresh profile's assistant listed sub-agents, web search,
+        # Watchlists and the built-in source's notes tools, and the first
+        # chat asked approval for one.
+        # Review round 1 (F10): a first send planned against a window nobody
+        # verified (a fresh local server) carries no tools at all, so the row
+        # says what MAY be offered, not what always is.
         assert rows["Tools"].detail == (
-            f"all off; turn them on under {TOOL_GATES_PANE_PATH}"
+            "gates off; the assistant may still use chatbook's own tools "
+            "(sub-agents, web search, notes, Watchlists) when the model's "
+            f"context window has room. Turn gates on under {TOOL_GATES_PANE_PATH}"
         )
+        assert "all off" not in rows["Tools"].detail
         assert TOOL_GATES_PANE_PATH == "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
 
     def test_plaintext_keys_flag_encryption_as_attention(self):
@@ -2349,10 +2424,7 @@ class TestProviderTrustChain:
     def test_classify_discovery_failure(self):
         classify = setup_state.classify_discovery_failure
         assert classify("available", "") == setup_state.PROVIDER_PROBE_NONE
-        assert (
-            classify("listing_unavailable", "")
-            == setup_state.PROVIDER_PROBE_NONE
-        )
+        assert classify("listing_unavailable", "") == setup_state.PROVIDER_PROBE_NONE
         assert (
             classify("connection_failed", "authentication")
             == setup_state.PROVIDER_PROBE_AUTH
@@ -2405,9 +2477,7 @@ class TestProviderTrustChain:
         assert "authentication" in out[0].detail
         assert out[1] == rows[1]
         # No failure — untouched (identity, not equality, is fine too).
-        assert (
-            setup_state.apply_probe_failure_to_summary_rows(rows, "") == rows
-        )
+        assert setup_state.apply_probe_failure_to_summary_rows(rows, "") == rows
         # An unconfigured Provider row keeps its own, more specific message.
         unconfigured = (
             setup_state.SummaryRow(
@@ -2471,10 +2541,7 @@ class TestEnvKeyFirstRunNotice:
         assert names == ("OPENAI_API_KEY",)
 
     def test_no_env_value_means_no_notice(self):
-        assert (
-            setup_state.env_keys_that_silenced_first_run(self._config(), {})
-            == ()
-        )
+        assert setup_state.env_keys_that_silenced_first_run(self._config(), {}) == ()
 
     def test_inline_config_key_means_no_notice(self):
         names = setup_state.env_keys_that_silenced_first_run(

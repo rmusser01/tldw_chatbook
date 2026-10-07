@@ -1,0 +1,108 @@
+{
+  "tested_source": "52bb6f10d2f7d0b5e7a834286a7cd42f6f55eb59",
+  "dev_base": "6423c4fbd1460952dd8cb5df04e51c4e0e7e0d0b",
+  "buddy_cases_passed": 16,
+  "fts_cases_passed": 3,
+  "patches_preserved": true,
+  "buddy_log_sha256": "dd958ffee931c91e0fb69be379a6bad348538e6e7fadaeb761cbc537a9287fc5",
+  "fts_log_sha256": "dcbbec7e49e6a79fe13d85bfec33255162c8b6867b8db3ec1f789e01450f85ac",
+  "profile_receipt_sha256": {
+    "fresh": "c69269123cb0fac4aae6a727a2b86a74a0b9f6303f3529d50c79354c08d4c170",
+    "upgrade": "2d5052b62d13e6c06bd540b9f71f2924c67652c895600fcca7cead32c3a58f86"
+  },
+  "full_suite_run": false,
+  "profiles": {
+    "fresh": {
+      "profile": "fresh",
+      "headless": true,
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        }
+      },
+      "workspace_explicit_none": true,
+      "workspace_explicit_none_before": false,
+      "workspace_explicit_none_after": true,
+      "schema_version": 73,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "source_commit": "52bb6f10d2f7d0b5e7a834286a7cd42f6f55eb59",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1"
+    },
+    "upgrade": {
+      "profile": "upgrade",
+      "headless": true,
+      "frames": {
+        "static": {
+          "frame_count": 1,
+          "observed_indices": [
+            0
+          ],
+          "sequence": [
+            0
+          ],
+          "animate": false,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        },
+        "dynamic": {
+          "frame_count": 4,
+          "observed_indices": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "sequence": [
+            0,
+            1,
+            2,
+            3,
+            0
+          ],
+          "animate": true,
+          "loop": true,
+          "buddy_owner_present": true,
+          "persona_owner_absent": true
+        }
+      },
+      "workspace_explicit_none": true,
+      "workspace_explicit_none_before": false,
+      "workspace_explicit_none_after": true,
+      "schema_version": 73,
+      "persona_count_unchanged_during_artwork_selection": true,
+      "source_commit": "52bb6f10d2f7d0b5e7a834286a7cd42f6f55eb59",
+      "harness_sha256": "667ccdeeee287325c41318bdbd46fb60b4a66b3e103487ef3b0190471c30cad1"
+    }
+  }
+}

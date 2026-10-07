@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tldw_chatbook"
-version = "0.2.2"
+version = "0.2.3"
 authors = [
   { name="Robert Musser", email="contact@rmusser.net" },
 ]
@@ -59,6 +59,8 @@ dependencies = [
     "pillow>=10.4",
     "PyYAML",
     "pydantic>=2.4,<3",
+    "jsonschema>=4.26,<5",  # H3 offline validation is a base runtime boundary
+    "referencing>=0.37,<1",  # explicit no-retrieval schema registry
     "rfc8785==0.1.4",  # exact pin: shared profile JCS contract (ADR-102)
     "cryptography",  # AES-GCM Personal Context envelopes and key wrapping
     "portalocker==3.2.0",
@@ -318,11 +320,6 @@ dev = [
     "pytest-timeout",  # For handling hanging tests
     "pytest-xdist",  # Parallel test execution: pytest -n auto --dist loadscope
     "pytest-mock",  # Used throughout Tests/; was only in requirements-test.txt
-    # Tests/Agents/test_local_tool_provider.py imports Draft202012Validator at
-    # module level. It reached environments only TRANSITIVELY (chromadb,
-    # docling-core, mcp-unified -- all optional extras), so a plain
-    # `.[dev]` install could not collect that module at all.
-    "jsonschema",
     "pytest-cov",  # Coverage runs documented in Tests/README.md
     "textual-dev", # For Textual development tools
     "hypothesis",
@@ -513,6 +510,7 @@ exclude = [
 ]
 
 [tool.setuptools.package-data]
+"tldw_chatbook.Plugins" = ["migrations/*.sql"]
 # Bundle only the reviewed character, Buddy and tiktoken runtime inventories.
 "tldw_chatbook" = [
     "assets/characters/samira/*.json",

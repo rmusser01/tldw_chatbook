@@ -1,15 +1,21 @@
-"""Reproducible warm Console mount profiler for TASK-19505.
+"""Reproducible Console visit profiler (TASK-19505; warm route TASK-33260).
 
-Run the production A/B from the repository root::
+Profile Library -> Console visits from the repository root::
 
     .venv/bin/python Tests/Performance/run_console_mount_profile.py \
         --iterations 30 --output /tmp/console-mount-profile.json
 
-Use ``--phase controls`` to reproduce the eager baseline versus empty
-Inspector/Context measurement controls. The default production phase
-alternates the shipping eager Context rail with the rejected deferred
-candidate, injected only inside this measurement process. Every navigation
-builds a fresh ``ChatScreen``.
+The Console route is reusable (TASK-31520): the app mounts its ``ChatScreen``
+once, and every later visit RESUMES that instance (``on_screen_resume``, no
+``on_mount``) while the outgoing reusable Library screen is suspended rather
+than unmounted. The default ``--phase warm`` measures exactly that visit.
+
+``--phase production`` / ``--phase controls`` are TASK-19505's composition
+A/Bs (eager vs deferred Context rail; empty Inspector/Context controls, the
+evidence behind ADR-078). Their variants patch ``compose``, which only runs
+on a COLD mount, so those phases evict the cached Console before every
+measured visit (``_evict_reusable_console``): each sample is a cold mount
+and the variants measure their own compositions.
 """
 
 from __future__ import annotations
@@ -35,6 +41,12 @@ if str(REPO_ROOT) not in sys.path:
 
 CONTROL_VARIANTS = ("baseline_eager", "inspector_empty_eager", "context_empty")
 PRODUCTION_VARIANTS = ("eager", "deferred")
+WARM_VARIANTS = ("warm_resume",)
+PHASE_VARIANTS = {
+    "warm": WARM_VARIANTS,
+    "production": PRODUCTION_VARIANTS,
+    "controls": CONTROL_VARIANTS,
+}
 
 
 def _configure_isolated_profile(root: Path) -> None:
@@ -109,7 +121,7 @@ def _summaries(
                 }
             metric_summary[count_key] = counts
         result[variant] = metric_summary
-    baseline_name = "baseline_eager" if "baseline_eager" in result else "eager"
+    baseline_name = variants[0]
     baseline = result[baseline_name]
     for variant in variants:
         if variant == baseline_name:
@@ -223,19 +235,26 @@ async def _measure_navigation(
     outgoing = app.screen
     unmount_times: dict[str, float] = {}
     original_unmount = Screen._on_unmount
+    original_suspend = Screen._on_screen_suspend
     original_chat_mount = ChatScreen.on_mount
+    original_chat_resume = ChatScreen.on_screen_resume
 
-    def timed_unmount(screen: Screen) -> None:
-        if screen is not outgoing:
-            original_unmount(screen)
-            return
-        started = time.perf_counter()
-        try:
-            original_unmount(screen)
-        finally:
-            completed_at = time.perf_counter()
-            unmount_times["duration_ms"] = (completed_at - started) * 1000
-            unmount_times["completed_at"] = completed_at
+    def timed(original: Any) -> Any:
+        # A reusable outgoing screen is suspended, not unmounted
+        # (TASK-31520); time whichever detaches it, keeping the latest.
+        def run(screen: Screen) -> None:
+            if screen is not outgoing:
+                original(screen)
+                return
+            started = time.perf_counter()
+            try:
+                original(screen)
+            finally:
+                completed_at = time.perf_counter()
+                unmount_times["duration_ms"] = (completed_at - started) * 1000
+                unmount_times["completed_at"] = completed_at
+
+        return run
 
     started = time.perf_counter()
     first_interactive: float | None = None
@@ -259,8 +278,15 @@ async def _measure_navigation(
         screen.call_after_refresh(screen._profile_mount_boundary)
         original_chat_mount(screen)
 
+    def profiled_chat_resume(screen: ChatScreen) -> None:
+        # The reusable route's per-visit hook: a warm visit never mounts.
+        screen.call_after_refresh(screen._profile_mount_boundary)
+        original_chat_resume(screen)
+
     with (
-        patch.object(Screen, "_on_unmount", timed_unmount),
+        patch.object(Screen, "_on_unmount", timed(original_unmount)),
+        patch.object(Screen, "_on_screen_suspend", timed(original_suspend)),
+        patch.object(ChatScreen, "on_screen_resume", profiled_chat_resume),
         patch.object(
             ChatScreen,
             "_profile_mount_boundary",
@@ -352,6 +378,25 @@ async def _measure_navigation(
     }
 
 
+def _evict_reusable_console(app: Any) -> None:
+    """Drop the cached Console so the next visit mounts it cold.
+
+    The composition A/B phases patch ``compose``, which runs only when a
+    ``ChatScreen`` is built and mounted. On the reusable route (TASK-31520)
+    every later visit resumes the one cached instance, so each measured
+    visit first disposes it the way ``app_navigation`` disposes a stale
+    reusable screen: out of the cache, uninstalled, removed. Called while
+    Library is showing, so the Console is off the screen stack.
+    """
+    cache = getattr(app, "_reusable_screen_instances", None) or {}
+    entry = cache.pop("chat", None)
+    if entry is None:
+        return
+    _, screen = entry
+    app.uninstall_screen(screen)
+    screen.remove()
+
+
 async def _run(iterations: int, *, phase: str) -> dict[str, Any]:
     from Tests.UI.app_factory import (
         _build_test_app,
@@ -364,17 +409,26 @@ async def _run(iterations: int, *, phase: str) -> dict[str, Any]:
 
     app = _build_test_app()
     _configure_native_ready_console(app)
-    variants = CONTROL_VARIANTS if phase == "controls" else PRODUCTION_VARIANTS
+    variants = PHASE_VARIANTS[phase]
     samples: list[dict[str, Any]] = []
     try:
         async with app.run_test(size=(170, 48)) as pilot:
             for _ in range(20):
                 await pilot.pause(0.05)
+            if phase == "warm":
+                # Visit Console once before measuring so every sample is a warm
+                # resume of the reused route, whatever the configured default
+                # tab: a first visit would construct and mount it (cold).
+                await _navigate(app, "chat")
+                for _ in range(5):
+                    await pilot.pause(0.05)
             await _navigate(app, "library")
             for iteration in range(iterations):
                 offset = iteration % len(variants)
                 variant_order = variants[offset:] + variants[:offset]
                 for variant in variant_order:
+                    if phase != "warm":
+                        _evict_reusable_console(app)
                     sample = await _measure_navigation(
                         app,
                         pilot,
@@ -404,8 +458,8 @@ def main() -> int:
     parser.add_argument("--iterations", type=int, default=30)
     parser.add_argument(
         "--phase",
-        choices=("production", "controls"),
-        default="production",
+        choices=tuple(PHASE_VARIANTS),
+        default="warm",
     )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()

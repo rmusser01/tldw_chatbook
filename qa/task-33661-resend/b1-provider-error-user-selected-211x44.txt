@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                    Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Explain rainbows briefly                                                                                                                           │
+                         Context ◂  │   Why is the sky blu…  ✕  Explain rainbows b…  ✕    New tab     Temporary                                                                                         │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                                     ✕  │
+ Workspaces                    ▸    │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Conversations                 ▾    │                                                                                                                                                                   │
+   New conversation                 │                                                                                                                                                                   │
+        Archive this chat           │                                                                                                                                                                   │
+          Archived chats            │                                                                                                                                                                   │
+        Search all chats…           │                                                                                                                                                                   │
+   Explain rainbows briefly         │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                                   │
+  ▊  Filter visible     ▎           │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │   User                                                                                                                                                            │◂ Inspect
+                                    │   Explain rainbows briefly                                                                                                                                        │
+  Chats                        ▾    │                                                                                                                                                                   │
+   Explain rainbows briefly   💬    │    Copy  Edit  Fork  Resend  More…                                                                                                                                │
+   Why is the sky blue?       💬    │                                                                                                                                                                   │
+                                    │   Guide: j/k select · c Copy · e Edit · f Fork · r Resend · Esc clear                                                                                             │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Character · No chats          ▸    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ─────────────────────────────────  │  ▊ Assistant  Failed                                                                                                                                              │
+ Model                         ▸    │  ▊                                                                                                                                                                │
+ ─────────────────────────────────  │  ▊  Response failed.                                                                                                                                              │
+ Agent                         ▸    │  ▊                                                                                                                                                                │
+ ─────────────────────────────────  │  ▊                                                                                                                                                                │
+ Details                       ▸    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                    │   System                                                                                                                                                          │
+                                    │   Agent run failed: provider returned HTTP 500 (scratch stub refused the request).                                                                                │
+                                    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │  failed
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: llama.cpp     Model: model-a     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Context 0%
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                                     Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q

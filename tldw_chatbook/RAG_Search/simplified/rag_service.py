@@ -495,18 +495,14 @@ def _keyword_allowlist_ids(
             source_types = {str(value) for value in raw_types}
 
         raw_ids = entry.get(ALLOWLIST_SOURCE_ID_KEY)
-        entry_ids = (
-            None if raw_ids is None else {str(value) for value in raw_ids}
-        )
+        entry_ids = None if raw_ids is None else {str(value) for value in raw_ids}
 
         for source_type in source_types:
             if source_type not in KEYWORD_LEG_SOURCE_TYPES:
                 unservable_types.add(source_type)
                 continue  # No sub-leg serves this type (e.g. a vector-only type).
             if source_type not in ids_by_type:
-                ids_by_type[source_type] = (
-                    None if entry_ids is None else set(entry_ids)
-                )
+                ids_by_type[source_type] = None if entry_ids is None else set(entry_ids)
             elif ids_by_type[source_type] is not None and entry_ids is not None:
                 # Two entries naming one type are a union, not an
                 # intersection: each is an independent AND-group.
@@ -1729,9 +1725,9 @@ class RAGService:
                 "Keyword search has no runnable sub-legs (selection={}, "
                 "scoped id count={}); returning no results without a database "
                 "lookup.",
-                "all" if keyword_source_types is None else sorted(
-                    str(value) for value in keyword_source_types
-                ),
+                "all"
+                if keyword_source_types is None
+                else sorted(str(value) for value in keyword_source_types),
                 None if allowlist_ids is None else len(allowlist_ids),
             )
             return []
@@ -1761,7 +1757,8 @@ class RAGService:
                 filter_metadata,
                 include_citations,
                 allowed_ids=(
-                    None if allowlist_ids is None
+                    None
+                    if allowlist_ids is None
                     else allowlist_ids.get(SOURCE_TYPE_MEDIA)
                 ),
             )
@@ -1774,7 +1771,8 @@ class RAGService:
                 include_citations,
                 source_types=chacha_types,
                 allowed_ids=(
-                    None if allowlist_ids is None
+                    None
+                    if allowlist_ids is None
                     else {
                         source_type: allowlist_ids.get(source_type)
                         for source_type in chacha_types
@@ -1789,7 +1787,8 @@ class RAGService:
                 filter_metadata,
                 include_citations,
                 allowed_ids=(
-                    None if allowlist_ids is None
+                    None
+                    if allowlist_ids is None
                     else allowlist_ids.get(SOURCE_TYPE_PROMPT)
                 ),
             )
@@ -1988,7 +1987,9 @@ class RAGService:
                         logger.warning(
                             f"FTS5 search attempt {retry_count} failed, retrying: {e}"
                         )
-                        await asyncio.sleep(0.1 * retry_count)  # Linear backoff (delay grows with the retry count)
+                        await asyncio.sleep(
+                            0.1 * retry_count
+                        )  # Linear backoff (delay grows with the retry count)
 
             # Process results in batches for better performance
             if include_citations:
@@ -2051,8 +2052,7 @@ class RAGService:
             affects the media sub-leg.
         """
         selected = (
-            _resolve_keyword_source_types(source_types)
-            & CHACHA_KEYWORD_SOURCE_TYPES
+            _resolve_keyword_source_types(source_types) & CHACHA_KEYWORD_SOURCE_TYPES
         )
         if not selected:
             return []
@@ -2245,8 +2245,7 @@ class RAGService:
         }
 
         selected = (
-            _resolve_keyword_source_types(source_types)
-            & CHACHA_KEYWORD_SOURCE_TYPES
+            _resolve_keyword_source_types(source_types) & CHACHA_KEYWORD_SOURCE_TYPES
         )
         if not selected:
             return rows
@@ -2450,9 +2449,7 @@ class RAGService:
         LIMIT ?
         """
         try:
-            with closing(
-                conn.execute(conversations_sql, tuple(params))
-            ) as cursor:
+            with closing(conn.execute(conversations_sql, tuple(params))) as cursor:
                 conversations = [
                     {
                         "id": row["id"],
@@ -2595,9 +2592,7 @@ class RAGService:
         try:
             from tldw_chatbook.config import get_prompts_db_path
 
-            db_path_raw = (
-                self.config.search.prompts_db_path or get_prompts_db_path()
-            )
+            db_path_raw = self.config.search.prompts_db_path or get_prompts_db_path()
         except Exception as e:
             logger.warning(
                 "Could not resolve the Prompts database path; the prompts "
@@ -2982,14 +2977,18 @@ class RAGService:
             # keeps the vector leg's real similarity for score banding, and
             # carries the chunk metadata (`source_id`, `chunk_id`) that the
             # downstream row mappers read.
-            result = entry.vector_item if entry.vector_item is not None else entry.fts_item
+            result = (
+                entry.vector_item if entry.vector_item is not None else entry.fts_item
+            )
             # `result` aliases one of the two leg items, so both legs'
             # original scores must be read *before* result.score is
             # overwritten below, or the in-place mutation clobbers the very
             # value we're trying to preserve (it is now the vector leg's
             # score that would be lost, previously the FTS leg's).
             fts_score = entry.fts_item.score if entry.fts_item is not None else None
-            vector_score = entry.vector_item.score if entry.vector_item is not None else None
+            vector_score = (
+                entry.vector_item.score if entry.vector_item is not None else None
+            )
             # Combine citations when the same document surfaced in both legs.
             # Read defensively: only the displayed item is guaranteed to be a
             # citation-carrying shape, and the two legs can disagree (a
@@ -3087,7 +3086,11 @@ class RAGService:
         # to_thread explicitly transfers this accepted operation context.
         # The outer retained coroutine joins native completion before retirement.
         await asyncio.to_thread(
-            native_worker(self, self.vector_store.add), ids, embeddings, documents, metadata
+            native_worker(self, self.vector_store.add),
+            ids,
+            embeddings,
+            documents,
+            metadata,
         )
         from ..recovery import record_stored_chunks
 
@@ -3811,9 +3814,7 @@ class RAGService:
         Returns:
             ``(primary_form, fallback_form)`` for the active construction.
         """
-        return FTS_MATCH_FORMS_BY_CONSTRUCTION[
-            self._resolved_fts_match_construction()
-        ]
+        return FTS_MATCH_FORMS_BY_CONSTRUCTION[self._resolved_fts_match_construction()]
 
     def _fts5_primary_form(self) -> str:
         """The FORM the active construction's PRIMARY expression runs.

@@ -57,9 +57,7 @@ LIBRARY_NAV_CONTEXT_INGEST = "ingest_media"
 LIBRARY_MODE_CONVERSATIONS = "conversations"
 
 # Console navigation-context contract keys.
-CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = (
-    "resume_local_conversation_id"
-)
+CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID = "resume_local_conversation_id"
 CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET = "character_conversation_target"
 
 # Trusted character-conversation navigation context keys.

@@ -79,8 +79,7 @@ class ConsoleSaveAsModal(SafeModalDismissMixin, ModalScreen[str | None]):
                 # generic "not wired yet" phrasing reads as an unfinished
                 # feature instead of naming the actual (permanent) rule.
                 empty_state_text = (
-                    "This chat is temporary, so Save as destinations are "
-                    "not available."
+                    "This chat is temporary, so Save as destinations are not available."
                     if self.ephemeral
                     else "No Save as destinations are wired for selected messages yet."
                 )

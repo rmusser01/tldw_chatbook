@@ -18,6 +18,7 @@ from textual.widgets import Button
 
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
+    _configure_native_ready_console,
     _build_console_send_test_app,
     _persist_console_provider_config,
     _select_llamacpp_console,
@@ -34,6 +35,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 )
 from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+# Mounted Console tests retain the configuration admitted at collection time.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 
@@ -231,6 +236,7 @@ async def test_mouse_send_completion_preserves_text_typed_after_acceptance(monke
 @pytest.mark.asyncio
 async def test_console_pre_durable_failure_keeps_newer_typing_and_recovery():
     app = _build_console_send_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
@@ -298,7 +304,10 @@ async def test_console_unknown_command_hint_restores_draft(monkeypatch):
 async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
     monkeypatch,
 ):
-    """Typing during the unknown-command check belongs to the next draft."""
+    """Skill parsing retains the captured send and preserves later typing.
+
+    Hook review's separate unchanged-draft gate is isolated in this case.
+    """
 
     app = _ready_openai_app(monkeypatch, "unused")
     host = ConsoleHarness(app)
@@ -317,6 +326,12 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         composer.load_draft(armed)
         store.set_session_draft(session.id, armed)
         console._console_unknown_send_armed = armed
+        for _ in range(100):
+            if console._console_attach_reconciled:
+                break
+            await pilot.pause(0.05)
+        assert console._console_attach_reconciled
+        assert console._console_runtime().view is console
 
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -340,7 +355,20 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
             "_console_skill_blocked_match_response",
             no_blocked_match,
         )
+
+        # Isolate the pre-skill snapshot boundary from hook review's later
+        # unchanged-draft gate (covered by test_console_hook_admission).
+        # The real button handler and queue/runtime custody route stay live.
+        async def dispatch_without_hook_review(draft, *, session_id, stash, dispatch):
+            assert draft == armed and stash.text == armed
+            return await dispatch()
+
+        monkeypatch.setattr(console._hooks, "dispatch", dispatch_without_hook_review)
         requests: list[object] = []
+        notices: list[str] = []
+        monkeypatch.setattr(
+            app, "notify", lambda message, **_kwargs: notices.append(str(message))
+        )
 
         def record_accept(request):
             requests.append(request)
@@ -356,7 +384,7 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         composer.insert_text(" suffix")
         release.set()
 
-        assert await send_task
+        assert await send_task, notices
         assert len(requests) == 1
         assert requests[0].draft == armed
         assert composer.draft_text() == " suffix"
@@ -366,6 +394,7 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
 @pytest.mark.asyncio
 async def test_console_blocked_send_retains_exact_recovery_after_runtime_custody():
     app = _build_console_send_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
@@ -422,7 +451,9 @@ async def test_console_double_enter_sends_once_and_loses_nothing(monkeypatch):
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         monkeypatch.setattr(console, "_console_setup_modal_blocking", lambda: False)
-        monkeypatch.setattr(console, "_should_capture_console_input", lambda _composer: True)
+        monkeypatch.setattr(
+            console, "_should_capture_console_input", lambda _composer: True
+        )
         monkeypatch.setattr(console, "_console_command_popup_or_none", lambda: None)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.focus()
@@ -505,7 +536,7 @@ async def test_console_submit_exception_retains_exact_recovery_and_keeps_app_ali
 
         assert composer.draft_text() == ""
         runtime = console._console_runtime()
-        recovery, = runtime.recoveries_for_session(controller.store.active_session_id)
+        (recovery,) = runtime.recoveries_for_session(controller.store.active_session_id)
         assert recovery.draft == "precious draft"
         runtime.restore_turn_recovery(recovery.turn_id)
         console._prompt_queue._load_recovered_turn(recovery.session_id)
@@ -536,7 +567,9 @@ async def test_console_fresh_profile_first_send_resolves_real_session_not_sentin
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         monkeypatch.setattr(console, "_console_setup_modal_blocking", lambda: False)
-        monkeypatch.setattr(console, "_should_capture_console_input", lambda _composer: True)
+        monkeypatch.setattr(
+            console, "_should_capture_console_input", lambda _composer: True
+        )
         monkeypatch.setattr(console, "_console_command_popup_or_none", lambda: None)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.focus()
@@ -1209,8 +1242,13 @@ async def _finish_test_custody(console):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("keyboard,late_text", [(False, ""), (False, "new draft"), (True, ""), (True, "new draft")])
-async def test_setup_refusal_after_custody_preserves_exact_recovery(monkeypatch, keyboard, late_text):
+@pytest.mark.parametrize(
+    "keyboard,late_text",
+    [(False, ""), (False, "new draft"), (True, ""), (True, "new draft")],
+)
+async def test_setup_refusal_after_custody_preserves_exact_recovery(
+    monkeypatch, keyboard, late_text
+):
     app = _ready_openai_app(monkeypatch, "never used")
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
@@ -1232,12 +1270,16 @@ async def test_setup_refusal_after_custody_preserves_exact_recovery(monkeypatch,
 
         monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
         if keyboard:
-            assert await console._dispatch_console_draft_send("original draft", stash=stash, session_id=session.id)
+            assert await console._dispatch_console_draft_send(
+                "original draft", stash=stash, session_id=session.id
+            )
         else:
-            assert await console.handle_console_send_message(Button.Pressed(console.query_one("#console-send-message", Button)))
+            assert await console.handle_console_send_message(
+                Button.Pressed(console.query_one("#console-send-message", Button))
+            )
         runtime, turn_id = await _finish_test_custody(console)
         assert composer.draft_text() == late_text
-        recovery, = runtime.recoveries_for_session(session.id)
+        (recovery,) = runtime.recoveries_for_session(session.id)
         assert recovery.turn_id == turn_id
         assert recovery.draft == "original draft"
         if late_text:
@@ -1253,7 +1295,9 @@ async def test_setup_refusal_after_custody_preserves_exact_recovery(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_refusal_recovery_restore_never_overwrites_another_visible_owner(monkeypatch):
+async def test_refusal_recovery_restore_never_overwrites_another_visible_owner(
+    monkeypatch,
+):
     app = _ready_openai_app(monkeypatch, "never used")
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
@@ -1276,7 +1320,9 @@ async def test_refusal_recovery_restore_never_overwrites_another_visible_owner(m
             return ConsoleSubmitResult(False, False, "Setup cancelled")
 
         monkeypatch.setattr(controller, "run_prompt_chain", refuse_after_setup)
-        assert await console._dispatch_console_draft_send("A private draft", stash=stash, session_id=session.id)
+        assert await console._dispatch_console_draft_send(
+            "A private draft", stash=stash, session_id=session.id
+        )
         runtime, turn_id = await _finish_test_custody(console)
         assert composer.draft_text() == "B private draft"
         runtime.restore_turn_recovery(turn_id)
@@ -1288,7 +1334,9 @@ async def test_refusal_recovery_restore_never_overwrites_another_visible_owner(m
 @pytest.mark.asyncio
 @pytest.mark.parametrize("keyboard", [False, True])
 @pytest.mark.parametrize("durable", [False, True])
-async def test_custody_refusal_recovery_respects_durable_acceptance_and_undo(monkeypatch, keyboard, durable):
+async def test_custody_refusal_recovery_respects_durable_acceptance_and_undo(
+    monkeypatch, keyboard, durable
+):
     app = _ready_openai_app(monkeypatch, "never used")
     host = ConsoleHarness(app)
     async with host.run_test(size=(160, 48)) as pilot:
@@ -1315,9 +1363,13 @@ async def test_custody_refusal_recovery_respects_durable_acceptance_and_undo(mon
         monkeypatch.setattr(controller, "submit_draft", refuse)
         monkeypatch.setattr(controller, "run_prompt_chain", run_chain)
         if keyboard:
-            assert await console._dispatch_console_draft_send("original draft", stash=stash, session_id=session.id)
+            assert await console._dispatch_console_draft_send(
+                "original draft", stash=stash, session_id=session.id
+            )
         else:
-            assert await console.handle_console_send_message(Button.Pressed(console.query_one("#console-send-message", Button)))
+            assert await console.handle_console_send_message(
+                Button.Pressed(console.query_one("#console-send-message", Button))
+            )
         runtime, turn_id = await _finish_test_custody(console)
         assert composer.draft_text() == ""
         assert not composer.undo()

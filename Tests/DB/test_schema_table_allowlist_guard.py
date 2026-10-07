@@ -54,7 +54,9 @@ CHECKER = REPO_ROOT / "scripts" / "check_schema_table_allowlist.py"
 
 def _load_checker():
     """Import the checker by path (``scripts/`` is not a package)."""
-    spec = importlib.util.spec_from_file_location("_check_schema_table_allowlist", CHECKER)
+    spec = importlib.util.spec_from_file_location(
+        "_check_schema_table_allowlist", CHECKER
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -71,7 +73,9 @@ def _fake_tree(tmp_path: Path, *, migration_sql: str, allowlisted: list[str]) ->
     """
     migrations = tmp_path / "tldw_chatbook" / "DB" / "migrations"
     migrations.mkdir(parents=True)
-    (migrations / "chachanotes_v1_to_v2_fixture.sql").write_text(migration_sql, encoding="utf-8")
+    (migrations / "chachanotes_v1_to_v2_fixture.sql").write_text(
+        migration_sql, encoding="utf-8"
+    )
 
     db_module = tmp_path / "tldw_chatbook" / "DB" / "ChaChaNotes_DB.py"
     # A Python source whose *comment* claims a table, to pin the AST-vs-text
@@ -119,7 +123,9 @@ _FIXTURE_TABLES = ["from_python_literal", "from_sql_migration"]
 
 
 def test_passes_when_every_created_table_is_allowlisted(tmp_path, capsys):
-    module = _fake_tree(tmp_path, migration_sql=_FIXTURE_SQL, allowlisted=_FIXTURE_TABLES)
+    module = _fake_tree(
+        tmp_path, migration_sql=_FIXTURE_SQL, allowlisted=_FIXTURE_TABLES
+    )
     assert module.main([]) == 0
     out = capsys.readouterr().out
     assert "2 declared tables" in out
@@ -159,7 +165,9 @@ def test_verdict_is_not_derived_from_the_allowlist_it_guards(tmp_path, capsys):
     """
     sql = _FIXTURE_SQL + "CREATE TABLE brand_new_table(id INTEGER PRIMARY KEY);\n"
 
-    incomplete = _fake_tree(tmp_path / "a", migration_sql=sql, allowlisted=_FIXTURE_TABLES)
+    incomplete = _fake_tree(
+        tmp_path / "a", migration_sql=sql, allowlisted=_FIXTURE_TABLES
+    )
     assert incomplete.main([]) == 1
     capsys.readouterr()
 
@@ -178,7 +186,9 @@ def test_comment_prose_is_never_read_as_a_table_declaration(tmp_path, capsys):
     Client_Media_DB_v2.py reports the phantom tables ``IF``, ``column`` and
     ``as`` -- and a guard that reports phantoms gets muted.
     """
-    module = _fake_tree(tmp_path, migration_sql=_FIXTURE_SQL, allowlisted=_FIXTURE_TABLES)
+    module = _fake_tree(
+        tmp_path, migration_sql=_FIXTURE_SQL, allowlisted=_FIXTURE_TABLES
+    )
     assert module.main([]) == 0
     assert "phantom_from_a_comment" not in capsys.readouterr().out
 
@@ -260,7 +270,9 @@ def test_if_not_exists_backtracking_does_not_produce_a_phantom_if_table(tmp_path
     dead-end match and read the leftover word ``IF`` as the table name
     instead -- an active false positive, not a miss.
     """
-    module = _fake_tree(tmp_path, migration_sql=_FIXTURE_SQL, allowlisted=_FIXTURE_TABLES)
+    module = _fake_tree(
+        tmp_path, migration_sql=_FIXTURE_SQL, allowlisted=_FIXTURE_TABLES
+    )
     db_module = module.SCHEMAS[0].python_files[0]
     db_module.write_text(
         'sql = "CREATE TABLE IF NOT EXISTS " + table_name + " (id INTEGER PRIMARY KEY)"\n',
@@ -362,7 +374,9 @@ def test_checker_is_stdlib_only_and_never_imports_the_package():
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             imported.add(node.module.split(".")[0])
     assert "tldw_chatbook" not in imported, imported
-    assert imported <= set(sys.stdlib_module_names), imported - set(sys.stdlib_module_names)
+    assert imported <= set(sys.stdlib_module_names), imported - set(
+        sys.stdlib_module_names
+    )
 
     completed = subprocess.run(
         [sys.executable, "-I", "-S", str(CHECKER)],
@@ -372,3 +386,33 @@ def test_checker_is_stdlib_only_and_never_imports_the_package():
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "all present in VALID_TABLES['chachanotes']" in completed.stdout
+
+
+@pytest.mark.parametrize(
+    "rename, accepted", [("canonical", True), ("unexpected", False), (None, False)]
+)
+def test_rebuild_is_scanned_under_its_actual_rename_destination(
+    tmp_path, rename, accepted
+):
+    sql = "CREATE TABLE staging(id INTEGER PRIMARY KEY);"
+    if rename is not None:
+        sql += f" ALTER TABLE staging RENAME TO {rename};"
+    checker = _fake_tree(
+        tmp_path, migration_sql=sql, allowlisted=["from_python_literal", "canonical"]
+    )
+    declared = set(checker.declared_tables(checker.SCHEMAS[0]))
+    assert (declared == {"from_python_literal", "canonical"}) is accepted
+    if not accepted:
+        assert declared - checker.allowlisted_tables("chachanotes")
+
+
+def test_a_pre_create_rename_does_not_change_the_new_table_name(tmp_path):
+    checker = _fake_tree(
+        tmp_path,
+        migration_sql="ALTER TABLE canonical RENAME TO retired; CREATE TABLE canonical(id INTEGER PRIMARY KEY); DROP TABLE retired;",
+        allowlisted=["from_python_literal", "canonical"],
+    )
+    assert set(checker.declared_tables(checker.SCHEMAS[0])) == {
+        "from_python_literal",
+        "canonical",
+    }

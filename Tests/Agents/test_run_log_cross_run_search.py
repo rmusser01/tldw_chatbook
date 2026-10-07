@@ -133,7 +133,9 @@ def test_junk_scope_values_never_raise(real_search_run_log, bad_scope):
 # the "found" case, a real log directory) BEFORE the current run starts. --
 
 
-def _plant_older_run(db, run_log_module, conversation_id: str, *, with_log: bool, content: str = "") -> str:
+def _plant_older_run(
+    db, run_log_module, conversation_id: str, *, with_log: bool, content: str = ""
+) -> str:
     """Create an older PRIMARY run's DB row, optionally with a real log.
 
     Args:
@@ -158,7 +160,9 @@ def _plant_older_run(db, run_log_module, conversation_id: str, *, with_log: bool
     if with_log:
         writer = run_log_module.RunLogWriter()
         writer.bind(older_run_id)
-        writer.append(run_id=older_run_id, kind="primary", type="model", content=content)
+        writer.append(
+            run_id=older_run_id, kind="primary", type="model", content=content
+        )
     return older_run_id
 
 
@@ -321,9 +325,7 @@ def test_multiple_older_runs_mixed_resolvable_and_not(tmp_path, monkeypatch):
     assert outcome.status == RUN_DONE
 
     primary_runs = [r for r in db.list_runs("c1") if r["agent_kind"] == "primary"]
-    current = [
-        r for r in primary_runs if r["id"] not in (found_run_id, missing_run_id)
-    ]
+    current = [r for r in primary_runs if r["id"] not in (found_run_id, missing_run_id)]
     assert len(current) == 1
     tool_results = [
         s["result"]
@@ -537,11 +539,17 @@ def test_format_cross_run_results_states_coverage_and_attributes_hits():
     )
 
     record = RunLogRecord(
-        number=1, run_id="run-old", kind="primary", type="model", ts="-",
+        number=1,
+        run_id="run-old",
+        kind="primary",
+        type="model",
+        ts="-",
         content="hello world",
     )
     result = CrossRunSearchResult(
-        hits=[CrossRunHit(record=record, source_run_id="run-old", is_current_run=False)],
+        hits=[
+            CrossRunHit(record=record, source_run_id="run-old", is_current_run=False)
+        ],
         searched_run_ids=["run-cur", "run-old"],
         unresolved_run_ids=["run-missing"],
         not_searched_run_ids=["run-skipped"],
@@ -564,7 +572,9 @@ def test_format_cross_run_results_no_hits_still_states_coverage():
     )
 
     result = CrossRunSearchResult(
-        hits=[], searched_run_ids=["a"], unresolved_run_ids=["b"],
+        hits=[],
+        searched_run_ids=["a"],
+        unresolved_run_ids=["b"],
         not_searched_run_ids=[],
     )
     text = format_cross_run_results(result)
@@ -585,7 +595,9 @@ def test_format_cross_run_results_folds_omitted_run_count_into_not_attempted():
     )
 
     result = CrossRunSearchResult(
-        hits=[], searched_run_ids=["a"], unresolved_run_ids=[],
+        hits=[],
+        searched_run_ids=["a"],
+        unresolved_run_ids=[],
         not_searched_run_ids=["b"],
     )
     text = format_cross_run_results(result, omitted_run_count=3)
@@ -629,9 +641,7 @@ def test_more_runs_than_the_cap_reports_the_excess_correctly(tmp_path, monkeypat
     extra = 3
     older_count = MAX_CROSS_RUN_RUNS + extra
     for i in range(older_count):
-        _plant_older_run(
-            db, run_log_module, "c1", with_log=True, content=f"older {i}"
-        )
+        _plant_older_run(db, run_log_module, "c1", with_log=True, content=f"older {i}")
 
     script = [
         _svc_fence(SEARCH_RUN_LOG_TOOL_NAME, {"scope": "conversation"}),

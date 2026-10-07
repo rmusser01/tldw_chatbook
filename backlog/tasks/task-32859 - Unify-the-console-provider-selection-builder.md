@@ -1,7 +1,7 @@
 ---
 id: TASK-32859
 title: Unify the console provider-selection builder and resolver helpers
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-09-19 08:24'
 labels:
@@ -28,9 +28,15 @@ Source: cascade review 2026-09-19 — `qa/cascade-review-2026-09-19/report.md`.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Exactly one implementation of the selection algorithm exists (the superset survives); a grep for the algorithm's distinctive steps finds one copy
-- [ ] #2 The unified `_provider_settings` is registry-aware (ADR-146); the gateway's error policy is preserved or the change is an explicit recorded decision
-- [ ] #3 The model-fallback chain and the selection-construction are centralized; the ×5/×7 spellings are gone
-- [ ] #4 ADR-006 precedence order unchanged and pinned by the existing console settings tests
-- [ ] #5 The PR-2668 fix exists in exactly one place
+- [x] #1 Exactly one implementation of the selection algorithm exists (the superset survives); a grep for the algorithm's distinctive steps finds one copy
+- [x] #2 The unified `_provider_settings` is registry-aware (ADR-146); the gateway's error policy is preserved or the change is an explicit recorded decision
+- [x] #3 The model-fallback chain and the selection-construction are centralized; the ×5/×7 spellings are gone
+- [x] #4 ADR-006 precedence order unchanged and pinned by the existing console settings tests
+- [x] #5 The PR-2668 fix exists in exactly one place
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Closed by Phase 4 (TASK-33004.2). One builder, `resolve_console_selection_core`, replaces the screen chain and the controller builder. The model fallback chain is spelled once. `console_provider_settings` is registry-aware, and the gateway keeps its raising policy via `strict=True`. ADR-006 precedence is unchanged, and the PR-2668 fix exists once. See TASK-33004.2 for evidence.
+<!-- SECTION:NOTES:END -->

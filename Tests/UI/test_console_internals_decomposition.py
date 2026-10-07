@@ -10,6 +10,7 @@ from textual.app import ComposeResult
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.events import Key, Paste
 from textual.widgets import Button, Input, Select, Static
@@ -319,10 +320,7 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    border: none;"
         ) in css
         assert (
-            "#console-staged-context-tray {\n"
-            "    height: auto;\n"
-            "    min-height: 0;\n"
-            "}"
+            "#console-staged-context-tray {\n    height: auto;\n    min-height: 0;\n}"
         ) in css
         assert (
             "#console-workspace-context {\n    height: auto;\n    min-height: 0;"
@@ -855,7 +853,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
             run_active=False,
             can_save_chatbook=False,
             send_blocked=True,
-            setup_blocked_reason="Choose a model in Console Settings before sending.",
+            setup_blocked_reason="Choose a model in Chat settings before sending.",
         )
         await pilot.pause(0.1)
 
@@ -873,9 +871,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
             == "Send blocked — choose a model to continue ›"
         )
         assert send_button.disabled is True
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
         composer.load_draft("draft despite missing setup")
         await pilot.pause(0.1)
@@ -887,9 +883,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         # A typed draft does not lift a setup block.
         assert send_button.disabled is True
         assert disabled_reason.styles.display == "block"
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
 
 @pytest.mark.asyncio
@@ -2526,9 +2520,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
             not in _visible_text(console)
         )
         send_button = console.query_one("#console-send-message", Button)
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
         assert "Setup required: Choose model before sending." not in _visible_text(
             console
         )
@@ -2574,9 +2566,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
             not in _visible_text(console)
         )
         send_button = console.query_one("#console-send-message", Button)
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
 
 @pytest.mark.asyncio
@@ -2796,6 +2786,8 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         # Ready state is compact: one displayed ready line, no action row at all.
         body = empty_panel.query_one("#console-empty-body", Static)
         assert getattr(body.render(), "plain", str(body.render())) == (
+            # TASK-34100.5 AC#11: the arrival line names what setup connected.
+            "Setup complete — llama.cpp · local-model. "
             "Ready — type a message to begin."
         )
         assert body.display is True
@@ -3449,7 +3441,7 @@ async def test_console_native_control_bar_and_staged_context_reflect_pending_han
         assert "Provider:" in text
         assert "Model:" in text
         assert "Assistant: General" in text
-        assert "Library · Auto off · Agent blocked" in text
+        assert "Library · Auto off · Agent access off" in text
         assert "Sources: 1" in text
         assert "Transformer notes" in text
         assert "ready" in text
@@ -3532,7 +3524,7 @@ def test_console_control_state_tolerates_missing_config_and_precise_rag_source()
         ConsoleLiveWorkLaunch(source="Library Search/RAG", title="RAG result"),
     )
 
-    assert non_rag_state.rag_label == "Library · Auto off · Agent blocked"
+    assert non_rag_state.rag_label == "Library · Auto off · Agent access off"
     assert rag_state.rag_label == non_rag_state.rag_label
 
 
@@ -3544,10 +3536,14 @@ def test_console_control_state_tolerates_missing_launch_source():
         ConsoleLiveWorkLaunch(source=None, title="Unknown source"),
     )
 
-    assert state.rag_label == "Library · Auto off · Agent blocked"
+    assert state.rag_label == "Library · Auto off · Agent access off"
 
 
-def test_console_control_and_inspector_share_effective_provider_model_sources():
+@pytest.mark.asyncio
+@private_profile_test
+def test_console_control_and_inspector_share_effective_provider_model_sources(
+    request,
+):
     app = _build_test_app()
     _configure_native_ready_console(app, model="reactive-model")
     screen = ChatScreen(app)
@@ -3556,7 +3552,9 @@ def test_console_control_and_inspector_share_effective_provider_model_sources():
     inspector_state = screen._build_console_inspector_state(None)
     rows_by_label = {row.label: row for row in inspector_state.rows}
 
-    assert control_state.provider_label == "Provider: llama_cpp"
+    # TASK-33002.5: the chip names the provider; the key stays the identity.
+    assert control_state.provider_label == "Provider: llama.cpp"
+    assert screen._active_console_provider_model_display()[0] == "llama_cpp"
     assert control_state.model_label == "Model: reactive-model"
     assert rows_by_label["Provider"].text == "Provider: ready"
 
@@ -3579,9 +3577,9 @@ def test_console_rag_source_status_unchanged_with_a_pending_launch():
     )
     # A stale sent-notice sitting alongside a NEW pending launch changes
     # nothing -- pending-launch derivation takes over unconditionally.
-    assert screen._retrieval._console_rag_source_status(launch, sent_source_count=5) == (
-        "staged from Library Search/RAG"
-    )
+    assert screen._retrieval._console_rag_source_status(
+        launch, sent_source_count=5
+    ) == ("staged from Library Search/RAG")
 
 
 def test_console_rag_source_status_remembers_the_last_send_when_nothing_is_staged():
@@ -3603,10 +3601,13 @@ def test_console_rag_source_status_genuinely_empty_reads_not_staged():
     screen = ChatScreen(app)
 
     assert screen._retrieval._console_rag_source_status(None) == "not staged"
-    assert screen._retrieval._console_rag_source_status(None, sent_source_count=0) == "not staged"
-    assert screen._retrieval._console_rag_source_status(None, sent_source_count=None) == (
-        "not staged"
+    assert (
+        screen._retrieval._console_rag_source_status(None, sent_source_count=0)
+        == "not staged"
     )
+    assert screen._retrieval._console_rag_source_status(
+        None, sent_source_count=None
+    ) == ("not staged")
 
 
 def test_console_inspector_sources_row_remembers_the_last_send():
@@ -3652,7 +3653,9 @@ def test_console_strip_and_inspector_sent_counts_provably_agree():
     inspector_state_2 = screen._build_console_inspector_state(None)
     rows_by_label_2 = {row.label: row for row in inspector_state_2.rows}
     assert strip_state_2.notice == "Evidence sent with this message · 2 sources"
-    assert rows_by_label_2["Retrieval"].value == "sent with the last message · 2 sources"
+    assert (
+        rows_by_label_2["Retrieval"].value == "sent with the last message · 2 sources"
+    )
 
 
 def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():
@@ -3751,9 +3754,7 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
         # disappear together -- a stranded reason line would still advertise a
         # control the user cannot reach.
         assert not list(console.query("#console-inspector-review-tool-call"))
-        assert not list(
-            console.query("#console-inspector-review-tool-call-reason")
-        )
+        assert not list(console.query("#console-inspector-review-tool-call-reason"))
 
 
 @pytest.mark.asyncio
@@ -3991,9 +3992,8 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result(
         # scope-summary grammar under the Console's own "Sources" noun
         # ("Scope" here already means the retrieval ITEM scope), and it
         # names what is off -- the default still being today's three.
-        assert (
-            "Sources: Notes, Media, Conversations (Prompts off)"
-            in _visible_text(console)
+        assert "Sources: Notes, Media, Conversations (Prompts off)" in _visible_text(
+            console
         )
         await _run_manual_library_search(console, pilot, query)
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
@@ -4251,9 +4251,7 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        await _run_manual_library_search(
-            console, pilot, "Why did the incident happen?"
-        )
+        await _run_manual_library_search(console, pilot, "Why did the incident happen?")
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
@@ -4320,9 +4318,7 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
 
         text = _visible_text(console)
         assert "Evidence: 0/1 available (blocked)" in text
-        assert (
-            "Console send blocked: Library search has no available evidence" in text
-        )
+        assert "Console send blocked: Library search has no available evidence" in text
         assert "Review source authority before sending." in text
         assert composer.draft_text() == "Answer using the staged RAG evidence"
 
@@ -4584,7 +4580,9 @@ def test_console_keyboard_hints_visible_in_native_footer():
         "f6": "Next pane",
         "shift+f6": "Previous pane",
         "ctrl+k": "Switch session",
-        "alt+m": "Model",
+        # TASK-33004.7: both model surfaces, named as the footer names them.
+        "alt+m": "Switch model",
+        "ctrl+o": "Chat settings",
         "ctrl+t": "New tab",
     }
     for key, description in visible.items():
@@ -4681,10 +4679,11 @@ async def test_console_command_provider_session_settings_targets_guarded_action(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         provider = ConsoleCommandProvider(screen=console, match_style=None)
-        hits = [hit async for hit in provider.search("session settings")]
-        assert hits, "expected the session settings command to be listed"
-        matching = [hit for hit in hits if "Session settings" in str(hit.text)]
-        assert matching, "expected a 'Console: Session settings…' hit"
+        # TASK-33004.7: the entry is "Chat settings…" (Ctrl+O), the modal's name.
+        hits = [hit async for hit in provider.search("chat settings")]
+        assert hits, "expected the chat settings command to be listed"
+        matching = [hit for hit in hits if "Chat settings" in str(hit.text)]
+        assert matching, "expected a 'Console: Chat settings…' hit"
         assert matching[0].command == console.action_open_console_session_settings
 
 
@@ -4799,8 +4798,7 @@ async def test_console_command_provider_covers_every_alt_bound_action():
         paste_hits = [hit async for hit in provider.search("paste image")]
         assert paste_hits, "expected the paste-image command to be searchable"
         assert any(
-            hit.command == console.action_paste_clipboard_image
-            for hit in paste_hits
+            hit.command == console.action_paste_clipboard_image for hit in paste_hits
         )
 
 

@@ -1,0 +1,44 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                                                                                                                        │
+│ Author the pieces that shape a chat                                                                                                                                                                             │
+│  Blocked                                                                                                                                                                                                        │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 3
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                                                                                 │
+│ ╭─────────────────────────────────────────────────╮╭──────────────────────────────────────────────────────────────────────────────────────────────────────╮┌──────────────────────────────────────────────────┐ │
+│ │  Library                                     <  ││                                  ▸ Try a test chat (nothing saved)                                   ││                                                  │ │
+│ │  Search...                                      ││ Character                                                                                            ││  Inspector                                    >  │ │
+│ │                       New                       ││  Name: Default Assistant                                                                             ││ Selected: Default Assistant                      │ │
+│ │                 New Actor Pack                  ││                                                                                                      ││ Type: character                                  │ │
+│ │                     Import                      ││  Description: The built-in Default Assistant character -- used for any new conversation until you    ││ Validation: OK                                   │ │
+│ │                Import Actor Pack                ││  choose a different character. It also serves as a worked example: every field on this card          ││ Conversations (0)                                │ │
+│ │                    Duplicate                    ││  (personality, system prompt, greeting, alternate greetings, creator notes) is filled in on          ││   Search this character's chats                  │ │
+│ │                   Sort: Name                    ││  purpose, so editing one and starting a fresh chat shows exactly what that field does.               ││  No saved conversations.                         │ │
+│ │                    Tag: All                     ││  Personality: Concise by default: gives the direct answer first, then reasoning only if it adds      ││                                                  │ │
+│ │  Default Assistant                              ││  something. Says which parts of an answer are uncertain instead of guessing at them. Asks one        ││ Readiness                                        │ │
+│ │  The built-in Default Assistant character -- …  ││  clarifying question before assuming something that would change the answer, rather than assuming    ││ Chat now blocked: openai is not ready: Missing   │ │
+│ │  pixel-migu                                     ││  and hoping.                                                                                         ││ API key. Set OPENAI_API_KEY or add api_key under │ │
+│ │  A tiny turquoise pixel-art robot with a rect…  ││  First message: Hello! I'm the Default Assistant -- the character every new chat starts with         ││ [api_settings.openai].                           │ │
+│ │  Samira “Sammy” Vadem                           ││  until you pick another one.                                                                      ▅  ││                     Chat now                     │ │
+│ │  Samira “Sammy” Vadem appears to be a woman i…  ││                                                                                                      ││              Send to Console draft               │ │
+│ │                                                 ││  This card is also a working example: everything about me is editable from **Roleplay ▸              ││                   Export JSON                    │ │
+│ │                                                 ││  Characters ▸ Default Assistant** -- personality, system prompt, this greeting, all of it. I         ││                    Export PNG                    │ │
+│ │                                                 ││  don't come with a voice assigned (voice profiles are set up separately) -- give me one from the     ││                Export Actor Pack                 │ │
+│ │                                                 ││  card's **Voice & Speech** section, or set an app-wide default under **Settings ▸ Speech & TTS ▸     ││                      Delete                      │ │
+│ │                                                 ││  Default voice profile**.                                                                            ││                   Manage Buddy                   │ │
+│ │                                                 ││                                                                                                      ││                    Show Buddy                    │ │
+│ │                                                 ││  Prefer to keep this card as-is? Duplicate it from the Characters list and customize the copy        ││                   Close Buddy                    │ │
+│ │                                                 ││  instead.                                                                                            ││                  Disable Buddy                   │ │
+│ │                                                 ││                                                                                                      ││                                                  │ │
+│ │                                                 ││  What can I help you with?                                                                           ││                                                  │ │
+│ │                                                 ││  System prompt: You are {{char}}: a measured, general-purpose assistant.                           ▆ ││                                                  │ │
+│ │                                                 ││    Edit     Conversations (0)                                                                        ││                                                  │ │
+│ ╰─────────────────────────────────────────────────╯╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯└──────────────────────────────────────────────────┘ │
+│                                                                                                                                                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | [ ] mode | s sort | F1 help · Ctrl+P palette · Ctrl+Q quit

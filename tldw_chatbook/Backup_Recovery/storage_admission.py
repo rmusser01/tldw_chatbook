@@ -13,6 +13,7 @@ import sqlite3
 import stat
 import threading
 import time
+from collections import OrderedDict
 from collections.abc import Iterable
 from contextlib import contextmanager
 from pathlib import Path
@@ -193,6 +194,7 @@ class _Acquisition:
         self.thread = threading.current_thread()
         self.task = _task_identity()
         self.initializing_root = None
+        self.scope_roots = None
         self.cancel = threading.Event()
         self.operation = getattr(_operation_local, "operation", None)
         with _lock:
@@ -495,6 +497,10 @@ class _Hold:
         self.ready = threading.Event()
         self.stop = threading.Event()
         self.error: BaseException | None = None
+        # PERF-07/08 (ADR-126 amendment 2026-09-29): process-local admission
+        # evidence, discarded with this hold. Guarded by _lock.
+        self.evidence: dict[str, _Evidence] = {}
+        self.path_evidence: OrderedDict[tuple[str, str], _Evidence] = OrderedDict()
         self.thread = threading.Thread(
             target=self._run,
             args=(authority,),
@@ -711,9 +717,9 @@ def _config_capture_sources(root, selectors, bindings):
                     or info.st_mode & 0o077
                 ):
                     raise bootstrap.RecoveryRequired("capture_config_source_unsafe")
-                tokens.add(f"inode:{info.st_dev}:{info.st_ino}")
+                tokens.add(bootstrap.inode_token(info))
             if any(bootstrap._overlap(path, control) for control in controls) or any(
-                tokens.intersection(entry["historical"])
+                tokens.intersection(bootstrap.identity_view(entry["historical"]))
                 or any(bootstrap._overlap(path, Path(p)) for p in entry["roots"])
                 or any(
                     bootstrap._overlap(path, Path(token[5:]))
@@ -764,6 +770,308 @@ def _config_capture_file(sources, selected, owner_id, info):
                 raise bootstrap.RecoveryRequired("capture_config_source_changed")
         return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Reusable admission evidence (PERF-07/08; ADR-126 amendment, 2026-09-29).
+#
+# An ordinary acquisition may reuse the *allowed* result of an unmodified
+# derivation while every stamp below is identical when re-observed on the same
+# call. Posture stamps cover every path component the derivation walks; content
+# stamps cover the records, registry, marker, selector and qualification file.
+# Evidence becomes reusable only after two consecutive full derivations bracket
+# identical stamps with content change times at least _EVIDENCE_SETTLE_NS old.
+# Any mismatch runs the unmodified derivation, the only source of refusals.
+# All evidence state is read and written under _lock; nothing relies on the
+# GIL for atomicity (free-threaded builds, PEP 779).
+# ---------------------------------------------------------------------------
+
+#: Kill switch. The oracle test compares both settings after each mutation.
+_EVIDENCE_REUSE = True
+#: A content change must be this old before evidence over it is trusted.
+_EVIDENCE_SETTLE_NS = 1_000_000_000
+#: Per-path containment evidence kept per hold (LRU).
+_EVIDENCE_PATHS_MAX = 256
+_NOT_BOOTSTRAP_RECORDS = ("admission", "unbound-owner", "projection-dependencies")
+_QUALIFICATION_FILE = Path(__file__).with_name("native_qualification.json")
+
+
+def _posture(path: Path) -> tuple | None:
+    """Identity and permission posture, or None when the path is absent."""
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return (
+        info.st_dev,
+        info.st_ino,
+        stat.S_IFMT(info.st_mode),
+        stat.S_IMODE(info.st_mode),
+        info.st_uid,
+    )
+
+
+def _content(path: Path) -> tuple | None:
+    """Identity plus change stamps, or None when the path is absent."""
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _chain(path: Path) -> tuple[Path, ...]:
+    """Every component from the filesystem root down to ``path`` itself."""
+    return (*reversed(path.parents), path)
+
+
+class _Evidence:
+    """Stamps over one derivation's inputs; immutable once published on a hold."""
+
+    __slots__ = ("names", "posture", "content", "epoch", "confirmed")
+
+    def __init__(self, names, posture_paths, content_paths):
+        self.names = names
+        self.posture = tuple((p, _posture(p)) for p in posture_paths)
+        self.content = tuple((p, _content(p)) for p in content_paths)
+        self.epoch = bootstrap._admission_epoch
+        self.confirmed = False
+
+    def dependencies(self) -> tuple:
+        return (
+            tuple(p for p, _ in self.posture),
+            tuple(p for p, _ in self.content),
+        )
+
+    def stamps(self) -> tuple:
+        return (
+            tuple(s for _, s in self.posture),
+            tuple(s for _, s in self.content),
+        )
+
+    def observe(self) -> tuple:
+        return (
+            tuple(_posture(p) for p, _ in self.posture),
+            tuple(_content(p) for p, _ in self.content),
+        )
+
+    def settled_before(self, when_ns: int) -> bool:
+        return all(
+            s is None or s[4] <= when_ns - _EVIDENCE_SETTLE_NS for _, s in self.content
+        )
+
+
+def _no_links(evidence: _Evidence) -> bool:
+    """Evidence is never kept over a symlink component (or an absent ancestor)."""
+    last = len(evidence.posture) - 1
+    return all(
+        (s is not None and not stat.S_ISLNK(s[2])) or (s is None and i == last)
+        for i, (_, s) in enumerate(evidence.posture)
+    )
+
+
+def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
+    """Stamp every input the selector-level derivation read, or None if unsafe."""
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return None
+    if any(n.startswith(("pending-", "activation-update-")) for n in entries):
+        return None
+    admission = root / "admission"
+    content = [
+        root,
+        admission,
+        admission / "registry.json",
+        admission / "registry.lock",
+        root / "unbound-owner",
+        _QUALIFICATION_FILE,
+        *sorted(root / n for n in entries if n not in _NOT_BOOTSTRAP_RECORDS),
+    ]
+    # The selector is an input even when unbound: a profile whose fingerprint
+    # stopped matching binds again once the selector is restored.
+    walked = [root, admission, selector.parent]
+    if names != (UNBOUND_NAMESPACE,):
+        if roots is None or not all(os.path.lexists(r) for r in roots):
+            return None  # absence-proved roots are never reused
+        walked.extend(roots)
+    posture = sorted({p for target in walked for p in _chain(Path(target))})
+    evidence = _Evidence(names, posture, (*content, selector))
+    posture_ok = all(
+        s is not None and not stat.S_ISLNK(s[2]) for _, s in evidence.posture
+    )
+    # An absent selector is observed as absent; its appearance is a mismatch.
+    content_ok = all(s is not None for p, s in evidence.content if p != selector)
+    return evidence if posture_ok and content_ok else None
+
+
+def _path_evidence(names, selected: Path) -> _Evidence | None:
+    """Stamp the admitted path's chain (the containment check's only input)."""
+    evidence = _Evidence(names, _chain(selected), ())
+    return evidence if _no_links(evidence) else None
+
+
+def _hold_serving(hold) -> bool:
+    return (
+        hold is not None
+        and hold.ready.is_set()
+        and hold.error is None
+        and not hold.stop.is_set()
+    )
+
+
+def _mount_read_only(path: Path) -> bool:
+    """Qualification refuses a read-only mount; the reuse path must too."""
+    statvfs = getattr(os, "statvfs", None)
+    if statvfs is None:
+        return True
+    try:
+        return bool(statvfs(path).f_flag & getattr(os, "ST_RDONLY", 1))
+    except OSError:
+        return True
+
+
+def _selected_paths(path, related_paths) -> tuple[Path, ...]:
+    return tuple(
+        selected
+        for selected in ((lexical_path(path) if path is not None else None), *related_paths)
+        if selected is not None
+    )
+
+
+def _reuse_evidence(root, selector, path, related_paths, check, execution_selection):
+    """Return a lease from confirmed evidence, or None to run the derivation.
+
+    Like the derivation, the lease is counted before the final revalidation, so a
+    drain that starts meanwhile sees it. Every stamp and the admission epoch are
+    then observed again; any difference closes the lease and falls back.
+    """
+    key = (os.getpid(), str(root))
+    selected = _selected_paths(path, related_paths)
+    with _lock:
+        hold = _holds.get(key)
+        if not _hold_serving(hold):
+            return None
+        evidence = hold.evidence.get(str(selector))
+        if (
+            evidence is None
+            or not evidence.confirmed
+            or evidence.epoch != bootstrap._admission_epoch
+            or evidence.names != hold.names
+        ):
+            return None
+        bound = evidence.names != (UNBOUND_NAMESPACE,)
+        per_path = []
+        for item in selected if bound else ():
+            entry = hold.path_evidence.get((str(selector), str(item)))
+            if (
+                entry is None
+                or not entry.confirmed
+                or entry.epoch != bootstrap._admission_epoch
+            ):
+                return None
+            hold.path_evidence.move_to_end((str(selector), str(item)))
+            per_path.append(entry)
+    if _mount_read_only(root.parent):
+        return None
+    with _lock:
+        check()
+    if getattr(_local, "admitted", False):
+        raise bootstrap.RecoveryRequired("maintenance_requires_owner_capability")
+    with _lock:
+        check()
+        if (
+            _holds.get(key) is not hold
+            or not _hold_serving(hold)
+            or hold.evidence.get(str(selector)) is not evidence
+            or evidence.epoch != bootstrap._admission_epoch
+        ):
+            return None
+        hold.count += 1
+        token = StorageLease(key)
+        token._execution_selection = execution_selection
+    # Native filesystem observation never runs under the coordinator lock.
+    try:
+        unchanged = (
+            evidence.observe() == evidence.stamps()
+            and all(entry.observe() == entry.stamps() for entry in per_path)
+            and evidence.epoch == bootstrap._admission_epoch
+        )
+    except BaseException:
+        token.close()  # as the derivation does: a counted lease never leaks
+        raise
+    if not unchanged:
+        token.close()
+        return None
+    return token
+
+
+def _observe_candidates(root, selector, path, related_paths):
+    """Before a derivation, re-observe the evidence it may confirm."""
+    key = (os.getpid(), str(root))
+    epoch = bootstrap._admission_epoch
+    with _lock:
+        hold = _holds.get(key)
+        if hold is None:
+            return epoch, {}
+        wanted = {str(selector): hold.evidence.get(str(selector))}
+        for item in _selected_paths(path, related_paths):
+            wanted[(str(selector), str(item))] = hold.path_evidence.get(
+                (str(selector), str(item))
+            )
+    now = time.time_ns()
+    return epoch, {
+        name: (entry, entry.observe(), now)
+        for name, entry in wanted.items()
+        if entry is not None
+    }
+
+
+def _note_evidence(hold, root, selector, path, related_paths, names, roots, before):
+    """Publish post-derivation stamps; confirm them if they bracket the derivation."""
+    epoch_before, observations = before
+    fresh = {str(selector): _selector_evidence(root, selector, names, roots)}
+    if names != (UNBOUND_NAMESPACE,):
+        for item in _selected_paths(path, related_paths):
+            fresh[(str(selector), str(item))] = _path_evidence(names, item)
+    with _lock:
+        if _holds.get(hold.key) is not hold or hold.names != names:
+            return
+        for name, entry in fresh.items():
+            store = hold.evidence if isinstance(name, str) else hold.path_evidence
+            if entry is None:
+                store.pop(name, None)
+                continue
+            current = store.get(name)
+            if (
+                current is not None
+                and current.confirmed
+                and current.epoch == entry.epoch
+                and current.names == entry.names
+                and current.dependencies() == entry.dependencies()
+                and current.stamps() == entry.stamps()
+            ):
+                # Concurrent derivations over unchanged inputs must not replace
+                # confirmed evidence with a fresh, unconfirmed copy of itself.
+                if store is hold.path_evidence:
+                    store.move_to_end(name)
+                continue
+            # Sound when this derivation was bracketed by identical stamps over
+            # the same inputs: observed before it, and observed again after.
+            previous, observed, observed_at = observations.get(name, (None, None, 0))
+            entry.confirmed = (
+                bootstrap._admission_epoch == epoch_before == entry.epoch
+                and previous is not None
+                and previous.names == entry.names
+                and previous.dependencies() == entry.dependencies()
+                and previous.stamps() == observed == entry.stamps()
+                and entry.settled_before(observed_at)
+            )
+            store[name] = entry
+            if store is hold.path_evidence:
+                store.move_to_end(name)
+                while len(store) > _EVIDENCE_PATHS_MAX:
+                    store.popitem(last=False)
 
 
 def _scope(
@@ -824,6 +1132,14 @@ def _scope(
         binding["roots"],
         (registry[name] for name in binding["namespaces"]),
     )
+    if startup_attempt is not None:
+        # The DECLARED roots, not the effective ones: effective_roots drops an
+        # absence-proved alias, and that proof is no stamp -- the alias can
+        # reappear (e.g. as a FIFO) without changing its parent's posture. An
+        # absent declared root makes _selector_evidence refuse to record.
+        startup_attempt.scope_roots = tuple(
+            dict.fromkeys(Path(r) for r in binding["roots"])
+        )
     for selected in (path, *related_paths):
         if selected is not None and not _contains_capture_path(
             (*roots, Path(binding["selector"])), selected
@@ -880,6 +1196,14 @@ def _acquire_storage(
             and attempt.operation.key != (os.getpid(), str(root))
         ):
             raise bootstrap.RecoveryRequired("operation_native_scope_changed")
+    before = None
+    if _EVIDENCE_REUSE and type(attempt) is _Acquisition and os.name != "nt":
+        reused = _reuse_evidence(
+            root, selector, path, related_paths, check, execution_selection
+        )
+        if reused is not None:
+            return reused
+        before = _observe_candidates(root, selector, path, related_paths)
     with attempt.initializing(root, path):
         check()
         allowed, reason = bootstrap.startup_permission(selector, root)
@@ -957,6 +1281,11 @@ def _acquire_storage(
                 != names
             ):
                 raise bootstrap.RecoveryRequired("storage_scope_changed")
+        if before is not None:
+            _note_evidence(
+                hold, root, selector, path, related_paths, names,
+                attempt.scope_roots, before,
+            )
         return token
     except BaseException:
         token.close()

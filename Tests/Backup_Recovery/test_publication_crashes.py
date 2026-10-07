@@ -537,7 +537,13 @@ def _replacement(tmp_path, *, tree=False):
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
     from tldw_chatbook.Backup_Recovery.staging import stage_restore
 
-    archive = sealed(tmp_path, mutate=producer)
+    def raw_files(doc):
+        # Arbitrary bytes use an opaque owner; ui.state is a fixed config leaf.
+        producer(doc)
+        for row in (*doc["owners"], *doc["files"], *doc["producer_inventory"]):
+            row["owner_id"] = "models.artifacts"
+
+    archive = sealed(tmp_path, mutate=raw_files)
     target = tmp_path / "live"
     target.mkdir(mode=0o700)
     previous = target / "note.txt"
@@ -545,8 +551,8 @@ def _replacement(tmp_path, *, tree=False):
     previous.chmod(0o640)
     os.utime(previous, ns=(123000000000, 123000000000))
     items = [
-        StorageItem("ui.state", "root", target, "included_directory", ()),
-        StorageItem("ui.state", "file", previous, "included", ("root",)),
+        StorageItem("models.artifacts", "root", target, "included_directory", ()),
+        StorageItem("models.artifacts", "file", previous, "included", ("root",)),
     ]
     if tree:
         old = target / "obsolete"
@@ -556,15 +562,19 @@ def _replacement(tmp_path, *, tree=False):
         (old / "data").chmod(0o640)
         items.extend(
             [
-                StorageItem("ui.state", "old", old, "included_directory", ("root",)),
                 StorageItem(
-                    "ui.state",
+                    "models.artifacts", "old", old, "included_directory", ("root",)
+                ),
+                StorageItem(
+                    "models.artifacts",
                     "old-empty",
                     old / "empty",
                     "included_directory",
                     ("old",),
                 ),
-                StorageItem("ui.state", "old-data", old / "data", "included", ("old",)),
+                StorageItem(
+                    "models.artifacts", "old-data", old / "data", "included", ("old",)
+                ),
             ]
         )
     inventory = Inventory(tuple(items), True, "local", ())
@@ -636,6 +646,7 @@ def _encrypted_rollback(
     capture = captured(tmp_path, previous.read_bytes() if data is None else data)
     document = json.loads(capture.manifest_bytes)
     document["credential_policy"] = "rollback"
+    document["files"][0]["owner_id"] = "models.artifacts"
     info = previous.stat()
     document["files"][0]["metadata"] = {
         "version": 1,
@@ -675,7 +686,7 @@ def _encrypted_rollback(
                 "root_id": "root",
                 "parent_id": "old",
                 "relative_path": "obsolete/data",
-                "owner_id": "notes",
+                "owner_id": "models.artifacts",
                 "payload": "payload/2",
                 "size": len(payload),
                 "sha256": hashlib.sha256(payload).hexdigest(),
@@ -693,13 +704,13 @@ def _encrypted_rollback(
         "mode": root_info.st_mode & 0o777,
         "mtime_ns": root_info.st_mtime_ns,
     }
-    document["owners"].append(
-        {"owner_id": "ui.state", "schema_version": 0, "capabilities": []}
-    )
+    document["owners"] = [
+        {"owner_id": "models.artifacts", "schema_version": 0, "capabilities": []}
+    ]
     document["producer_inventory"] = [
         {
             "logical_id": row["logical_id"],
-            "owner_id": "ui.state" if row["logical_id"] == "root" else "notes",
+            "owner_id": "models.artifacts",
             "status": "included_directory",
             "dependencies": [row["parent_id"]] if row["parent_id"] else [],
             "shared_group": None,

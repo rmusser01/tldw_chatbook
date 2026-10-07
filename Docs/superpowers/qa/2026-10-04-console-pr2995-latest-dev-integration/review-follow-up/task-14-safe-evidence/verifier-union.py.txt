@@ -1,0 +1,11 @@
+from common import *
+i=json.loads((O/'initial-tree-map.json').read_text());pre=json.loads((S/'task-14-latest-dev-preflight-selection.json').read_text());expected=dict(i['trees'][BASE]);current=tree('HEAD');rows={}
+for r in pre['overlay_map']:
+ p=r['path'];raw=(W/p).read_bytes();assert sha(raw)==r['candidate_sha256'],p
+ if not r['feature_overlap']:assert raw==blob(NEW,p),p
+ expected[p]=git('hash-object','--stdin') if False else subprocess.check_output(['git','hash-object','--stdin'],input=raw,cwd=W).decode().strip()
+ rows[p]={'expected_sha256':r['candidate_sha256'],'actual_sha256':sha(raw),'mode':r['preservation'],'blob':current[p]}
+assert expected==current
+assert subprocess.run(['git','merge-base','--is-ancestor',NEW,'HEAD'],cwd=W).returncode==0
+h=git('rev-parse','HEAD').decode().strip();dump('rebase-source-union.json',{'base':BASE,'rebase_intermediate':h,'pinned_dev':NEW,'path_count':len(expected),'all_paths_exact_expected_union':True,'incoming_commits':git('rev-list',OLD+'..'+NEW).decode().splitlines(),'replayed_commit_count':len(git('rev-list',OLD+'..'+BASE).splitlines()),'incoming_paths':rows,'paths':current})
+print('Exact union verified',h,len(expected),'paths')

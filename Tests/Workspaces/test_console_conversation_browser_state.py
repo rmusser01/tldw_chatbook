@@ -73,12 +73,10 @@ def test_section_budget_defaults_to_the_historical_ceiling_without_a_measurement
         == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
     )
     assert (
-        console_rail_section_height_budget(0)
-        == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+        console_rail_section_height_budget(0) == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
     )
     assert (
-        console_rail_section_height_budget(-5)
-        == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+        console_rail_section_height_budget(-5) == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
     )
 
 
@@ -88,7 +86,9 @@ def test_section_budget_splits_a_tall_rail_evenly_between_peer_sections():
     assert console_rail_section_height_budget(200) == 100
     assert console_rail_section_height_budget(120) == 60
     # A 40-line rail halves below the historical ceiling: unchanged.
-    assert console_rail_section_height_budget(40) == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+    assert (
+        console_rail_section_height_budget(40) == CONSOLE_RAIL_SECTION_MIN_BUDGET_LINES
+    )
 
 
 def test_group_row_limit_defaults_to_the_historical_cap_without_a_measurement():

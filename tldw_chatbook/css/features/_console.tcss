@@ -1220,13 +1220,6 @@ Button.console-rail-focus-carrier:focus {
     color: $ds-text-primary;
 }
 
-#console-chat-tabs,
-#console-chat-tabs #chat-sessions-container,
-#console-chat-tabs .chat-session {
-    height: $ds-height-full;
-    min-height: $ds-size-0;
-}
-
 /* task-32287: the inline task-card surface (ChatTaskCards) hugs its cards.
    As a plain Container it kept Textual's `height: 1fr` default and took a
    full share of the session column next to `#console-transcript-surface`
@@ -1850,6 +1843,35 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
     text-style: bold;
 }
 
+/* TASK-33628.2 / ADR-097: the message-Delete receipt (Archive receipt
+   pattern) is a rarely opened modal, so its rules do NOT ride the boot
+   parse: build_css.py splits every `console-delete-receipt*` block out of
+   this module into screen_modal_console_delete_receipt.tcss, which
+   ConsoleMessageDeleteReceiptModal's own CSS_PATH loads on first open
+   (the ConsoleHooksReviewModal model). */
+.console-delete-receipt-modal {
+    align: center middle;
+}
+
+#console-delete-receipt {
+    width: $ds-size-60;
+    max-width: $ds-width-full;
+    height: auto;
+    border: tall $primary;
+    background: $surface;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#console-delete-receipt-actions {
+    height: auto;
+}
+
+#console-delete-receipt-actions Button {
+    width: auto;
+    min-width: $ds-size-8;
+    margin-right: $ds-space-1;
+}
+
 #console-workspace-files-modal {
     width: $ds-size-110;
     max-width: $ds-percent-96;
@@ -2236,18 +2258,6 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     margin: $ds-space-0;
 }
 
-#console-workspace-tree-selection-context {
-    width: $ds-percent-99;
-    max-width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    max-height: $ds-size-1;
-    color: $ds-text-muted;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
-    overflow: hidden;
-}
-
 .console-workspace-action {
     height: $ds-size-1;
     min-height: $ds-size-1;
@@ -2265,14 +2275,6 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     min-width: $ds-size-0;
     height: $ds-size-3;
     min-height: $ds-size-3;
-}
-
-#console-workspace-tree-star {
-    width: $ds-width-full;
-    min-width: $ds-size-6;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin: $ds-space-0;
 }
 
 #console-workspace-search-status {
@@ -2498,10 +2500,6 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     text-style: bold;
 }
 
-#console-chat-tabs {
-    display: none;
-}
-
 #console-session-surface .chat-empty-state {
     min-height: $ds-size-5;
     padding: $ds-space-0 $ds-space-1;
@@ -2542,6 +2540,15 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     background: $ds-status-warning 20%;
     color: $ds-text-primary;
     text-style: bold;
+}
+
+/* TASK-33625.1: the rule above (id + class) outranks the global
+   `Button:focus` cue (type + pseudo-class), so a Tab-focused Stop painted
+   exactly like an unfocused one. Restate the shared focus cue here. */
+#console-stop-generation.console-stop-active:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 .console-control-label,
@@ -2660,3 +2667,5 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     margin: $ds-space-0 $ds-space-1 $ds-space-1 $ds-space-0 !important;
 }
 .console-generation-frame { border: round $ds-console-frame !important; }
+
+#console-control-hooks.hooks-attention{color:$ds-status-approval-required;}

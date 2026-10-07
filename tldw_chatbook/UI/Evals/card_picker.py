@@ -50,7 +50,9 @@ class CardRow(Button):
     Textual: ``textual.widgets._button.Button.validate_label`` ->
     ``Content.from_text``)."""
 
-    def __init__(self, card_id: int, card_name: str, selected: bool, index: int) -> None:
+    def __init__(
+        self, card_id: int, card_name: str, selected: bool, index: int
+    ) -> None:
         self.card_id = card_id
         self.card_name = card_name
         self._selected = selected

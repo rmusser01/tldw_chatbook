@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from types import MethodType, SimpleNamespace
 
 import pytest
 from textual.app import App, ComposeResult
-from textual.containers import VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.events import Click, MouseDown, MouseScrollDown, MouseScrollUp, MouseUp
 from textual.widget import Widget
 from textual.widgets import Button, Static
@@ -44,6 +45,7 @@ from tldw_chatbook.Widgets.Console.console_settings_summary import (
 from tldw_chatbook.Widgets.Console.console_staged_context import (
     ConsoleStagedContextTray,
 )
+from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     build_console_conversation_browser_state,
     console_rail_section_height_budget,
@@ -2545,6 +2547,114 @@ async def test_context_focus_recovery_prefers_same_id_remount_over_ordinal(
 
         assert app.focused is replacement
         assert app.focused is not ordinal
+        assert rail._pending_focus_recoveries == {}
+
+
+class _SlowUnmount(Static):
+    """A row whose teardown takes a while, like a large tray's rebuild."""
+
+    async def on_unmount(self) -> None:
+        await asyncio.sleep(0.3)
+
+
+class _RebuildingRows(RecomposeCaptureGuard, Vertical):
+    """A guarded container that rebuilds its rows in place, as the tray does."""
+
+    DEFAULT_CSS = "_RebuildingRows { height: auto; }"
+
+    def compose(self) -> ComposeResult:
+        yield Button("Neighbour", id="context-rebuild-neighbour", compact=True)
+        yield _SlowUnmount("slow teardown")
+        yield Button("Row", id="context-rebuild-row", compact=True)
+
+
+@pytest.mark.asyncio
+async def test_focus_recovery_waits_for_the_focused_rows_own_rebuild(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-33621.12: a container rebuilding the focused row keeps its focus.
+
+    Live, closing Console's Save .md… prompt re-synced the Conversations tray,
+    whose recompose removed the focused row control. The rail's focus recovery
+    then ran before the replacement row was mounted: nothing matched the row's
+    id yet (`controls` was `[]` or held only "New conversation"), so the index
+    fallback stranded focus there -- 2 of 6 Escape runs. Recovery must wait for
+    the rebuild and land on the replacement with the same id. The slow sibling
+    holds the rebuild's teardown open, the window the live tray left open.
+    """
+    demands = dict.fromkeys(SECTION_IDS, 0)
+    demands["model"] = 20
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        body = rail.query_one("#console-rail-section-body-model")
+        configure = rail.query_one("#console-model-section-configure", Button)
+        rows = _RebuildingRows()
+        await body.mount(rows, before=configure)
+        await _settle(pilot)
+        original = rows.query_one("#context-rebuild-row", Button)
+        original.focus()
+        await pilot.pause()
+        assert app.focused is original
+
+        rows.refresh(recompose=True)
+        await pilot.pause(0.8)
+        await _settle(pilot)
+
+        focused = app.focused
+        assert focused is not original, "the rebuild did not replace the row"
+        assert focused is not None and focused.id == "context-rebuild-row", (
+            f"focus was stranded on {focused!r}"
+        )
+        assert focused.is_attached
+        assert rail._pending_focus_recoveries == {}
+
+
+@pytest.mark.asyncio
+async def test_focus_moved_while_recovery_waits_for_a_rebuild_is_kept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-33621.12 review: waiting for a rebuild must not undo a newer move.
+
+    While the incident waits (up to 2 s) for the rebuilding rows, the user
+    moves focus to another control in the SAME section -- Tab, Down, a click.
+    Only focus leaving the rail used to cancel the wait, so the recovery
+    later snapped focus back onto the rebuilt row.
+    """
+    demands = dict.fromkeys(SECTION_IDS, 0)
+    demands["model"] = 20
+    _install_demands(monkeypatch, demands)
+    app = _RailHarness()
+
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _settle(pilot)
+        rail = app.query_one(ConsoleLeftRail)
+        body = rail.query_one("#console-rail-section-body-model")
+        configure = rail.query_one("#console-model-section-configure", Button)
+        rows = _RebuildingRows()
+        await body.mount(rows, before=configure)
+        await _settle(pilot)
+        rows.query_one("#context-rebuild-row", Button).focus()
+        await pilot.pause()
+
+        rows.refresh(recompose=True)
+        # Plain sleeps: `pilot.pause()` waits for the screen to go idle,
+        # which is only after the rebuild has finished.
+        for _ in range(200):
+            if rows.recompose_in_flight and "model" in rail._pending_focus_recoveries:
+                break
+            await asyncio.sleep(0.005)
+        else:
+            raise AssertionError("recovery never started waiting for the rebuild")
+        configure.focus()
+        await pilot.pause(0.8)
+        await _settle(pilot)
+
+        assert rows.recompose_in_flight is False
+        assert app.focused is configure, f"focus was moved to {app.focused!r}"
         assert rail._pending_focus_recoveries == {}
 
 

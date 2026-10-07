@@ -451,8 +451,7 @@ def _refuse_invalid_body(template: Dict[str, Any]) -> None:
     result = validate_template(body)
     if not result["valid"]:
         summary = "; ".join(
-            f"{issue['field']}: {issue['message']}"
-            for issue in result["errors"][:3]
+            f"{issue['field']}: {issue['message']}" for issue in result["errors"][:3]
         )
         raise InvalidTemplateError(
             f"Template '{template.get('name', 'template')}' failed "

@@ -7,12 +7,13 @@ directory listing so that first Enter activated ``..`` instead of confirming.
 
 Two independent defects, exercised here under the REAL app CSS bundle
 (mirrors ``_CardHarnessAppWithBundledCSS`` in test_console_mcp_approval.py):
-a bare test ``App`` with no ``CSS_PATH`` never loads
+a bare test ``App`` with no ``CSS_PATH`` never loaded
 ``tldw_cli_modular.tcss``'s bare, unscoped ``Select { width: 100%; }`` rule
-(``features/_conversations.tcss``), which Textual's cascade always ranks
-ABOVE any widget's own ``DEFAULT_CSS`` regardless of selector specificity --
-so it silently wins over ``BaseFileDialog``'s own ``Select`` rule and
-squeezes the sibling filename Input down to a few columns. This is the same
+(``features/_conversations.tcss``, retired in TASK-33003.1), which Textual's
+cascade always ranks ABOVE any widget's own ``DEFAULT_CSS`` regardless of
+selector specificity -- so it silently won over ``BaseFileDialog``'s own
+``Select`` rule and squeezed the sibling filename Input down to a few
+columns. This is the same
 defect class already fixed for ``#mcp-tools-filter-server-slot Select`` /
 ``.approval-row-decision`` elsewhere in this bundle; the width collapse only
 reproduces with the bundle loaded, while the focus defect reproduces even in
@@ -50,7 +51,9 @@ from tldw_chatbook.Third_Party.textual_fspicker.base_dialog import Dialog, Input
 from tldw_chatbook.Third_Party.textual_fspicker.file_dialog import FileFilter
 from tldw_chatbook.Third_Party.textual_fspicker.parts import DirectoryNavigation
 
-_BUNDLED_STYLESHEET = Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+_BUNDLED_STYLESHEET = (
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
 
 
 def _export_filters() -> Filters:
@@ -300,9 +303,7 @@ async def test_file_picker_success_results_remain_paths(
         await _wait_for_picker_result(app, pilot)
 
     expected = (
-        [tmp_path]
-        if dialog_type is SelectDirectory
-        else [tmp_path / "chosen.json"]
+        [tmp_path] if dialog_type is SelectDirectory else [tmp_path / "chosen.json"]
     )
     assert app.results == expected
     assert isinstance(app.results[0], Path)

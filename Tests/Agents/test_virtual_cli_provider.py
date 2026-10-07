@@ -8,7 +8,7 @@ from loguru import logger
 import tldw_chatbook.Agents.virtual_cli_provider as virtual_cli_provider
 from tldw_chatbook.Agents.agent_models import ToolCall
 from tldw_chatbook.Agents.local_tool_provider import (
-    LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL,
+    LOCAL_WORKER_FAILED_REFUSAL,
     LOCAL_DENY_REFUSAL,
     LOCAL_GATE_ERROR_REFUSAL,
     LOCAL_KILL_SWITCH_REFUSAL,
@@ -394,9 +394,9 @@ def test_provider_constructs_and_injects_real_executor_by_default(
     ("code", "expected"),
     (
         ("root_pin_failed", LOCAL_ROOT_CHANGED_REFUSAL),
-        ("containment_unavailable", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-        ("protocol_failure", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
-        ("spawn_failed", LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+        ("containment_unavailable", LOCAL_WORKER_FAILED_REFUSAL),
+        ("protocol_failure", LOCAL_WORKER_FAILED_REFUSAL),
+        ("spawn_failed", LOCAL_WORKER_FAILED_REFUSAL),
     ),
 )
 def test_virtual_cli_executor_boundary_failures_map_to_pinned_refusals(

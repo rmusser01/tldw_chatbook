@@ -41,6 +41,7 @@ from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
 
+
 class ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance):
         super().__init__()
@@ -512,8 +513,7 @@ async def test_console_approvals_chip_activation_focuses_the_decision_not_submit
 
         focused = host.focused
         assert getattr(focused, "id", None) != "approval-submit", (
-            "focus landed on the commit control: Enter would approve an "
-            "unread call"
+            "focus landed on the commit control: Enter would approve an unread call"
         )
         assert "approval-row-decision" in getattr(focused, "classes", set()), (
             f"expected the row's decision Select, got {focused!r}"
@@ -648,7 +648,9 @@ async def test_composer_menu_opens_current_draft_directly_in_recommended_review(
 
 
 @pytest.mark.asyncio
-async def test_direct_improve_keeps_provider_recovery_when_review_is_unavailable() -> None:
+async def test_direct_improve_keeps_provider_recovery_when_review_is_unavailable() -> (
+    None
+):
     """Direct entry must not strand users beside disabled model actions."""
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1001,9 +1003,7 @@ async def test_console_composer_keeps_disabled_reason_outside_input_row():
         assert visible_draft.region.width >= 20
         assert actions.region.y == send.region.y
         assert visible_draft.region.x < actions.region.x
-        assert (
-            visible_draft.region.x + visible_draft.region.width <= reason.region.x
-        )
+        assert visible_draft.region.x + visible_draft.region.width <= reason.region.x
         assert reason.region.x + reason.region.width <= actions.region.x + 1
         assert "api key" in (send.tooltip or "").lower()
         assert "nowrap" in str(reason.styles.text_wrap)
@@ -1069,6 +1069,8 @@ async def test_console_ready_empty_transcript_exposes_activation_panel_copy():
         assert _is_displayed(empty_panel)
         # Ready state shows one ready line and hides the setup card + action row.
         assert _widget_text(console.query_one("#console-empty-body")) == (
+            # TASK-34100.5 AC#11: the arrival line names what setup connected.
+            "Setup complete — llama.cpp · local-model. "
             "Ready — type a message to begin."
         )
         assert not list(console.query("#console-empty-title"))
@@ -1119,6 +1121,8 @@ async def test_console_ready_empty_transcript_omits_setup_action_row():
         assert not list(console.query("#console-empty-action-row"))
         assert not list(console.query("#console-empty-choose-model"))
         assert _widget_text(console.query_one("#console-empty-body")) == (
+            # TASK-34100.5 AC#11: the arrival line names what setup connected.
+            "Setup complete — llama.cpp · local-model. "
             "Ready — type a message to begin."
         )
 
@@ -1264,6 +1268,7 @@ def test_console_workbench_state_exposes_core_actions_visibly():
     assert tuple(actions) == (
         "new-tab",
         "settings",
+        "hooks",
         "attach-context",
         "run-library-rag",
         "send",
@@ -1398,6 +1403,74 @@ def test_console_disabled_reason_copy_maps_setup_blockers(
         )
 
         assert reason == expected_reason
+
+
+def test_console_disabled_reason_names_queue_state_never_provider_setup():
+    """TASK-33620.4: the prompt queue's Preparing / Queue-full refusal has its
+    own slot. It used to ride ``setup_blocked_reason`` and fall through to
+    "finish provider setup" -- mid-run, as the setup-wizard link."""
+    for queue_copy in (
+        "Queue opens once this turn is accepted",
+        "Wait for the current run to finish",
+        "Queue full — manage it to make room",
+    ):
+        for has_draft in (False, True):
+            reason = build_console_disabled_reason(
+                action_id="send",
+                has_draft=has_draft,
+                send_blocked=True,
+                queue_blocked_reason=queue_copy,
+            )
+            assert reason == queue_copy
+            assert "provider setup" not in reason.lower()
+    # A genuine setup blocker still outranks the queue's wait.
+    assert (
+        build_console_disabled_reason(
+            action_id="send",
+            has_draft=True,
+            send_blocked=True,
+            setup_blocked_reason="Add API key in Settings > Providers & Models before sending.",
+            queue_blocked_reason="Queue opens once this turn is accepted",
+        )
+        == "Send blocked — add an API key to continue"
+    )
+    # And a sub-agent wake still names itself over the queue's Preparing.
+    assert (
+        build_console_disabled_reason(
+            action_id="send",
+            has_draft=False,
+            send_blocked=True,
+            wake_turn_active=True,
+            queue_blocked_reason="Queue opens once this turn is accepted",
+        )
+        == "Send blocked — delivering a sub-agent result"
+    )
+
+
+def test_console_disabled_reason_keeps_the_run_hold_under_the_preparing_label():
+    """TASK-33620.4 on top of TASK-33625.1's label-keyed copy: a regenerate /
+    continue / agent wake holds the slot labelled "Preparing..." with no
+    prompt chain, so the strip names the run it waits on -- never the queue
+    that only opens for a pre-acceptance prompt turn."""
+    from tldw_chatbook.Chat.console_display_state import (
+        QUEUE_REASON_PREPARING,
+        QUEUE_REASON_RUN_HOLD,
+        SEND_LABEL_PREPARING,
+    )
+
+    def preparing(queue_copy: str) -> str:
+        return build_console_disabled_reason(
+            action_id="send",
+            has_draft=True,
+            send_blocked=True,
+            queue_blocked_reason=queue_copy,
+            send_label=SEND_LABEL_PREPARING,
+        )
+
+    assert preparing(QUEUE_REASON_RUN_HOLD) == "Wait for the current run to finish"
+    assert preparing(QUEUE_REASON_PREPARING) == "Queue opens once this turn is accepted"
+    # Any other Preparing tooltip keeps TASK-33625.1's queue-state copy.
+    assert preparing("Wait for this turn to be accepted.") == QUEUE_REASON_PREPARING
 
 
 def test_console_disabled_reason_copy_handles_draft_and_ready_states():
@@ -1805,7 +1878,12 @@ async def test_console_f1_help_lists_visible_actions():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_registers_footer_workbench_shortcuts():
+    # TASK-15512: the real-app mount reads config through the guarded loader;
+    # under the per-test sandbox that trips the config-participant admission
+    # (RecoveryRequired("raw_source_selection_changed")). Keep the
+    # collection-time profile (TASK-32873 per-node enrollment).
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleFooterHarness(app)
@@ -1831,15 +1909,22 @@ async def test_console_registers_footer_workbench_shortcuts():
             # Ctrl+Shift+F toggle pair PREPENDED — AppFooterStatus drops
             # trailing hints first when width runs out, and the focus
             # toggle is the only exit affordance visible in focus mode.
-            "Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | "
+            "Ctrl+Shift+F focus | F6 next pane | F1 help | "
+            # TASK-33004.7: the two model surfaces follow F1, as in mockup (a).
+            "Alt+M switch model | Ctrl+O chat settings | "
             # TASK-24604: Alt+I sits before the palette hint. The Inspect
             # rail ships CLOSED and F6 could not reach it, so the footer is
             # where its accelerator has to be taught -- an accelerator only
             # the source mentions is not a discoverable one.
             # task-32277: Alt+A follows immediately after, same reasoning --
             # the approval card had no key binding at all before this.
-            "Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new "
-            "tab | Alt+I inspect | Alt+A approval | Ctrl+P palette | Ctrl+Q quit"
+            "Ctrl+K switch session | Ctrl+T new "
+            # TASK-32320's Alt+C was missing here (red on dev before 33004.7).
+            "tab | Alt+I inspect | Alt+A approval | Alt+C context rail | "
+            # TASK-33004.7 review: the self-evident Enter, the rarer Y and the
+            # F6-paired Shift+F6 trail, so 211x44 keeps Alt+I/Alt+A/Alt+C.
+            "Ctrl+P palette | Y trace | Enter send / queue | "
+            "Shift+F6 previous pane | Ctrl+Q quit"
         )
 
         await console.remove()
@@ -1931,7 +2016,10 @@ async def test_console_header_carries_inline_class_and_dash_subtitle():
         await _wait_for_selector(console, pilot, "#console-workbench-header")
         header = console.query_one("#console-workbench-header")
         assert header.has_class("console-header-inline")
-        assert _widget_text(console.query_one("#workbench-header-title")).strip() == "Console"
+        assert (
+            _widget_text(console.query_one("#workbench-header-title")).strip()
+            == "Console"
+        )
         subtitle = _widget_text(console.query_one("#workbench-header-subtitle"))
         assert subtitle.lstrip().startswith("—")
         assert "source handoffs" in subtitle
@@ -1944,6 +2032,7 @@ async def test_console_header_inline_css_renders_single_row():
 
     class _HeaderApp(ConsolidatedCSSApp):
         CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
         def compose(self) -> ComposeResult:
             yield DestinationHeader(
                 WorkbenchHeaderState(
@@ -1974,6 +2063,7 @@ async def test_console_header_inline_subtitle_ellipsizes_when_narrow():
 
     class _NarrowHeaderApp(ConsolidatedCSSApp):
         CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
         def compose(self) -> ComposeResult:
             yield DestinationHeader(
                 WorkbenchHeaderState(

@@ -1,6 +1,7 @@
 # ADR-068: Console Text Selection and Annotations
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-14
 Related Task: TASK-17166
 Supersedes: N/A

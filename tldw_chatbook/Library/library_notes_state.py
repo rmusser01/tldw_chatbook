@@ -520,6 +520,8 @@ class LibraryNotesListState:
             task-32616 AC#3: the list's own "Next:" is advice for a reader
             with nothing open, so it stands down while the work pane has an
             instruction of its own.
+        sync_attention: Whether any lasting-sync folder is held for attention
+            (TASK-34000.2). The list's idle status says so instead of "Ready".
     """
 
     rows: tuple[LibraryNotesListRow, ...]
@@ -536,6 +538,7 @@ class LibraryNotesListState:
     operation_running: bool = False
     delete_receipt: LibraryNoteDeleteReceipt | None = None
     note_open: bool = False
+    sync_attention: bool = False
 
 
 @dataclass(frozen=True)

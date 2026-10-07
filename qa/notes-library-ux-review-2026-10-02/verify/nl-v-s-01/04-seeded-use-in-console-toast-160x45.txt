@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────┐  I  Q3 planning memo                                         │
+│ │ Navigation                     │  a  │ Media (23)      Sets                                 │  t  Operations team                                          │
+│ │     Import…                    │  v  │ Media · 23 of 23 · all types · sort: Newest          │  e    Find  Read later  Use in Console  More                 │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m    Read (selected)  Analysis  Highlights  Info            │
+│ │ ▊ Search Library…         ▎▊x▎ │     │  ▊  Title/keyword…                  ▎                │  s  ┌──────────────────────────────────────────────────────┐ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │     │ Researchers disagree about the main drivers.         │ │
+│ │                                │     │    type: All types    sort: Newest                   │     │ Readers should treat early results with caution.     │ │
+│ │ ────────────────────────────── │     │                                                      │     │ Practical guidance often lags behind the evidence.   │ │
+│ │ Browse                     ▾   │     │    Export…     Trash     Select                      │     │ Several open problems remain, especially around      │ │
+│ │  ▸ Media (23) — your files     │     │    Review these                                      │     │ evaluation. This section summarises the most cited   │ │
+│ │    Conversations (12)          │     │    A field guide to Markdown tables                  │     │ findings.                                            │ │
+│ │    Notes (122)                 │     │      article · updated 2d                            │     │                                                      │ │
+│ │    Prompts (10) — reuse        │     │    Voice memo 2026-09-29                             │     │ Quarterly planning has changed significantly over    │ │
+│ │    Skills (4) — AI add-ons     │<--- │      audio · updated 3d                              │     │ the past decade. This section summarises the most    │ │
+│ │    Collections (6)             │     │    学習メモ — 日本語の文法                           │     │ cited findings. Practical guidance often lags        │ │
+│ │    Search / RAG — find all     │     │      document · updated 4d                           │     │ behind the evidence. Researchers disagree about      │ │
+│ │ ────────────────────────────── │     │    Server logs excerpt 2026-09-27                    │     │ the main drivers. Several open problems remain,      │ │
+│ │ Artifacts                  ▾   │     │      plaintext · updated 5d                          │     │ especially around evaluation.                        │ │
+│ │    All artifacts               │     │    Spaced repetition, explained                      │<--- │                                                      │ │
+│ │    Chatbooks                   │     │      article · updated 5d                            │     │ Several open problems remain, especially around      │ │
+│ │    Reports                     │     │    Podcast: Deep Work revisited (ep. 112) — trans…   │     │ evaluation. Readers should treat early results       │ │
+│ │ ────────────────────────────── │     │      audio · updated 1w                              │     │ with caution. Practical guidance often lags behind   │ │
+│ │ Create                     ▾   │     │    Grocery receipt (OCR text)                        │     │ the evidence. Quarterly planning has changed      ▄▄ │ │
+│ │    New note                    │     │      plaintext · updated 1w                          │     │ significantly over the past decade. Researchers      │ │
+│ │    New prompt                  │<--- │    Research notes — interview synthesis (export)   ▄ │     │ disagree about the main drivers.                     │ │
+│ │    New skill                   │     │      document · updated 1w                           │     │                                                      │ │
+│ │ ────────────────────────────── │     │    How SQLite FTS5 ranks results                     │     │ Readers should treat early results with caution.     │ │
+│ │ Study                      ▾   │     │      article · updated 1w                            │     │ Researchers disagree about the main drivers.         │ │
+│ │    Study decks (0)             │     │    Lecture 4 — Transformers (transcript)             │     │ Practical guidance often lags behind the evidence.   │ │
+│ │    Flashcards due: 0           │     │      video · updated 2w                              │     │ Several open problems remain, especially around      │ │
+│ │    Quizzes (0)                 │     │    The Dispossessed — sample chapter                 │     │ evaluation. Quarterly planning has changed           │ │
+│ │ ────────────────────────────── │     │      ebook · updated 2w                              │ ╭──────────────────────────────────────────────────────────╮ │
+│ │ Import / Export            ▾   │     │  ▸ Q3 planning memo                                  │ │                                                          │ │
+│ │    Import…                     │     │      document · updated 2w · loaded                  │ │ Copy or link this media into workspace workspace-default │ │
+│ │    Export                      │     │               1-20 of 23 · Page 1 of 2               │ │ before using it in Console.                              │ │
+│ │ ────────────────────────────── │     │              Already on the first page.              │ │                                                          │ │
+│ │ Details                    ▸   │     │                 ○ Previous     Next                  │ ╰──────────────────────────────────────────────────────────╯ │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────┘                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | ] next item | [ prev item | ctrl+f find | l read later | c use in Console | t trash | F1 · Ctrl+P · Ctrl+Q

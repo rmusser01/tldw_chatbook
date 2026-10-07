@@ -3,15 +3,43 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Callable
 
 from loguru import logger
+
+from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
+from tldw_chatbook.Tools.remote_workspace_transport import TransportFailureKind
 
 #: How many closed run keys stay tombstoned (R12). A closed key never
 #: reopens a session; the oldest tombstone is evicted past this bound.
 _CLOSED_KEYS_MAX = 1024
 
-from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker, SessionStartError
+#: How long run end / app exit waits for session closes (all in parallel).
+#: A close still running after this finishes on its daemon thread; at app
+#: exit the master's ``-O exit`` ends its channel anyway.
+_CLOSE_JOIN_S = 5.0
+
+
+def _close_workers(workers: list[RemoteSessionWorker], *, wait: float | None) -> None:
+    """Close ``workers`` concurrently, one daemon thread each.
+
+    Args:
+        workers: Sessions already removed from the registry.
+        wait: Total seconds to wait for all closes; ``None`` returns at once
+            (the idle reaper: a close never lands on the calling tool call).
+    """
+    threads = [
+        threading.Thread(target=worker.close, name="ssh-session-close", daemon=True)
+        for worker in workers
+    ]
+    for thread in threads:
+        thread.start()
+    if wait is None:
+        return
+    deadline = time.monotonic() + wait
+    for thread in threads:
+        thread.join(max(0.0, deadline - time.monotonic()))
 
 
 class RemoteSessionRegistry:
@@ -23,6 +51,16 @@ class RemoteSessionRegistry:
         self._sessions: dict[tuple[str, str], RemoteSessionWorker] = {}
         self._disabled: set[tuple[str, str]] = set()
         self._restarted: set[tuple[str, str]] = set()
+        #: Last transport-class start failure per key, with the monotonic
+        #: time it happened: callers that queued behind that start share it
+        #: instead of each paying another connect timeout (TASK-33400). A
+        #: post-answer budget ``OP_TIMEOUT`` start failure (TASK-33420) is
+        #: raised to its own caller but never recorded here, so waiters (who
+        #: have their own budgets) do not share it.
+        self._start_failures: dict[tuple[str, str], tuple[float, SessionStartError]] = {}
+        #: Keys whose session start already hit a mux failure this run: the
+        #: first costs one one-shot call, a second disables the key (TASK-33402).
+        self._mux_failed: set[tuple[str, str]] = set()
         # R12: insertion-ordered tombstones of closed run keys (bounded).
         self._closed_keys: dict[str, None] = {}
         #: Set once by close_all (app shutdown): every later acquire is one-shot.
@@ -40,8 +78,13 @@ class RemoteSessionRegistry:
         completes after it is closed rather than kept.
 
         Raises:
-            SessionStartError: transport-class start failure (caller records it).
+            SessionStartError: ``transport=True`` start failure (caller
+                records it). A transport-class one is shared with callers
+                queued behind that start; a post-answer budget
+                ``OP_TIMEOUT`` is raised only to its own caller (not recorded,
+                so not shared with waiters).
         """
+        entered = time.monotonic()
         with self._lock:
             if self._shutdown:
                 return None
@@ -56,6 +99,12 @@ class RemoteSessionRegistry:
                 worker = self._sessions.get(key)
                 if worker is not None and worker.alive:
                     return worker
+                failed = self._start_failures.get(key)
+            if failed is not None and failed[0] >= entered:
+                # This caller queued behind a start that failed
+                # transport-class: share that failure (a fresh exception per
+                # thread) rather than start again against the same dead host.
+                raise SessionStartError(failed[1].transport, failed[1].failure, str(failed[1]))
             # ended_cleanly() may wait for the reap: outside the global lock.
             if worker is not None and not worker.ended_cleanly():
                 # Died mid-run: one restart, then fall back. A clean end
@@ -74,9 +123,28 @@ class RemoteSessionRegistry:
             try:
                 worker.start()
             except SessionStartError as error:
+                if error.failure is not None and error.failure.kind is TransportFailureKind.MUX_ERROR:
+                    # A stale control socket: classifying it already restarted
+                    # the master, and nothing was sent, so this call runs
+                    # one-shot and the next call tries a session again. A
+                    # second mux start failure in the run disables the key.
+                    with self._lock:
+                        repeat = key in self._mux_failed
+                        # A run (or the app) closed during this start already
+                        # pruned the key: record nothing that outlives it.
+                        if not (self._shutdown or key[0] in self._closed_keys):
+                            self._mux_failed.add(key)
+                            if repeat:
+                                self._disabled.add(key)
+                    logger.info(
+                        "ssh session start hit a stale control socket; using one-shot calls "
+                        + ("for this run" if repeat else "for this call")
+                    )
+                    return None
                 if not error.transport:
                     with self._lock:
-                        self._disabled.add(key)
+                        if not (self._shutdown or key[0] in self._closed_keys):
+                            self._disabled.add(key)
                     # Only static text: a typed failure's reason may quote a
                     # stderr line (mux errors can name the ControlPath).
                     cause = error.failure.kind.value if error.failure else str(error)
@@ -86,8 +154,18 @@ class RemoteSessionRegistry:
                     return None
                 kind = error.failure.kind.value if error.failure else "unknown"
                 logger.debug(f"ssh session worker start failed (transport): {kind}")
+                budget_expired = (
+                    error.failure is not None
+                    and error.failure.kind is TransportFailureKind.OP_TIMEOUT
+                )
+                with self._lock:
+                    # OP_TIMEOUT is this caller's budget running out on a live
+                    # host: waiters have their own budgets, so it is not shared.
+                    if not budget_expired and not (self._shutdown or key[0] in self._closed_keys):
+                        self._start_failures[key] = (time.monotonic(), error)
                 raise
             with self._lock:
+                self._start_failures.pop(key, None)
                 closed_meanwhile = self._shutdown or key[0] in self._closed_keys
                 if not closed_meanwhile:
                     self._sessions[key] = worker
@@ -108,9 +186,12 @@ class RemoteSessionRegistry:
             workers = [self._sessions.pop(k) for k in keys]
             self._disabled = {k for k in self._disabled if k[0] != session_key}
             self._restarted = {k for k in self._restarted if k[0] != session_key}
+            self._start_failures = {
+                k: v for k, v in self._start_failures.items() if k[0] != session_key
+            }
+            self._mux_failed = {k for k in self._mux_failed if k[0] != session_key}
             self._key_locks = {k: v for k, v in self._key_locks.items() if k[0] != session_key}
-        for worker in workers:
-            worker.close()
+        _close_workers(workers, wait=_CLOSE_JOIN_S)
 
     def close_all(self) -> None:
         """Close every session (app shutdown); later acquires go one-shot."""
@@ -118,8 +199,9 @@ class RemoteSessionRegistry:
             self._shutdown = True
             workers = list(self._sessions.values()); self._sessions.clear()
             self._disabled.clear(); self._restarted.clear(); self._key_locks.clear()
-        for worker in workers:
-            worker.close()
+            self._start_failures.clear()
+            self._mux_failed.clear()
+        _close_workers(workers, wait=_CLOSE_JOIN_S)
 
     def reap_idle(self, now: float, idle_s: float) -> None:
         """Close sessions idle for at least ``idle_s`` (a later call starts a fresh one)."""
@@ -127,8 +209,7 @@ class RemoteSessionRegistry:
             stale = [k for k, w in self._sessions.items()
                      if w.idle_since is not None and now - w.idle_since >= idle_s]
             workers = [self._sessions.pop(k) for k in stale]
-        for worker in workers:
-            worker.close()
+        _close_workers(workers, wait=None)
 
 
 _REGISTRY: RemoteSessionRegistry | None = None

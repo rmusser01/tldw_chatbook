@@ -1,6 +1,7 @@
 # ADR-120: Character conversation navigation and local semantic search
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Renumbering: provisional ADR-116 moved to ADR-120 for Keyword release isolation;
 the shipped Schedules ADR retains 116. Local/remote ref and worktree allocation
 review on 2026-09-05 confirms 117–119 occupied and 120 owned by this programme.

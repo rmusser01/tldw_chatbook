@@ -178,6 +178,8 @@ async def test_local_llm_provider_catalog_service_discovers_configured_openai_co
             "api_key": "sk-test",
         }
     ]
+
+
 @pytest.mark.asyncio
 async def test_local_llm_provider_catalog_service_staged_endpoint_and_key_win_for_discovery():
     discovery_calls = []
@@ -1184,6 +1186,69 @@ async def test_kimi_zai_discovery_reuses_exact_hosted_send_resolution(
     assert len(seen) == 1
     assert seen[0]["endpoint"] == expected_base
     assert seen[0]["api_key"] == "catalog-secret-canary"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "list_key", "model"),
+    [("moonshot", "Moonshot", "kimi-k3"), ("zai", "ZAI", "glm-5.2")],
+)
+async def test_kimi_zai_discovery_lists_where_the_gateway_pins_a_send(
+    provider, list_key, model
+):
+    """TASK-33005.4 AC#10: the gateway pins a Kimi/Z.AI send to the first
+    configured endpoint alias (``effective_provider_endpoint``), while their
+    resolvers read only ``api_base_url``. Discovery lists at the pinned URL,
+    so a key check never proves a host the send does not use."""
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        effective_provider_endpoint,
+    )
+    from tldw_chatbook.LLM_Calls.moonshot import resolve_moonshot_request
+    from tldw_chatbook.LLM_Calls.zai import resolve_zai_request
+
+    seen: list[dict] = []
+
+    async def fake_client(**kwargs):
+        seen.append(kwargs)
+        return ModelDiscoveryResult(
+            provider=kwargs["provider"],
+            provider_list_key=kwargs["provider_list_key"],
+            endpoint_fingerprint="fp",
+            status="success",
+            models=(),
+        )
+
+    table = {
+        "api_key": "catalog-secret-canary",
+        "model": model,
+        "base_url": "https://alias.example.test/v1",
+    }
+    config = {"providers": {list_key: [model]}, "api_settings": {provider: table}}
+    service = LocalLLMProviderCatalogService(
+        provider_catalog_loader=lambda: {list_key: [model]},
+        settings_loader=lambda: config,
+        discovery_client=fake_client,
+        environ={},
+    )
+
+    result = await service.discover_models(provider=list_key)
+
+    resolver = (
+        resolve_moonshot_request if provider == "moonshot" else resolve_zai_request
+    )
+    send_base = resolver(
+        explicit_base_url=effective_provider_endpoint(provider, None, table),
+        app_config=config,
+        environ={},
+    ).base_url
+    assert send_base == "https://alias.example.test/v1"
+    assert result.status == "success", result.error
+    assert [call["endpoint"] for call in seen] == [send_base]
+
+    # Negative control: an ambiguous table still fails as a configuration
+    # error (no ProviderSettingsError escapes the alias lookup).
+    config["api_settings"][f"{provider.upper()} "] = {"api_key": "other"}
+    assert service._current_endpoint_fingerprint(provider_key=provider) is None
 
 
 @pytest.mark.asyncio

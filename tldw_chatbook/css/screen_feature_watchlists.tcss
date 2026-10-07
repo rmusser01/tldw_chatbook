@@ -10,7 +10,7 @@
 $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
-$ds-grid-line: $surface-lighten-1;
+$ds-grid-line: $tldw-boundary;
 $ds-column-line: $surface-lighten-2;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
@@ -22,7 +22,7 @@ $ds-focus-accent: $primary;
 $ds-input-focus-border: $primary;
 $ds-input-focus-bg: $ds-focus-bg;
 $ds-input-focus-accent: $primary;
-$ds-control-edge: $surface-lighten-2;
+$ds-control-edge: $tldw-boundary;
 $ds-status-ready: $success;
 $ds-status-running: $primary;
 $ds-status-info: $accent;
@@ -95,6 +95,7 @@ $ds-space-inset: $ds-space-1;
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
+$ds-model-switcher-width: 140;
 $ds-width-full: 100%;
 $ds-width-fill: 1fr;
 $ds-width-auto: auto;
@@ -269,8 +270,6 @@ $ds-theme-preset-dark-4: #656565;
 $ds-theme-preview-dark-ink: #000000;
 $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
-
-$ds-console-settings-wide-max-width: 196;
 
 $ds-inspector-modal-width: 120;
 $ds-inspector-modal-height: 42;
@@ -887,19 +886,19 @@ $ds-conversation-menu-width: 30;
  *
  * 2. WIDTH, which the strip's height alone would not have fixed. Nothing
  *    sized these controls, so `Input`'s Textual default (`width: 100%`) and
- *    `_conversations.tcss`'s bare global `Select { width: 100%; }` each
- *    claimed the FULL strip: measured at 160x42 the four of them stacked to
- *    x=31,122,213,304 in a pane 93 columns wide, putting `New source` at
- *    x=395 -- 300 columns off the right edge of a 160-column terminal. The
- *    explicit widths below are what keeps every control on screen.
+ *    `_conversations.tcss`'s bare global `Select { width: 100%; }` (retired
+ *    in TASK-33003.1) each claimed the FULL strip: measured at 160x42 the
+ *    four of them stacked to x=31,122,213,304 in a pane 93 columns wide,
+ *    putting `New source` at x=395 -- 300 columns off the right edge of a
+ *    160-column terminal. The explicit widths below are what keeps every
+ *    control on screen.
  *
- *    These must live in the bundle, not in a widget's `DEFAULT_CSS`:
- *    Textual always ranks a CSS_PATH rule above any `DEFAULT_CSS` rule
- *    regardless of specificity, so that bare `Select { width: 100% }` beats
- *    DEFAULT_CSS every time. Same lesson as `#mcp-tools-filter-server-slot
- *    Select` and `#mcp-audit-filter-*` in components/_agentic_terminal.tcss.
- *    `margin: 0` is part of that override too -- the same global rule adds
- *    `margin-bottom: 1`, which would push a one-row Select to two rows.
+ *    These live in the bundle, not in a widget's `DEFAULT_CSS`: Textual
+ *    always ranks a CSS_PATH rule above any `DEFAULT_CSS` rule regardless
+ *    of specificity. Same lesson as `#mcp-tools-filter-server-slot Select`
+ *    and `#mcp-audit-filter-*` in components/_agentic_terminal.tcss. (A
+ *    `margin: 0` that undid the same retired rule's `margin-bottom: 1` was
+ *    dropped with it.)
  *
  * Widths are sized to their longest option label plus the dropdown arrow
  * ("All statuses" 12, "Playlist"/"Inactive" 8), leaving the search box the
@@ -912,7 +911,6 @@ $ds-conversation-menu-width: 30;
 #watchlists-header-bar Select {
     height: $ds-size-1;
     min-height: $ds-size-1;
-    margin: $ds-space-0;
 }
 
 #sources-search-input {
@@ -1007,18 +1005,16 @@ $ds-conversation-menu-width: 30;
     margin: $ds-space-0;
 }
 
-/* Type + Active share one row. Two things are pinned here.
+/* Type + Active share one row.
  *
  * The `Active` label was `width: 1fr` at Textual's default and claimed the
  * whole 168-column row, pushing the `Switch` to x=198 -- one column past
  * the pane's right edge at 235x52, so the only control for "is this source
  * active" was neither visible nor clickable.
  *
- * `margin: 0` on the Select undoes the bare global `Select { width: 100%;
- * margin-bottom: 1; }` in features/_conversations.tcss, which added a blank
- * row under the row and pushed the fields below it further down a pane that
- * has no rows to spare. Same override, same reason, as the toolbar block
- * above.
+ * The Select's `margin: 0` that undid the bare global `Select { width:
+ * 100%; margin-bottom: 1; }` (features/_conversations.tcss, retired in
+ * TASK-33003.1) went with that rule; a Select has no margin by default.
  */
 #sources-create-form .sources-create-type-row {
     width: $ds-width-full;
@@ -1027,7 +1023,6 @@ $ds-conversation-menu-width: 30;
 
 #sources-create-form #sources-create-type {
     width: $ds-width-fill;
-    margin: $ds-space-0;
 }
 
 #sources-create-form .sources-create-active-label {
@@ -1057,11 +1052,9 @@ $ds-conversation-menu-width: 30;
 
 /* TASK-2302 AC#1: the destination row. Compact (one row) for the reason the
  * tags row above it is: the Sources pane is 16 rows at 160x42 and a
- * full-height row would push `Create`/`Cancel` past its bottom edge. The
- * Select needs the same `margin: 0` override as its two siblings -- the bare
- * global `Select { width: 100%; margin-bottom: 1; }` in
- * features/_conversations.tcss otherwise adds a blank row and reintroduces
- * exactly that overflow.
+ * full-height row would push `Create`/`Cancel` past its bottom edge. (The
+ * bare global `Select { width: 100%; margin-bottom: 1; }` that once added a
+ * blank row here was retired in TASK-33003.1.)
  */
 #sources-create-form .sources-create-destination-row {
     width: $ds-width-full;
@@ -1075,15 +1068,13 @@ $ds-conversation-menu-width: 30;
 
 #sources-create-form #sources-create-watchlist {
     width: $ds-width-fill;
-    margin: $ds-space-0;
 }
 
 /* Tags + check cadence share the next row, for the reason spelled out above:
  * the Sources pane is 16 rows tall at 160x42 and a sixth full-height field row
- * would put `Create`/`Cancel` past its bottom edge. The Select needs the same
- * `margin: 0` override as the type Select -- the bare global
- * `Select { width: 100%; margin-bottom: 1; }` in features/_conversations.tcss
- * otherwise adds a blank row beneath it and reintroduces exactly that overflow.
+ * would put `Create`/`Cancel` past its bottom edge. (The bare global
+ * `Select { width: 100%; margin-bottom: 1; }` that once added a blank row
+ * beneath it was retired in TASK-33003.1.)
  */
 #sources-create-form .sources-create-tags-row {
     width: $ds-width-full;
@@ -1092,12 +1083,10 @@ $ds-conversation-menu-width: 30;
 
 #sources-create-form #sources-create-tags {
     width: $ds-width-fill;
-    margin: $ds-space-0;
 }
 
 #sources-create-form #sources-create-frequency {
     width: $ds-size-16;
-    margin: $ds-space-0;
 }
 
 /* TASK-1362 (spec §2): the noise control. `max-height: 4` is the whole field
@@ -1507,18 +1496,15 @@ $ds-conversation-menu-width: 30;
  * `.destination-filter-strip` already pins `height: 1; min-height: 1;`
  * (layout/_destination.tcss), same as `#artifacts-toolbar` above it.
  *
- * All three `Select`s need the exact TASK-995 override `#sources-toolbar
- * Select` carries: the bare global `Select { width: 100%; margin-bottom: 1; }`
- * (features/_conversations.tcss) always wins over `DEFAULT_CSS` regardless
- * of specificity, so without `margin: 0` here a one-row picker strip grows
- * a blank row underneath it, and without an explicit `width` each Select
- * claims the whole strip -- the same two-part defect TASK-995 fixed for
- * Sources, on a different toolbar.
+ * All three `Select`s carry the TASK-995 one-row pin `#sources-toolbar
+ * Select` carries, plus an explicit `width` each, so the strip keeps every
+ * picker on it. (The bare global `Select { width: 100%; margin-bottom: 1; }`
+ * these first fought was retired in TASK-33003.1, along with the `margin: 0`
+ * that undid it.)
  */
 #artifacts-picker-toolbar Select {
     height: $ds-size-1;
     min-height: $ds-size-1;
-    margin: $ds-space-0;
 }
 
 #artifacts-mode-select {
@@ -1791,16 +1777,12 @@ $ds-conversation-menu-width: 30;
 }
 
 /* The cast preset picker, rendered only once a kept briefing is selected.
- * Same TASK-995 override every other one-row `Select` strip in this file
- * needs (`#artifacts-picker-toolbar Select` above is the closest sibling):
- * the bare global `Select { width: 100%; margin-bottom: 1; }`
- * (features/_conversations.tcss) always wins over `DEFAULT_CSS` regardless
- * of specificity.
+ * Same TASK-995 one-row pin every other one-row `Select` strip in this file
+ * carries (`#artifacts-picker-toolbar Select` above is the closest sibling).
  */
 #kbm-cast-toolbar Select {
     height: $ds-size-1;
     min-height: $ds-size-1;
-    margin: $ds-space-0;
 }
 
 #kbm-preset-select {

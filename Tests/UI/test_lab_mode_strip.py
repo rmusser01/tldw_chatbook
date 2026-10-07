@@ -13,13 +13,13 @@ import time
 from importlib import import_module
 from pathlib import Path
 from typing import Callable
-from unittest.mock import patch
 
 import pytest
 from textual import on
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.app import App
 from textual.widgets import Button
@@ -280,7 +280,7 @@ async def test_lab_route_and_mode_strip_navigate_the_real_shell(
     app.app_config["_first_run"] = True
     app._initial_tab_value = "chat"
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(160, 45)) as pilot:
             await _wait_until(
                 pilot,

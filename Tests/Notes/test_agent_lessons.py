@@ -75,11 +75,14 @@ def test_renderer_emits_one_note_for_one_lesson_in_the_approved_order() -> None:
 
     assert rendered.startswith("# Retry the Notes transaction after a stale read\n")
     assert rendered.count("\n# ") == 0
-    assert tuple(
-        line.removeprefix("## ")
-        for line in rendered.splitlines()
-        if line.startswith("## ")
-    ) == REQUIRED_SECTIONS
+    assert (
+        tuple(
+            line.removeprefix("## ")
+            for line in rendered.splitlines()
+            if line.startswith("## ")
+        )
+        == REQUIRED_SECTIONS
+    )
     assert "- " + _public_note_id("related-note-1") in rendered
     assert validate_agent_lesson_template(rendered).accepted is True
 

@@ -1,0 +1,45 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console ! │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                               Speak replies   ▌   Hands-free   ▌     Running
+   New tab     Settings     Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Reply with exactly this mar...                                                                         │
+                  Context ◂  │  ◆ Reply with exactly… ✕    New tab     Temporary                                                                     │
+   Terminal                  │                                                                                                                       │
+ ──────────────────────────  │ █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█ │
+ Workspaces             ▸    │ █                                                                                                                   █ │
+ ──────────────────────────  │ █  Approval required                                                                                                █ │
+ Conversations      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎       █ │
+   New conversation ▊                                                                                                                      ▎       █ │
+     Archive this ch▊   Library search                                                                                                     ▎       █ │
+      Archived chats▊                                                                                                                      ▎       █ │
+     Search all chat▊  Manual search for this send only. It stages matching evidence without changing Automatic retrieval or assistant     ▎       █ │
+   Reply with exactl▊  Library access.                                                                                                     ▎       █ │
+   this mar...      ▊  │                                                                                                                   ▎       █ │
+                    ▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ▎       █ │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ▊  ▊  What should the Library search look for?                                                                     ▎   ▎       █ │
+  ▊  Filter      ▎  ▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ▎       █ │◂ Inspect
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ▊  │                                                                                                                   ▎▄▄▄▄▄▄▄█ │
+                    ▊  Scope: everything                                                                                                   ▎         │
+  Chats             ▊  │                                                                                                                   ▎──────   │
+   Reply with exactl▊  This search only · Sources: Notes, Media, Conversations (Prompts off)                                               ▎         │
+   Approval required▊  │                                                                                                                   ▎         │
+                    ▊    ☑ Notes                                                 ☑ Media                                                ▅  ▎         │
+ ───────────────────▊    ☑ Conversations                                         ☐ Prompts                                                 ▎──────   │
+ Character · No chat▊   Search Library   Cancel                                                                                            ▎         │
+ ───────────────────▊                                                                                                                      ▎         │
+ Model              ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎──────   │
+ ──────────────────────────  │  ▊ Assistant  Waiting for your approval · 6m 7s                                                                       │
+ Agent                  ▸    │  ▊   ▸ list_directory                                                                        · Awaiting approval      │
+ ──────────────────────────  │  ▊     Review approval                                                                                             ▂  │
+ Details                ▸    │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+                             │  ▊                                                                                                                    │
+                             │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │  setup
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Run: Waiting for your approva…     Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                            Send disabled: type a message      Queue         Dictate   Redir
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+P · Ctrl+Q

@@ -21,6 +21,10 @@ yaml = pytest.importorskip("yaml")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "derived-artifacts.yml"
+LANES = (
+    "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
+    "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
+)
 CHECKERS = (
     "tldw_chatbook/css/check_bundle_sync.py",
     "scripts/check_canvas_mermaid_assets.py",
@@ -69,11 +73,15 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
     protection. `derived-artifacts` stays the single required context, and
     `needs` + its two verdict steps are what make a red lane fail it -- see
     `test_required_aggregator_fails_when_either_lane_fails`.
+
+    `queue-tick` (the merge queue, spec 2026-10-03) runs after the aggregate and
+    is never a required context.
     """
     assert list(_workflow()["jobs"]) == [
         "pr-fast-lane",
         "ui-fast-lane",
         "derived-artifacts",
+        "queue-tick",
     ]
 
 
@@ -93,14 +101,11 @@ def test_required_aggregator_fails_when_either_lane_fails():
             if step.get("name")
             == f"Require successful {'PR' if lane == 'pr-fast-lane' else 'UI'} fast lane"
         )
-        assert verdict["if"] == (
-            "${{ github.event_name == 'pull_request' && "
-            f"needs.{lane}.result != 'success' }}}}"
-        )
+        assert verdict["if"] == f"${{{{ ({LANES}) && needs.{lane}.result != 'success' }}}}"
         assert "exit 1" in verdict["run"]
 
 
-def test_ui_fast_lane_runs_the_census_serially_on_the_minimal_dep_set():
+def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     """TASK-32908: the run CI performs must be the run the census was verified
     against.
 
@@ -109,11 +114,18 @@ def test_ui_fast_lane_runs_the_census_serially_on_the_minimal_dep_set():
     different order would all be untested configurations for a gate whose
     entire value is that it is green -- and a gate that lands red trains
     people to ignore it.
+
+    TASK-34353: the serial census outgrew the job's 20-minute cap, so it runs
+    as parallel round-robin shards picked by the census checker -- each one a
+    subsequence of the census, in census order -- never an xdist split.
     """
     job = _workflow()["jobs"]["ui-fast-lane"]
 
-    assert job["if"] == "github.event_name == 'pull_request'"
-    assert "strategy" not in job, "sharding would change the verified order"
+    assert job["if"] == LANES
+    strategy = job["strategy"]
+    assert strategy["fail-fast"] is False  # one red shard must not hide another
+    assert list(strategy["matrix"]) == ["shard"]
+    assert len(strategy["matrix"]["shard"]) >= 2
 
     install = next(
         step
@@ -129,9 +141,66 @@ def test_ui_fast_lane_runs_the_census_serially_on_the_minimal_dep_set():
         for step in job["steps"]
         if step.get("name") == "Run the gated Tests/UI slice"
     )["run"]
-    assert "scripts/ui_pr_gate_census.txt" in run
+    # The census checker reads scripts/ui_pr_gate_census.txt and picks the shard, sized by the matrix; its output goes
+    # through a file (so its failure fails the step) and an empty shard is
+    # refused (bare `pytest` would collect the whole tree).
+    assert "scripts/check_ui_pr_gate_census.py --shard" in run
+    assert '"${{ strategy.job-index }}" "${{ strategy.job-total }}"' in run
+    assert 'mapfile -t SHARD < "$RUNNER_TEMP/ui-shard.txt"' in run
+    assert 'test "${#SHARD[@]}" -gt 0' in run
+    assert 'pytest "${SHARD[@]}"' in run
     assert "-n auto" not in run and "--dist" not in run
     assert "-p no:randomly" not in run  # not installed; order is collection order
+
+
+@pytest.mark.parametrize("total", [1, 2, 3, 4, 5])
+def test_ui_gate_shards_cover_the_census_once_each_in_census_order(total):
+    """TASK-34353: the shards the UI lane runs are exactly the census.
+
+    Drives the real `--shard` command the workflow runs, for each shard of a
+    `total`-way split: every census file lands in exactly one shard, no shard
+    is empty, and each shard keeps census order.
+    """
+    import subprocess
+    import sys
+
+    checker = PROJECT_ROOT / "scripts" / "check_ui_pr_gate_census.py"
+    census = [
+        line.strip()
+        for line in (PROJECT_ROOT / "scripts" / "ui_pr_gate_census.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    shards = [
+        subprocess.run(
+            [sys.executable, str(checker), "--shard", str(index), str(total)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        for index in range(total)
+    ]
+
+    assert all(shards)
+    assert sorted(path for shard in shards for path in shard) == sorted(census)
+    for shard in shards:
+        assert shard == [path for path in census if path in shard]
+
+
+def test_ui_gate_shard_refuses_an_index_outside_the_split():
+    """A mistyped matrix must fail the step, not silently gate nothing."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_ui_pr_gate_census",
+        PROJECT_ROOT / "scripts" / "check_ui_pr_gate_census.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with pytest.raises(ValueError):
+        module.shard(["a", "b"], 2, 2)
 
 
 def test_ui_gate_census_is_non_empty_and_every_entry_exists():
@@ -158,7 +227,7 @@ def test_triggers_are_not_path_filtered():
     would brick merges without failing anything.
     """
     triggers = _workflow()[True]  # PyYAML parses the bare `on:` key as True
-    assert set(triggers) == {"pull_request", "push"}
+    assert set(triggers) == {"pull_request", "push", "workflow_dispatch"}
     for event, config in triggers.items():
         assert not (config or {}).get("paths"), f"{event} must not be path-filtered"
         assert not (config or {}).get("paths-ignore"), f"{event} must not path-ignore"
@@ -218,3 +287,54 @@ def test_derived_artifact_checkers_use_mermaid_builder_python_pin():
 def test_required_check_name_is_stable():
     """Renaming this silently detaches branch protection from the job."""
     assert _job()["name"] == "Derived artifacts reproduce from their sources"
+
+
+def test_dispatch_input_lets_the_queue_name_the_pr():
+    """A queue dispatch names its PR; a manual kick names none, so the lanes skip."""
+    dispatch = _workflow()[True]["workflow_dispatch"]
+    assert dispatch["inputs"]["pr"] == {"description": "PR number (set by the merge queue)", "required": False,
+                                        "type": "string", "default": ""}
+
+
+def test_queue_tick_runs_after_ci_and_is_never_required():
+    jobs = _workflow()["jobs"]
+    tick = jobs["queue-tick"]
+    assert tick["needs"] == ["derived-artifacts"]
+    assert "queue-tick" not in jobs["derived-artifacts"].get("needs", [])
+    assert tick["if"].startswith("!cancelled() &&")
+    assert "vars.MERGE_QUEUE == 'dry' || vars.MERGE_QUEUE == 'on'" in tick["if"]
+    assert "github.event_name == 'workflow_dispatch'" in tick["if"]
+    assert "auto_merge" not in tick["if"], (
+        "the payload's auto_merge is a trigger-time snapshot; disarm-push-rearm leaves it null, "
+        "so gating on it means red author runs never wake the queue"
+    )
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in tick["if"]
+    assert "push" not in tick["if"], "pushes to dev are merge-queue.yml's job"
+    assert tick["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write"}
+    assert _workflow()["permissions"] == {"contents": "read"}
+    checkout = tick["steps"][0]
+    assert checkout["uses"] == "actions/checkout@v4" and checkout["with"] == {
+        "ref": "dev",
+        "persist-credentials": False,
+    }
+    assert tick["steps"][1]["run"] == "python3 scripts/merge_queue.py"
+    assert tick["steps"][1]["env"] == {"GH_TOKEN": "${{ github.token }}", "MERGE_QUEUE": "${{ vars.MERGE_QUEUE }}"}
+
+
+def test_branch_dispatch_without_pr_runs_the_gate():
+    """A no-`pr` dispatch off `dev` must still run the lanes, or the required check
+
+    can be greened with zero tests run (spike F2: a dispatched run counts as the
+    PR's required context). Only a no-`pr` dispatch ON `dev` is the cheap manual
+    queue kick.
+    """
+    workflow = _workflow()
+    for job_name in ("pr-fast-lane", "ui-fast-lane"):
+        assert workflow["jobs"][job_name]["if"] == LANES
+    for step_name in ("Require successful PR fast lane", "Require successful UI fast lane"):
+        step = next(
+            step
+            for step in workflow["jobs"]["derived-artifacts"]["steps"]
+            if step.get("name") == step_name
+        )
+        assert "github.ref != 'refs/heads/dev'" in step["if"]

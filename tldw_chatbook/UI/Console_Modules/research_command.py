@@ -25,6 +25,7 @@ RESEARCH_POLICIES = (
     "balanced",
 )
 
+
 def _extract_flags(args: str) -> tuple[dict[str, str], str]:
     """Split --flag value tokens out of the args.
 

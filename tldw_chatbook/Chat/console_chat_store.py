@@ -6,12 +6,11 @@ import asyncio
 import hashlib
 import inspect
 import json
-import math
 import threading
 import time
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager, suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from collections.abc import Iterator
@@ -62,7 +61,7 @@ from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteStreamParser,
     utf16_length,
 )
-from tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES, PendingAttachment
+from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.citation_trace_models import (
     ANSWER_ATTEMPT_BODY_UTF8_BYTES_MAX,
     SealedCitationWrite,
@@ -77,6 +76,14 @@ from tldw_chatbook.Chat.console_capture_policy_repository import (
     ConsoleCapturePolicyRepository,
 )
 from tldw_chatbook.Chat.console_chat_fork import (
+    validate_console_fork_video_projection,
+    console_fork_message_state_is_eligible,
+    console_fork_visible_selection,
+    fingerprint_console_fork_attachments,
+    validate_console_fork_image_selections,
+    fingerprint_console_fork_video,
+    project_console_fork_message,
+    console_fork_candidate_matches_fence,
     CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT,
     ConsoleChatForkSnapshot,
     ConsoleForkCitationLink,
@@ -89,9 +96,12 @@ from tldw_chatbook.Chat.console_chat_fork import (
     ConsoleForkProjectedGeneration,
     ConsoleForkProjectedMessage,
     ConsoleForkProjectedVideoTombstone,
+    CONSOLE_FORK_SAVED_HISTORY_UNAVAILABLE,
+    check_console_fork_saved_tail,
+    console_fork_prefix_refusal,
+    console_fork_source_ids,
     encode_console_fork_message_metadata,
     fingerprint_console_fork_configuration,
-    fingerprint_console_fork_selected_image,
     normalize_fork_title,
     validate_console_fork_image_payload,
 )
@@ -204,6 +214,7 @@ from tldw_chatbook.Chat.console_speech import (
 )
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_voice_promotion import (
         CompletedVoicePairCommit,
@@ -235,6 +246,7 @@ from tldw_chatbook.Chat.library_activity import (
     project_library_activity,
 )
 from tldw_chatbook.Chat.message_metadata import (
+    AgentHandoffLaunchMetadata,
     CharacterEmoteEventMetadata,
     CharacterEmoteMetadata,
     MessageMetadata,
@@ -710,6 +722,7 @@ class ConsoleDurableTurnCommit:
     assistant_message_id: str
     assistant_message_version: int
     checkpoint: ConsoleDispatchCheckpoint
+    user_parent_message_id: str | None
     first_persist: bool = False
     generation_snapshot: ConsoleGenerationSettingsSnapshot | None = None
     generation_revision: int = 0
@@ -814,6 +827,7 @@ class ConsoleChatPersistence(Protocol):
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
+        project_context_json: str | None = None,
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn."""
 
@@ -1360,9 +1374,9 @@ class _ConsoleSettingsPersistenceLifecycle:
     component_revisions: dict[ConsoleSettingsComponent, int] = field(
         default_factory=dict
     )
-    generation_bases: dict[
-        str, ConsoleGenerationSettingsSnapshot | None
-    ] = field(default_factory=dict)
+    generation_bases: dict[str, ConsoleGenerationSettingsSnapshot | None] = field(
+        default_factory=dict
+    )
     context_bases: dict[str, int | None] = field(default_factory=dict)
 
 
@@ -1382,6 +1396,13 @@ def _invalid_runtime_backend_diagnostic(value: Any) -> str:
 @dataclass
 class ConsoleChatSession:
     """A native Console chat session."""
+
+    incarnation_id: str = field(
+        default_factory=lambda: str(uuid4()), init=False, compare=False
+    )
+    agent_handoff_revision: int | None = None
+    agent_handoff_state: str | None = None
+    agent_handoff_launch: AgentHandoffLaunchMetadata | None = None
 
     title: str = DEFAULT_CONSOLE_SESSION_TITLE
     workspace_id: str = CONSOLE_GLOBAL_WORKSPACE_ID
@@ -1658,7 +1679,8 @@ class ConsoleChatStore:
         on_canvas_context_changed: Callable[[str | None], None] | None = None,
         assistant_defaults_provider: Callable[
             [str, ConsoleSessionSettings | None], ConsoleAssistantStartup
-        ] | None = None,
+        ]
+        | None = None,
         on_assistant_default_notice: Callable[[str], None] | None = None,
     ) -> None:
         """Initialize the Console chat store.
@@ -1790,6 +1812,7 @@ class ConsoleChatStore:
         self._progress_identity_lock = threading.RLock()
         self._progress_message_store: MessageStore | None = None
         self._sessions: dict[str, ConsoleChatSession] = {}
+        self._conversation_title_transitions: set[str] = set()
         self._ephemeral_promotion_lock = threading.RLock()
         self._ephemeral_promotion_reservations: dict[
             str, _ConsoleEphemeralPromotionReservation
@@ -1806,9 +1829,7 @@ class ConsoleChatStore:
         self._settings_persistence_lifecycles: dict[
             str, _ConsoleSettingsPersistenceLifecycle
         ] = {}
-        self._roleplay_persistence_locks: dict[
-            str, _RoleplayPersistenceLockEntry
-        ] = {}
+        self._roleplay_persistence_locks: dict[str, _RoleplayPersistenceLockEntry] = {}
         self._settings_session_incarnations: dict[str, int] = {}
         # Public settings origins need their own app-lifetime fence. Async
         # drain incarnations are an implementation detail and can be cleaned
@@ -1954,7 +1975,6 @@ class ConsoleChatStore:
         #: it is untouched by tree mutations (create/delete/sibling). ``(None,
         #: None)`` = no summary. Write-through is ``_persist_context_summary``.
         self._context_summary_by_session: dict[str, tuple[str | None, str | None]] = {}
-        self._deferred_project_instruction_state_session_ids: set[str] = set()
         self._unresolved_promotion_operations: dict[str, str] = {}
         self._pending_workspace_projections: dict[str, str] = {}
         self._pending_persistence_message_ids: set[str] = set()
@@ -2079,7 +2099,8 @@ class ConsoleChatStore:
         # chat keeps its draft across app restarts (TASK-32482 AC #4).
         # Process-local, like the epochs above.
         self._pending_agent_handoff_clears: dict[str, None] = {}
-
+        self._agent_handoff_writes: dict[str, dict[str, Any]] = {}
+        self._agent_handoff_changed: Callable[[str, str], bool] | None = None
 
         # Trajectory sidecar (schema v38) capture state. LOCAL-ONLY: the
         # ``message_trajectory_metadata`` table is never synced. Timing is
@@ -2230,7 +2251,9 @@ class ConsoleChatStore:
         if assistant_kind is UNSPECIFIED_ASSISTANT:
             assistant_kind, assistant_id = "generic", "console"
             if self._assistant_defaults_provider is not None:
-                startup = self._assistant_defaults_provider(target_workspace_id, settings)
+                startup = self._assistant_defaults_provider(
+                    target_workspace_id, settings
+                )
                 if canonical_settings_baseline is not None:
                     canonical_settings_baseline = startup.settings
                 settings = startup.settings
@@ -2335,11 +2358,16 @@ class ConsoleChatStore:
                 )
             if activate:
                 self._activate_session(session.id)
-            if assistant_default_notice and self._on_assistant_default_notice is not None:
+            if (
+                assistant_default_notice
+                and self._on_assistant_default_notice is not None
+            ):
                 try:
                     self._on_assistant_default_notice(assistant_default_notice)
                 except Exception:  # noqa: BLE001 - presentation cannot undo a new chat
-                    logger.warning("Workspace default Persona notice could not be shown")
+                    logger.warning(
+                        "Workspace default Persona notice could not be shown"
+                    )
         return session
 
     def _activate_session(self, session_id: str | None) -> None:
@@ -2376,7 +2404,6 @@ class ConsoleChatStore:
                 type(exc).__name__,
             )
 
-
     def _consume_pending_agent_handoff_clear(self, session_id: str) -> None:
         """Clear a restored handoff key when its session first activates.
 
@@ -2412,9 +2439,7 @@ class ConsoleChatStore:
         if conversation_id not in self._pending_agent_handoff_clears:
             return
         self._pending_agent_handoff_clears.pop(conversation_id, None)
-        database = (
-            getattr(self.persistence, "db", None) if self.persistence else None
-        )
+        database = getattr(self.persistence, "db", None) if self.persistence else None
         if database is None:
             return
         updater = getattr(database, "update_conversation", None)
@@ -2428,9 +2453,7 @@ class ConsoleChatStore:
             raw_metadata = row.get("metadata") or "{}"
             try:
                 metadata_obj = (
-                    json.loads(raw_metadata)
-                    if isinstance(raw_metadata, str)
-                    else {}
+                    json.loads(raw_metadata) if isinstance(raw_metadata, str) else {}
                 )
             except ValueError:
                 metadata_obj = {}
@@ -2644,11 +2667,15 @@ class ConsoleChatStore:
             raise ValueError("Roleplay authority id must be non-empty text or None.")
         if assistant_kind == "character":
             if not trusted_system_prompt.strip():
-                raise ValueError("Trusted roleplay system prompt must be non-empty text.")
+                raise ValueError(
+                    "Trusted roleplay system prompt must be non-empty text."
+                )
             if type(character_name) is not str or not character_name.strip():
                 raise ValueError("Roleplay character name must be non-empty text.")
             if title != f"Chat with {character_name}":
-                raise ValueError("Roleplay title does not match the character identity.")
+                raise ValueError(
+                    "Roleplay title does not match the character identity."
+                )
             expected_roleplay_settings = replace(
                 canonical_settings,
                 system_prompt=trusted_system_prompt,
@@ -2695,11 +2722,9 @@ class ConsoleChatStore:
             expected_settings=canonical_settings,
         ):
             raise ValueError("Session is no longer pristine.")
-        proposed_binding_revision = (
-            self._advance_console_settings_binding_revision(
-                session_id,
-                session.conversation_binding_revision,
-            )
+        proposed_binding_revision = self._advance_console_settings_binding_revision(
+            session_id,
+            session.conversation_binding_revision,
         )
 
         # All validation, derived values, and stale-eligibility checks are
@@ -2793,8 +2818,7 @@ class ConsoleChatStore:
             session is None
             or session.settings != expected_current_settings
             or session.canonical_settings_baseline != expected_current_settings
-            or session.generation_settings_revision
-            != prior_generation_revision + 1
+            or session.generation_settings_revision != prior_generation_revision + 1
             or not self.is_pristine_session(
                 session_id,
                 expected_settings=expected_current_settings,
@@ -2890,6 +2914,7 @@ class ConsoleChatStore:
         assistant_id: str | None = "console",
         assistant_authority_id: str | None = None,
         persona_memory_mode: str | None = None,
+        assistant_default_notice: str = "",
         character_id: int | None = None,
         character_name: str | None = None,
         user_display_name_override: str | None = None,
@@ -2898,6 +2923,8 @@ class ConsoleChatStore:
         remote_active: bool = False,
         activate: bool = True,
         prepared_data: ConsoleConversationHydrationData | None = None,
+        initial_project_instruction_state: ProjectInstructionControlState | None = None,
+        prepare_progress: bool = True,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -2937,12 +2964,23 @@ class ConsoleChatStore:
                 prompt immediately after an explicitly empty active path, or
                 ``None`` for ordinary selected/unset cursor state.
             settings: Optional provider/model settings snapshot for the session.
+            initial_project_instruction_state: Owner-supplied controls for a newly
+                created conversation, applied at session construction. When absent,
+                retain the durable controls or the legacy disabled default.
             prepared_data: Optional unpublished bulk reads for this conversation.
                 Policy reconciliation and all store publication remain on the caller.
 
         Returns:
             The newly created and activated Console session.
         """
+        if initial_project_instruction_state is not None and not isinstance(
+            initial_project_instruction_state, ProjectInstructionControlState
+        ):
+            raise TypeError(
+                "initial_project_instruction_state must be ProjectInstructionControlState"
+            )
+        if persisted_conversation_id in self._conversation_title_transitions:
+            raise RuntimeError("A conversation title change is still publishing.")
         # A restored session comes FROM durable storage, so it is by
         # definition not temporary. Refuse rather than silently produce a
         # session that is both temporary and persisted -- the one state the
@@ -2972,6 +3010,8 @@ class ConsoleChatStore:
                 project_instruction_state = decode_project_context_json(
                     raw_project_context
                 )
+        if initial_project_instruction_state is not None:
+            project_instruction_state = initial_project_instruction_state
         prior_active_session_id = self.active_session_id
         session = self.create_session(
             title=title,
@@ -2982,6 +3022,7 @@ class ConsoleChatStore:
             assistant_id=assistant_id,
             assistant_authority_id=assistant_authority_id,
             persona_memory_mode=persona_memory_mode,
+            assistant_default_notice=assistant_default_notice,
             character_id=character_id,
             character_name=character_name,
             project_instruction_state=project_instruction_state,
@@ -2998,7 +3039,9 @@ class ConsoleChatStore:
                 str(persisted_conversation_id),
             )
             handoff_draft = None
-            database = getattr(self.persistence, "db", None) if self.persistence else None
+            database = (
+                getattr(self.persistence, "db", None) if self.persistence else None
+            )
             reader = getattr(database, "get_conversation_by_id", None)
             if callable(reader):
                 try:
@@ -3019,20 +3062,38 @@ class ConsoleChatStore:
                     if isinstance(metadata_obj, dict)
                     else None
                 )
-                if isinstance(handoff, dict) and handoff.get("draft"):
-                    handoff_draft = str(handoff["draft"])
-                    # Final-review fix wave (Finding 2): record a PENDING clear
-                    # instead of clearing the key here. Restore alone (the
-                    # agent-create completion path restores with activate=False)
-                    # must keep the durable key so an unopened draft survives an
-                    # app restart; the clear fires when this session first
-                    # becomes active -- see
-                    # `_consume_pending_agent_handoff_clear`.
-                    self._pending_agent_handoff_clears[
-                        str(persisted_conversation_id)
-                    ] = None
-            if handoff_draft:
-                self.set_session_draft(session.id, handoff_draft)
+                if isinstance(handoff, dict):
+                    session.agent_handoff_launch = AgentHandoffLaunchMetadata.read(
+                        handoff.get("launch")
+                    )
+                    if "version" not in handoff and handoff.get("draft"):
+                        handoff_draft = str(handoff["draft"])
+                        self._pending_agent_handoff_clears[
+                            str(persisted_conversation_id)
+                        ] = None
+                    elif (
+                        handoff.get("version") == 2
+                        and handoff.get("state") in {"pending", "consumed"}
+                        and type(handoff.get("draft_revision")) is int
+                        and handoff["draft_revision"] >= 1
+                        and isinstance(handoff.get("draft"), str)
+                    ):
+                        session.agent_handoff_revision = handoff["draft_revision"]
+                        session.agent_handoff_state = handoff["state"]
+                        if handoff["state"] == "pending":
+                            handoff_draft = handoff["draft"]
+                            self._agent_handoff_writes[session.id] = {
+                                "conversation_id": str(persisted_conversation_id),
+                                "durable_revision": handoff["draft_revision"],
+                                "revision": handoff["draft_revision"],
+                                "draft": handoff_draft,
+                                "task": None,
+                                "failed": False,
+                            }
+                    elif "version" in handoff:
+                        session.agent_handoff_state = "review_required"
+            if handoff_draft is not None:
+                session.draft = handoff_draft
             if self.active_session_id == session.id:
                 # An ACTIVATING restore (the post-restart open path) activates
                 # inside `create_session` -- before the pending clear above was
@@ -3040,10 +3101,14 @@ class ConsoleChatStore:
                 self._consume_pending_agent_handoff_clear(session.id)
             with self._progress_identity_lock:
                 sibling = next(
-                    (other for other in self._sessions.values()
-                     if other is not session
-                     and other.persisted_conversation_id == session.persisted_conversation_id
-                     and other._progress_owner_id is not None),
+                    (
+                        other
+                        for other in self._sessions.values()
+                        if other is not session
+                        and other.persisted_conversation_id
+                        == session.persisted_conversation_id
+                        and other._progress_owner_id is not None
+                    ),
                     None,
                 )
                 if sibling is not None:
@@ -3112,6 +3177,13 @@ class ConsoleChatStore:
                 )
             self._seed_console_settings_owned_bases(session)
             self._bump_payload_revision(session.id)
+            from tldw_chatbook.Agents.fleet_messages import MessageError
+
+            if prepare_progress:
+                try:
+                    self.prepare_progress_inbox(session.id)
+                except MessageError:
+                    pass  # Saved capacity/load refusal must not roll back the chat.
             return session
         except BaseException:
             self.rollback_restored_session(
@@ -3134,7 +3206,13 @@ class ConsoleChatStore:
 
         self.delete_message(message_id)
         session = self._session_or_raise(session_id)
-        session.title = title
+        # Saved sends do not auto-title; their older snapshots cannot undo a
+        # committed rename. Scratch/rebound identity rollback still restores.
+        if (
+            persisted_conversation_id is None
+            or session.persisted_conversation_id != persisted_conversation_id
+        ):
+            session.title = title
         session.persisted_conversation_id = persisted_conversation_id
 
     def _durable_thinking_history_policy(
@@ -3431,9 +3509,9 @@ class ConsoleChatStore:
             )
             if action is None or not action.enabled:
                 return None
-            try:
-                message = self._message_or_raise(current.assistant_message_id)
-            except KeyError:
+            nodes = self._nodes_by_session.get(session_id, {})  # own tree: TASK-33662
+            message = nodes.get(current.assistant_message_id)
+            if message is None:
                 return None
             self._dispatch_recovery_message_baselines[session_id] = self._snapshot(
                 message
@@ -3931,8 +4009,7 @@ class ConsoleChatStore:
                 current = self._dispatch_recoveries_by_session.get(session_id)
                 if (
                     current is recovery
-                    and current.kind
-                    is ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+                    and current.kind is ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
                     and current.runtime_active
                     and not current.recovery_needed
                     and current.checkpoint is not None
@@ -3991,9 +4068,11 @@ class ConsoleChatStore:
             metadata_json=metadata_json,
             contributions=canvas_contributions,
             on_durable_commit=(
-                lambda: canvas_controller.confirm_exact_settlement(canvas_settlement)
-                if canvas_settlement is not None and terminal_state == "complete"
-                else None
+                lambda: (
+                    canvas_controller.confirm_exact_settlement(canvas_settlement)
+                    if canvas_settlement is not None and terminal_state == "complete"
+                    else None
+                )
             ),
         ):
             raise ConsoleDispatchSettlementError(
@@ -4050,9 +4129,7 @@ class ConsoleChatStore:
 
         message.metadata, message.video_metadata = snapshot
 
-    def _prime_unpersisted_terminal_receipt(
-        self, message: ConsoleChatMessage
-    ) -> None:
+    def _prime_unpersisted_terminal_receipt(self, message: ConsoleChatMessage) -> None:
         """Prevent stream materialization from creating an orphan row first."""
         if (
             self.persistence is None
@@ -4201,11 +4278,6 @@ class ConsoleChatStore:
                 continue
             if thinking.envelope is not None:
                 node.id = persisted_id
-            node.parent_message_id = (
-                str(row["parent_message_id"])
-                if row.get("parent_message_id") is not None
-                else None
-            )
             node.provider_continuation = safe.checkpoint
             node.provider_continuation_warning = safe.warning
             node.provider_continuation_remote = bool(
@@ -4223,6 +4295,11 @@ class ConsoleChatStore:
             node.thinking_actions_enabled = (
                 thinking.generation_actions_enabled and thinking.warning is None
             )
+        from tldw_chatbook.Chat.console_conversation_hydration import (
+            _refresh_console_message_parents,
+        )
+
+        _refresh_console_message_parents(nodes, rows)
         return nodes
 
     def _quarantine_continuation_hydration(
@@ -4609,6 +4686,77 @@ class ConsoleChatStore:
                     )
         return session, persisted
 
+    def publish_conversation_title(self, conversation_id: str, title: str) -> None:
+        """Publish an already committed title to all exact local runtime aliases.
+
+        Args:
+            conversation_id: Persisted identity in this store's Data Profile.
+            title: Durable nonblank title; this method performs no database write.
+
+        Raises:
+            ValueError: If the title is blank.
+            RuntimeError: If a matching runtime's promotion blocks mutation.
+        """
+        with self.conversation_title_transition(conversation_id) as publish:
+            publish(title)
+
+    @contextmanager
+    def conversation_title_transition(
+        self,
+        conversation_id: str,
+    ) -> Iterator[Callable[[str], None]]:
+        """Reserve exact aliases before the caller's durable title write.
+
+        The caller retains persistence ownership and must publish only after
+        commit. Existing promotion admissions and fork transitions cover the
+        whole durable/live gap. A fresh hydrate of this exact conversation
+        is refused until the transition finishes; unrelated chats remain free.
+
+        Args:
+            conversation_id: Exact persisted identity in this store's profile.
+
+        Yields:
+            Callback publishing the committed nonblank title to retained aliases.
+
+        Raises:
+            RuntimeError: If mutation admission or an existing rename blocks it.
+        """
+        if conversation_id in self._conversation_title_transitions:
+            raise RuntimeError("A conversation title change is still publishing.")
+        matches = tuple(
+            session
+            for session in self.sessions()
+            if session.persisted_conversation_id == conversation_id
+        )
+        with ExitStack() as transitions:
+            for session in matches:
+                transitions.enter_context(self._fork_source_transition(session.id))
+            self._conversation_title_transitions.add(conversation_id)
+            live = True
+            try:
+
+                def publish(title: str) -> None:
+                    if not live:
+                        raise RuntimeError("Conversation title publication expired.")
+                    normalized = title.strip()
+                    if not normalized:
+                        raise ValueError("Console chat session title cannot be blank.")
+                    for session in matches:
+                        if (
+                            self._sessions.get(session.id) is not session
+                            or session.persisted_conversation_id != conversation_id
+                        ):
+                            continue
+                        if session.title != normalized:
+                            session.has_user_work = True
+                            session.canonical_settings_baseline = None
+                        session.title = normalized
+
+                yield publish
+            finally:
+                live = False
+                self._conversation_title_transitions.discard(conversation_id)
+
     def admit_library_activity(
         self,
         session_id: str,
@@ -4841,15 +4989,6 @@ class ConsoleChatStore:
             self._bump_library_activity_revision(session_id)
             return result
 
-    def final_flush_all_library_activity(
-        self,
-    ) -> dict[str, LibraryActivityFlushResult]:
-        """Perform one bounded shutdown flush for every live Console session."""
-        return {
-            session_id: self.final_flush_library_activity(session_id)
-            for session_id in tuple(self._sessions)
-        }
-
     def _persist_library_activity_batch(
         self,
         session_id: str,
@@ -5040,7 +5179,6 @@ class ConsoleChatStore:
         self._children_by_parent.pop(session_id, None)
         self._active_leaf_by_session.pop(session_id, None)
         self._context_summary_by_session.pop(session_id, None)
-        self._deferred_project_instruction_state_session_ids.discard(session_id)
         self._roleplay_system_projection_candidates.pop(session_id, None)
         self._payload_revisions.pop(session_id, None)
         self._library_activity_revisions.pop(session_id, None)
@@ -5119,6 +5257,7 @@ class ConsoleChatStore:
         *,
         release: bool = False,
         message_store: MessageStore | None = None,
+        defer_close: bool = False,
     ) -> Iterator[str | None]:
         """Fence inbox binding against native release; never do external work here.
 
@@ -5143,16 +5282,194 @@ class ConsoleChatStore:
                 ):
                     owner_id = None
                 if owner_id is not None and self._progress_message_store is not None:
-                    self._progress_message_store.close_inbox(owner_id)
+                    inbox = self._progress_message_store.begin_close_inbox(owner_id)
+                    if not defer_close:
+                        try:
+                            # Rollback and direct native release use the existing
+                            # finite Chat worker; no UI/identity waiter owns SQL.
+                            self._stream_persistence_executor.submit(
+                                self._progress_message_store.finish_close_inbox,
+                                owner_id,
+                                inbox,
+                            )
+                        except RuntimeError:
+                            # Runtime teardown already owns whole-store cleanup.
+                            pass
             yield owner_id
 
-    def register_progress_message_store(self, message_store: MessageStore) -> None:
-        """Bind one runtime; replacement invalidates only the previous runtime."""
+    def register_progress_message_store(
+        self, message_store: MessageStore, *, publish_hints: bool = True
+    ) -> None:
+        """Bind one runtime; saved queues may defer without blocking other owners."""
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
         with self._progress_identity_lock:
             previous = self._progress_message_store
             if previous is not None and previous is not message_store:
-                previous.close()
+                previous.begin_close()
             self._progress_message_store = message_store
+            session_ids = tuple(self._sessions)
+        if previous is not None and previous is not message_store:
+            # Drain admitted SQL before reloading its committed rows; native
+            # identity and UI metadata reads remain available during the wait.
+            previous.close()
+        for session_id in session_ids:
+            try:
+                self.prepare_progress_inbox(
+                    session_id, message_store=message_store, publish_hints=publish_hints
+                )
+            except MessageError:
+                # Saved rows remain authoritative; authorized entry retries later.
+                continue
+
+
+    def prepare_progress_inbox(
+        self,
+        session_id: str,
+        *,
+        message_store: MessageStore | None = None,
+        publish_hints: bool = True,
+        create_temporary: bool = False,
+        expected_owner_id: str | None = None,
+    ) -> str | None:
+        """Load bounded saved data outside identity locks, then bind its exact owner."""
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        with self._progress_identity_lock:
+            current_store = self._progress_message_store
+            if current_store is None or (
+                message_store is not None and current_store is not message_store
+            ):
+                return None
+            session = self._sessions.get(session_id)
+            owner_id = session._progress_owner_id if session is not None else None
+            if owner_id is None or (
+                expected_owner_id is not None and owner_id != expected_owner_id
+            ):
+                return None
+            conversation_id = session.persisted_conversation_id
+        if conversation_id is None and not create_temporary:
+            # Temporary/toolless sessions stay noncreating until a fleet needs one.
+            return owner_id
+        inbox = current_store.get_inbox(owner_id)
+        if inbox is None or inbox.saved_conversation_id != conversation_id:
+            repository = None
+            messages = ()
+            database = getattr(self.persistence, "db", None)
+            if database is not None and conversation_id is not None:
+                from tldw_chatbook.DB.fleet_progress_repository import (
+                    FleetProgressRepository,
+                )
+
+                repository = FleetProgressRepository(database)
+                messages = repository.load(conversation_id)
+            while True:
+                with self._progress_identity_lock:
+                    if (
+                        self._progress_message_store is not current_store
+                        or self._sessions.get(session_id) is not session
+                        or session._progress_owner_id != owner_id
+                        or session.persisted_conversation_id != conversation_id
+                    ):
+                        return None
+                    inbox = None
+                    try:
+                        inbox = current_store.open_inbox(
+                            owner_id,
+                            repository=repository,
+                            saved_conversation_id=conversation_id,
+                            messages=messages,
+                            blocking=False,
+                        )
+                    except MessageError as error:
+                        if error.code != "queue_full" or current_store.defer_inbox(
+                            owner_id, len(messages), blocking=False
+                        ):
+                            raise
+                if inbox is not None:
+                    break
+                # Never retain native identity through another queue's SQL.
+                # The loop rechecks exact session/store/owner after the wait.
+                current_store.wait_for_writer()
+        if publish_hints:
+            self.publish_progress_inbox_hints(session_id, message_store=current_store)
+        return owner_id
+
+
+    async def prepare_progress_inbox_owned(self, session_id: str) -> str | None:
+        """Keep one exact owner's physical preparation off-loop through cancellation."""
+        with self.progress_owner_scope(session_id) as owner_id:
+            message_store = self._progress_message_store
+        if owner_id is None or message_store is None:
+            return None
+        database = getattr(self.persistence, "db", None)
+        if getattr(database, "is_memory_db", False):
+            # SQLite memory databases are connection-local and have no external writer.
+            return self.prepare_progress_inbox(
+                session_id, message_store=message_store, expected_owner_id=owner_id
+            )
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+        from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
+
+        try:
+            # The existing finite Chat worker owns the physical receipt;
+            # asyncio teardown can cancel observers without cancelling SQL.
+            physical = self._stream_persistence_executor.submit(
+                run_finite_local_worker,
+                self.prepare_progress_inbox,
+                session_id,
+                message_store=message_store,
+                expected_owner_id=owner_id,
+            )
+        except RuntimeError:
+            raise MessageError("unavailable") from None
+        observed = asyncio.wrap_future(physical)
+        cancelled = False
+        while True:
+            try:
+                result = await asyncio.shield(observed)
+                break
+            except asyncio.CancelledError:
+                if physical.done():
+                    raise  # Terminal cancellation has no unfinished leaf to own.
+                cancelled = True
+                if observed.cancelled():
+                    observed = asyncio.wrap_future(physical)
+            except Exception:
+                if cancelled:
+                    raise asyncio.CancelledError from None
+                raise
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
+
+    def publish_progress_inbox_hints(
+        self, session_id: str, *, message_store: MessageStore
+    ) -> None:
+        """Publish cached metadata after initialization and ownership locks exit."""
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        with self.progress_owner_scope(session_id, message_store=message_store) as owner_id:
+            inbox = message_store.get_inbox(owner_id) if owner_id is not None else None
+        if inbox is None:
+            return
+        try:
+            metadata = inbox.pending_metadata()
+        except MessageError:
+            return
+        callback = message_store.on_enqueue
+        if callback is not None:
+            for message_id, identity in metadata:
+                with self.progress_owner_scope(
+                    session_id, message_store=message_store
+                ) as current_owner:
+                    if current_owner != owner_id:
+                        return
+                # A hint is never authority; the consumer rechecks before admission.
+                try:
+                    callback(owner_id, message_id, identity)
+                except Exception:  # noqa: BLE001, S112 - hints cannot affect authoritative data
+                    continue
 
     def progress_owner_id(self, session_id: str) -> str | None:
         """Read a live native progress identity without allocating an inbox."""
@@ -5338,7 +5655,12 @@ class ConsoleChatStore:
             if session is not None:
                 if current.origin == "manual":
                     session.draft = current.executed_draft
-                session.title = current.pre_send_title
+                if (
+                    current.pre_send_conversation_id is None
+                    or session.persisted_conversation_id
+                    != current.pre_send_conversation_id
+                ):
+                    session.title = current.pre_send_title
                 self.rebind_persisted_conversation(
                     session.id,
                     current.pre_send_conversation_id,
@@ -5838,8 +6160,17 @@ class ConsoleChatStore:
             "user_content_sha256": hashlib.sha256(
                 acceptance.user_content.encode("utf-8")
             ).hexdigest(),
+            "continuation_receipt": cls._canonical_fingerprint_value(
+                acceptance.continuation_receipt
+            ),
+            "user_root_fork": acceptance.user_root_fork,
             "parent_message_id": acceptance.parent_message_id,
             "attachments": cls._canonical_fingerprint_value(acceptance.attachments),
+            "agent_chat_start_attempt_id": acceptance.agent_chat_start_attempt_id,
+            "agent_chat_start": cls._canonical_fingerprint_value(
+                acceptance.agent_chat_start
+            ),
+            "handoff_draft_revision": acceptance.handoff_draft_revision,
             "origin": acceptance.origin,
             "queue_entry_id": acceptance.queue_entry_id,
             "frozen_authority": cls._canonical_fingerprint_value(
@@ -5986,6 +6317,11 @@ class ConsoleChatStore:
                 if preparation is None or preparation.session_id not in self._sessions:
                     raise RuntimeError("Durable preparation is unavailable.")
                 session = self._sessions[preparation.session_id]
+                from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
+                acceptance = flat_roots.durable_acceptance(
+                    acceptance, self._nodes_by_session.get(session.id, {})
+                )
                 existing_reservation = self._durable_commit_in_flight.get(
                     acceptance.preparation_id
                 )
@@ -6073,6 +6409,7 @@ class ConsoleChatStore:
                         session.speech_preferences
                     )
                 first_persist = session.persisted_conversation_id is None
+                project_state = session.project_instruction_state  # TASK-33621.13
                 roleplay_context = ConsoleRoleplayContext(
                     user_name_override=session.user_display_name_override,
                     character_system_template=session.character_system_template,
@@ -6213,6 +6550,11 @@ class ConsoleChatStore:
                 raise RuntimeError(
                     "Durable Console persistence cannot store staged context settings."
                 )
+            # TASK-33621.13: a new chat's project controls commit with it, off-loop.
+            project_stored = first_persist and self._persistence_accepts_kwarg(
+                durable_commit, "project_context_json"
+            )
+            project_json = encode_project_context_json(project_state)
             checkpoint = durable_commit(
                 acceptance=acceptance,
                 policy_candidate=policy_candidate,
@@ -6220,9 +6562,9 @@ class ConsoleChatStore:
                 **(
                     {"context_policy_overrides": context_policy_overrides}
                     if context_policy_overrides is not None
-                    and context_kwarg_supported
                     else {}
                 ),
+                **({"project_context_json": project_json} if project_stored else {}),
             )
             with self._preparation_lock:
                 identity_reservation = self._first_identity_reservations.get(
@@ -6245,6 +6587,7 @@ class ConsoleChatStore:
                 assistant_message_id=owners.assistant_message_id,
                 assistant_message_version=checkpoint.assistant_message_version,
                 checkpoint=checkpoint,
+                user_parent_message_id=acceptance.parent_message_id,
                 first_persist=first_persist,
                 generation_snapshot=generation_snapshot,
                 generation_revision=generation_revision,
@@ -6280,6 +6623,10 @@ class ConsoleChatStore:
                     assistant_message_id=owners.assistant_message_id,
                     fingerprint=fingerprint,
                 )
+            if first_persist and (  # a folder re-chosen mid-commit, or no kwarg
+                not project_stored or session.project_instruction_state != project_state
+            ):
+                self._persist_project_instruction_state(session)
             return commit
         except Exception:
             if reservation is None:
@@ -6641,14 +6988,11 @@ class ConsoleChatStore:
         context_base_installed = False
         if commit.first_persist:
             lifecycle = self._settings_persistence_lifecycles.setdefault(
-                session_id,
-                _ConsoleSettingsPersistenceLifecycle(),
+                session_id, _ConsoleSettingsPersistenceLifecycle()
             )
             conversation_id = commit.identity.conversation_id
             if conversation_id not in lifecycle.generation_bases:
-                lifecycle.generation_bases[conversation_id] = (
-                    commit.generation_snapshot
-                )
+                lifecycle.generation_bases[conversation_id] = commit.generation_snapshot
                 generation_base_installed = True
             if conversation_id not in lifecycle.context_bases:
                 lifecycle.context_bases[conversation_id] = (
@@ -6680,7 +7024,10 @@ class ConsoleChatStore:
                 failure = session.settings_persistence_failures.get(
                     ConsoleSettingsComponent.CONTEXT_POLICY
                 )
-                if failure is None or failure.revision <= commit.context_policy_revision:
+                if (
+                    failure is None
+                    or failure.revision <= commit.context_policy_revision
+                ):
                     session.settings_persistence_failures.pop(
                         ConsoleSettingsComponent.CONTEXT_POLICY,
                         None,
@@ -6725,7 +7072,9 @@ class ConsoleChatStore:
             components.add(ConsoleSettingsComponent.GENERATION_SETTINGS)
         if (
             session.context_policy_revision != commit.context_policy_revision
-            and lifecycle.component_revisions.get(ConsoleSettingsComponent.CONTEXT_POLICY)
+            and lifecycle.component_revisions.get(
+                ConsoleSettingsComponent.CONTEXT_POLICY
+            )
             != session.context_policy_revision
         ):
             components.add(ConsoleSettingsComponent.CONTEXT_POLICY)
@@ -6866,6 +7215,8 @@ class ConsoleChatStore:
         if self._message_session_index.get(user.id) != session_id:
             raise RuntimeError("Committed USER owner changed sessions.")
         user.persisted_message_id = commit.user_message_id
+        # TASK-33621.10: mirror the parents the commit wrote, as reload does.
+        user.parent_message_id = commit.user_parent_message_id
         # The atomic acceptance transaction creates the durable USER row, but
         # the optimistic live echo accumulated its trajectory observations
         # before it had that durable identity. Publish the sidecar owner now so
@@ -6887,6 +7238,7 @@ class ConsoleChatStore:
         if assistant.role is not ConsoleMessageRole.ASSISTANT:
             raise RuntimeError("Committed assistant owner changed role.")
         assistant.persisted_message_id = commit.assistant_message_id
+        assistant.parent_message_id = commit.user_message_id
         # TASK-22302: arm here, AFTER the durable id is assigned.
         # `append_message` gates arming on its own `persist` flag, which is
         # False on this path and correctly so -- the checkpoint already wrote
@@ -6912,11 +7264,15 @@ class ConsoleChatStore:
         if not isinstance(identity, ConsoleStagedConversationIdentity):
             raise TypeError("identity must be ConsoleStagedConversationIdentity")
         session = self._session_or_raise(session_id)
+        first_binding = session.persisted_conversation_id is None
         self.publish_first_persisted_conversation(
             session_id,
             identity.conversation_id,
         )
-        session.title = identity.title
+        # Existing saved titles are owned by committed rename publication,
+        # not the title snapshot captured by an older send or retry.
+        if first_binding:
+            session.title = identity.title
         self._flush_staged_capture_policy(session)
 
     @staticmethod
@@ -6929,15 +7285,8 @@ class ConsoleChatStore:
 
     @staticmethod
     def _fork_message_state_is_eligible(role: object, status: object) -> bool:
-        if type(role) is not ConsoleMessageRole or type(status) is not str:
-            return False
-        if role is ConsoleMessageRole.USER:
-            return status == "complete"
-        return role is ConsoleMessageRole.ASSISTANT and status in {
-            "complete",
-            "stopped",
-            "failed",
-        }
+        """Forward eligibility checks to the pure fork owner."""
+        return console_fork_message_state_is_eligible(role, status)
 
     def _fork_configuration_snapshot(
         self,
@@ -7002,115 +7351,16 @@ class ConsoleChatStore:
     def _fork_visible_selection(
         message: ConsoleChatMessage,
     ) -> tuple[str, str | None]:
-        if type(message.content) is not str:
-            raise ValueError("Console fork message content is unavailable.")
-        variants = message.variants
-        if variants is None:
-            return message.content, None
-        try:
-            current = variants.current
-        except (AttributeError, IndexError):
-            raise ValueError("Console fork text selection is unavailable.") from None
-        if (
-            type(current.id) is not str
-            or not current.id
-            or type(current.content) is not str
-            or current.content != message.content
-        ):
-            raise ValueError("Console fork text selection is unavailable.")
-        return current.content, current.id
+        """Forward visible text selection to the pure fork owner."""
+        return console_fork_visible_selection(message)
 
     @staticmethod
     def _fork_attachment_fingerprint(
         attachments: Sequence[MessageAttachment | ConsoleForkProjectedAttachment],
         generation: Sequence[GenerationVariantMeta | ConsoleForkProjectedGeneration],
     ) -> str:
-        payload: list[dict[str, object]] = []
-        if generation and len(generation) != len(attachments):
-            raise ValueError("Console fork generation metadata is unavailable.")
-        for index, attachment in enumerate(attachments):
-            if (
-                type(attachment)
-                not in {MessageAttachment, ConsoleForkProjectedAttachment}
-                or type(attachment.data) is not bytes
-                or not attachment.data
-                or len(attachment.data) > MAX_ATTACHMENT_BYTES
-                or type(attachment.mime_type) is not str
-                or not attachment.mime_type
-                or type(attachment.display_name) is not str
-                or attachment.position != index
-            ):
-                raise ValueError("Console fork attachment is unavailable.")
-            if attachment.mime_type.startswith("image/") or generation:
-                validate_console_fork_image_payload(
-                    attachment.data,
-                    attachment.mime_type,
-                )
-            metadata = generation[index] if index < len(generation) else None
-            metadata_payload: dict[str, object] | None = None
-            if metadata is not None:
-                if (
-                    type(metadata)
-                    not in {GenerationVariantMeta, ConsoleForkProjectedGeneration}
-                    or type(metadata.prompt) is not str
-                    or type(metadata.negative_prompt) is not str
-                    or type(metadata.backend) is not str
-                    or type(metadata.model) not in {str, type(None)}
-                    or type(metadata.seed) not in {int, type(None)}
-                    or type(metadata.style) not in {str, type(None)}
-                ):
-                    raise ValueError("Console fork generation metadata is unavailable.")
-                if type(metadata) is GenerationVariantMeta:
-                    if type(metadata.params) is not dict:
-                        raise ValueError(
-                            "Console fork generation metadata is unavailable."
-                        )
-                    try:
-                        params_json = json.dumps(
-                            metadata.params,
-                            allow_nan=False,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                            sort_keys=True,
-                        )
-                    except (TypeError, ValueError):
-                        raise ValueError(
-                            "Console fork generation metadata is unavailable."
-                        ) from None
-                elif (
-                    type(metadata) is ConsoleForkProjectedGeneration
-                    and metadata.position == index
-                    and type(metadata.params_json) is str
-                ):
-                    params_json = metadata.params_json
-                else:
-                    raise ValueError("Console fork generation metadata is unavailable.")
-                metadata_payload = {
-                    "prompt": metadata.prompt,
-                    "negative_prompt": metadata.negative_prompt,
-                    "backend": metadata.backend,
-                    "model": metadata.model,
-                    "seed": metadata.seed,
-                    "style": metadata.style,
-                    "params_json": params_json,
-                }
-            payload.append(
-                {
-                    "position": attachment.position,
-                    "data_sha256": hashlib.sha256(attachment.data).hexdigest(),
-                    "mime_type": attachment.mime_type,
-                    "display_name": attachment.display_name,
-                    "generation": metadata_payload,
-                }
-            )
-        canonical = json.dumps(
-            payload,
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-        return hashlib.sha256(b"console-fork-attachments-v1\0" + canonical).hexdigest()
+        """Forward attachment fingerprinting to the pure fork owner."""
+        return fingerprint_console_fork_attachments(attachments, generation)
 
     @staticmethod
     def _validate_fork_image_selections(
@@ -7118,94 +7368,21 @@ class ConsoleChatStore:
         prefix: Sequence[str],
         selections: Sequence[ConsoleForkImageSelectionFence],
     ) -> bool:
-        generated_ids = {
-            native_id for native_id in prefix if nodes[native_id].generation_metadata
-        }
-        if (
-            any(
-                nodes[native_id].role is not ConsoleMessageRole.ASSISTANT
-                for native_id in generated_ids
-            )
-            or len(selections) != len(generated_ids)
-            or any(
-                type(item) is not ConsoleForkImageSelectionFence for item in selections
-            )
-            or len(selections) != len({item.native_message_id for item in selections})
-            or {item.native_message_id for item in selections} != generated_ids
-        ):
-            return False
-        try:
-            for item in selections:
-                message = nodes[item.native_message_id]
-                if (
-                    type(item.selected_position) is not int
-                    or item.selected_position < 0
-                    or type(item.browse_revision) is not int
-                    or item.browse_revision < 0
-                    or item.selected_position >= len(message.attachments)
-                    or item.selected_position >= len(message.generation_metadata)
-                    or fingerprint_console_fork_selected_image(
-                        message.attachments[item.selected_position],
-                        message.generation_metadata[item.selected_position],
-                    )
-                    != item.attachment_meta_fingerprint
-                ):
-                    return False
-        except (KeyError, TypeError, ValueError):
-            return False
-        return True
+        """Forward selected-image validation to the pure fork owner."""
+        return validate_console_fork_image_selections(nodes, prefix, selections)
 
     @staticmethod
     def _fork_video_fingerprint(video: VideoGenerationMetadata) -> str:
-        if type(video) is not VideoGenerationMetadata:
-            raise ValueError("Console fork video metadata is unavailable.")
-        text_fields = (
-            video.name,
-            video.prompt,
-            video.negative_prompt,
-            video.backend,
-            video.container,
-        )
-        optional_text = (video.model, video.ratio, video.source_image_message_id)
-        numeric = (video.duration_seconds, video.fps)
-        integer = (video.seed, video.width, video.height)
-        if (
-            any(type(value) is not str for value in text_fields)
-            or not video.name
-            or not video.backend
-            or any(type(value) not in {str, type(None)} for value in optional_text)
-            or any(type(value) not in {int, float, type(None)} for value in numeric)
-            or any(type(value) not in {int, type(None)} for value in integer)
-            or any(value is not None and not math.isfinite(value) for value in numeric)
-            or type(video.is_unavailable_tombstone) is not bool
-        ):
-            raise ValueError("Console fork video metadata is unavailable.")
-        payload = video.to_json().encode("utf-8")
-        if len(payload) > 64 * 1024:
-            raise ValueError("Console fork video metadata is unavailable.")
-        return hashlib.sha256(b"console-fork-video-v1\0" + payload).hexdigest()
+        """Forward video fingerprinting to the pure fork owner."""
+        return fingerprint_console_fork_video(video)
 
     @classmethod
     def _validate_video_projection_tuple(cls, message: ConsoleChatMessage) -> None:
-        """Validate the all-or-nothing canonical video owner projection."""
+        """Forward canonical video validation with live class fingerprint lookup."""
 
-        if message.video_metadata is None:
-            if type(message.content) is str and (
-                parse_video_marker(message.content) is not None
-                or message.content == CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
-            ):
-                raise ValueError("Console fork video metadata is unavailable.")
-            return
-        if message.attachments or message.generation_metadata:
-            raise ValueError("Console fork video payload is unavailable.")
-        cls._fork_video_fingerprint(message.video_metadata)
-        expected_content = (
-            CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
-            if message.video_metadata.is_unavailable_tombstone
-            else video_content_marker(message.video_metadata.name)
+        validate_console_fork_video_projection(
+            message, fingerprint_video=lambda video: cls._fork_video_fingerprint(video)
         )
-        if message.content != expected_content:
-            raise ValueError("Console fork video marker is unavailable.")
 
     @classmethod
     def _fork_media_fingerprint(cls, message: ConsoleChatMessage) -> str:
@@ -7263,36 +7440,31 @@ class ConsoleChatStore:
         conversation_id = session.persisted_conversation_id
         reader = getattr(self.persistence, "get_console_fork_active_leaf", None)
         if conversation_id is None or not callable(reader):
-            raise ValueError("Saved active leaf is unavailable.")
+            raise ValueError(CONSOLE_FORK_SAVED_HISTORY_UNAVAILABLE)
         active_leaf_id = reader(conversation_id)
         if type(active_leaf_id) is not str or not active_leaf_id:
-            raise ValueError("Saved active leaf is unavailable.")
-        active_path = self.active_path_message_ids(session_id)
-        boundary_index = active_path.index(boundary_message_id)
-        try:
-            leaf_index = next(
-                index
-                for index, native_id in enumerate(active_path)
-                if self._nodes_by_session[session_id][native_id].persisted_message_id
-                == active_leaf_id
-            )
-        except StopIteration as exc:
-            raise ValueError("Saved active leaf lineage is unavailable.") from exc
-        if leaf_index < boundary_index:
-            raise ValueError("Saved active leaf lineage is unavailable.")
-        previous_id = self._nodes_by_session[session_id][
-            boundary_message_id
-        ].persisted_message_id
-        for native_id in active_path[boundary_index + 1 : leaf_index + 1]:
-            message = self._nodes_by_session[session_id][native_id]
-            if (
-                type(message.persisted_message_id) is not str
-                or not message.persisted_message_id
-                or message.parent_message_id != previous_id
-            ):
-                raise ValueError("Saved active leaf lineage is unavailable.")
-            previous_id = message.persisted_message_id
+            raise ValueError(CONSOLE_FORK_SAVED_HISTORY_UNAVAILABLE)
+        check_console_fork_saved_tail(
+            self.active_path_message_ids(session_id),
+            self._nodes_by_session[session_id],
+            boundary_message_id,
+            active_leaf_id,
+        )
         return active_leaf_id
+
+    def _fork_lineage(
+        self, session_id: str, prefix: Sequence[str], *, durable: bool
+    ) -> tuple[ConsoleForkLineageFence, ...]:
+        nodes = self._nodes_by_session[session_id]
+        return tuple(
+            self._fork_lineage_entry(
+                session_id,
+                nodes[native_id],
+                durable=durable,
+                lineage_parent_id=prefix[index - 1] if index else None,
+            )
+            for index, native_id in enumerate(prefix)
+        )
 
     def _fork_lineage_entry(
         self,
@@ -7300,6 +7472,7 @@ class ConsoleChatStore:
         message: ConsoleChatMessage,
         *,
         durable: bool,
+        lineage_parent_id: str | None,
     ) -> ConsoleForkLineageFence:
         if message.generation_projection_quarantined:
             raise ValueError(
@@ -7308,11 +7481,10 @@ class ConsoleChatStore:
         if not self._fork_message_state_is_eligible(message.role, message.status):
             raise ValueError("Console fork message state is unavailable.")
         content, variant_id = self._fork_visible_selection(message)
+        # Siblings hang off the native parent; the copied parent skips notes.
         parent_id = self._native_parent_by_message.get(message.id)
-        expected_persisted_parent = (
-            self._nodes_by_session[session_id][parent_id].persisted_message_id
-            if parent_id is not None
-            else None
+        expected_persisted_parent = self._nearest_persisted_ancestor_id(
+            session_id, message
         )
         if durable and message.parent_message_id != expected_persisted_parent:
             raise ValueError("Saved Console fork parent is unavailable.")
@@ -7327,7 +7499,7 @@ class ConsoleChatStore:
         return ConsoleForkLineageFence(
             native_message_id=message.id,
             persisted_message_id=message.persisted_message_id,
-            native_parent_id=parent_id,
+            native_parent_id=lineage_parent_id,
             turn_id=message.turn_id,
             trace_turn_id=(
                 message.trace_turn_id
@@ -7369,7 +7541,7 @@ class ConsoleChatStore:
         active_ids = self.active_path_message_ids(session_id)
         if message_id not in active_ids:
             return ConsoleForkEligibility(False, "Message is not on the active path.")
-        prefix = active_ids[: active_ids.index(message_id) + 1]
+        prefix = console_fork_source_ids(active_ids, message_id, nodes)
         session = self._sessions[session_id]
         durability = self._fork_durability(session)
         durable = durability == "durable"
@@ -7378,35 +7550,19 @@ class ConsoleChatStore:
                 False,
                 "Durable Console Library policy is not loaded.",
             )
-        for native_id in prefix:
-            message = nodes.get(native_id)
-            if message is not None and message.generation_projection_quarantined:
-                return ConsoleForkEligibility(
-                    False,
-                    "Canonical generation is unavailable; reload before forking.",
-                )
-            if message is None or not self._fork_message_state_is_eligible(
-                message.role,
-                message.status,
-            ):
-                return ConsoleForkEligibility(
-                    False,
-                    "Only user and assistant messages can be forked.",
-                )
-            try:
-                content, _ = self._fork_visible_selection(message)
-            except ValueError as exc:
-                return ConsoleForkEligibility(False, str(exc))
-            if not content.strip():
-                return ConsoleForkEligibility(
-                    False,
-                    "Message must contain stable completed text before forking.",
-                )
-            if durable and not message.persisted_message_id:
-                return ConsoleForkEligibility(
-                    False,
-                    "Every message through the selected boundary must be saved before forking.",
-                )
+        refusal = console_fork_prefix_refusal(
+            prefix,
+            nodes,
+            durable=durable,
+            persisted_parent=lambda item: self._nearest_persisted_ancestor_id(
+                session_id, item
+            ),
+            state_is_eligible=self._fork_message_state_is_eligible,
+            visible_content=lambda item: self._fork_visible_selection(item)[0],
+            can_fork=lambda native_id: self._fork_eligibility(native_id).eligible,
+        )
+        if refusal is not None:
+            return ConsoleForkEligibility(False, refusal)
         if durable:
             try:
                 self._fork_database_active_leaf(session_id, message_id)
@@ -7420,6 +7576,26 @@ class ConsoleChatStore:
         except (TypeError, ValueError) as exc:
             return ConsoleForkEligibility(False, str(exc))
         return ConsoleForkEligibility(True)
+
+    def fork_source_message_ids(self, message_id: str) -> tuple[str, ...]:
+        """Return the rows a fork through ``message_id`` copies, root first.
+
+        Args:
+            message_id: The fork boundary's native id.
+
+        Returns:
+            The active path through ``message_id`` minus excluded command
+            notes (``console_fork_source_ids``).
+
+        Raises:
+            KeyError: If ``message_id`` belongs to no session.
+            ValueError: If ``message_id`` is not on its session's active path.
+        """
+        with self._fork_source_lock:
+            session_id = self._message_session_index[message_id]
+            nodes = self._nodes_by_session.get(session_id, {})
+            active_ids = self.active_path_message_ids(session_id)
+            return tuple(console_fork_source_ids(active_ids, message_id, nodes))
 
     def issue_fork_fence(
         self,
@@ -7446,8 +7622,7 @@ class ConsoleChatStore:
             raise ValueError(eligibility.reason)
         session_id = self._message_session_index[message_id]
         session = self._sessions[session_id]
-        active_ids = self.active_path_message_ids(session_id)
-        prefix = active_ids[: active_ids.index(message_id) + 1]
+        prefix = self.fork_source_message_ids(message_id)
         durability = self._fork_durability(session)
         durable = durability == "durable"
         selections = tuple(image_selections)
@@ -7463,14 +7638,7 @@ class ConsoleChatStore:
         active_leaf_persisted_id = (
             self._fork_database_active_leaf(session.id, message_id) if durable else None
         )
-        lineage = tuple(
-            self._fork_lineage_entry(
-                session_id,
-                self._nodes_by_session[session_id][native_id],
-                durable=durable,
-            )
-            for native_id in prefix
-        )
+        lineage = self._fork_lineage(session_id, prefix, durable=durable)
         trace_boundary = session.fork_trace_boundary if not durable else None
         trace_boundary_reader = getattr(
             self.persistence,
@@ -7546,10 +7714,8 @@ class ConsoleChatStore:
             eligibility = self.fork_eligibility(fence.boundary_message_id)
             if not eligibility.eligible:
                 return False
-            active_ids = self.active_path_message_ids(session.id)
-            boundary_index = active_ids.index(fence.boundary_message_id)
-            prefix = active_ids[: boundary_index + 1]
-            if tuple(prefix) != tuple(item.native_message_id for item in fence.lineage):
+            prefix = self.fork_source_message_ids(fence.boundary_message_id)
+            if prefix != tuple(item.native_message_id for item in fence.lineage):
                 return False
             if not self._validate_fork_image_selections(
                 self._nodes_by_session[session.id],
@@ -7590,17 +7756,8 @@ class ConsoleChatStore:
                 != fence.source_configuration_fingerprint
             ):
                 return False
-            current_lineage = tuple(
-                self._fork_lineage_entry(
-                    session.id,
-                    self._nodes_by_session[session.id][native_id],
-                    durable=durable,
-                )
-                for native_id in prefix
-            )
-            current_trace_boundary = (
-                None if durable else session.fork_trace_boundary
-            )
+            current_lineage = self._fork_lineage(session.id, prefix, durable=durable)
+            current_trace_boundary = None if durable else session.fork_trace_boundary
             trace_boundary_reader = getattr(
                 self.persistence,
                 "get_console_trace_fork_boundary",
@@ -7704,118 +7861,22 @@ class ConsoleChatStore:
             target_variant = (
                 str(uuid4()) if entry.visible_variant_id is not None else None
             )
-            attachments: list[ConsoleForkProjectedAttachment] = []
-            generation_rows: list[ConsoleForkProjectedGeneration] = []
-            message_has_image = False
             selection = selection_by_message.get(source.id)
-            source_positions = (
-                (selection.selected_position,)
-                if selection is not None
-                else tuple(range(len(source.attachments)))
+            projected_message, message_has_image = project_console_fork_message(
+                source,
+                entry,
+                target_native=target_native,
+                target_persisted=target_persisted,
+                target_turn=target_turn,
+                target_variant=target_variant,
+                previous_native=previous_native,
+                previous_persisted=previous_persisted,
+                durable=durable,
+                selection=selection,
+                projected_image_ids=projected_image_ids,
+                fingerprint_video=lambda video: self._fork_video_fingerprint(video),
             )
-            for target_position, source_position in enumerate(source_positions):
-                attachment = source.attachments[source_position]
-                if (
-                    type(attachment.data) is not bytes
-                    or not attachment.data
-                    or len(attachment.data) > MAX_ATTACHMENT_BYTES
-                    or type(attachment.mime_type) is not str
-                    or not attachment.mime_type
-                    or type(attachment.display_name) is not str
-                ):
-                    raise ValueError("Fork attachment bytes are unavailable.")
-                if attachment.mime_type.startswith("image/"):
-                    validate_console_fork_image_payload(
-                        attachment.data,
-                        attachment.mime_type,
-                    )
-                    message_has_image = True
-                attachments.append(
-                    ConsoleForkProjectedAttachment(
-                        owner_native_message_id=target_native,
-                        owner_persisted_message_id=target_persisted,
-                        position=target_position,
-                        data=bytes(attachment.data),
-                        mime_type=attachment.mime_type,
-                        display_name=attachment.display_name,
-                    )
-                )
-                if source_position < len(source.generation_metadata):
-                    metadata = source.generation_metadata[source_position]
-                    generation_rows.append(
-                        ConsoleForkProjectedGeneration(
-                            owner_native_message_id=target_native,
-                            owner_persisted_message_id=target_persisted,
-                            position=target_position,
-                            prompt=metadata.prompt,
-                            negative_prompt=metadata.negative_prompt,
-                            backend=metadata.backend,
-                            model=metadata.model,
-                            seed=metadata.seed,
-                            style=metadata.style,
-                            params_json=json.dumps(
-                                metadata.params,
-                                allow_nan=False,
-                                ensure_ascii=False,
-                                separators=(",", ":"),
-                                sort_keys=True,
-                            ),
-                        )
-                    )
-            video_tombstone: ConsoleForkProjectedVideoTombstone | None = None
-            if source.video_metadata is not None:
-                video = source.video_metadata
-                source_image_target = projected_image_ids.get(
-                    video.source_image_message_id or ""
-                )
-                video_tombstone = ConsoleForkProjectedVideoTombstone(
-                    owner_native_message_id=target_native,
-                    owner_persisted_message_id=target_persisted,
-                    source_fingerprint=self._fork_video_fingerprint(video),
-                    prompt=video.prompt,
-                    negative_prompt=video.negative_prompt,
-                    backend=video.backend,
-                    model=video.model,
-                    seed=video.seed,
-                    duration_seconds=video.duration_seconds,
-                    fps=video.fps,
-                    width=video.width,
-                    height=video.height,
-                    ratio=video.ratio,
-                    source_image_message_id=source_image_target,
-                    container=video.container,
-                )
-            projected.append(
-                ConsoleForkProjectedMessage(
-                    source_native_message_id=entry.native_message_id,
-                    source_persisted_message_id=(
-                        entry.persisted_message_id if durable else None
-                    ),
-                    source_persisted_revision=(
-                        entry.persisted_revision if durable else None
-                    ),
-                    source_persisted_content=(
-                        entry.persisted_content if durable else None
-                    ),
-                    native_message_id=target_native,
-                    persisted_message_id=target_persisted,
-                    native_parent_id=previous_native,
-                    persisted_parent_id=previous_persisted,
-                    turn_id=target_turn,
-                    trace_turn_id=entry.trace_turn_id,
-                    visible_variant_id=target_variant,
-                    role=entry.role,
-                    status=entry.status,
-                    content=(
-                        CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
-                        if video_tombstone is not None
-                        else entry.visible_content
-                    ),
-                    attachments=tuple(attachments),
-                    generation_metadata=tuple(generation_rows),
-                    video_tombstone=video_tombstone,
-                )
-            )
+            projected.append(projected_message)
             if message_has_image:
                 projected_image_id = target_persisted or target_native
                 projected_image_ids[source.id] = projected_image_id
@@ -7852,66 +7913,18 @@ class ConsoleChatStore:
             citation_links=citation_links,
             trace_boundary=fence.trace_boundary,
         )
-        candidate_matches_fence = len(candidate.messages) == len(fence.lineage)
-        for entry, message in zip(
-            fence.lineage,
+        candidate_matches_fence = console_fork_candidate_matches_fence(
             candidate.messages,
-        ):
-            candidate_matches_fence = candidate_matches_fence and (
-                message.source_native_message_id == entry.native_message_id
-                and message.source_persisted_message_id
-                == (entry.persisted_message_id if durable else None)
-                and message.source_persisted_revision
-                == (entry.persisted_revision if durable else None)
-                and message.source_persisted_content
-                == (entry.persisted_content if durable else None)
-                and message.native_message_id == native_ids[entry.native_message_id]
-                and message.persisted_message_id
-                == persisted_ids[entry.native_message_id]
-                and message.native_parent_id == native_ids.get(entry.native_parent_id)
-                and message.persisted_parent_id
-                == persisted_ids.get(entry.native_parent_id)
-                and message.turn_id == turn_ids.get(entry.turn_id)
-                and message.trace_turn_id == entry.trace_turn_id
-                and (message.visible_variant_id is None)
-                == (entry.visible_variant_id is None)
-                and message.role is entry.role
-                and message.status == entry.status
-                and message.content
-                == (
-                    CONSOLE_FORK_VIDEO_TOMBSTONE_CONTENT
-                    if message.video_tombstone is not None
-                    else entry.visible_content
-                )
-            )
-            if not candidate_matches_fence:
-                break
-            selection = selection_by_message.get(entry.native_message_id)
-            if message.video_tombstone is not None:
-                candidate_matches_fence = (
-                    message.video_tombstone.source_fingerprint
-                    == entry.attachment_fingerprint
-                )
-            elif selection is not None:
-                candidate_matches_fence = (
-                    len(message.attachments) == 1
-                    and len(message.generation_metadata) == 1
-                    and fingerprint_console_fork_selected_image(
-                        message.attachments[0],
-                        message.generation_metadata[0],
-                    )
-                    == selection.attachment_meta_fingerprint
-                )
-            else:
-                candidate_matches_fence = (
-                    self._fork_attachment_fingerprint(
-                        message.attachments,
-                        message.generation_metadata,
-                    )
-                    == entry.attachment_fingerprint
-                )
-            if not candidate_matches_fence:
-                break
+            fence.lineage,
+            native_ids=native_ids,
+            persisted_ids=persisted_ids,
+            turn_ids=turn_ids,
+            selection_by_message=selection_by_message,
+            durable=durable,
+            fingerprint_attachments=lambda attachments, generation: (
+                self._fork_attachment_fingerprint(attachments, generation)
+            ),
+        )
         source_still_matches = self.validate_fork_fence(
             fence,
             image_selections=fence.image_selections,
@@ -8446,12 +8459,13 @@ class ConsoleChatStore:
         current = session.persisted_conversation_id
         if current is not None and current != conversation_id:
             raise RuntimeError("A persisted Console session cannot be rebound.")
-        session.persisted_conversation_id = conversation_id
-        self._record_console_settings_binding_revision(
-            session_id,
-            session.conversation_binding_revision,
-        )
-        return session
+        with self._fork_source_transition(session_id):
+            session.persisted_conversation_id = conversation_id
+            self._record_console_settings_binding_revision(
+                session_id,
+                session.conversation_binding_revision,
+            )
+            return session
 
     def rebind_persisted_conversation(
         self,
@@ -8464,21 +8478,26 @@ class ConsoleChatStore:
         ):
             raise ValueError("conversation_id must be non-empty text or None")
         session = self._session_or_raise(session_id)
-        if session.persisted_conversation_id != conversation_id:
-            session.conversation_binding_revision = (
-                self._advance_console_settings_binding_revision(
-                    session_id,
-                    session.conversation_binding_revision,
+        with self._fork_source_transition(session_id):
+            if session.persisted_conversation_id != conversation_id:
+                if conversation_id in self._conversation_title_transitions:
+                    raise RuntimeError(
+                        "A conversation title change is still publishing."
+                    )
+                session.conversation_binding_revision = (
+                    self._advance_console_settings_binding_revision(
+                        session_id,
+                        session.conversation_binding_revision,
+                    )
                 )
-            )
-            session.persisted_conversation_id = conversation_id
-            session.settings_persistence_failures.clear()
-            session.generation_durable_snapshot = None
-            session.context_policy_durable_revision = None
-            lifecycle = self._settings_persistence_lifecycles.get(session_id)
-            if lifecycle is not None:
-                lifecycle.component_revisions.clear()
-        return session
+                session.persisted_conversation_id = conversation_id
+                session.settings_persistence_failures.clear()
+                session.generation_durable_snapshot = None
+                session.context_policy_durable_revision = None
+                lifecycle = self._settings_persistence_lifecycles.get(session_id)
+                if lifecycle is not None:
+                    lifecycle.component_revisions.clear()
+            return session
 
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
         """Return in-memory settings for a native Console session."""
@@ -8610,7 +8629,9 @@ class ConsoleChatStore:
                 current_settings.system_prompt if current_settings is not None else None
             ),
             pinned_prefill=(
-                current_settings.pinned_prefill if current_settings is not None else None
+                current_settings.pinned_prefill
+                if current_settings is not None
+                else None
             ),
         )
         with self._preparation_lock:
@@ -8626,29 +8647,35 @@ class ConsoleChatStore:
                 raise ValueError("Chat closed; nothing applied.")
             if submission.submission_id in session.applied_settings_submission_ids:
                 raise ValueError("Console settings submission was already applied.")
-            session.applied_settings_submission_ids.append(submission.submission_id)
-            self.replace_session_settings(session.id, settings)
-            self._replace_session_context_policy_live(
-                session,
-                submission.draft.context_policy_overrides,
-            )
-            session.staged_context_policy_failure_label = (
-                self._console_settings_policy_failure_label(submission.surface)
-            )
-            session.staged_context_policy_failure_revision = (
-                session.context_policy_revision
-            )
-            return ConsoleSettingsLiveCommit(
-                submission_id=submission.submission_id,
-                session_id=session.id,
-                persisted_conversation_id=session.persisted_conversation_id,
-                conversation_binding_revision=session.conversation_binding_revision,
-                generation_revision=session.generation_settings_revision,
-                context_policy_revision=session.context_policy_revision,
-                settings=settings,
-                context_policy_overrides=session.context_policy_overrides,
-                accepted_submission=submission,
-            )
+            with self._fork_source_transition(session.id):
+                session.applied_settings_submission_ids.append(submission.submission_id)
+                self.replace_session_settings(session.id, settings)
+                if current_settings is None or (
+                    current_settings.provider,
+                    current_settings.model,
+                ) != (settings.provider, settings.model):
+                    session.updated_at = _utc_now_iso()  # a new pair is a use (RECENT)
+                self._replace_session_context_policy_live(
+                    session,
+                    submission.draft.context_policy_overrides,
+                )
+                session.staged_context_policy_failure_label = (
+                    self._console_settings_policy_failure_label(submission.surface)
+                )
+                session.staged_context_policy_failure_revision = (
+                    session.context_policy_revision
+                )
+                return ConsoleSettingsLiveCommit(
+                    submission_id=submission.submission_id,
+                    session_id=session.id,
+                    persisted_conversation_id=session.persisted_conversation_id,
+                    conversation_binding_revision=session.conversation_binding_revision,
+                    generation_revision=session.generation_settings_revision,
+                    context_policy_revision=session.context_policy_revision,
+                    settings=settings,
+                    context_policy_overrides=session.context_policy_overrides,
+                    accepted_submission=submission,
+                )
 
     def _replace_session_context_policy_live(
         self,
@@ -8733,9 +8760,9 @@ class ConsoleChatStore:
         lifecycle.context_bases[session.persisted_conversation_id] = (
             session.context_policy_durable_revision
         )
-        lifecycle.component_revisions[
-            ConsoleSettingsComponent.CONTEXT_POLICY
-        ] = session.context_policy_revision
+        lifecycle.component_revisions[ConsoleSettingsComponent.CONTEXT_POLICY] = (
+            session.context_policy_revision
+        )
         return session, True
 
     async def persist_console_settings_commit_serialized(
@@ -8978,9 +9005,7 @@ class ConsoleChatStore:
         assert session is not None
         if session.ephemeral or drain.persisted_conversation_id is None:
             if session.context_policy_revision == drain.context_policy_revision:
-                session.staged_context_policy_failure_label = (
-                    drain.policy_failure_label
-                )
+                session.staged_context_policy_failure_label = drain.policy_failure_label
                 session.staged_context_policy_failure_revision = (
                     drain.context_policy_revision
                 )
@@ -8998,12 +9023,9 @@ class ConsoleChatStore:
             )
         ):
             excluded.add(ConsoleSettingsComponent.GENERATION_SETTINGS)
-        if (
-            ConsoleSettingsComponent.CONTEXT_POLICY in drain.initial_components
-            and (
-                session.context_policy_revision != drain.context_policy_revision
-                or drain.context_policy_overrides is None
-            )
+        if ConsoleSettingsComponent.CONTEXT_POLICY in drain.initial_components and (
+            session.context_policy_revision != drain.context_policy_revision
+            or drain.context_policy_overrides is None
         ):
             excluded.add(ConsoleSettingsComponent.CONTEXT_POLICY)
         stale.update(excluded)
@@ -9305,8 +9327,7 @@ class ConsoleChatStore:
         return bool(
             session is not None
             and session.persisted_conversation_id == persisted_conversation_id
-            and session.conversation_binding_revision
-            == conversation_binding_revision
+            and session.conversation_binding_revision == conversation_binding_revision
         )
 
     @staticmethod
@@ -9716,12 +9737,101 @@ class ConsoleChatStore:
         return self._session_or_raise(session_id).draft
 
     def set_session_draft(self, session_id: str, draft: str) -> ConsoleChatSession:
-        """Replace the in-memory composer draft for a native Console session."""
+        """Replace a composer draft, persisting only pending version-2 handoffs."""
         session = self._session_or_raise(session_id)
+        changed = session.draft != draft
         session.draft = draft
         if draft:
             session.has_user_work = True
+        pending = self._agent_handoff_writes.get(session_id)
+        if changed and pending is not None and session.agent_handoff_state == "pending":
+            pending["revision"] += 1
+            pending["draft"] = draft
+            session.agent_handoff_revision = pending["revision"]
+            if self._agent_handoff_changed is not None:
+                self._agent_handoff_changed(session_id, "draft_changed")
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._write_agent_handoff_revision(pending)
+            else:
+                if pending["task"] is None or pending["task"].done():
+                    pending["task"] = loop.create_task(
+                        self._drain_agent_handoff_writer(pending)
+                    )
         return session
+
+    def _write_agent_handoff_revision(self, pending: dict[str, Any]) -> bool:
+        revision, draft = pending["revision"], pending["draft"]
+        expected = pending["durable_revision"]
+        if revision == expected:
+            return not pending["failed"]
+        try:
+            written = self.persistence.update_agent_handoff_draft(
+                pending["conversation_id"],
+                expected_revision=expected,
+                draft_revision=revision,
+                draft=draft,
+            )
+        except Exception:
+            written = False
+        if written:
+            pending["durable_revision"] = revision
+        pending["failed"] = not written
+        return written
+
+    async def _drain_agent_handoff_writer(self, pending: dict[str, Any]) -> bool:
+        while pending["durable_revision"] != pending["revision"]:
+            # Snapshot on the owning loop; the worker must never read typing state.
+            revision, draft = pending["revision"], pending["draft"]
+            try:
+                written = await asyncio.to_thread(
+                    self.persistence.update_agent_handoff_draft,
+                    pending["conversation_id"],
+                    expected_revision=pending["durable_revision"],
+                    draft_revision=revision,
+                    draft=draft,
+                )
+            except Exception:
+                written = False
+            pending["failed"] = not written
+            if not written:
+                return False
+            pending["durable_revision"] = revision
+        return not pending["failed"]
+
+    def publish_agent_handoff_consumed(self, session_id: str, revision: int) -> None:
+        """Retire the exact pending writer after its durable consumption receipt."""
+        session = self._sessions.get(session_id)
+        pending = self._agent_handoff_writes.get(session_id)
+        if session is None or pending is None:
+            return
+        self._agent_handoff_writes.pop(session_id, None)
+        if pending["revision"] == revision:
+            session.draft = ""
+        session.agent_handoff_state = "consumed"
+        session.agent_handoff_revision = revision + 1
+        # Typing after the accepted receipt belongs to the ordinary composer.
+        # The writer's pending-state CAS prevents any in-flight stale write
+        # from resurrecting the consumed handoff.
+        task = pending["task"]
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def drain_agent_handoff(self, session_id: str) -> bool:
+        """Join the handoff's single coalescing writer before changing custody."""
+        pending = self._agent_handoff_writes.get(session_id)
+        if pending is None:
+            session = self._sessions.get(session_id)
+            return (
+                session is not None and session.agent_handoff_state != "review_required"
+            )
+        task = pending["task"]
+        if task is not None:
+            await asyncio.shield(task)
+        return (
+            not pending["failed"] and pending["durable_revision"] == pending["revision"]
+        )
 
     def session_one_shot_prefill(self, session_id: str) -> str | None:
         """Return the armed one-shot response prefill for a session, if any."""
@@ -9772,9 +9882,7 @@ class ConsoleChatStore:
             deadline = time.monotonic() + _CAPTURE_QUIESCENCE_DRAIN_TIMEOUT
             while self._capture_exchange_writers.get(session_id):
                 remaining = deadline - time.monotonic()
-                if remaining <= 0 or not self._capture_quiescence_idle.wait(
-                    remaining
-                ):
+                if remaining <= 0 or not self._capture_quiescence_idle.wait(remaining):
                     if self._capture_exchange_writers.get(session_id):
                         self._capture_quiescent_sessions.discard(session_id)
                         logger.bind(session_id=session_id).warning(
@@ -9973,7 +10081,8 @@ class ConsoleChatStore:
             pii_redaction_enabled=session.pii_redaction_enabled_override,
         )
         if (
-            result.status in {
+            result.status
+            in {
                 CapturePolicyWriteStatus.STORED,
                 CapturePolicyWriteStatus.UNCHANGED,
             }
@@ -10469,29 +10578,22 @@ class ConsoleChatStore:
         return session
 
     def _persist_project_instruction_state(self, session: ConsoleChatSession) -> None:
-        """Best-effort write one durable session's local control state."""
-        conversation_id = session.persisted_conversation_id
-        if (
-            session.ephemeral
-            or conversation_id is None
-            or session.id in self._deferred_project_instruction_state_session_ids
-        ):
+        """Never-raising write of controls to the saved (or just-committed) chat."""
+        with self._preparation_lock:  # TASK-33621.13: committed, unpublished first send
+            reservation = self._first_identity_reservations.get(session.id)
+        owner, staged, durable = reservation or (None, None, False)
+        committed = staged.conversation_id if owner and durable else None
+        conversation_id = session.persisted_conversation_id or committed
+        if session.ephemeral or conversation_id is None:
             return
-        setter = getattr(
-            self.persistence, "set_conversation_console_project_context", None
-        )
-        if callable(setter):
-            try:
-                setter(
-                    conversation_id=conversation_id,
-                    project_context_json=encode_project_context_json(
-                        session.project_instruction_state
-                    ),
-                )
-            except Exception:
-                pass
-            else:
-                return
+        with suppress(Exception):  # incl. AttributeError: no persistence or setter
+            self.persistence.set_conversation_console_project_context(
+                conversation_id=conversation_id,
+                project_context_json=encode_project_context_json(
+                    session.project_instruction_state
+                ),
+            )
+            return
         logger.warning(
             "project_instruction_state_write_failed: the updated choice "
             "may not survive restart."
@@ -10613,9 +10715,7 @@ class ConsoleChatStore:
                     prior_revision,
                 )
         for settings_session_id in set(self._sessions) | set(sessions_by_id):
-            self._advance_console_settings_session_incarnation(
-                settings_session_id
-            )
+            self._advance_console_settings_session_incarnation(settings_session_id)
         self._activate_session(None)
         if self.library_policy_coordinator is not None:
             for replaced_session_id in tuple(self._sessions):
@@ -10699,9 +10799,7 @@ class ConsoleChatStore:
                 restored_session.ephemeral
                 and self.canvas_promotion_participant is not None
             ):
-                self.canvas_promotion_participant.activate_session(
-                    restored_session.id
-                )
+                self.canvas_promotion_participant.activate_session(restored_session.id)
             if (
                 restored_session.ephemeral
                 and self.canvas_turn_controller is not None
@@ -10710,10 +10808,14 @@ class ConsoleChatStore:
                 self.canvas_turn_controller.activate_session(restored_session.id)
             with self._progress_identity_lock:
                 sibling = next(
-                    (other for other in self._sessions.values()
-                     if restored_session.persisted_conversation_id is not None
-                     and other.persisted_conversation_id == restored_session.persisted_conversation_id
-                     and other._progress_owner_id is not None),
+                    (
+                        other
+                        for other in self._sessions.values()
+                        if restored_session.persisted_conversation_id is not None
+                        and other.persisted_conversation_id
+                        == restored_session.persisted_conversation_id
+                        and other._progress_owner_id is not None
+                    ),
                     None,
                 )
                 if sibling is not None:
@@ -10745,6 +10847,13 @@ class ConsoleChatStore:
             )
             self._bump_payload_revision(session.id)
 
+        from tldw_chatbook.Agents.fleet_messages import MessageError
+
+        for restored_session_id in self._sessions:
+            try:
+                self.prepare_progress_inbox(restored_session_id)
+            except MessageError:
+                continue
         for replaced_session_id in replaced_binding_revisions:
             self._cleanup_console_settings_lifecycle_if_idle(replaced_session_id)
 
@@ -10904,7 +11013,7 @@ class ConsoleChatStore:
         markers whose durable accounting lives elsewhere: direct user commands
         use local-command run logs, while model calls use the agent run log.
         """
-        self._session_or_raise(session_id)
+        session = self._session_or_raise(session_id)
         if raw_cli_presentation is not None and (
             type(raw_cli_presentation) is not RawCliPresentation
             or role is not ConsoleMessageRole.TOOL
@@ -10970,6 +11079,10 @@ class ConsoleChatStore:
             and self.persistence is not None
             and (defer_terminal_persistence or arm_finalizer)
         )
+        old_leaf = self._active_leaf_by_session[session_id]
+        children = self._children_by_parent.get(session_id)
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         message = ConsoleChatMessage(
             id=message_id or str(uuid4()),
             role=role,
@@ -10978,7 +11091,9 @@ class ConsoleChatStore:
             tool_output_full=tool_output_full,
             tool_diff=tool_diff,
             change_review_run_id=change_review_run_id,
-            metadata=metadata,
+            metadata=flat_roots.appended_metadata(
+                metadata, role, old_leaf, children, session
+            ),
             activity_presentation=activity_presentation,
             activity_round_ordinal=activity_round_ordinal,
             raw_cli_presentation=raw_cli_presentation,
@@ -11016,7 +11131,6 @@ class ConsoleChatStore:
                     session_id, anchor_node, content, tool_output_full
                 )
             return self._snapshot(message)
-        old_leaf = self._active_leaf_by_session[session_id]
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
@@ -11132,21 +11246,25 @@ class ConsoleChatStore:
         """
         self._message_or_raise(anchor_message_id)
         session_id = self._message_session_index[anchor_message_id]
+        session = self._sessions[session_id]
         parent_native_id = self._native_parent_by_message.get(anchor_message_id)
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         message = ConsoleChatMessage(
             id=message_id or str(uuid4()),
             role=role,
             content=content,
             status=self._initial_status(role=role, content=content),
+            metadata=flat_roots.root_fork_metadata(parent_native_id, session),
         )
         # task-573: a fork can carry the anchor's attachments (Edit & resend
         # of an image-bearing user turn); same seam ``append_message`` uses.
         self._set_message_attachments(message, tuple(attachments))
-        previous_updated_at = self._sessions[session_id].updated_at
+        previous_updated_at = session.updated_at
         previous_active_leaf = self._active_leaf_by_session[session_id]
         try:
             with self._dispatch_branch_mutation(session_id):
-                self._sessions[session_id].updated_at = _utc_now_iso()
+                session.updated_at = _utc_now_iso()
                 self._register_tree_node(
                     session_id, message, parent_native_id=parent_native_id
                 )
@@ -12085,7 +12203,9 @@ class ConsoleChatStore:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
             )
-        if session_id != (self.active_session_id if owner_session_id is None else owner_session_id):
+        if session_id != (
+            self.active_session_id if owner_session_id is None else owner_session_id
+        ):
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
             )
@@ -12096,7 +12216,9 @@ class ConsoleChatStore:
                 ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
             )
         if owner_session_id is not None and session.runtime_backend != "local":
-            raise ConsoleSpeechSnapshotRejected(ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED)
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
+            )
         if message.generation_projection_quarantined:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
@@ -12185,7 +12307,9 @@ class ConsoleChatStore:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
             )
-        if snapshot.session_id != (self.active_session_id if owner_session_id is None else owner_session_id):
+        if snapshot.session_id != (
+            self.active_session_id if owner_session_id is None else owner_session_id
+        ):
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
             )
@@ -12195,7 +12319,9 @@ class ConsoleChatStore:
                 ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
             )
         if owner_session_id is not None and session.runtime_backend != "local":
-            raise ConsoleSpeechSnapshotRejected(ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED)
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
+            )
         owner_session_id = self._message_session_index.get(snapshot.message_id)
         if owner_session_id is None:
             raise ConsoleSpeechSnapshotRejected(
@@ -12452,7 +12578,9 @@ class ConsoleChatStore:
                 and content != previous_content
             ):
                 if not self._persist_active_leaf(session_id, message.id):
-                    raise ValueError("Resolve pending dispatch before editing this message.")
+                    raise ValueError(
+                        "Resolve pending dispatch before editing this message."
+                    )
         if not persisted:
             return self._snapshot(message)
 
@@ -12676,28 +12804,40 @@ class ConsoleChatStore:
         normalized = normalize_chat_display_name(value, blank_means_none=True)
         if session.user_display_name_override == normalized:
             return session, None
-        session.user_display_name_override = normalized
-        self._bump_identity_revision(session.id)
-        context_write = self._snapshot_roleplay_context_write(session)
-        plan = self._materialize_roleplay_projections_live(
-            session.id,
-            global_default=global_default,
-        )
-        if plan is None:
-            plan = ConsoleRoleplayProjectionPersistencePlan(
-                session_id=session.id,
-                generation=session.identity_revision,
-                persisted_conversation_id=session.persisted_conversation_id,
-                conversation_binding_revision=(
-                    session.conversation_binding_revision
-                ),
-                system_prompt_write=None,
-                message_writes=(),
-                context_write=context_write,
+        session_id = session.id
+        transition_token = str(uuid4())
+        self._begin_fork_source_transition(session_id)
+        with self._fork_source_lock:
+            self._roleplay_fork_transition_leases[transition_token] = session_id
+        try:
+            session.user_display_name_override = normalized
+            self._bump_identity_revision(session.id)
+            context_write = self._snapshot_roleplay_context_write(session)
+            plan = self._materialize_roleplay_projections_live(
+                session.id,
+                global_default=global_default,
             )
-        else:
-            plan = replace(plan, context_write=context_write)
-        return session, plan
+            if plan is None:
+                plan = ConsoleRoleplayProjectionPersistencePlan(
+                    session_id=session.id,
+                    generation=session.identity_revision,
+                    persisted_conversation_id=session.persisted_conversation_id,
+                    conversation_binding_revision=(
+                        session.conversation_binding_revision
+                    ),
+                    system_prompt_write=None,
+                    message_writes=(),
+                    context_write=context_write,
+                )
+            else:
+                plan = replace(plan, context_write=context_write)
+            return session, replace(plan, fork_transition_token=transition_token)
+        except BaseException:
+            self._release_roleplay_fork_transition(
+                transition_token,
+                expected_session_id=session_id,
+            )
+            raise
 
     @_fork_session_transition
     def refresh_session_roleplay_projections(
@@ -12838,16 +12978,17 @@ class ConsoleChatStore:
             if isinstance(system_template, str) and system_template.strip()
             else None
         )
-        source_changed = session.persona_system_template != source
-        session.persona_system_template = source
-        if source_changed:
-            self._bump_identity_revision(session_id)
-        context_persisted = self._persist_roleplay_context(session)
-        self._materialize_roleplay_projections(
-            session_id, global_default=global_default
-        )
-        if not context_persisted:
-            logger.warning("Failed to persist seeded Console persona context.")
+        with self._fork_source_transition(session_id):
+            source_changed = session.persona_system_template != source
+            session.persona_system_template = source
+            if source_changed:
+                self._bump_identity_revision(session_id)
+            context_persisted = self._persist_roleplay_context(session)
+            self._materialize_roleplay_projections(
+                session_id, global_default=global_default
+            )
+            if not context_persisted:
+                logger.warning("Failed to persist seeded Console persona context.")
 
     def swap_session_character_roleplay(
         self,
@@ -13034,14 +13175,15 @@ class ConsoleChatStore:
         new_name = normalized or None
         if session.assistant_name == new_name:
             return session, True
-        session.assistant_name = new_name
-        if new_name is not None:
-            session.character_name = None
-        self._bump_identity_revision(session_id)
-        persisted = self._materialize_roleplay_projections(
-            session_id, global_default=global_default
-        )
-        return session, persisted
+        with self._fork_source_transition(session_id):
+            session.assistant_name = new_name
+            if new_name is not None:
+                session.character_name = None
+            self._bump_identity_revision(session_id)
+            persisted = self._materialize_roleplay_projections(
+                session_id, global_default=global_default
+            )
+            return session, persisted
 
     def _bump_identity_revision(self, session_id: str) -> None:
         session = self._session_or_raise(session_id)
@@ -13363,8 +13505,7 @@ class ConsoleChatStore:
         return (
             session is not None
             and session.identity_revision == plan.generation
-            and session.persisted_conversation_id
-            == plan.persisted_conversation_id
+            and session.persisted_conversation_id == plan.persisted_conversation_id
             and session.conversation_binding_revision
             == plan.conversation_binding_revision
         )
@@ -13524,9 +13665,7 @@ class ConsoleChatStore:
                         character_system_template=(
                             context_write.character_system_template
                         ),
-                        character_name_snapshot=(
-                            context_write.character_name_snapshot
-                        ),
+                        character_name_snapshot=(context_write.character_name_snapshot),
                     )
                 )
             except Exception as exc:
@@ -13673,8 +13812,7 @@ class ConsoleChatStore:
         if (
             session is None
             or session.identity_revision != result.generation
-            or session.persisted_conversation_id
-            != result.persisted_conversation_id
+            or session.persisted_conversation_id != result.persisted_conversation_id
             or session.conversation_binding_revision
             != result.conversation_binding_revision
         ):
@@ -13737,19 +13875,6 @@ class ConsoleChatStore:
                 "(error_type={}).",
                 type(exc).__name__,
             )
-
-    def _persist_message_projection(self, message: ConsoleChatMessage) -> bool:
-        if self.persistence is None or message.persisted_message_id is None:
-            return True
-        try:
-            return self._persist_existing_message(message)
-        except Exception as exc:
-            logger.warning(
-                "Failed to persist Console roleplay message projection "
-                "(error_type={}).",
-                type(exc).__name__,
-            )
-            return False
 
     def _persist_session_system_prompt(
         self, session: ConsoleChatSession, system_prompt: str | None
@@ -13824,28 +13949,29 @@ class ConsoleChatStore:
         parent_native_id = self._native_parent_by_message.get(message_id)
         on_active_path = message_id in self.active_path_message_ids(session_id)
         subtree_ids = self._subtree_ids(session_id, message_id)
-        if self.persistence is None or message.persisted_message_id is None:
-            with self._dispatch_branch_mutation(session_id):
-                if on_active_path and not self._persist_active_leaf(
-                    session_id, parent_native_id
-                ):
-                    raise ValueError("Resolve pending dispatch before deleting this message.")
+        nodes = self._nodes_by_session.get(session_id, {})
         tombstones: list[dict[str, Any]] = []
-        if self.persistence is not None and message.persisted_message_id is not None:
-            deleter = getattr(self.persistence, "delete_message_subtree", None)
-            if not callable(deleter):
-                raise RuntimeError("Message deletion could not be persisted.")
-            with self._dispatch_branch_mutation(session_id):
-                tombstones = deleter(message_id=message.persisted_message_id)
-                if on_active_path and not self._persist_active_leaf(
-                    session_id, parent_native_id
-                ):
-                    raise ValueError("Resolve pending dispatch before deleting this message.")
-            self._project_sync_v2_message_deletes(tombstones)
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
+        with self._dispatch_branch_mutation(session_id):
+            # TASK-33628.6/.7/.9: every saved row, even under an unsaved node.
+            saved = flat_roots.delete_seeds(self, session_id, subtree_ids)
+            anchor = message.persisted_message_id or next(filter(None, saved), None)
+            if anchor is not None and self.persistence is not None:
+                deleter = getattr(self.persistence, "delete_message_subtree", None)
+                if not callable(deleter):
+                    raise RuntimeError("Message deletion could not be persisted.")
+                tombstones = deleter(message_id=anchor, subtree_message_ids=saved)
+            if on_active_path and not self._persist_active_leaf(
+                session_id, parent_native_id
+            ):
+                raise ValueError(
+                    "Resolve pending dispatch before deleting this message."
+                )
+        self._project_sync_v2_message_deletes(tombstones)
         for node_id in subtree_ids:
             self._invalidate_generation_attempt(node_id)
         children_map = self._children_by_parent.get(session_id, {})
-        nodes = self._nodes_by_session.get(session_id, {})
         # Detach the deleted node from its parent's ordered child list.
         siblings = children_map.get(parent_native_id)
         if siblings is not None and message_id in siblings:
@@ -15203,9 +15329,7 @@ class ConsoleChatStore:
             # original answer priced by the abandoned regeneration.
             return self._snapshot(message)
         message.usage = usage
-        self._bump_display_projection_revision(
-            self._message_session_index[message.id]
-        )
+        self._bump_display_projection_revision(self._message_session_index[message.id])
         if message.status not in {"pending", "streaming"}:
             self._persist_usage_only(message)
         return self._snapshot(message)
@@ -15404,9 +15528,9 @@ class ConsoleChatStore:
         revised in place while a turn runs: a realtime user row is created
         ``pending`` at turn-commit and becomes ``final``/``empty``/``failed``
         when its transcript resolves, and a reply is marked ``interrupted``
-        after the fact. So this always overwrites (the caller composes the
-        whole record; there is no partial merge to get wrong) and persists
-        immediately WHEN there is a durable row to write to.
+        after the fact. So this overwrites (the caller composes the whole
+        record; only the store's own ``root_fork`` marker is carried over) and
+        persists immediately WHEN there is a durable row to write to.
 
         A row with no persisted id yet is left alone on purpose: an empty
         realtime user row is not written at all until its transcript lands
@@ -15422,7 +15546,9 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._reject_quarantined_generation_mutation(message)
-        message.metadata = metadata
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
+        message.metadata = flat_roots.keep_root_fork(message.metadata, metadata)
         if message.persisted_message_id is not None:
             self._persist_metadata_only(message)
         return self._snapshot(message)
@@ -15642,12 +15768,15 @@ class ConsoleChatStore:
                         return None
                 elif not current_leaf_persisted_id:
                     return None
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         return ResolvedVoicePromotionDestination(
             session_id=session_id,
             session_incarnation=context.origin.session_incarnation,
             persisted_conversation_id=session.persisted_conversation_id,
             expected_persisted_leaf_id=current_leaf_persisted_id,
             capture_eligible_at_dispatch=context.capture_eligible_at_dispatch,
+            user_root_fork=flat_roots.voice_user_root_fork(self, session, context),
         )
 
     def try_claim_voice_promotion(
@@ -16142,6 +16271,8 @@ class ConsoleChatStore:
             assistant.metadata = MessageMetadata(
                 terminal_receipt_id=commit.terminal_receipt_id
             )
+        if lease.destination.user_root_fork:  # saved marked (TASK-33628.12)
+            user.metadata = MessageMetadata(root_fork=True)
         if persisted:
             user.parent_message_id = lease.destination.expected_persisted_leaf_id
             assistant.parent_message_id = user.id
@@ -17019,7 +17150,9 @@ class ConsoleChatStore:
                     # `citation_write` at all. Guarding this flush on one would
                     # leave the durable row empty while the in-memory message
                     # reads complete -- the answer lost, silently.
-                    self._persist_existing_terminal(message, terminal_outcome="complete")
+                    self._persist_existing_terminal(
+                        message, terminal_outcome="complete"
+                    )
                 # A checkpointed row with no sealed citation is complete after
                 # the UPDATE above.  Calling create_message again would try to
                 # insert the same stable id and turn a successful durable
@@ -18515,8 +18648,7 @@ class ConsoleChatStore:
         )
         staged_generation_snapshot = (
             snapshot_from_session_settings(session.settings)
-            if session.settings is not None
-            and session.generation_settings_revision > 0
+            if session.settings is not None and session.generation_settings_revision > 0
             else None
         )
         if staged_generation_snapshot is not None:
@@ -18893,7 +19025,19 @@ class ConsoleChatStore:
             self.retry_pending_workspace_projection(session_id)
             return None
         canvas_contribution: CanvasPromotionContribution | None = None
+        progress_inbox = None
+        progress_contribution = None
         try:
+            with self.progress_owner_scope(session_id) as progress_owner_id:
+                if (
+                    self._progress_message_store is not None
+                    and progress_owner_id is not None
+                ):
+                    progress_inbox = self._progress_message_store.get_inbox(
+                        progress_owner_id
+                    )
+            if progress_inbox is not None:
+                progress_contribution = progress_inbox.prepare_promotion()
             activity_contribution = (
                 self._library_activity_buffer.promotion_contribution(session_id)
             )
@@ -18915,6 +19059,11 @@ class ConsoleChatStore:
                     *combined_contributions,
                     activity_contribution,
                 )
+            if progress_contribution is not None:
+                combined_contributions = (
+                    *combined_contributions,
+                    progress_contribution,
+                )
             return self._promote_ephemeral_session_atomically(
                 session,
                 reservation=reservation,
@@ -18925,6 +19074,21 @@ class ConsoleChatStore:
             )
         finally:
             try:
+                if progress_contribution is not None:
+                    repository = None
+                    if reservation.committed:
+                        from tldw_chatbook.DB.fleet_progress_repository import (
+                            FleetProgressRepository,
+                        )
+
+                        repository = FleetProgressRepository(self.persistence.db)
+                    progress_inbox.settle_promotion(
+                        progress_contribution,
+                        repository=repository,
+                        saved_conversation_id=session.persisted_conversation_id,
+                    )
+                    if reservation.committed:
+                        self.prepare_progress_inbox(session_id)
                 self._settle_canvas_promotion_contribution(
                     reservation,
                     canvas_contribution,
@@ -19237,7 +19401,6 @@ class ConsoleChatStore:
                 self.on_scope_flushed(identity.conversation_id, held_scope)
             except Exception:
                 logger.exception("on_scope_flushed callback failed after promotion.")
-        self._persist_project_instruction_state(session)
         self._flush_context_policy_on_first_persist(session)
         return identity.conversation_id
 
@@ -20144,18 +20307,12 @@ class ConsoleChatStore:
             )
         ):
             create_kwargs["metadata_json"] = message.metadata.to_json()
-        if (
-            terminal_receipt_id is not None
-            and self._persistence_accepts_kwarg(
-                self.persistence.create_message, "terminal_receipt_id"
-            )
+        if terminal_receipt_id is not None and self._persistence_accepts_kwarg(
+            self.persistence.create_message, "terminal_receipt_id"
         ):
             create_kwargs["terminal_receipt_id"] = terminal_receipt_id
-        if (
-            terminal_outcome is not None
-            and self._persistence_accepts_kwarg(
-                self.persistence.create_message, "terminal_outcome"
-            )
+        if terminal_outcome is not None and self._persistence_accepts_kwarg(
+            self.persistence.create_message, "terminal_outcome"
         ):
             create_kwargs["terminal_outcome"] = terminal_outcome
         if (
@@ -20177,10 +20334,7 @@ class ConsoleChatStore:
         # ownership is rechecked here so a receipt primed while a deferred
         # worker sat queued can never be bypassed by an unmarked insert.
         with self._pending_row_insert_lock:
-            if (
-                not terminal_persistence
-                and message.persisted_message_id is not None
-            ):
+            if not terminal_persistence and message.persisted_message_id is not None:
                 return True
             if (
                 terminal_receipt_id is None
@@ -20774,20 +20928,14 @@ class ConsoleChatStore:
             ):
                 return False
             update_kwargs["expected_version"] = expected_version
-        if (
-            terminal_receipt_id is not None
-            and self._persistence_accepts_kwarg(
-                self.persistence.update_message_content,
-                "terminal_receipt_id",
-            )
+        if terminal_receipt_id is not None and self._persistence_accepts_kwarg(
+            self.persistence.update_message_content,
+            "terminal_receipt_id",
         ):
             update_kwargs["terminal_receipt_id"] = terminal_receipt_id
-        if (
-            terminal_outcome is not None
-            and self._persistence_accepts_kwarg(
-                self.persistence.update_message_content,
-                "terminal_outcome",
-            )
+        if terminal_outcome is not None and self._persistence_accepts_kwarg(
+            self.persistence.update_message_content,
+            "terminal_outcome",
         ):
             update_kwargs["terminal_outcome"] = terminal_outcome
         if (
@@ -20907,8 +21055,7 @@ class ConsoleChatStore:
                 )
         except Exception:
             logger.warning(
-                "Failed to record Sync v2 version hash after generation "
-                "reconciliation"
+                "Failed to record Sync v2 version hash after generation reconciliation"
             )
 
     def _persist_pending_message_if_ready(
@@ -21053,6 +21200,10 @@ class ConsoleChatStore:
     def persist_provider_continuation_event(
         self,
         event: ProviderContinuationEvent,
+        *,
+        checkpoint_finalizer: (
+            Callable[..., ProviderContinuationCheckpoint] | None
+        ) = None,
     ) -> None:
         """Commit one runtime continuation event before its next side effect.
 
@@ -21085,6 +21236,17 @@ class ConsoleChatStore:
             )
 
         checkpoint, content = self._continuation_event_value(message, event)
+        if checkpoint_finalizer is not None:
+            session_id = self._message_session_index[message.id]
+            conversation_id = self.persist_session_if_needed(session_id)
+            if not conversation_id:
+                raise RuntimeError("Durable managed continuation owner is unavailable.")
+            checkpoint = checkpoint_finalizer(
+                checkpoint,
+                conversation_id,
+                message.persisted_message_id or message.id,
+                context.run_id,
+            )
         private_json = dump_provider_continuation_json(checkpoint)
         if private_json is None:
             raise RuntimeError("Durable continuation state is unavailable.")
@@ -21185,14 +21347,16 @@ class ConsoleChatStore:
             creator = getattr(database, "create_assistant_with_continuation", None)
             if not callable(creator):
                 raise RuntimeError("Durable continuation storage is unavailable.")
+            parent_message_id = self._previous_persisted_message_id(message)
             creator(
                 message_id=message.id,
                 conversation_id=conversation_id,
-                parent_message_id=self._previous_persisted_message_id(message),
+                parent_message_id=parent_message_id,
                 content=content,
                 provider_continuation_json=private_json,
             )
             message.persisted_message_id = message.id
+            message.parent_message_id = parent_message_id
             self._pending_persistence_message_ids.discard(message.id)
             message_version = 1
         else:
@@ -21401,9 +21565,7 @@ class ConsoleChatStore:
                 enqueue_kwargs["assistant_generation_state"] = (
                     message.assistant_generation_state
                 )
-            result = self.sync_v2_chat_producer.enqueue_chat_message(
-                **enqueue_kwargs
-            )
+            result = self.sync_v2_chat_producer.enqueue_chat_message(**enqueue_kwargs)
             self._record_sync_v2_message_version(stable_key, result)
         except Exception:
             if content_safe_diagnostic:
@@ -21829,12 +21991,29 @@ class ConsoleChatStore:
         ``all_nodes`` -- resume re-derives them from ``AgentRunsDB`` and overlays
         them onto the view afterward -- but any that slip in are registered in
         the session index only, mirroring ``_ingest_linear_messages``.
+
+        TASK-33662: a dispatch recovery names its owner rows by persisted id,
+        which a live turn's native ids equal. A restored owner keeps that id as
+        its native id (unless another session holds it), or Retry and Discard
+        cannot find it after a relaunch.
         """
+        recovery = self.dispatch_recovery_for_session(session_id)
+        owner_ids = (
+            {
+                getattr(recovery, "assistant_message_id", None),
+                getattr(getattr(recovery, "checkpoint", None), "user_message_id", None),
+            }
+            - self._message_session_index.keys()
+            - {None, ""}
+        )
         registered: list[ConsoleChatMessage] = []
         persisted_to_native: dict[str, str] = {}
         for node in all_nodes:
             restored = replace(
                 node,
+                id=node.persisted_message_id
+                if node.persisted_message_id in owner_ids
+                else node.id,
                 citation_presentation=None,
                 activity_presentation=None,
                 raw_cli_presentation=None,
@@ -21890,9 +22069,7 @@ class ConsoleChatStore:
         if restore_before_native is not None:
             self._active_leaf_by_session[session_id] = None
             self._recompute_active_path(session_id)
-            self.set_session_draft(
-                session_id, nodes[restore_before_native].content
-            )
+            self.set_session_draft(session_id, nodes[restore_before_native].content)
         else:
             self._active_leaf_by_session[session_id] = leaf_native
             self._recompute_active_path(session_id)
@@ -21904,101 +22081,30 @@ class ConsoleChatStore:
         self._resolve_context_summary_on_resume(session_id, persisted_to_native)
 
     def _chain_legacy_flat_roots(self, session_id: str) -> None:
-        """Chain multiple root-level threads into one linear spine (C1 repair).
+        """Chain legacy flat root-level rows into one linear spine (C1 repair).
 
-        Pre-feature Console persistence wrote EVERY message with
-        ``parent_message_id=NULL`` (the base ``_persist_new_message`` hardcoded
-        ``None``), so an existing conversation ``[U1, A1, U2, A2]`` is stored as
-        four separate roots -- all siblings under ``None``, none with children.
-        On resume the active-leaf fallback (``_most_recent_leaf_native``) then
-        walks only the LAST root, collapsing the transcript to its final message
-        and rendering a phantom ``n/n`` sibling counter on the survivor.
-
-        Historically a GENUINE Console branch was ALWAYS a set of siblings
-        under a shared *non-None* parent (regenerate / create-sibling parent
-        the new node at the anchor's parent), NEVER two separate root
-        threads -- a conversation's real root is its single first message.
-        So more than one root-level thread meant legacy flat data (fully
-        flat, or a flat prefix followed by post-feature branched messages),
-        and it was always correct to chain the roots into a single linear
-        spine.
-
-        Phase B's ``edit_and_resend_message`` broke that invariant on
-        purpose: editing-and-resending the conversation's very FIRST user
-        message forks a NEW root-level USER sibling (``create_sibling``
-        parents the fork at the anchor's own parent, which is ``None`` for a
-        root message) -- a genuine branch that legitimately has more than one
-        root thread. A genuine root-level fork's siblings are ALWAYS all USER
-        (an ASSISTANT node's native parent is never ``None`` -- it always
-        replies to a user turn, even the very first one), so a role-MIXED root
-        set (both USER and ASSISTANT at the root) can ONLY be legacy flat data
-        and is chained. Role-homogeneity is thus the distinguishing signal: a
-        single-role (all-USER) root set is treated as a genuine Phase-B branch
-        and left alone (chaining it would silently splice the newer branch onto
-        the older as a fake parent-child link, corrupting the tree so a
-        swipe/resume shows the wrong content).
-
-        task-572 strengthens the fingerprint for the all-USER root set: a
-        DEGENERATE legacy conversation whose 2+ user turns each got NO
-        assistant reply (reachable in the flat era via repeated
-        failed/blocked sends) also loads as all-USER roots -- but its roots
-        are ALL CHILDLESS, whereas a genuine first-message edit-&-resend
-        fork always hangs at least one reply subtree under a root (the
-        anchor's old tail, and/or the resent branch's own reply). So an
-        all-USER root set is chained when every root is childless, and left
-        alone when any root has a subtree.
-
-        RESIDUAL EDGE (not airtight, narrower than the pre-task-572 gap): a
-        genuine first-message fork whose BOTH branches ended up childless --
-        the anchor never got a reply AND the resent branch's reply never
-        persisted (killed mid-stream before the first flushed chunk) -- is
-        indistinguishable from degenerate legacy and now chains. Non-data-
-        loss (both user rows stay visible, linearly), and strictly rarer
-        than the all-USER-legacy shape this fixes; the two shapes are
-        provably indistinguishable from the persisted tree alone, so no
-        local heuristic can be perfect.
-
-        Roots are chained in their existing insertion order, which is the DB's
-        timestamp-ASC order (``get_root_messages_for_conversation`` orders roots
-        by timestamp; ``ConsoleChatMessage`` carries no timestamp of its own, so
-        insertion order is the ordering signal -- exactly the accepted fallback
-        for equal/absent timestamps). Each root ``r_i`` (i >= 1) is re-parented
-        onto ``r_{i-1}`` and moved out of the ``None`` bucket into
-        ``r_{i-1}``'s ordered child list; any real subtree already hanging off a
-        root (e.g. a post-feature message whose real parent is a flat row) is
-        left intact. After chaining there is exactly one root (``r_0``) and the
-        active-leaf ancestry walk traverses the full spine plus any subtrees.
-
-        A single-root (genuine) tree is left untouched -- the chaining branch
-        never triggers. This is an IN-MEMORY reconstruction only; durable
-        ``parent_message_id`` rows are never rewritten (the active-leaf pointer
-        repair on resume is the durable fix).
+        ``console_legacy_flat_roots.legacy_flat_chain`` picks the roots: every
+        unmarked legacy flat root (a marked fork stays its own root; that module
+        has the rule and its residual edges). They chain in insertion order, the
+        DB's timestamp-ASC root order: each ``r_i`` (i >= 1) moves from the
+        ``None`` bucket to the end of ``r_{i-1}``'s child list, any real subtree
+        left intact, so the ancestry walk traverses the whole spine. IN-MEMORY
+        only: durable ``parent_message_id`` rows are never rewritten.
         """
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         children = self._children_by_parent.get(session_id)
         if children is None:
             return
         roots = children.get(None, [])
-        if len(roots) <= 1:
-            return
         nodes = self._nodes_by_session.get(session_id, {})
-        root_has_assistant = any(
-            nodes[root_id].role is ConsoleMessageRole.ASSISTANT
-            for root_id in roots
-            if root_id in nodes
-        )
-        all_roots_childless = all(not children.get(root_id) for root_id in roots)
-        if not root_has_assistant and not all_roots_childless:
-            # All-USER roots with at least one reply subtree: a genuine
-            # Phase-B root-level fork (an ASSISTANT node's parent is never
-            # None, so any root assistant row is the legacy signature; and a
-            # real fork always carries a subtree). Leave each root
-            # independently navigable via `siblings_at`/`set_active_leaf`.
+        chain = flat_roots.legacy_flat_chain(roots, children, nodes)
+        if len(chain) <= 1:
             return
-        # Keep only the first root under None; chain the rest onto their
-        # predecessor, preserving each root's own existing subtree.
-        children[None] = [roots[0]]
-        previous = roots[0]
-        for root in roots[1:]:
+        chained = set(chain[1:])
+        children[None] = [root for root in roots if root not in chained]
+        previous = chain[0]
+        for root in chain[1:]:
             self._native_parent_by_message[root] = previous
             children.setdefault(previous, []).append(root)
             previous = root
@@ -22207,7 +22313,9 @@ class ConsoleChatStore:
         another connection cannot accept a send between this check and mutation.
         """
         session = self._sessions.get(session_id)
-        conversation_id = session.persisted_conversation_id if session is not None else None
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
         db = getattr(self.persistence, "db", None)
         if conversation_id is None or db is None:
             yield
@@ -22242,7 +22350,9 @@ class ConsoleChatStore:
         the historical in-memory write-through behavior.
         """
         session = self._sessions.get(session_id)
-        conversation_id = session.persisted_conversation_id if session is not None else None
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
         if conversation_id is None:
             return True
         persistence_db = getattr(self.persistence, "db", None)
@@ -22253,7 +22363,9 @@ class ConsoleChatStore:
             node = self._nodes_by_session.get(session_id, {}).get(message_id)
             leaf_persisted_id = node.persisted_message_id if node is not None else None
         try:
-            persistence_db.set_conversation_active_leaf(conversation_id, leaf_persisted_id)
+            persistence_db.set_conversation_active_leaf(
+                conversation_id, leaf_persisted_id
+            )
         except InputError:
             logger.warning("console_cursor_pending_dispatch")
             return False
@@ -22421,9 +22533,7 @@ class ConsoleChatStore:
                 return
             self._persist_pending_message_if_ready(message)
 
-    def _materialize_stream_buffer_deferred(
-        self, message: ConsoleChatMessage
-    ) -> None:
+    def _materialize_stream_buffer_deferred(self, message: ConsoleChatMessage) -> None:
         """Fold buffered chunks inline and persist the pending row off-thread.
 
         task-33081: read paths running on the UI event loop (the 0.2s Console
@@ -22438,9 +22548,7 @@ class ConsoleChatStore:
                 return
             self._defer_pending_message_persistence(message)
 
-    def _defer_pending_message_persistence(
-        self, message: ConsoleChatMessage
-    ) -> None:
+    def _defer_pending_message_persistence(self, message: ConsoleChatMessage) -> None:
         if self.persistence is None:
             return
         with self._stream_persistence_deferred_lock:

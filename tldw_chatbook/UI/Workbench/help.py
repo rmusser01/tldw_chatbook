@@ -49,9 +49,7 @@ class WorkbenchHelpState:
             lines.append("Shortcuts:")
             for group_name, group_shortcuts in self.shortcut_groups:
                 lines.append(f"  {group_name}:")
-                lines.extend(
-                    f"    {key}: {label}" for key, label in group_shortcuts
-                )
+                lines.extend(f"    {key}: {label}" for key, label in group_shortcuts)
         elif self.shortcuts:
             lines.append("Shortcuts:")
             lines.extend(f"- {key}: {label}" for key, label in self.shortcuts)

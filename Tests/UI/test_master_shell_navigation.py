@@ -30,7 +30,9 @@ from tldw_chatbook.UI.Navigation.main_navigation import (
 #: live, since `App.CSS_PATH` stylesheets outrank widget `DEFAULT_CSS`
 #: regardless of specificity or `!important` (see the rule's docstring in
 #: `main_navigation.py`).
-_BUNDLED_CSS_PATH = str(Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss")
+_BUNDLED_CSS_PATH = str(
+    Path(tldw_chatbook.__file__).parent / "css" / "tldw_cli_modular.tcss"
+)
 
 #: The selector `test_ghost_rule_is_width_neutral_under_the_bundled_stylesheet`
 #: pins, and the box-model properties that made it geometry-non-neutral once
@@ -861,7 +863,9 @@ async def test_nav_strip_never_renders_a_partial_destination_label(width, active
             # default position, some destination WILL straddle the "More
             # ›" hint's edge -- if nothing were ever ghosted here, the
             # geometry/rendered-text assertions above would be vacuous.
-            assert ghosted, "test premise: expected a straddling destination at 100 cols"
+            assert ghosted, (
+                "test premise: expected a straddling destination at 100 cols"
+            )
 
 
 # --- task-4020: re-critique RC-02 -- ghosting effectiveness under the real,
@@ -912,9 +916,7 @@ def _plain_nav_text(app: App) -> str:
     legible label.
     """
     strips = app.screen._compositor.render_strips()
-    return "\n".join(
-        "".join(segment.text for segment in strip) for strip in strips
-    )
+    return "\n".join("".join(segment.text for segment in strip) for strip in strips)
 
 
 @pytest.mark.asyncio
@@ -957,8 +959,7 @@ async def test_naive_colorless_capture_false_positives_on_ghosted_labels():
         # A colorless capture sees the clipped fragment even though the
         # button is ghosted (fg == bg) and disabled.
         assert fragment in _plain_nav_text(app), (
-            "expected the colorless capture to include the ghosted destination "
-            "fragment"
+            "expected the colorless capture to include the ghosted destination fragment"
         )
 
         # The color-aware check (already established by task-3200, reused
@@ -1218,9 +1219,7 @@ async def test_click_on_ghosted_nav_button_via_border_route_is_a_no_op():
             if button.has_class("nav-button-clip-ghost")
         ]
         assert ghosted, "test premise: expected a straddling destination at 80 cols"
-        target = next(
-            (b for b in ghosted if b.id == "nav-artifacts"), ghosted[0]
-        )
+        target = next((b for b in ghosted if b.id == "nav-artifacts"), ghosted[0])
         assert target.disabled
         region = target.region
 

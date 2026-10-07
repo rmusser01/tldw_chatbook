@@ -65,6 +65,7 @@ as an ``AttributeError`` inside whichever moved body reaches for it first,
 under the wrong prefix. One shared home closes that gap for good instead
 of adding a third copy.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -121,6 +122,10 @@ class LibraryConversationsState:
     reader_loaded_metadata: Mapping[str, Any] = field(default_factory=dict)
     reader_selected_metadata: Mapping[str, Any] = field(default_factory=dict)
     find_focus_intent: tuple[int, int, str] | None = None
+    #: (list request generation, reader generation): a transcript loaded at
+    #: or past that reader generation is current for that list read
+    #: (TASK-33628.10).
+    reader_checked_read: tuple[int, int] | None = None
     reader_mounted_authority: bool = False
     deleted_selection_id: str = ""
     projection: str = ""

@@ -171,9 +171,7 @@ async def test_the_inspector_follows_the_same_three_states():
         service.release.set()
         for _ in range(120):
             await pilot.pause()
-            inspector = screen.query_one(
-                "#watchlists-entity-inspector", InspectorPane
-            )
+            inspector = screen.query_one("#watchlists-entity-inspector", InspectorPane)
             if inspector.query("#inspector-first-run-hint"):
                 break
 
@@ -189,12 +187,10 @@ async def test_the_inspector_follows_the_same_three_states():
         # Overview's own first-run guidance (UAT: three stacked "nothing
         # yet" messages on one screen) -- this pane's hint now names just
         # the one action relevant to what IT shows.
-        hint_text = str(
-            inspector.query_one("#inspector-first-run-hint").renderable
+        hint_text = str(inspector.query_one("#inspector-first-run-hint").renderable)
+        assert "start with new source under sources" in (hint_text.lower()), (
+            f"the Inspector's first-run hint is missing or empty; it renders {hint_text!r}"
         )
-        assert "start with new source under sources" in (
-            hint_text.lower()
-        ), f"the Inspector's first-run hint is missing or empty; it renders {hint_text!r}"
 
 
 @pytest.mark.asyncio

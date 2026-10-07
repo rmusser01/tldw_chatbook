@@ -88,6 +88,7 @@ def worker_factory(monkeypatch):
         cache: bool = False,
         grace: float = 1.0,
         max_children: int = 4,
+        handshake_timeout: float | None = None,
     ):
         if expected_stamp is not None:
             monkeypatch.setattr(worker_module, "expected_bundle_stamp", lambda _data: expected_stamp)
@@ -115,6 +116,7 @@ def worker_factory(monkeypatch):
             idle_s=30,
             cache=cache,
             spawn=spawn,
+            handshake_timeout=handshake_timeout,
         )
         workers.append(worker)
         return worker, spawns
@@ -342,13 +344,47 @@ def test_natural_255_death_classifies_by_real_exit_code(worker_factory, workspac
     assert after.failure.kind is TransportFailureKind.UNREACHABLE
 
 
-def test_call_after_close_is_remote_op_failed(worker_factory, workspace):
+def test_call_after_close_raises_session_closed(worker_factory, workspace):
+    """TASK-33401: a session the laptop retired sent nothing; the caller re-acquires."""
     worker, _ = worker_factory()
     worker.start()
+    worker.close()
+    with pytest.raises(worker_module.SessionClosed):
+        worker.call(read_request(workspace, "a.txt"), budget=10)
+
+
+def test_call_after_a_stuck_kill_is_still_remote_op_failed(worker_factory, workspace):
+    """Only a laptop close of a HEALTHY session is retryable; a killed one is not.
+
+    The run-end/reap path always calls close() on whatever it pops out of
+    the registry, dead or alive, so the real sequence to pin is death THEN
+    close() THEN a straggler call -- not just death then call (TASK-33401's
+    was_alive guard in close() is only exercised by the close() step)."""
+    worker, _ = worker_factory()
+    worker.start()
+    worker._die(natural=False)
     worker.close()
     result = worker.call(read_request(workspace, "a.txt"), budget=10)
     assert not result.admitted
     assert result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED
+
+
+def test_call_after_close_following_a_natural_death_is_still_classified(worker_factory, workspace):
+    """A close() after a NATURAL death (host exited 255 on its own) must not
+    retire the session either: close()'s was_alive guard only fires for a
+    session that was still ALIVE when close() ran (TASK-33401)."""
+    artifact, _, _ = _bundle_payload()
+    worker, _ = worker_factory(
+        spawn_argv=[sys.executable, "-c", _EXIT_255_HOST, expected_bundle_stamp(artifact)]
+    )
+    worker.start()
+    inflight = worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert not inflight.admitted
+    assert inflight.failure.kind is TransportFailureKind.UNREACHABLE
+    worker.close()
+    result = worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert not result.admitted
+    assert result.failure.kind is TransportFailureKind.UNREACHABLE
 
 
 def test_mid_frame_stall_kills_the_session(worker_factory, workspace):
@@ -562,6 +598,72 @@ _NEED_NO_READ_HOST = textwrap.dedent(
     """
 )
 
+#: Host that asks for the bundle, takes it whole, then never says READY.
+_NEED_THEN_SILENT_HOST = textwrap.dedent(
+    """
+    import os, sys, time
+    loader_len, bundle_hash = int(sys.argv[1]), sys.argv[2]
+    def read_exact(n):
+        buf = b""
+        while len(buf) < n:
+            chunk = os.read(0, n - len(buf))
+            if not chunk:
+                sys.exit(3)
+            buf += chunk
+        return buf
+    read_exact(loader_len)
+    header = b""
+    while not header.endswith(b"\\n"):
+        header += read_exact(1)
+    os.write(1, b"TLDW-REMOTE-0001NEED " + bundle_hash.encode() + b"\\n")
+    size = int.from_bytes(read_exact(4), "big")
+    read_exact(size)
+    time.sleep(30)
+    """
+)
+
+
+def _need_then_silent_argv() -> list[str]:
+    _, compressed, _ = _bundle_payload()
+    return [
+        sys.executable, "-c", _NEED_THEN_SILENT_HOST,
+        str(len(loader_payload())), hashlib.sha256(compressed).hexdigest(),
+    ]
+
+
+def _need_no_read_argv() -> list[str]:
+    _, compressed, _ = _bundle_payload()
+    return [sys.executable, "-c", _NEED_NO_READ_HOST, hashlib.sha256(compressed).hexdigest()]
+
+
+def test_budget_expiry_mid_upload_fails_only_that_call(worker_factory):
+    """TASK-33420: the host answered NEED; the call's budget ran out mid-upload."""
+    worker, _ = worker_factory(spawn_argv=_need_no_read_argv(), handshake_timeout=1.0)
+    started = time.monotonic()
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    assert time.monotonic() - started < 8
+    assert err.value.transport is True  # the call's result, no one-shot retry
+    assert err.value.failure.kind is TransportFailureKind.OP_TIMEOUT
+
+
+@pytest.mark.parametrize("budget_bounded", [True, False])
+def test_ready_stall_after_answer_is_never_unreachable(worker_factory, monkeypatch, budget_bounded):
+    """TASK-33420 AC #3: a READY that never comes after NEED is never UNREACHABLE."""
+    if budget_bounded:
+        worker, _ = worker_factory(spawn_argv=_need_then_silent_argv(), handshake_timeout=1.0)
+    else:
+        monkeypatch.setattr(worker_module, "_HANDSHAKE_TIMEOUT_S", 1.0)
+        worker, _ = worker_factory(spawn_argv=_need_then_silent_argv())
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    if budget_bounded:
+        assert err.value.transport is True
+        assert err.value.failure.kind is TransportFailureKind.OP_TIMEOUT
+    else:
+        assert err.value.transport is False  # protocol-class: one-shot for the run
+        assert err.value.failure is None or err.value.failure.kind is not TransportFailureKind.UNREACHABLE
+
 
 def test_bundle_write_is_bounded_by_the_handshake_deadline(worker_factory, monkeypatch):
     monkeypatch.setattr(worker_module, "_HANDSHAKE_TIMEOUT_S", 2.0)
@@ -605,3 +707,169 @@ def test_host_refusal_status_maps_to_op_timeout(worker_factory):
     result = worker._result(pending, 5.0, killed=False)
     assert not result.admitted
     assert result.failure.kind is TransportFailureKind.OP_TIMEOUT
+
+
+def test_handshake_is_bounded_by_the_call_budget(worker_factory):
+    """TASK-33400: a silent host fails at the budget, classified like one-shot."""
+    worker, _ = worker_factory(spawn_argv=["sh", "-c", "exec sleep 30"], handshake_timeout=1.0)
+    started = time.monotonic()
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    assert time.monotonic() - started < 6
+    assert err.value.transport is True
+    assert err.value.failure.kind is TransportFailureKind.UNREACHABLE
+
+
+def test_failed_start_reaps_ssh_and_closes_its_pipes(worker_factory):
+    worker, spawns = worker_factory(spawn_argv=["sh", "-c", "exit 255"])
+    with pytest.raises(SessionStartError):
+        worker.start()
+    proc = spawns[0]
+    assert proc.returncode is not None
+    assert proc.stdin.closed and proc.stdout.closed and proc.stderr.closed
+
+
+def test_unexpected_pipe_error_during_start_is_a_protocol_start_error(worker_factory, monkeypatch):
+    worker, spawns = worker_factory(spawn_argv=["sh", "-c", "exec sleep 30"])
+
+    def broken_read(self, deadline):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(RemoteSessionWorker, "_read_handshake_line", broken_read)
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    assert err.value.transport is False
+    proc = spawns[0]
+    assert proc.returncode is not None and proc.stdout.closed
+
+
+def test_tail_capture_keeps_the_last_bytes():
+    capture = worker_module._TailCapture(8)
+    capture.append(b"0123456789")
+    capture.append(b"ab")
+    assert capture.value() == b"456789ab"
+
+
+def test_mux_marker_after_64k_of_stderr_still_classifies_mux(worker_factory, workspace):
+    """TASK-33403: a long session's death reason is at the END of its stderr."""
+    worker, _ = worker_factory()
+    worker.start()
+    worker.close()
+    worker._stderr.append(b"x" * (70 * 1024) + b"\n")
+    worker._stderr.append(b"mux_client_request_session: read from master failed: Broken pipe\n")
+    worker._death_natural, worker._death_code = True, 255  # as if ssh died on its own
+    result = worker._dead_session_result()
+    assert result.failure.kind is TransportFailureKind.MUX_ERROR
+
+
+def test_mux_error_at_start_is_classified_mux(worker_factory):
+    worker, _ = worker_factory(
+        spawn_argv=[
+            "sh", "-c",
+            "echo 'mux_client_hello_exchange: write packet: Broken pipe' >&2; exit 255",
+        ]
+    )
+    with pytest.raises(SessionStartError) as err:
+        worker.start()
+    assert err.value.failure.kind is TransportFailureKind.MUX_ERROR
+
+
+def test_host_spawn_failure_is_status_preserving(worker_factory):
+    from tldw_chatbook.Tools.remote_session_frames import HOST_SPAWN_FAILED
+
+    worker, _ = worker_factory()
+    pending = worker_module._Pending(status=(HOST_SPAWN_FAILED, None))
+    result = worker._result(pending, 5.0, killed=False)
+    assert not result.admitted
+    assert result.failure.kind is TransportFailureKind.REMOTE_OP_FAILED
+
+
+def test_close_between_register_and_write_raises_session_closed(worker_factory, workspace, monkeypatch):
+    """TASK-33421: registered, then retired before any REQUEST byte: nothing was sent."""
+    worker, _ = worker_factory()
+    worker.start()
+    real_write = worker._write
+
+    def close_first(data, deadline):
+        worker.close()  # lands after registration, before the REQUEST write
+        return real_write(data, deadline)
+
+    monkeypatch.setattr(worker, "_write", close_first)
+    with pytest.raises(worker_module.SessionClosed):
+        worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert worker._pending == {}
+
+
+def test_cancel_write_on_closed_stdin_is_not_session_closed(worker_factory, workspace, monkeypatch):
+    """A REQUEST that was written is never retried, even if a later CANCEL finds stdin closed."""
+    worker, _ = worker_factory()
+    worker.start()
+    real_write = worker._write
+    calls = {"n": 0}
+
+    def close_before_cancel(data, deadline):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the CANCEL: the REQUEST already went out
+            worker.close()
+        return real_write(data, deadline)
+
+    monkeypatch.setattr(worker, "_write", close_before_cancel)
+    # The request's own budget (30 s) outlives the call's deadline
+    # (0.2 s + grace 1.0 s), so the laptop CANCELs before the watchdog ends it.
+    result = worker.call(grep_request(workspace, "(a+)+$", budget=30), budget=0.2)
+    assert calls["n"] == 2, "the CANCEL write was never reached"
+    assert result.failure is not None  # a classified failure, never SessionClosed
+
+
+def test_epipe_before_any_byte_after_close_kill_raises_session_closed(worker_factory, workspace):
+    """PR #2907 review: close() found the write lock busy and killed the host
+    BEFORE closing stdin; a registered call that then wins the lock meets
+    EPIPE with none of its REQUEST written. Nothing was sent: it re-acquires."""
+    worker, spawns = worker_factory()
+    worker.start()
+    with ThreadPoolExecutor(1) as pool:
+        assert worker._write_lock.acquire(timeout=5)  # a stalled upload holds the lock
+        try:
+            future = pool.submit(worker.call, read_request(workspace, "a.txt"), budget=10)
+            deadline = time.monotonic() + 5
+            while not worker._pending:
+                assert time.monotonic() < deadline, "the call never registered"
+                time.sleep(0.01)
+            # close()'s first half, deterministically: retire, then kill with
+            # the lock still busy -- stdin stays open, so no pre-send check.
+            with worker._lock:
+                if worker._death_natural is None:
+                    worker._death_natural = False
+                worker._alive = False
+                worker._retired = True
+            worker._kill()
+            spawns[0].wait(timeout=5)
+        finally:
+            worker._write_lock.release()
+        with pytest.raises(worker_module.SessionClosed):
+            future.result(timeout=10)
+    assert worker._pending == {}
+
+
+def test_epipe_after_a_partial_write_is_never_session_closed(worker_factory, workspace, monkeypatch):
+    """A REQUEST any byte of which reached the pipe is never retried, even on a retired session."""
+    worker, _ = worker_factory()
+    worker.start()
+    stdin_fd = worker._proc.stdin.fileno()
+    real_write = os.write
+    calls = {"n": 0}
+
+    def partial_then_epipe(fd, data):
+        if fd != stdin_fd:
+            return real_write(fd, data)
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_write(fd, bytes(data[:1]))  # one REQUEST byte reaches the host
+        worker._retired = True  # close() lands between the two writes
+        raise BrokenPipeError(32, "Broken pipe")
+
+    with monkeypatch.context() as patch:  # os.write is global: patch it for the call only
+        patch.setattr(worker_module.os, "write", partial_then_epipe)
+        result = worker.call(read_request(workspace, "a.txt"), budget=10)
+    assert calls["n"] == 2, "the second (EPIPE) write was never reached"
+    assert result.failure is not None  # a classified failure, never SessionClosed

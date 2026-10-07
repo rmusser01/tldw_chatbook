@@ -1,0 +1,24 @@
+# 12 fixed build (live, w1-t2-2): appended 'from the vault
+' to quotes.md on disk while the note was open; waited 14 s for the watcher pass
+-- operations (kind|state|reason):
+  10 create_note|completed|
+   3 update_file|completed|
+   1 update_note|completed|
+-- roots (state|last_status_code):
+active|up_to_date
+-- note in DB:
+version=5
+length=124 last16hex=0A66726F6D20746865207661756C740A
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more tail two
+from the vault
+
+-- file on disk (md5):
+89e60fbe2a4811ba1febeb5091d4d94c
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more tail two
+from the vault

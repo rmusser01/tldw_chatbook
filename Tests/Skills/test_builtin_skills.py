@@ -5,6 +5,7 @@ import hashlib
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.Skills_Interop import builtin_skills as bs
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 
@@ -203,7 +204,7 @@ def test_app_wires_loader_to_in_memory_config(tmp_path, monkeypatch):
     except RecoveryRequired:  # ADR-126 machine state; CI imports the app cleanly
         pytest.skip("app import blocked by RecoveryRequired on this machine")
 
-    monkeypatch.setattr(app_module, "get_user_data_dir", lambda: tmp_path)
+    set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     app = SimpleNamespace(
         _local_skills_service=None,
         _skills_scope_service=None,

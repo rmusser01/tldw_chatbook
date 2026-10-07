@@ -2945,6 +2945,7 @@ def list_specialized_runners() -> List[str]:
 
     return sorted(runner_names)
 
+
 class ResearchReportRunner(BaseEvalRunner):
     """Self-eval runner for deep-search research reports (task-16327).
 

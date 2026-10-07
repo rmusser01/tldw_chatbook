@@ -770,8 +770,11 @@ This is a guardrail, not a security boundary: it stops accidents and naive
 injected payloads, not a determined ``python -c``. The sandbox/workspace-root
 track is the real answer for shell execution.
 """
+import os
+import threading
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
+_failures = threading.local()
 
 def _debug(message: str) -> None:
     """Emit one resolution-failure diagnostic.
@@ -788,6 +791,7 @@ def _debug(message: str) -> None:
     raising would turn one unresolvable directory entry into a failed
     ``fs_list`` instead of a skipped entry.
     """
+    _failures.count = getattr(_failures, 'count', 0) + 1
     try:
         raise ImportError("'loguru' (importing logger) is not available inside the remote worker bundle")
     except ImportError:
@@ -1036,25 +1040,94 @@ class SensitivePathContext(NamedTuple):
     call re-resolve the set from scratch.
 
     Deliberately not cached at module or process scope -- see
-    ``resolve_sensitive_context``.
+    ``resolve_sensitive_context`` (only its raw inputs are memoized).
     """
     files: tuple[Path, ...]
     dirs: tuple[Path, ...]
     db_paths: tuple[Path, ...]
     user_data_dir: Path | None
     direct_child_denied_dirs: tuple[Path, ...]
+_RAW_INPUTS_MEMO: tuple | None = None
+_RAW_INPUTS_LOCK = threading.Lock()
+
+def _raw_inputs() -> tuple:
+    """Return the unresolved sensitive paths, memoized on the config and data dir.
+
+    The key is the config cache object (by identity) and its generation, the
+    effective config path, the user data directory -- itself re-verified on
+    every call by ``config.get_user_data_dir`` -- the whole environment,
+    since accessors read overrides such as ``RAG_PERSIST_DIR`` that outrank
+    config, and the working directory a relative custom database path is
+    resolved against. So a config reload or write, any environment change, a
+    moved data directory or a directory change is observed on the very next
+    call. A snapshot built while
+    any accessor failed is never kept: it would carry a gap in the deny list.
+
+    Returns:
+        ``(user_data_dir, single_files, skill_trust_dir, db_paths,
+        container_dirs)``, unresolved.
+    """
+    global _RAW_INPUTS_MEMO
+    user_data_dir, config_path, key = _raw_inputs_key()
+    with _RAW_INPUTS_LOCK:
+        memo = _RAW_INPUTS_MEMO
+    if memo is not None and _same_key(memo[0], key):
+        return memo[1]
+    failures = getattr(_failures, 'count', 0)
+    inputs = (user_data_dir, _sensitive_single_file_paths(), _sensitive_skill_trust_dir(), _sensitive_db_paths(), _direct_child_rule_container_dirs())
+    if user_data_dir is not None and config_path is not None and (getattr(_failures, 'count', 0) == failures) and _same_key(key, _raw_inputs_key()[2]):
+        with _RAW_INPUTS_LOCK:
+            _RAW_INPUTS_MEMO = (key, inputs)
+    return inputs
+
+def _raw_inputs_key() -> tuple:
+    """Read what the raw inputs depend on, as ``_raw_inputs``' memo key.
+
+    Returns:
+        ``(user_data_dir, config_path, key)``; either of the first two is
+        ``None`` when it could not be resolved, and such a key is not memoized.
+    """
+    raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
+    try:
+        user_data_dir = _config.get_user_data_dir()
+    except Exception as exc:
+        _debug(f'sensitive_paths: could not resolve user data dir: {exc}')
+        user_data_dir = None
+    try:
+        config_path = str(_config._get_effective_config_path())
+        cwd = os.getcwd()
+    except Exception:
+        config_path = cwd = None
+    key = (_config._CONFIG_CACHE, _config._CONFIG_GENERATION, _config._CONFIG_CACHE_SOURCE, config_path, str(user_data_dir), os.environ.copy(), cwd)
+    return (user_data_dir, config_path, key)
+
+def _same_key(left: tuple, right: tuple) -> bool:
+    """Compare two memo keys: the config cache by identity, the rest by value.
+
+    Args:
+        left: A key from ``_raw_inputs_key``.
+        right: Another key from ``_raw_inputs_key``.
+
+    Returns:
+        True when both describe the same config object, generation, source,
+        paths and environment.
+    """
+    return left[0] is right[0] and left[1:] == right[1:]
 
 def resolve_sensitive_context() -> SensitivePathContext:
     """Resolve the full sensitive-path set once, for reuse across many checks.
 
     Call this ONCE per tool invocation and thread the result through to
     every ``is_sensitive_path``/``is_within`` call that invocation makes.
-    Do NOT cache the return value at module or process scope: the whole
-    point of the per-call ``_sensitive_db_paths()`` resolution it wraps is
-    to observe a config change (e.g. the test suite swapping
-    ``TLDW_CONFIG_PATH`` between cases) on the very next call rather than
-    serving a stale answer. A single invocation resolving this once is
-    "per call"; a global cache would not be.
+    Do NOT cache the returned context at module or process scope. Its paths
+    are resolved (symlinks followed) on every call, so a filesystem change
+    is seen at once. PERF-07 memoizes only the raw, config-derived inputs
+    (``_raw_inputs``), keyed on the config cache identity, generation and
+    source, the effective config path, the re-verified user data directory,
+    the whole environment and the working directory, so a config change (e.g.
+    the test suite swapping ``TLDW_CONFIG_PATH`` between cases), an override
+    such as ``RAG_PERSIST_DIR`` or a directory change is observed on the very
+    next call rather than serving a stale answer.
 
     Returns:
         A ``SensitivePathContext`` snapshotting the currently configured
@@ -1062,15 +1135,10 @@ def resolve_sensitive_context() -> SensitivePathContext:
         directory (entries that failed to resolve are dropped; the user
         data directory is ``None`` if it could not be resolved).
     """
-    raise ImportError("'..' (importing config) is not available inside the remote worker bundle")
-    try:
-        user_data_dir = _resolved(str(_config.get_user_data_dir()))
-    except Exception as exc:
-        _debug(f'sensitive_paths: could not resolve user data dir: {exc}')
-        user_data_dir = None
-    skill_trust_dir = _sensitive_skill_trust_dir()
+    raw_user_dir, single_files, skill_trust_dir, db_paths, containers = _raw_inputs()
+    user_data_dir = _resolved(str(raw_user_dir)) if raw_user_dir is not None else None
     dynamic_dirs = (skill_trust_dir,) if skill_trust_dir is not None else ()
-    return SensitivePathContext(files=tuple((p for p in (_resolved(str(raw)) for raw in _sensitive_single_file_paths()) if p is not None)), dirs=tuple((p for p in (_resolved(str(entry)) for entry in _SENSITIVE_DIRS + dynamic_dirs) if p is not None)), db_paths=tuple((p for p in (_resolved(str(raw)) for raw in _sensitive_db_paths()) if p is not None)), user_data_dir=user_data_dir, direct_child_denied_dirs=tuple((p for p in (_resolved(str(raw)) for raw in _direct_child_rule_container_dirs()) if p is not None)))
+    return SensitivePathContext(files=tuple((p for p in (_resolved(str(raw)) for raw in single_files) if p is not None)), dirs=tuple((p for p in (_resolved(str(entry)) for entry in _SENSITIVE_DIRS + dynamic_dirs) if p is not None)), db_paths=tuple((p for p in (_resolved(str(raw)) for raw in db_paths) if p is not None)), user_data_dir=user_data_dir, direct_child_denied_dirs=tuple((p for p in (_resolved(str(raw)) for raw in containers) if p is not None)))
 
 def merge_sensitive_context(base: SensitivePathContext, *, extra_files: Iterable[Path]=(), extra_dirs: Iterable[Path]=()) -> SensitivePathContext:
     """Fold per-workspace user exclusions into a per-call context snapshot.
@@ -4541,6 +4609,7 @@ HELLO, REQUEST, CANCEL = (1, 2, 3)
 LINE, STATUS, BUSY = (16, 17, 18)
 HEADER = struct.Struct('>IIB')
 _U32_MAX = 2 ** 32 - 1
+HOST_SPAWN_FAILED = 71
 
 class FrameError(ValueError):
     """A frame violated the size cap or the header format."""
@@ -4623,6 +4692,7 @@ _CHILD_CRASH_EXIT = 70
 _MAX_IDLE_S = 1000000.0
 _QUEUE_PER_CHILD = 4
 _QUEUE_BYTES_FACTOR = 2
+_COALESCE_S = 0.01
 
 class _Child:
     __slots__ = ('pid', 'fd', 'request_id', 'partial', 'sent', 'capped')
@@ -4669,7 +4739,12 @@ def _close_fds_above_2(keep: int) -> None:
 
 def _spawn(raw: bytes, request_id: int, run_request: Callable[[bytes, BinaryIO], int]) -> _Child:
     read_fd, write_fd = os.pipe()
-    pid = os.fork()
+    try:
+        pid = os.fork()
+    except OSError:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
     if pid == 0:
         code = _CHILD_CRASH_EXIT
         try:
@@ -4720,7 +4795,13 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     ``max_response_bytes`` is killed and its STATUS still reports the
     kill signal. A malformed ``HELLO`` body (bad JSON, a missing key, a
     value of the wrong type, or a non-finite ``idle_s``) ends the session
-    with exit code 3 rather than raising into the caller. The loop is single-threaded: forking a
+    with exit code 3 rather than raising into the caller. A ``REQUEST``
+    whose fork or pipe the host refuses (process or fd limit) gets
+    ``STATUS`` (``HOST_SPAWN_FAILED``, ``None``) at once; only that
+    request fails, and the session keeps serving. ``LINE`` frames of a
+    still-running child may be held up to ``_COALESCE_S`` so a fast
+    operation's frames leave in one write; ``STATUS`` and ``BUSY`` are
+    always written at once. The loop is single-threaded: forking a
     multi-threaded process is unsafe, and any per-request timeout is the
     child's own responsibility, not the parent's.
 
@@ -4740,9 +4821,10 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         violates the codec's size cap or ``HELLO``'s body is malformed.
 
     Raises:
-        OSError: If a low-level file descriptor operation (fork, pipe,
-            read, write) fails for a reason other than the cases already
-            handled above.
+        OSError: If a low-level file descriptor operation (read, write)
+            fails for a reason other than the cases already
+            handled above. A failed fork or pipe while starting a request
+            never raises here; see the ``HOST_SPAWN_FAILED`` case above.
     """
     reader = FrameReader(max_body=max_request_bytes)
     selector = selectors.DefaultSelector()
@@ -4754,6 +4836,8 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     max_children, idle_s, hello = (8, 60.0, False)
     last_activity = clock()
     outbox = bytearray()
+    hold_until: float | None = None
+    urgent = False
 
     def flush() -> None:
         view = memoryview(outbox)
@@ -4764,13 +4848,19 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         outbox.clear()
 
     def start(request_id: int, raw: bytes) -> None:
-        child = _spawn(raw, request_id, run_request)
+        nonlocal urgent
+        try:
+            child = _spawn(raw, request_id, run_request)
+        except OSError:
+            outbox.extend(encode_frame(STATUS, request_id, encode_status(HOST_SPAWN_FAILED, None)))
+            urgent = True
+            return
         children[child.fd] = child
         by_request[request_id] = child
         selector.register(child.fd, selectors.EVENT_READ, child)
 
     def finish(child: _Child) -> None:
-        nonlocal queued_bytes
+        nonlocal queued_bytes, urgent
         selector.unregister(child.fd)
         os.close(child.fd)
         if child.partial and (not child.capped):
@@ -4779,6 +4869,7 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
         exit_code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else None
         signal_no = os.WTERMSIG(status) if os.WIFSIGNALED(status) else None
         outbox.extend(encode_frame(STATUS, child.request_id, encode_status(exit_code, signal_no)))
+        urgent = True
         del children[child.fd]
         by_request.pop(child.request_id, None)
         while queue and len(children) < max_children:
@@ -4787,7 +4878,9 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
             start(request_id, raw)
 
     def refuse(request_id: int) -> None:
+        nonlocal urgent
         outbox.extend(encode_frame(STATUS, request_id, encode_status(None, signal.SIGKILL)))
+        urgent = True
 
     def kill_all() -> None:
         for child in list(children.values()):
@@ -4802,9 +4895,14 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
     try:
         while True:
             busy = bool(children or queue)
-            timeout = None if busy else max(0.0, idle_s - (clock() - last_activity))
+            if hold_until is not None:
+                timeout = max(0.0, hold_until - clock())
+            elif busy:
+                timeout = None
+            else:
+                timeout = max(0.0, idle_s - (clock() - last_activity))
             events = selector.select(timeout)
-            if not events and (not busy) and (clock() - last_activity >= idle_s):
+            if not events and (not busy) and (hold_until is None) and (clock() - last_activity >= idle_s):
                 return 0
             for key, _mask in events:
                 if key.data is None:
@@ -4836,6 +4934,7 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
                                 queue.append((request_id, body))
                                 queued_bytes += len(body)
                                 outbox.extend(encode_frame(BUSY, request_id, b''))
+                                urgent = True
                         elif kind == CANCEL:
                             child = by_request.get(request_id)
                             if child is not None:
@@ -4847,6 +4946,7 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
                                 remaining = [item for item in queue if item[0] != request_id]
                                 if len(remaining) != len(queue):
                                     outbox.extend(encode_frame(STATUS, request_id, encode_status(None, signal.SIGKILL)))
+                                    urgent = True
                                 queue.clear()
                                 queue.extend(remaining)
                                 queued_bytes = sum((len(item[1]) for item in queue))
@@ -4872,8 +4972,11 @@ def serve(in_fd: int, out_fd: int, *, run_request: Callable[[bytes, BinaryIO], i
                     child.partial = bytearray(lines[-1])
                     for line in lines[:-1]:
                         outbox.extend(encode_frame(LINE, child.request_id, line + b'\n'))
-            if outbox:
+                    if lines[:-1] and hold_until is None:
+                        hold_until = clock() + _COALESCE_S
+            if outbox and (urgent or hold_until is None or clock() >= hold_until):
                 flush()
+                urgent, hold_until = (False, None)
     except FrameError:
         return 3
     finally:
@@ -5206,4 +5309,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("80ade35b467ab74d0902c45a224ef879ba2490ec961b9aaf6721044df7c6c9b9")
+BUNDLE_SHA256 = _enter_worker_exchange("0096373750b3e01d4d52237177f1727acf0c263967b958e07140d6f5e22a8cf7")

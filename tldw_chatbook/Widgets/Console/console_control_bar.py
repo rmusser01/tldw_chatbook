@@ -20,6 +20,7 @@ from tldw_chatbook.Widgets.compact_model_bar import CompactModelBar
 TOP_ACTION_IDS = {
     "new-tab",
     "settings",
+    "hooks",
     "attach-context",
     "run-library-rag",
     "help",
@@ -27,6 +28,7 @@ TOP_ACTION_IDS = {
 CONSOLE_CONTROL_ACTION_WIDGET_IDS = {
     "new-tab": "console-control-new-tab",
     "settings": "console-control-settings",
+    "hooks": "console-control-hooks",
     "attach-context": "console-control-attach-context",
     "run-library-rag": "console-control-run-library-rag",
     "help": "console-control-help",
@@ -37,6 +39,7 @@ FALLBACK_ACTIONS = (
         label="Settings",
         tooltip="Configure provider, model, tools, and generation",
     ),
+    WorkbenchAction(id="hooks", label="Hooks", tooltip="Review hook permissions"),
     WorkbenchAction(
         id="attach-context",
         # CN-03 (TASK-2154.13): byte-matches the live action in
@@ -123,9 +126,11 @@ class ConsoleControlBar(Vertical):
     def _set_recovery_height(self, visible: bool) -> None:
         """Set the exact bar height for its recovery-row visibility."""
         height = 2 if visible else 1
-        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        classes = {name for name in self.classes if not name.startswith("h-")}
+        classes.add(f"h-{height}")
         self.set_styles(height=None)
-        self.add_class("h-2" if visible else "h-1")
+        # One atomic update; Textual skips restyling when classes are unchanged.
+        self.set_classes(classes)
         self.styles.min_height = height
         self.styles.max_height = height
 
@@ -276,15 +281,17 @@ class ConsoleControlBar(Vertical):
         self._set_recovery_height(recovery_visible)
         try:
             row = self.query_one("#console-auto-speak-row", Horizontal)
+            # Teardown prunes the buttons before their row; a late sync
+            # (a hook refresh still in flight) must not fail its worker.
+            retry = self.query_one("#console-auto-speak-retry", Button)
+            resume = self.query_one("#console-auto-speak-resume", Button)
         except NoMatches:
             return
-        retry = self.query_one("#console-auto-speak-retry", Button)
         retry.display = (
             self.auto_speak_enabled
             and self.auto_speak_paused
             and self.auto_speak_retry_available
         )
-        resume = self.query_one("#console-auto-speak-resume", Button)
         resume.display = recovery_visible
         row.display = recovery_visible
 
@@ -295,7 +302,9 @@ class ConsoleControlBar(Vertical):
             for action in self._visible_actions():
                 yield self._action(action)
         with Horizontal(id="console-auto-speak-row") as speech_row:
-            speech_row.remove_class(*(name for name in speech_row.classes if name.startswith("h-")))
+            speech_row.remove_class(
+                *(name for name in speech_row.classes if name.startswith("h-"))
+            )
             speech_row.set_styles(height=None)
             speech_row.add_class("h-1")
             speech_row.styles.min_height = 1

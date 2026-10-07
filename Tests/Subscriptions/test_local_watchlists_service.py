@@ -291,7 +291,9 @@ async def test_wait_for_terminal_run_has_bounded_backoff(monkeypatch, tmp_path):
         ).fetchone()
     )
     before_source = dict(
-        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
+        db.conn.execute(
+            "SELECT * FROM subscriptions WHERE id = ?", (source_id,)
+        ).fetchone()
     )
     original_get_run = service.get_run
     queries = 0
@@ -321,21 +323,31 @@ async def test_wait_for_terminal_run_has_bounded_backoff(monkeypatch, tmp_path):
     )
     service.get_run = get_run
 
-    with pytest.raises(TimeoutError, match=f"Timed out waiting for watchlist run {run_id}"):
+    with pytest.raises(
+        TimeoutError, match=f"Timed out waiting for watchlist run {run_id}"
+    ):
         await service.wait_for_terminal_run(run_id)
 
     assert queries == 9
     assert sleeps == pytest.approx([0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.5, 0.5])
     assert max(sleeps) == 0.5
     assert clock == pytest.approx(1.63)
-    assert dict(
-        db.conn.execute(
-            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
-        ).fetchone()
-    ) == before_run
-    assert dict(
-        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
-    ) == before_source
+    assert (
+        dict(
+            db.conn.execute(
+                "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        )
+        == before_run
+    )
+    assert (
+        dict(
+            db.conn.execute(
+                "SELECT * FROM subscriptions WHERE id = ?", (source_id,)
+            ).fetchone()
+        )
+        == before_source
+    )
     db.close()
 
 
@@ -354,7 +366,9 @@ async def test_wait_for_terminal_run_is_cancellable(tmp_path) -> None:
         ).fetchone()
     )
     before_source = dict(
-        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
+        db.conn.execute(
+            "SELECT * FROM subscriptions WHERE id = ?", (source_id,)
+        ).fetchone()
     )
     polled = asyncio.Event()
     queries = 0
@@ -376,14 +390,22 @@ async def test_wait_for_terminal_run_is_cancellable(tmp_path) -> None:
         await waiting
 
     assert queries == 1
-    assert dict(
-        db.conn.execute(
-            "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
-        ).fetchone()
-    ) == before_run
-    assert dict(
-        db.conn.execute("SELECT * FROM subscriptions WHERE id = ?", (source_id,)).fetchone()
-    ) == before_source
+    assert (
+        dict(
+            db.conn.execute(
+                "SELECT * FROM local_watchlist_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        )
+        == before_run
+    )
+    assert (
+        dict(
+            db.conn.execute(
+                "SELECT * FROM subscriptions WHERE id = ?", (source_id,)
+            ).fetchone()
+        )
+        == before_source
+    )
     db.close()
 
 
@@ -836,7 +858,16 @@ async def test_local_watchlists_service_executes_sitemap_sources_with_default_ur
         </urlset>
         """
 
-    async def fake_guarded(url, *, client, max_bytes, trusted_origins=frozenset(), headers=None, params=None, auth=None):
+    async def fake_guarded(
+        url,
+        *,
+        client,
+        max_bytes,
+        trusted_origins=frozenset(),
+        headers=None,
+        params=None,
+        auth=None,
+    ):
         fetched_sitemaps.append(url)
         return SimpleNamespace(
             status_code=200,
@@ -1054,7 +1085,16 @@ async def test_local_watchlists_service_sitemap_isolates_one_failing_url(
         </urlset>
         """
 
-    async def fake_guarded(url, *, client, max_bytes, trusted_origins=frozenset(), headers=None, params=None, auth=None):
+    async def fake_guarded(
+        url,
+        *,
+        client,
+        max_bytes,
+        trusted_origins=frozenset(),
+        headers=None,
+        params=None,
+        auth=None,
+    ):
         return SimpleNamespace(
             status_code=200,
             headers={"content-type": "application/xml"},
@@ -1379,10 +1419,14 @@ async def test_local_watchlists_service_record_run_failure_auto_pauses_at_thresh
 
     row = db.get_subscription(source_id)
     assert row["consecutive_failures"] == 3
-    assert row["is_paused"] == 1, "threshold reached via the real failure path -- must auto-pause"
+    assert row["is_paused"] == 1, (
+        "threshold reached via the real failure path -- must auto-pause"
+    )
 
     auto_pause_warnings = [
-        record for record in caplog.records if "Auto-paused subscription" in record.message
+        record
+        for record in caplog.records
+        if "Auto-paused subscription" in record.message
     ]
     assert len(auto_pause_warnings) == 1, (
         "exactly one auto-pause WARNING must fire (on the 3rd failure only), got "
@@ -1499,7 +1543,9 @@ async def test_local_watchlists_service_both_failure_paths_pause_at_the_same_thr
     row_b = db.get_subscription(source_b_id)
     assert row_a["consecutive_failures"] == threshold
     assert row_b["consecutive_failures"] == threshold
-    assert row_a["is_paused"] == 1, "record_check_result's error branch must pause at threshold"
+    assert row_a["is_paused"] == 1, (
+        "record_check_result's error branch must pause at threshold"
+    )
     assert row_b["is_paused"] == 1, "record_check_error must pause at threshold"
 
 
@@ -1536,7 +1582,9 @@ async def test_local_watchlists_service_successful_manual_recheck_resumes_a_paus
     async def always_succeeds(subscription):
         return []
 
-    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=always_succeeds)
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=always_succeeds
+    )
     source = await service.create_source(
         {
             "name": "Feed",
@@ -1562,7 +1610,9 @@ async def test_local_watchlists_service_successful_manual_recheck_resumes_a_paus
 
     assert completed["status"] == "completed"
     row = db.get_subscription(source_id)
-    assert row["is_paused"] == 0, "a successful manual re-check must resume a paused source"
+    assert row["is_paused"] == 0, (
+        "a successful manual re-check must resume a paused source"
+    )
     assert row["consecutive_failures"] == 0
     assert row["error_count"] == 0
     assert row["last_error"] is None
@@ -1595,7 +1645,16 @@ async def test_local_watchlists_service_executes_api_sources_with_json_field_map
         }
     }
 
-    async def fake_guarded(url, *, client, max_bytes, trusted_origins=frozenset(), headers=None, params=None, auth=None):
+    async def fake_guarded(
+        url,
+        *,
+        client,
+        max_bytes,
+        trusted_origins=frozenset(),
+        headers=None,
+        params=None,
+        auth=None,
+    ):
         requests.append({"url": url, "headers": headers, "params": params})
         return SimpleNamespace(
             status_code=200,
@@ -1719,7 +1778,12 @@ async def test_create_source_honors_inactive(tmp_path):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
     result = await service.create_source(
-        {"name": "Inactive", "source_type": "rss", "url": "http://example.com/feed", "active": False}
+        {
+            "name": "Inactive",
+            "source_type": "rss",
+            "url": "http://example.com/feed",
+            "active": False,
+        }
     )
     assert result["active"] is False
 
@@ -1749,7 +1813,9 @@ async def test_create_source_persists_check_frequency(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_create_sources_exact_batch_preserves_order_and_reports_existing(tmp_path):
+async def test_create_sources_exact_batch_preserves_order_and_reports_existing(
+    tmp_path,
+):
     db = SubscriptionsDB(tmp_path / "subscriptions.db", "test")
     service = LocalWatchlistsService(db_factory=lambda: db)
 
@@ -1875,13 +1941,23 @@ async def test_execute_run_persists_items_and_evaluates_filters(tmp_path):
     async def fake_run_executor(subscription):
         return {
             "items": [
-                {"url": "https://example.com/ai-post", "title": "AI news", "content_hash": "hash-ai"},
-                {"url": "https://example.com/cooking-post", "title": "Cooking tips", "content_hash": "hash-cooking"},
+                {
+                    "url": "https://example.com/ai-post",
+                    "title": "AI news",
+                    "content_hash": "hash-ai",
+                },
+                {
+                    "url": "https://example.com/cooking-post",
+                    "title": "Cooking tips",
+                    "content_hash": "hash-cooking",
+                },
             ],
             "stats": {},
         }
 
-    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=fake_run_executor)
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=fake_run_executor
+    )
     source = await service.create_source(
         {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
     )
@@ -1913,12 +1989,18 @@ async def test_execute_run_stores_content_alert_matches(tmp_path):
     async def fake_run_executor(subscription):
         return {
             "items": [
-                {"url": "https://example.com/ai-post", "title": "AI news", "content_hash": "hash-ai"},
+                {
+                    "url": "https://example.com/ai-post",
+                    "title": "AI news",
+                    "content_hash": "hash-ai",
+                },
             ],
             "stats": {},
         }
 
-    service = LocalWatchlistsService(db_factory=lambda: db, run_executor=fake_run_executor)
+    service = LocalWatchlistsService(
+        db_factory=lambda: db, run_executor=fake_run_executor
+    )
     source = await service.create_source(
         {"name": "Feed", "url": "https://example.com/feed.xml", "source_type": "rss"}
     )
@@ -2050,8 +2132,7 @@ async def test_list_items_can_be_scoped_to_one_run_with_alert_counts(tmp_path):
     assert len(every_item) == 2, "an unfiltered read must still see both runs"
     assert first_items[0]["run_id"] == first["run_id"]
     assert first_items[0]["alert_count"] == 1, (
-        "the item matched one content-alert rule, so the Alerts column has a 1 "
-        "to show"
+        "the item matched one content-alert rule, so the Alerts column has a 1 to show"
     )
 
 
@@ -2146,9 +2227,7 @@ async def test_a_real_check_produces_a_run_that_names_its_source_and_counts(
         "F32: a run row must name its source, not read 'Untitled'"
     )
     assert run["watchlist_names"] == ["Morning read"]
-    assert run["found_count"] == 30, (
-        "F33: the ~30-item check must show ~30 found"
-    )
+    assert run["found_count"] == 30, "F33: the ~30-item check must show ~30 found"
     assert run["processed_count"] == 29
     assert run["filtered_count"] == 1
     assert run["error_count"] == 0
@@ -2253,8 +2332,7 @@ async def test_resolve_watchlist_name_is_not_limited_to_the_first_10000_rows(
     with db.transaction() as conn:
         conn.executemany(
             "INSERT INTO watchlists (name) VALUES (?)",
-            [(f"Filler {index:05d}",) for index in range(10001)]
-            + [("Target",)],
+            [(f"Filler {index:05d}",) for index in range(10001)] + [("Target",)],
         )
         target_id = conn.execute(
             "SELECT id FROM watchlists WHERE name = ?", ("Target",)
@@ -2266,10 +2344,13 @@ async def test_resolve_watchlist_name_is_not_limited_to_the_first_10000_rows(
     assert created is False
     assert resolved["id"] == target_id
     assert resolved["name"] == "Target"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM watchlists WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))",
-        ("Target",),
-    ).fetchone()[0] == 1
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM watchlists WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))",
+            ("Target",),
+        ).fetchone()[0]
+        == 1
+    )
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,33 @@
+........................................................................ [ 80%]
+.....F............                                                       [100%]
+=================================== FAILURES ===================================
+___________ test_file_notes_portable_directory_setup_stays_ordinary ____________
+
+tmp_path = PosixPath('/private/tmp/console-dev-maintenance-fixtures-green2-01a0fa6c/test_file_notes_portable_direc0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ed9a4e0>
+
+    def test_file_notes_portable_directory_setup_stays_ordinary(tmp_path, monkeypatch):
+        from tldw_chatbook.Backup_Recovery import raw_participants as raw
+    
+        monkeypatch.setattr(raw, "_pinned_io_available", lambda: False)
+        owner = FileNotesReplica(tmp_path / "portable" / "nested" / "replica.sqlite")
+        try:
+            assert owner.list_active_files("root") == []
+            with pytest.raises(bootstrap.RecoveryRequired, match="not_installed"):
+>               raw._raw_source_participant(owner)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               AttributeError: module 'tldw_chatbook.Backup_Recovery.raw_participants' has no attribute '_raw_source_participant'. Did you mean: '_source_participants'?
+
+Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py:647: AttributeError
+============================= slowest 25 durations =============================
+1.49s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[torn_down]
+1.45s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[closed_entry]
+1.38s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[error]
+1.37s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[resume]
+1.36s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[active]
+1.35s call     Tests/Backup_Recovery/test_console_sync_maintenance.py::test_console_sync_maintenance_preserves_pending_pass[timeout]
+
+(19 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py::test_file_notes_portable_directory_setup_stays_ordinary
+1 failed, 89 passed in 23.11s

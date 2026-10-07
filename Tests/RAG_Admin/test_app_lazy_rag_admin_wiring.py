@@ -23,6 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from Tests.app_module_patches import patch_app_global
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.runtime_policy.types import RuntimeSourceState
 
@@ -49,16 +50,16 @@ def _cheap_app_init_patches():
 
     with contextlib.ExitStack() as stack:
         stack.enter_context(
-            patch(
-                "tldw_chatbook.app.load_settings",
+            patch_app_global(
+                "load_settings",
                 return_value={"tldw_api": {"base_url": "http://localhost:8000"}},
             )
         )
         stack.enter_context(
-            patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting)
+            patch_app_global("get_cli_setting", side_effect=fake_cli_setting)
         )
         stack.enter_context(
-            patch("tldw_chatbook.app.get_chachanotes_db_lazy", return_value=None)
+            patch_app_global("get_chachanotes_db_lazy", return_value=None)
         )
         stack.enter_context(
             patch(
@@ -68,7 +69,7 @@ def _cheap_app_init_patches():
         )
         stack.enter_context(
             patch(
-                "tldw_chatbook.app.ServerCharacterPersonaService.from_config",
+                "tldw_chatbook.app_service_wiring.ServerCharacterPersonaService.from_config",
                 return_value=MagicMock(),
             )
         )
@@ -111,26 +112,26 @@ def _cheap_app_init_patches():
         )
         stack.enter_context(
             patch(
-                "tldw_chatbook.app.get_notifications_db_path", return_value=":memory:"
+                "tldw_chatbook.app_service_wiring.get_notifications_db_path", return_value=":memory:"
             )
         )
         stack.enter_context(
-            patch(
-                "tldw_chatbook.app.get_subscriptions_db_path", return_value=":memory:"
+            patch_app_global(
+                "get_subscriptions_db_path", return_value=":memory:"
             )
         )
         stack.enter_context(
-            patch("tldw_chatbook.app.get_research_db_path", return_value=":memory:")
+            patch("tldw_chatbook.app_service_wiring.get_research_db_path", return_value=":memory:")
         )
         stack.enter_context(
-            patch("tldw_chatbook.app.get_writing_db_path", return_value=":memory:")
+            patch("tldw_chatbook.app_service_wiring.get_writing_db_path", return_value=":memory:")
         )
         stack.enter_context(
-            patch("tldw_chatbook.app.get_user_data_dir", return_value=user_data_dir)
+            patch_app_global("get_user_data_dir", return_value=user_data_dir)
         )
         stack.enter_context(
             patch(
-                "tldw_chatbook.app.get_workspaces_db_path",
+                "tldw_chatbook.app_service_wiring.get_workspaces_db_path",
                 return_value=user_data_dir / "workspaces.sqlite",
             )
         )
@@ -141,9 +142,9 @@ def _cheap_app_init_patches():
 def _patched_rag_admin_classes():
     """Replace the RAG admin service classes referenced by the lazy builder."""
     with (
-        patch("tldw_chatbook.app.ServerRAGAdminService") as server_cls,
-        patch("tldw_chatbook.app.LocalRAGAdminService") as local_cls,
-        patch("tldw_chatbook.app.RAGAdminScopeService") as scope_cls,
+        patch_app_global("ServerRAGAdminService") as server_cls,
+        patch_app_global("LocalRAGAdminService") as local_cls,
+        patch_app_global("RAGAdminScopeService") as scope_cls,
     ):
         yield server_cls, local_cls, scope_cls
 

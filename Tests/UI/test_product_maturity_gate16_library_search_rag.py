@@ -334,7 +334,14 @@ def test_empty_status_renders_quiet_two_line_state_not_full_dump() -> None:
     assert quiet_text == (
         "No evidence matched 'unicorn migration guide'.\nTry broader terms."
     )
-    for jargon in ("Owner:", "Unavailable:", "Why:", "Next:", "Recovery:", "No results"):
+    for jargon in (
+        "Owner:",
+        "Unavailable:",
+        "Why:",
+        "Next:",
+        "Recovery:",
+        "No results",
+    ):
         assert jargon not in quiet_text
 
     # Real failure: same render seam, different retrieval_status -> the
@@ -385,9 +392,7 @@ def test_empty_status_still_renders_the_routing_disclosure() -> None:
     note = children[0]
     assert note.id == "library-rag-coverage-note"
     assert note.has_class("library-rag-quiet-line")
-    assert (
-        str(note.renderable) == "Profile 'BM25 Only': keyword search (no vectors)."
-    )
+    assert str(note.renderable) == "Profile 'BM25 Only': keyword search (no vectors)."
     # The no-match copy itself is untouched, and still follows the note.
     quiet_static = children[1]
     assert quiet_static.id == "library-rag-empty-state"
@@ -1318,7 +1323,10 @@ def test_answer_region_footer_shows_cost_for_a_failed_but_billed_answer(
         for child in region_children
         if child.id == "library-rag-answer-provenance"
     )
-    assert str(provenance_static.renderable) == "anthropic · claude-sonnet-4-6 · $0.02 (600 tok)"
+    assert (
+        str(provenance_static.renderable)
+        == "anthropic · claude-sonnet-4-6 · $0.02 (600 tok)"
+    )
 
 
 def test_answer_region_footer_absent_when_nothing_was_ever_spent_or_known() -> None:
@@ -1411,9 +1419,7 @@ def test_answer_region_footer_also_renders_for_an_abstained_answer(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_library_search_rag_empty_results_render_quiet_state_end_to_end() -> (
-    None
-):
+async def test_library_search_rag_empty_results_render_quiet_state_end_to_end() -> None:
     """(RAG-33/Task 11) Full plumbing: a real zero-row service outcome
     renders the quiet two-line no-match state, not the six-line dump the
     2026-07 UAT flagged (critique RAG-33)."""
@@ -1689,16 +1695,13 @@ async def test_library_search_rag_cold_boot_recovery_banner_agrees_with_real_sou
             "once the real local-source snapshot landed with real counts"
         )
         assert not screen.query("#library-rag-scope-recovery"), (
-            "the false gate line is still mounted beside populated scope "
-            "toggles"
+            "the false gate line is still mounted beside populated scope toggles"
         )
         visible_text = _visible_text(screen)
         assert "No Library sources yet" not in visible_text
         # The headline contradiction the UAT observed: real counts on the
         # toggles beside the (now-cleared) gate copy.
-        notes_toggle = screen.query_one(
-            "#library-rag-scope-toggle-notes", Button
-        )
+        notes_toggle = screen.query_one("#library-rag-scope-toggle-notes", Button)
         assert "(1)" in str(notes_toggle.label)
         assert notes_toggle.disabled is False
 
@@ -1781,13 +1784,14 @@ async def test_library_search_rag_snapshot_that_enables_run_also_lands_paid_noti
             "an enabled Run in rag mode means the next press bills a "
             "provider -- the state must name it"
         )
-        assert str(quiet_line.renderable) == library_rag_query_quiet_text(panel_state), (
+        assert str(quiet_line.renderable) == library_rag_query_quiet_text(
+            panel_state
+        ), (
             "the mounted quiet row disagrees with the state the run gate "
             "beside it was derived from"
         )
         assert provider in str(quiet_line.renderable), (
-            "Run is enabled for a paid call with no paid disclosure on "
-            "screen (F1)"
+            "Run is enabled for a paid call with no paid disclosure on screen (F1)"
         )
 
 
@@ -2037,8 +2041,7 @@ async def test_library_search_rag_rag_mode_renders_coverage_note_end_to_end() ->
         assert "Evidence · top 15" in visible_text
         assert "per source" not in visible_text
         assert (
-            "Semantic search found nothing from: Notes, Conversations."
-            in visible_text
+            "Semantic search found nothing from: Notes, Conversations." in visible_text
         )
 
 
@@ -3310,7 +3313,9 @@ async def test_library_search_rag_new_search_mid_answer_leaves_no_dangling_statu
         for _ in range(20):
             await pilot.pause(0.02)
 
-        assert "Fresh answer from the second query" in screen._rag_search_state.answer.text
+        assert (
+            "Fresh answer from the second query" in screen._rag_search_state.answer.text
+        )
         assert screen._rag_search_state.answer_query == second_query
         assert screen._rag_search_state.answer_in_flight is False
         assert screen._library_rag_panel_state().retrieval_status == "ready"
@@ -3764,9 +3769,7 @@ async def test_library_search_rag_uncited_answer_renders_recovery_callout_end_to
     app.library_rag_search_service = StaticLibraryRagSearchService(
         _rag_result_fixture()
     )
-    chat = RecordingAnswerChat(
-        replies=["An expired credential caused the incident."]
-    )
+    chat = RecordingAnswerChat(replies=["An expired credential caused the incident."])
     app.library_rag_answer_chat = chat
     host = DestinationHarness(app, "library")
     query = "Why did the incident happen?"

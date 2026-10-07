@@ -198,9 +198,7 @@ def normalize_message_row(
         "usage_json": message_row.get("usage_json"),
         "metadata_json": message_row.get("metadata_json"),
         "provider_continuation_json": message_row.get("provider_continuation_json"),
-        "assistant_generation_state": message_row.get(
-            "assistant_generation_state"
-        ),
+        "assistant_generation_state": message_row.get("assistant_generation_state"),
         "topology": topology,
         "variant": variant,
     }
@@ -332,9 +330,7 @@ class ChatConversationService:
             self._rag_context_store = {"version": 1, "conversations": {}}
             return self._rag_context_store
         try:
-            payload = json.loads(
-                _chat_sources.read_text(self)
-            )
+            payload = json.loads(_chat_sources.read_text(self))
         except (OSError, json.JSONDecodeError):
             payload = {}
         conversations = (
@@ -351,7 +347,8 @@ class ChatConversationService:
         if self.rag_context_store_path is None or self._rag_context_store is None:
             return
         _chat_sources.write_text(
-            self, json.dumps(self._rag_context_store, indent=2, sort_keys=True),
+            self,
+            json.dumps(self._rag_context_store, indent=2, sort_keys=True),
         )
 
     def derive_conversation_title(
@@ -504,9 +501,7 @@ class ChatConversationService:
         include_deleted: bool,
     ) -> list[dict[str, Any]]:
         rows = list(rows)
-        conversation_ids = [
-            row.get("id") for row in rows if row.get("id") is not None
-        ]
+        conversation_ids = [row.get("id") for row in rows if row.get("id") is not None]
         message_counts = {}
         if conversation_ids:
             message_counts = self.db.count_messages_for_conversations(
@@ -644,9 +639,7 @@ class ChatConversationService:
         try:
             raw_map = get_metadata(conversation_ids)
         except Exception:
-            logger.debug(
-                "Unable to batch-read Console conversation appearances"
-            )
+            logger.debug("Unable to batch-read Console conversation appearances")
             return {}
         return {
             str(conversation_id): parse_console_conversation_appearance(metadata)
@@ -1303,7 +1296,16 @@ class ChatConversationService:
         id_map: dict[str, str] = {}
         copied = 0
         last_new_id: str | None = None
-        with self.db.transaction():
+        # IMMEDIATE (task-22501): this outer unit's first statement is
+        # add_message's conversation-existence SELECT, and the manager only
+        # honours `immediate` at depth 0 -- a DEFERRED begin here silently
+        # neutralizes every inner writer's IMMEDIATE and re-opens the exact
+        # snapshot-upgrade window task-21100 closed: one backfill chunk (or
+        # any concurrent committer) landing between the read and the first
+        # INSERT kills the whole user-facing fork with an instant,
+        # busy-handler-bypassing `database is locked`. See
+        # Tests/DB/test_chachanotes_conversation_writer_collision.py.
+        with self.db.transaction(immediate=True):
             for node in path:
                 content = node.get("content") or ""
                 image = node.get("image_data")
@@ -1325,7 +1327,9 @@ class ChatConversationService:
                         "sender": node.get("sender") or node.get("role") or "user",
                         "content": content,
                         "role": node.get("role"),
-                        "parent_message_id": id_map.get(str(node.get("parent_message_id"))),
+                        "parent_message_id": id_map.get(
+                            str(node.get("parent_message_id"))
+                        ),
                         "image_data": image,
                         "image_mime_type": node.get("image_mime_type"),
                         "timestamp": node.get("timestamp"),

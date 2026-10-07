@@ -52,20 +52,34 @@ def test_chunk_file_stream_words_overlap(tmp_path):
     ck = Chunker()
 
     # overlap > 0
-    chunks = list(ck.chunk_file_stream(p, method="words", max_size=25, overlap=5, language="en", buffer_size=1024))
+    chunks = list(
+        ck.chunk_file_stream(
+            p, method="words", max_size=25, overlap=5, language="en", buffer_size=1024
+        )
+    )
     recon = _reconstruct_tokens_from_stream(chunks, max_overlap=5)
-    assert recon == words, "Reconstructed token stream should match original (overlap>0)"
+    assert recon == words, (
+        "Reconstructed token stream should match original (overlap>0)"
+    )
 
     # overlap == 0
-    chunks0 = list(ck.chunk_file_stream(p, method="words", max_size=25, overlap=0, language="en", buffer_size=1024))
+    chunks0 = list(
+        ck.chunk_file_stream(
+            p, method="words", max_size=25, overlap=0, language="en", buffer_size=1024
+        )
+    )
     recon0 = _reconstruct_tokens_from_stream(chunks0, max_overlap=0)
-    assert recon0 == words, "Reconstructed token stream should match original (overlap=0)"
+    assert recon0 == words, (
+        "Reconstructed token stream should match original (overlap=0)"
+    )
 
 
 def test_chunk_file_stream_words_no_space_language(tmp_path, monkeypatch):
     from tldw_chatbook.Chunking.engine.strategies.words import WordChunkingStrategy
 
-    monkeypatch.setattr(WordChunkingStrategy, "_tokenize_thai", lambda self, text: list(text))
+    monkeypatch.setattr(
+        WordChunkingStrategy, "_tokenize_thai", lambda self, text: list(text)
+    )
 
     text = "abcdefg" * 700  # > 2048 chars to force multiple streaming flushes
     p = tmp_path / "nospace.txt"
@@ -97,14 +111,29 @@ def test_chunk_file_stream_sentences_overlap(tmp_path):
     ck = Chunker()
 
     # overlap one sentence
-    chunks = list(ck.chunk_file_stream(p, method="sentences", max_size=8, overlap=1, language="en", buffer_size=2048))
-    recon = _reconstruct_tokens_from_stream(chunks, max_overlap=50)  # sentence ~ few tokens
+    chunks = list(
+        ck.chunk_file_stream(
+            p,
+            method="sentences",
+            max_size=8,
+            overlap=1,
+            language="en",
+            buffer_size=2048,
+        )
+    )
+    recon = _reconstruct_tokens_from_stream(
+        chunks, max_overlap=50
+    )  # sentence ~ few tokens
     # Compare after whitespace normalization via token lists
     original_tokens = text.split()
-    assert recon == original_tokens, "Sentence stream should preserve content with dedup"
+    assert recon == original_tokens, (
+        "Sentence stream should preserve content with dedup"
+    )
 
 
-def test_chunk_file_stream_sentences_overlap_matches_full_chunking(tmp_path, monkeypatch):
+def test_chunk_file_stream_sentences_overlap_matches_full_chunking(
+    tmp_path, monkeypatch
+):
 
     ck = Chunker()
     sents = [f"Sentence {i}." for i in range(1, 9)]
@@ -114,7 +143,9 @@ def test_chunk_file_stream_sentences_overlap_matches_full_chunking(tmp_path, mon
     p.write_text(text, encoding="utf-8")
 
     # Force early flushing so we hit a boundary split deterministically.
-    monkeypatch.setattr(ck, "_estimate_stream_flush_threshold", lambda method, max_size: len(part1))
+    monkeypatch.setattr(
+        ck, "_estimate_stream_flush_threshold", lambda method, max_size: len(part1)
+    )
 
     chunks_stream = list(
         ck.chunk_file_stream(
@@ -126,11 +157,15 @@ def test_chunk_file_stream_sentences_overlap_matches_full_chunking(tmp_path, mon
             buffer_size=len(part1),
         )
     )
-    chunks_full = ck.chunk_text(text, method="sentences", max_size=3, overlap=1, language="en")
+    chunks_full = ck.chunk_text(
+        text, method="sentences", max_size=3, overlap=1, language="en"
+    )
     assert chunks_stream == chunks_full
 
 
-def test_chunk_file_stream_sentences_no_overlap_matches_full_chunking(tmp_path, monkeypatch):
+def test_chunk_file_stream_sentences_no_overlap_matches_full_chunking(
+    tmp_path, monkeypatch
+):
 
     ck = Chunker()
     sents = [f"Sentence {i}." for i in range(1, 9)]
@@ -140,7 +175,9 @@ def test_chunk_file_stream_sentences_no_overlap_matches_full_chunking(tmp_path, 
     p.write_text(text, encoding="utf-8")
 
     # Force early flushing so we hit a boundary split deterministically.
-    monkeypatch.setattr(ck, "_estimate_stream_flush_threshold", lambda method, max_size: len(part1))
+    monkeypatch.setattr(
+        ck, "_estimate_stream_flush_threshold", lambda method, max_size: len(part1)
+    )
 
     chunks_stream = list(
         ck.chunk_file_stream(
@@ -159,22 +196,32 @@ def test_chunk_file_stream_sentences_no_overlap_matches_full_chunking(tmp_path, 
 def test_structure_aware_code_fence_no_trailing_newline():
 
     ck = Chunker()
-    src = "# Title\n\n" "```python\n" "print('hello')" "```\n" "Paragraph after.\n"
+    src = "# Title\n\n```python\nprint('hello')```\nParagraph after.\n"
     # Intentionally no newline before the closing fence in middle of the string
-    chunks = ck.chunk_text(src, method="structure_aware", max_size=3, overlap=0, language="en")
+    chunks = ck.chunk_text(
+        src, method="structure_aware", max_size=3, overlap=0, language="en"
+    )
     # Ensure code fence is recognized and serialized back with fences present
-    assert any("```python" in c and "```" in c for c in chunks), "Code fence should be preserved as a single block"
+    assert any("```python" in c and "```" in c for c in chunks), (
+        "Code fence should be preserved as a single block"
+    )
     assert any("print('hello')" in c for c in chunks), "Code content should be present"
 
 
 def test_structure_aware_code_fence_long_marker():
 
     ck = Chunker()
-    src = "# Title\n\n" "````python\n" "print('hello')\n" "````\n" "Paragraph after.\n"
-    chunks = ck.chunk_text(src, method="structure_aware", max_size=1, overlap=0, language="en")
+    src = "# Title\n\n````python\nprint('hello')\n````\nParagraph after.\n"
+    chunks = ck.chunk_text(
+        src, method="structure_aware", max_size=1, overlap=0, language="en"
+    )
     assert any("print('hello')" in c for c in chunks), "Code content should be present"
-    assert any("Paragraph after." in c for c in chunks), "Trailing paragraph should not be swallowed"
-    assert not any("````python" in c for c in chunks), "Language tag should not include stray backticks"
+    assert any("Paragraph after." in c for c in chunks), (
+        "Trailing paragraph should not be swallowed"
+    )
+    assert not any("````python" in c for c in chunks), (
+        "Language tag should not include stray backticks"
+    )
 
 
 def test_language_autodetect_thai():
@@ -192,7 +239,9 @@ def test_language_autodetect_thai():
     )
     assert out and isinstance(out, list)
     md = out[0].get("metadata", {})
-    assert md.get("language") == "th", f"Expected Thai autodetect, got {md.get('language')}"
+    assert md.get("language") == "th", (
+        f"Expected Thai autodetect, got {md.get('language')}"
+    )
 
 
 def test_language_autodetect_japanese_prefers_kana():
@@ -210,7 +259,9 @@ def test_language_autodetect_japanese_prefers_kana():
     )
     assert out and isinstance(out, list)
     md = out[0].get("metadata", {})
-    assert md.get("language") == "ja", f"Expected Japanese autodetect, got {md.get('language')}"
+    assert md.get("language") == "ja", (
+        f"Expected Japanese autodetect, got {md.get('language')}"
+    )
 
 
 @pytest.mark.asyncio
@@ -222,8 +273,8 @@ async def test_async_chunk_stream_sentences_overlap_boundary_matches_full():
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
         reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
-                "§4.2: server http_client/exceptions deps; chatbook "
-                "chunks in-process — no consumer)",
+        "§4.2: server http_client/exceptions deps; chatbook "
+        "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 
@@ -248,7 +299,9 @@ async def test_async_chunk_stream_sentences_overlap_boundary_matches_full():
             )
         ]
 
-    expected = Chunker().chunk_text(full_text, method="sentences", max_size=3, overlap=1, language="en")
+    expected = Chunker().chunk_text(
+        full_text, method="sentences", max_size=3, overlap=1, language="en"
+    )
     assert chunks == expected
 
 
@@ -262,8 +315,8 @@ async def test_async_chunk_stream_sentences_overlap_matches_full():
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
         reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
-                "§4.2: server http_client/exceptions deps; chatbook "
-                "chunks in-process — no consumer)",
+        "§4.2: server http_client/exceptions deps; chatbook "
+        "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 
@@ -276,7 +329,9 @@ async def test_async_chunk_stream_sentences_overlap_matches_full():
         yield part1
         yield part2
 
-    expected = Chunker().chunk_text(full_text, method="sentences", max_size=3, overlap=1, language="en")
+    expected = Chunker().chunk_text(
+        full_text, method="sentences", max_size=3, overlap=1, language="en"
+    )
 
     async with AsyncChunker() as chunker:
         chunks = [
@@ -304,8 +359,8 @@ async def test_async_chunk_stream_overlap_clamps_to_max_size() -> None:
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
         reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
-                "§4.2: server http_client/exceptions deps; chatbook "
-                "chunks in-process — no consumer)",
+        "§4.2: server http_client/exceptions deps; chatbook "
+        "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 
@@ -319,7 +374,9 @@ async def test_async_chunk_stream_overlap_clamps_to_max_size() -> None:
         yield part2
 
     # chunk_text clamps overlap to max_size - 1
-    expected = Chunker().chunk_text(full_text, method="sentences", max_size=2, overlap=1, language="en")
+    expected = Chunker().chunk_text(
+        full_text, method="sentences", max_size=2, overlap=1, language="en"
+    )
 
     async with AsyncChunker() as chunker:
         chunks = [
@@ -346,8 +403,8 @@ async def test_async_chunk_stream_sentences_no_overlap_matches_full():
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
         reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
-                "§4.2: server http_client/exceptions deps; chatbook "
-                "chunks in-process — no consumer)",
+        "§4.2: server http_client/exceptions deps; chatbook "
+        "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 
@@ -386,13 +443,15 @@ async def test_async_chunk_stream_words_no_space_language(monkeypatch):
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
         reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
-                "§4.2: server http_client/exceptions deps; chatbook "
-                "chunks in-process — no consumer)",
+        "§4.2: server http_client/exceptions deps; chatbook "
+        "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
     from tldw_chatbook.Chunking.engine.strategies.words import WordChunkingStrategy
 
-    monkeypatch.setattr(WordChunkingStrategy, "_tokenize_thai", lambda self, text: list(text))
+    monkeypatch.setattr(
+        WordChunkingStrategy, "_tokenize_thai", lambda self, text: list(text)
+    )
 
     text = "abcdefg" * 200
     part1 = text[: len(text) // 2]
@@ -428,8 +487,8 @@ async def test_async_chunk_stream_overlap_no_tail_dup_on_boundary():
     pytest.importorskip(
         "tldw_chatbook.Chunking.engine.async_chunker",
         reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
-                "§4.2: server http_client/exceptions deps; chatbook "
-                "chunks in-process — no consumer)",
+        "§4.2: server http_client/exceptions deps; chatbook "
+        "chunks in-process — no consumer)",
     )
     from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 

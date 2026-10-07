@@ -1324,7 +1324,10 @@ class RemoteWorkspaceToolExecutor:
         start failure, or a second death). A transport-class start failure
         IS the call's result -- no one-shot retry, which would pay a second
         connect timeout. Results are recorded by the caller exactly like
-        one-shot results (the worker already classifies them).
+        one-shot results (the worker already classifies them). A session
+        the laptop retired (idle reap, run end, app exit) between
+        ``acquire`` and ``call`` sent nothing, so this re-acquires once
+        rather than surfacing a tool error (TASK-33401).
         """
         from tldw_chatbook.config import get_console_ssh_settings
         from tldw_chatbook.Tools.remote_binding_status import BindingState
@@ -1340,6 +1343,7 @@ class RemoteWorkspaceToolExecutor:
         from tldw_chatbook.Tools.remote_session_registry import get_session_registry
         from tldw_chatbook.Tools.remote_session_worker import (
             RemoteSessionWorker,
+            SessionClosed,
             SessionStartError,
         )
         from tldw_chatbook.Tools.remote_workspace_transport import (
@@ -1364,22 +1368,34 @@ class RemoteWorkspaceToolExecutor:
                 idle_s=settings.session_idle_s + cfg.transport.grace_seconds,
                 cache=settings.bundle_cache,
                 spawn=cfg.session_spawn,
+                # The start is part of this call: it may not outlive the
+                # call's own budget (same deadline as a one-shot handshake).
+                handshake_timeout=budget + cfg.transport.grace_seconds,
             )
 
         with _host_semaphore(cfg.resolved_host_key(), cfg.max_concurrent_calls):
             registry.reap_idle(time.monotonic(), settings.session_idle_s)
-            try:
-                session = registry.acquire((cfg.session_key, cfg.binding_id), create)
-            except SessionStartError as error:
-                return RemoteCallResult(
-                    False,
-                    None,
-                    error.failure
-                    or TransportFailure(TransportFailureKind.UNREACHABLE, None, str(error)),
-                )
-            if session is None:
-                return None
-            return session.call(request_bytes, budget=budget)
+            for _attempt in range(2):
+                try:
+                    session = registry.acquire((cfg.session_key, cfg.binding_id), create)
+                except SessionStartError as error:
+                    return RemoteCallResult(
+                        False,
+                        None,
+                        error.failure
+                        or TransportFailure(TransportFailureKind.UNREACHABLE, None, str(error)),
+                    )
+                if session is None:
+                    return None
+                try:
+                    return session.call(request_bytes, budget=budget)
+                except SessionClosed:
+                    # Retired (idle reap, run end, app exit) after acquire
+                    # handed it out and before this request was sent: nothing
+                    # ran, so ask again -- a fresh session, or one-shot once
+                    # the run or app has ended.
+                    continue
+            return None
 
     def _map_ssh_result(
         self, result: RemoteCallResult, operation_id: str

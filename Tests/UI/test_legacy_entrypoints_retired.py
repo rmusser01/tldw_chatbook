@@ -313,6 +313,8 @@ def test_task_577_pr2_pipeline_retired():
     # Source-grep style pin (mirrors CCP_HANDLER_FILES above) rather than
     # hasattr(TldwCli, ...) -- instantiating the app is out of scope for this
     # guard file.
-    app_source = (PROJECT_ROOT / "tldw_chatbook" / "app.py").read_text()
-    assert "def _build_handler_map" not in app_source
-    assert "self.button_handler_map" not in app_source
+    # TASK-33011: TldwCli's service composition lives in app_service_wiring.py.
+    for app_file in ("app.py", "app_service_wiring.py"):
+        app_source = (PROJECT_ROOT / "tldw_chatbook" / app_file).read_text()
+        assert "def _build_handler_map" not in app_source
+        assert "self.button_handler_map" not in app_source

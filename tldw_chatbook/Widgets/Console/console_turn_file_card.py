@@ -681,9 +681,7 @@ class ConsoleTurnFileCard(Vertical):
         # same-header windows on the same root+path.
         current_snapshot_row = self._row_for_entry.get(idx)
         current_snapshot_id = (
-            current_snapshot_row.get("id")
-            if current_snapshot_row is not None
-            else None
+            current_snapshot_row.get("id") if current_snapshot_row is not None else None
         )
         for hunk_idx, hunk in enumerate(mounted_hunks):
             await body.mount(
@@ -740,9 +738,7 @@ class ConsoleTurnFileCard(Vertical):
                 # match for legacy (``snapshot_id is None``) notes.
                 existing_notes = [
                     note
-                    for note in self._notes_by_key.get(
-                        (entry.root, entry.path), []
-                    )
+                    for note in self._notes_by_key.get((entry.root, entry.path), [])
                     if int(note.get("hunk_index", -1)) == hunk_idx
                     and note.get("hunk_header") == hunk.header
                     and _note_matches_snapshot(note, current_snapshot_id)
@@ -836,8 +832,7 @@ class ConsoleTurnFileCard(Vertical):
                         provider = self._provider_factory()
                     except Exception:
                         logger.opt(exception=True).warning(
-                            "Turn file card expand-all provider "
-                            "construction failed."
+                            "Turn file card expand-all provider construction failed."
                         )
                         provider = None
                 if provider is None:
@@ -1026,9 +1021,7 @@ class ConsoleTurnFileCard(Vertical):
         """
         try:
             focused = self.app.focused
-            if focused is None or not focused.has_class(
-                "console-turn-file-note-input"
-            ):
+            if focused is None or not focused.has_class("console-turn-file-note-input"):
                 return
             if event.key == "enter":
                 event.stop()
@@ -1082,9 +1075,7 @@ class ConsoleTurnFileCard(Vertical):
             if hunk_idx >= len(notes_boxes):
                 return
             notes_box = notes_boxes[hunk_idx]
-            existing_inputs = list(
-                notes_box.query(".console-turn-file-note-input")
-            )
+            existing_inputs = list(notes_box.query(".console-turn-file-note-input"))
             if existing_inputs:
                 # Already open -- focus it rather than mounting a second
                 # input for the same hunk.
@@ -1100,9 +1091,7 @@ class ConsoleTurnFileCard(Vertical):
             await notes_box.mount(note_input)
             note_input.focus()
         except Exception:
-            logger.opt(exception=True).warning(
-                "Turn file card note-input open failed."
-            )
+            logger.opt(exception=True).warning("Turn file card note-input open failed.")
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Enter in a note input: save the note off-thread."""
@@ -1150,9 +1139,7 @@ class ConsoleTurnFileCard(Vertical):
             # when the row isn't available (degrades to the legacy
             # hunk_index+hunk_header matching, same as any pre-fix note).
             snapshot_row = self._row_for_entry.get(idx)
-            snapshot_id = (
-                snapshot_row.get("id") if snapshot_row is not None else None
-            )
+            snapshot_id = snapshot_row.get("id") if snapshot_row is not None else None
             provider = self._provider_factory()
             if provider is None:
                 return
@@ -1191,16 +1178,14 @@ class ConsoleTurnFileCard(Vertical):
                 # Mirrors the DB row's own column too, same reason.
                 "snapshot_id": snapshot_id,
             }
-            self._notes_by_key.setdefault(
-                (entry.root, entry.path), []
-            ).append(note_record)
+            self._notes_by_key.setdefault((entry.root, entry.path), []).append(
+                note_record
+            )
             await note_input.remove()
             if notes_box is not None and notes_box.is_mounted:
                 await notes_box.mount(self._build_note_row(note_record))
         except Exception:
-            logger.opt(exception=True).warning(
-                "Turn file card note save failed."
-            )
+            logger.opt(exception=True).warning("Turn file card note save failed.")
 
     async def _delete_note(self, button: Button) -> None:
         """Delete a pending note off-thread and remove its rendered row.
@@ -1245,9 +1230,7 @@ class ConsoleTurnFileCard(Vertical):
             if note_row is not None and note_row.is_mounted:
                 await note_row.remove()
         except Exception:
-            logger.opt(exception=True).warning(
-                "Turn file card note delete failed."
-            )
+            logger.opt(exception=True).warning("Turn file card note delete failed.")
 
     @staticmethod
     def _build_note_row(note: dict) -> Horizontal:

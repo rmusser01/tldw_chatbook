@@ -266,7 +266,12 @@ async def test_move_source_fetches_exact_owner_order_before_reorder() -> None:
         async def reorder_sources(self, ref, ordered_source_ids):
             self.reorders.append(ordered_source_ids)
             return tuple(
-                local_source(ref, source_id, catalog_item_id=source_id.removeprefix("membership-"), selected=False)
+                local_source(
+                    ref,
+                    source_id,
+                    catalog_item_id=source_id.removeprefix("membership-"),
+                    selected=False,
+                )
                 for source_id in ordered_source_ids
             )
 

@@ -72,6 +72,7 @@ Real databases throughout (a real `MediaDatabase` / `CharactersRAGDB` /
 thing under test is which rows FTS5 actually returns for which form, and a
 mock would pin nothing.
 """
+
 import asyncio
 from pathlib import Path
 
@@ -468,9 +469,7 @@ def test_all_primary_constructions_merge_byte_identically_to_a_plain_interleave(
             f"{_fusion_doc_key(got)} != {_fusion_doc_key(want)}"
         )
     # The premise of the identity: nothing fell back.
-    assert {r.metadata["fts_match"] for r in results} == {
-        service._fts5_primary_form()
-    }
+    assert {r.metadata["fts_match"] for r in results} == {service._fts5_primary_form()}
 
 
 # --- (c) rank-fairness BETWEEN primaries is kept (no overreach) -------------
@@ -638,8 +637,7 @@ def test_every_construction_names_the_forms_it_can_run() -> None:
         service = _make_service(construction=construction)
         _primary_form, fallback_form = service._fts5_match_forms()
         can_fall_back = any(
-            service._fts5_match_expressions(query)[1] is not None
-            for query in probes
+            service._fts5_match_expressions(query)[1] is not None for query in probes
         )
         assert can_fall_back == (fallback_form is not None), (
             f"{construction!r}: produces a fallback expression="
@@ -692,9 +690,7 @@ def test_fallback_rows_are_stamped_with_the_fallbacks_own_form(
         )
     )
 
-    stamps = [
-        (r.metadata["source_type"], r.metadata["fts_match"]) for r in results
-    ]
+    stamps = [(r.metadata["source_type"], r.metadata["fts_match"]) for r in results]
     assert (
         "note",
         FTS_MATCH_AND,
@@ -772,9 +768,7 @@ def test_an_unstamped_row_lands_in_tier_one_under_every_construction(
         "note",
         "media",
     ], [(r.metadata["source_type"], r.metadata["fts_match"]) for r in results]
-    assert {r.metadata["fts_match"] for r in results} == {
-        service._fts5_primary_form()
-    }
+    assert {r.metadata["fts_match"] for r in results} == {service._fts5_primary_form()}
 
 
 @pytest.mark.parametrize(
@@ -825,6 +819,4 @@ def test_a_construction_without_a_fallback_can_never_produce_a_tier_two_row(
         )
     )
     assert results, "the fixture must return rows for this pin to mean anything"
-    assert {r.metadata["fts_match"] for r in results} == {
-        live._fts5_primary_form()
-    }
+    assert {r.metadata["fts_match"] for r in results} == {live._fts5_primary_form()}

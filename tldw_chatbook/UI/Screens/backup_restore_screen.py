@@ -19,7 +19,18 @@ from tldw_chatbook.Third_Party.textual_fspicker import (
 )
 from tldw_chatbook.Widgets.backup_group_selector import BackupDataGroupSelector
 
-from .backup_restore_state import result_label
+from .backup_restore_state import (
+    ARCHIVE_FORMAT_HINT,
+    CREATE_NEEDS_REVIEW,
+    CREATE_STARTED,
+    ENTRY_TITLES,
+    archive_source_problem,
+    create_unavailable_reason,
+    result_label,
+    typed_path,
+)
+
+_RETAINED_CREDENTIAL_REVIEW = "credential_isolated_retention_required"
 
 
 class BackupRestoreScreen(Screen):
@@ -49,8 +60,17 @@ class BackupRestoreScreen(Screen):
         config_paths=(),
         include_known_profiles=False,
         restart_request=None,
+        initial_mode="home",
     ):
+        """Bind the view to the app's recovery service.
+
+        Args:
+            initial_mode: ``"inspect"`` is setup's "Restore a backup" entry: the
+                view opens on Inspect, titled "Restore from a backup"
+                (TASK-34100.16). Any other value opens the ordinary home.
+        """
         super().__init__()
+        self._initial_mode = initial_mode if initial_mode in ENTRY_TITLES else "home"
         self.service = service
         self.config_paths = tuple(Path(path) for path in config_paths)
         self.include_known_profiles = include_known_profiles
@@ -77,6 +97,7 @@ class BackupRestoreScreen(Screen):
         self._requested_backup_operation = None
         self._requested_restore_operation = None
         self._restore_review_codes_seen = ()
+        self._restore_retention_accepted = False
         self._safety_scope_seen = ()
         self._rollback_copy_id = None
         self._rollback_plan = None
@@ -84,22 +105,27 @@ class BackupRestoreScreen(Screen):
         self._requested_rollback_operation = None
         self._rollback_selection = None
         self._later_review_codes_seen = ()
+        self._later_retention_accepted = False
         self._media_review = None
         self._media_offset = 0
 
     def compose(self) -> ComposeResult:
-        yield Static("Backup & Restore", id="backup-title")
+        yield Static(ENTRY_TITLES[self._initial_mode], id="backup-title")
         with Container(id="backup-actions"):
-            yield Button(
-                "Create backup",
-                id="backup-open-create",
-                classes="backup-restore-screen-button",
+            opening = (
+                Button(
+                    "Create backup",
+                    id="backup-open-create",
+                    classes="backup-restore-screen-button",
+                ),
+                Button(
+                    "Inspect / restore",
+                    id="backup-open-inspect",
+                    classes="backup-restore-screen-button",
+                ),
             )
-            yield Button(
-                "Inspect / restore",
-                id="backup-open-inspect",
-                classes="backup-restore-screen-button",
-            )
+            # Setup's Restore entry leads with what the user came to do.
+            yield from opening[:: -1 if self._initial_mode == "inspect" else 1]
             yield Button(
                 "Recovery copies",
                 id="backup-open-copies",
@@ -193,6 +219,7 @@ class BackupRestoreScreen(Screen):
                 yield Vertical(id="backup-credential-review", classes="backup-form")
             with Vertical(id="backup-inspect-form", classes="backup-form"):
                 yield Static("Backup archive", classes="destination-section")
+                yield Static(ARCHIVE_FORMAT_HINT, id="backup-archive-format")
                 yield Input(
                     placeholder="Choose an archive",
                     id="backup-source",
@@ -484,7 +511,9 @@ class BackupRestoreScreen(Screen):
         )
 
     def on_mount(self):
-        self._show_mode("home")
+        self._show_mode(self._initial_mode)
+        if self._restart_request is None and self._initial_mode == "inspect":
+            self.query_one("#backup-source", Input).focus()
         if self._restart_request is not None and self._restart_request.recovery_copies:
             target = self.query_one("#backup-later-target", Input)
             with target.prevent(Input.Changed):
@@ -560,6 +589,10 @@ class BackupRestoreScreen(Screen):
     def _show_mode(self, mode):
         self._mode = mode
         self._revision += 1
+        # Setup's entry is titled for Inspect only while Inspect is showing.
+        self.query_one("#backup-title", Static).update(
+            ENTRY_TITLES[mode if mode == self._initial_mode else "home"]
+        )
         self._preview = self._reviewed = None
         self._backup_availability = None
         self._restore_availability = None
@@ -587,7 +620,11 @@ class BackupRestoreScreen(Screen):
             self.query_one("#" + identifier).display = visible
         self.query_one("#backup-create", Button).disabled = True
         self.query_one("#backup-dependent").display = mode in ("copies", "profiles")
-        self.query_one("#backup-message", Static).update("")
+        # TASK-34100.16: the line above the buttons says why Create backup is
+        # disabled -- here, until a review succeeds.
+        self.query_one("#backup-message", Static).update(
+            CREATE_NEEDS_REVIEW if mode == "create" else ""
+        )
         self._clear_passwords()
 
     @on(Button.Pressed, "#backup-open-create")
@@ -976,7 +1013,7 @@ class BackupRestoreScreen(Screen):
             return
         if self._rollback_copy_id is None:
             return
-        target = Path(self._input("backup-later-target")).expanduser()
+        target = typed_path(self._input("backup-later-target"))
         password = self._input("backup-copy-password")
         if not target.is_absolute() or not password:
             self.query_one("#backup-message", Static).update(
@@ -990,6 +1027,10 @@ class BackupRestoreScreen(Screen):
             and not box.disabled
             and box.name in self._later_review_codes_seen
         )
+        if _RETAINED_CREDENTIAL_REVIEW in self._later_review_codes_seen:
+            self._later_retention_accepted = _RETAINED_CREDENTIAL_REVIEW in acknowledged
+        elif self._later_retention_accepted:
+            acknowledged = (*acknowledged, _RETAINED_CREDENTIAL_REVIEW)
         self._requested_rollback_operation = None
         self._invalidate()
         self._preview_rollback(
@@ -1293,6 +1334,11 @@ class BackupRestoreScreen(Screen):
         self._rollback_availability = None
         self.query_one("#backup-later-start", Button).disabled = True
         self.query_one("#backup-later-confirm", Checkbox).value = False
+        if self._mode == "create":
+            # TASK-34100.16: every path that voids the review disables Create
+            # (form edits, both pickers, a credential review), so the reason
+            # is set here once; Review and Create overwrite it afterwards.
+            self.query_one("#backup-message", Static).update(CREATE_NEEDS_REVIEW)
 
     @on(Input.Changed)
     @on(Checkbox.Changed)
@@ -1316,6 +1362,8 @@ class BackupRestoreScreen(Screen):
             self._sync_replacement_host()
             if event.control.id == "backup-source":
                 self._clear_inspection(dismiss_current=True)
+                # TASK-34100.16 review: a pre-check message named the old path.
+                self.query_one("#backup-message", Static).update("")
             if event.control.id == "backup-later-target":
                 self._forget_later_credential_review()
             control = event.control
@@ -1342,7 +1390,7 @@ class BackupRestoreScreen(Screen):
 
     def _later_selection(self):
         return self._rollback_copy_id, str(
-            Path(self._input("backup-later-target")).expanduser()
+            typed_path(self._input("backup-later-target"))
         )
 
     def _forget_later_credential_review(self):
@@ -1350,6 +1398,7 @@ class BackupRestoreScreen(Screen):
         self._requested_rollback_operation = None
         self._rollback_selection = None
         self._later_review_codes_seen = ()
+        self._later_retention_accepted = False
         self.query_one("#backup-later-credential-review").display = False
         for box in self.query(".backup-acknowledge-later-credential"):
             box.value = False
@@ -1359,6 +1408,7 @@ class BackupRestoreScreen(Screen):
         """A rollback omission belongs to the unchanged replacement choices."""
         self._requested_restore_operation = None
         self._restore_review_codes_seen = ()
+        self._restore_retention_accepted = False
         self.query_one("#backup-restore-credential-review").display = False
         for box in self.query(".backup-acknowledge-restore-credential"):
             box.value = False
@@ -1381,7 +1431,7 @@ class BackupRestoreScreen(Screen):
                     "Choose at least one data group, or select Everything."
                 )
             self._validate_password(options)
-            destination = Path(self._input("backup-destination")).expanduser()
+            destination = typed_path(self._input("backup-destination"))
             if not destination.is_absolute() or (
                 not self.config_paths and not self.include_known_profiles
             ):
@@ -1490,13 +1540,23 @@ class BackupRestoreScreen(Screen):
         )
         rows.extend(preview.issues)
         self.query_one("#backup-coverage", Static).update("\n".join(rows))
-        self.query_one("#backup-create", Button).disabled = (
-            not (details["complete"] or reviewed[2]["allow_partial"])
-            or not all(row["sufficient"] for row in details["capacity"])
-            or not available
+        blocked = create_unavailable_reason(
+            complete=details["complete"],
+            allow_partial=reviewed[2]["allow_partial"],
+            capacity=details["capacity"],
+            available=available,
+            unavailable_message=(
+                ""
+                if available
+                else self.service.issue_message(reason) + f" ({reason})"
+            ),
+            destination=reviewed[1],
         )
+        self.query_one("#backup-create", Button).disabled = blocked is not None
+        # TASK-34100.16: a disabled Create says why on the line above it.
         self.query_one("#backup-message", Static).update(
-            "Review the displayed coverage. Backup pauses writers for capture, then resumes them before packaging."
+            blocked
+            or "Review the displayed coverage. Backup pauses writers for capture, then resumes them before packaging."
         )
 
     @on(Button.Pressed, "#backup-create")
@@ -1531,6 +1591,9 @@ class BackupRestoreScreen(Screen):
             return
         approved_scope = self._preview.scope_digest
         self._invalidate()
+        # TASK-34100.16 review: pressing Create voids the review, so say how
+        # Create comes back (true through the run and after it ends).
+        self.query_one("#backup-message", Static).update(CREATE_STARTED)
         self._clear_passwords()
         self._start_backup_operation(
             self.app,
@@ -1581,13 +1644,26 @@ class BackupRestoreScreen(Screen):
                 None,
             )
 
+    @on(Input.Submitted, "#backup-source")
+    def _submit_source(self):
+        """Enter in the archive field inspects it, like the Inspect button."""
+        if self._mode == "inspect":
+            self._inspect()
+
     @on(Button.Pressed, "#backup-inspect")
     def _inspect(self):
-        source = Path(self._input("backup-source")).expanduser()
+        source = typed_path(self._input("backup-source"))
         if not source.is_absolute():
             self.query_one("#backup-message", Static).update(
                 "Choose a full archive path."
             )
+            return
+        problem = archive_source_problem(source)
+        if problem is not None:
+            # A config.toml or a folder: say what it is instead of letting
+            # the archive reader fail as backup_operation_failed.
+            self.query_one("#backup-message", Static).update(problem)
+            self._clear_passwords()
             return
         password = self._input("backup-inspect-password")
         try:
@@ -1768,16 +1844,25 @@ class BackupRestoreScreen(Screen):
         ):
             return
         area.display = True
+        retention = codes == (_RETAINED_CREDENTIAL_REVIEW,)
         await area.mount(
             Static(
-                "The safety copy could not include these credentials. No replacement was published. "
+                "Some incoming credentials need manual recovery and will remain in the encrypted archive. "
+                "No replacement was published. Accept encrypted retention, enter a new rollback password, "
+                "and review restore again."
+                if retention
+                else "The safety copy could not include these credentials. No replacement was published. "
                 "In Recovery copies, choose Abort untouched replacement. Then return here, "
                 "review each omission, enter a new rollback password, and review restore again.",
                 markup=False,
             ),
             *(
                 Checkbox(
-                    Text("Acknowledge safety-copy omission: " + code),
+                    Text(
+                        "Accept encrypted manual retention"
+                        if retention
+                        else "Acknowledge safety-copy omission: " + code
+                    ),
                     name=code,
                     classes="backup-acknowledge-restore-credential",
                 )
@@ -1809,20 +1894,32 @@ class BackupRestoreScreen(Screen):
         ):
             return
         area.display = True
+        retention = codes == (_RETAINED_CREDENTIAL_REVIEW,)
         await area.mount(
             Static(
                 (
-                    "The new safety copy could not include these credentials. No later rollback was published. "
+                    "Some credentials need manual recovery and will remain in the encrypted archive. "
+                    "No later rollback was published. Accept encrypted retention. "
+                    if retention
+                    else "The new safety copy could not include these credentials. No later rollback was published. "
                     "Choose Abort untouched replacement above. "
                     if pending
                     else "Review these unavailable credential scopes. "
                 )
-                + "Then select each omission you accept, re-enter the old copy password, and review later rollback again.",
+                + (
+                    "Re-enter the old copy password and review later rollback again."
+                    if retention
+                    else "Then select each omission you accept, re-enter the old copy password, and review later rollback again."
+                ),
                 markup=False,
             ),
             *(
                 Checkbox(
-                    Text("Acknowledge safety-copy omission: " + code),
+                    Text(
+                        "Accept encrypted manual retention"
+                        if retention
+                        else "Acknowledge safety-copy omission: " + code
+                    ),
                     name=code,
                     classes="backup-acknowledge-later-credential",
                 )
@@ -1970,7 +2067,7 @@ class BackupRestoreScreen(Screen):
             for index, group in enumerate(self._inspection_summary["dependency_groups"])
             if self.query_one(f"#backup-inert-group-{index}", Checkbox).value
         )
-        destination = Path(self._input("backup-inert-destination")).expanduser()
+        destination = typed_path(self._input("backup-inert-destination"))
         if not groups or not destination.is_absolute():
             self.query_one("#backup-inert-preview", Static).update(
                 "Select at least one group and a new absolute directory."
@@ -2059,7 +2156,7 @@ class BackupRestoreScreen(Screen):
                 continue
             if mode == "replace" and slot["kind"] == "profile_base":
                 continue
-            path = Path(self._input(f"backup-root-{index}")).expanduser()
+            path = typed_path(self._input(f"backup-root-{index}"))
             if not path.is_absolute():
                 self.query_one("#backup-message", Static).update(
                     "Choose an absolute local directory for every destination."
@@ -2082,7 +2179,7 @@ class BackupRestoreScreen(Screen):
         if mode == "replace":
             for index, profile in enumerate(self._inspection_summary["profile_ids"]):
                 identifier = "backup-target-config" + (f"-{index}" if index else "")
-                path = Path(self._input(identifier)).expanduser()
+                path = typed_path(self._input(identifier))
                 if not path.is_absolute():
                     self.query_one("#backup-message", Static).update(
                         "Choose the existing local profile configuration to replace."
@@ -2101,13 +2198,26 @@ class BackupRestoreScreen(Screen):
         }
         setup_parent = None
         if mode == "replace" and self._restore_setup_required():
-            setup_parent = Path(self._input("backup-setup-parent")).expanduser()
+            setup_parent = typed_path(self._input("backup-setup-parent"))
             if not setup_parent.is_absolute():
                 self.query_one("#backup-message", Static).update(
                     self.service.issue_message("restore_setup_parent_required")
                 )
                 return
         displayed_groups = self._effective_restore_groups()
+        acknowledged = tuple(
+            box.name
+            for box in self.query(".backup-acknowledge-restore-credential")
+            if mode == "replace"
+            and box.value
+            and box.name in self._restore_review_codes_seen
+        )
+        if _RETAINED_CREDENTIAL_REVIEW in self._restore_review_codes_seen:
+            self._restore_retention_accepted = (
+                _RETAINED_CREDENTIAL_REVIEW in acknowledged
+            )
+        elif mode == "replace" and self._restore_retention_accepted:
+            acknowledged = (*acknowledged, _RETAINED_CREDENTIAL_REVIEW)
         self._invalidate()
         self._preview_restore(
             self.app,
@@ -2117,13 +2227,7 @@ class BackupRestoreScreen(Screen):
             (bases, external, setup_parent),
             names,
             target,
-            tuple(
-                box.name
-                for box in self.query(".backup-acknowledge-restore-credential")
-                if mode == "replace"
-                and box.value
-                and box.name in self._restore_review_codes_seen
-            ),
+            acknowledged,
             tuple(
                 box.name
                 for box in self.query(".backup-safety-member")
@@ -2541,14 +2645,14 @@ class BackupRestoreScreen(Screen):
         target = self._input("backup-target-config").strip()
         if not target and self.config_paths:
             target = str(self.config_paths[0])
-        target = Path(target).expanduser()
+        target = typed_path(target)
         if not target.is_absolute():
             self.query_one("#backup-message", Static).update(
                 "Choose the existing local configuration before continuing."
             )
             return
         source = self._input("backup-source").strip()
-        archive = Path(source).expanduser() if source else None
+        archive = typed_path(source) if source else None
         self._clear_passwords()
         self.app.request_recovery_restart(archive, target)
 
@@ -2556,7 +2660,7 @@ class BackupRestoreScreen(Screen):
     def _restart_for_rollback(self):
         if not self._requires_recovery_restart():
             return
-        target = Path(self._input("backup-later-target").strip()).expanduser()
+        target = typed_path(self._input("backup-later-target").strip())
         if not target.is_absolute():
             self.query_one("#backup-message", Static).update(
                 "Choose the existing local configuration before continuing."

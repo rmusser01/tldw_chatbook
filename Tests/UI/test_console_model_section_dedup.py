@@ -9,7 +9,8 @@ every width where the rail is shown at all (below 100 columns the rail
 force-collapses).
 
 What stays in the Model section is what is NOT duplicated elsewhere: the
-sampling parameters, the system-prompt row, and Configure.
+sampling parameters, the system-prompt row, and the "Change  Alt+M" action
+(TASK-33004.7; its button id still reads ``-configure``).
 """
 
 from __future__ import annotations

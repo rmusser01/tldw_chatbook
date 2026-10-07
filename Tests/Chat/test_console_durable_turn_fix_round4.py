@@ -19,6 +19,8 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     ConsoleTurnPreparationState,
 )
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
 
 def _result_or_exception(future: Future[Any]) -> object:
     try:

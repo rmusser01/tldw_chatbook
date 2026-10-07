@@ -59,13 +59,50 @@ def _fingerprint(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False).encode()).hexdigest()
 
 
-def _read_scope(record, store):
+def _server_scope(record, purpose=None):
     from tldw_chatbook.runtime_policy.server_credentials import ServerCredentialScope
 
-    if record["kind"] == "server":
-        return store.get_scoped_secret(
-            ServerCredentialScope.legacy(record["server_id"], record["purpose"])
+    return ServerCredentialScope(
+        server_profile_id=record.get("profile_id") or record["server_id"],
+        normalized_origin=record["server_id"],
+        credential_type=purpose or record["purpose"],
+    )
+
+
+def _planned_record(record, plan):
+    return {**record, "profile_id": plan.get("profile_id", record.get("profile_id"))}
+
+
+def profile_credential_scopes(inventory: Inventory) -> dict[str, str | None]:
+    """Derive credential namespaces from locally verified config selectors.
+
+    Args:
+        inventory: Inventory containing locally verified config declarations.
+
+    Returns:
+        Profile IDs mapped to credential selectors. None selects the implicit
+        default profile; strings select the config path for explicit profiles.
+    """
+    from .profile_paths import default_config_path, effective_config_path, lexical_path
+
+    return {
+        item.logical_id.split(":")[1]: (
+            None
+            if lexical_path(item.path) == default_config_path()
+            and (
+                not os.environ.get("TLDW_CONFIG_PATH")
+                or effective_config_path() != default_config_path()
+            )
+            else str(lexical_path(item.path))
         )
+        for item in inventory.items
+        if item.owner == "config" and item.path is not None
+    }
+
+
+def _read_scope(record, store):
+    if record["kind"] == "server":
+        return store.get_scoped_secret(_server_scope(record))
     return store._keyring.get_password(record["service"], record["username"])
 
 
@@ -118,8 +155,9 @@ def _config_server_id(data):
     return _normalize_server_identity(value)[0] if value else None
 
 
-def _capture_owned(owner, path, data, staging, material, issues):
+def _capture_owned(owner, path, data, staging, material, issues, profile_id=None):
     relative = path.relative_to(staging).as_posix()
+    scope = {"profile_id": profile_id} if profile_id is not None else {}
     if owner == "mcp.targets":
         for target in _targets(data):
             reference = target.get("auth_reference", "") or ""
@@ -155,6 +193,7 @@ def _capture_owned(owner, path, data, staging, material, issues):
                         "server_id": target["server_id"],
                         "purpose": selected,
                         "remappable": purpose is not None,
+                        **scope,
                     },
                     material,
                     issues,
@@ -171,6 +210,7 @@ def _capture_owned(owner, path, data, staging, material, issues):
                         "server_id": server_id,
                         "purpose": purpose,
                         "remappable": False,
+                        **scope,
                     },
                     material,
                     issues,
@@ -265,6 +305,13 @@ def _material(staging):
         seen.add(record["id"])
         _staged_path(staging, Path(staging) / record["file"])
         if record["kind"] == "server":
+            if "profile_id" in record and (
+                type(record["profile_id"]) is not str
+                or not record["profile_id"]
+                or len(record["profile_id"]) > 8192
+                or "\x00" in record["profile_id"]
+            ):
+                raise ValueError("unsupported_credential_material")
             if (
                 not isinstance(record.get("server_id"), str)
                 or not record["server_id"]
@@ -347,7 +394,11 @@ def _material(staging):
 
 
 def plan_credential_scopes(
-    staging: Path, *, isolated: bool = False, fresh: bool = False
+    staging: Path,
+    *,
+    isolated: bool = False,
+    fresh: bool = False,
+    profile_scopes: Mapping[str, str | None] | None = None,
 ) -> Mapping[str, str]:
     """Plan only: caller journals this mapping before applying any credential."""
     plans = {}
@@ -359,8 +410,14 @@ def plan_credential_scopes(
                 {"action": "retain", "material": _fingerprint(record)}
             )
             continue
+        destination = (
+            {"profile_id": profile_scopes[record["file"]]}
+            if profile_scopes is not None
+            else {}
+        )
+        local_record = {**record, **destination}
         try:
-            current = _read_scope(record, _credential_store())
+            current = _read_scope(local_record, _credential_store())
         except Exception:  # noqa: BLE001 - backend errors can contain secret values
             raise ValueError("credential_store_unavailable") from None
         purpose = (
@@ -368,7 +425,7 @@ def plan_credential_scopes(
             if not fresh and current == record["value"]
             else "recovery_" + uuid4().hex + "_" + record["purpose"]
         )
-        target = {**record, "purpose": purpose}
+        target = {**local_record, "purpose": purpose}
         try:
             occupied = (
                 purpose != record["purpose"]
@@ -384,6 +441,7 @@ def plan_credential_scopes(
                 "purpose": purpose,
                 "expected": _fingerprint(current),
                 "material": _fingerprint(record),
+                **destination,
             },
             sort_keys=True,
         )
@@ -394,7 +452,6 @@ def restore_credential_values(
     staging: Path, scope_map: Mapping[str, str]
 ) -> tuple[str, ...]:
     """Recheck the journaled plan; isolate supported refs, retain other material."""
-    from tldw_chatbook.runtime_policy.server_credentials import ServerCredentialScope
 
     try:
         records = _material(staging)
@@ -425,7 +482,8 @@ def restore_credential_values(
                     raise ValueError("credential_scope_changed")
             else:
                 raise ValueError("credential_scope_changed")
-            current = _read_scope(record, _credential_store())
+            local_record = _planned_record(record, plan)
+            current = _read_scope(local_record, _credential_store())
             if _fingerprint(current) != plan.get("expected") or (
                 plan["action"] == "reuse" and current != record["value"]
             ):
@@ -433,7 +491,7 @@ def restore_credential_values(
             if (
                 plan["action"] == "create"
                 and _read_scope(
-                    {**record, "purpose": plan["purpose"]}, _credential_store()
+                    {**local_record, "purpose": plan["purpose"]}, _credential_store()
                 )
                 is not None
             ):
@@ -454,7 +512,7 @@ def restore_credential_values(
             check(record, plan)
             if plan["action"] == "create":
                 _credential_store().set_recovery_secret_if_absent(
-                    ServerCredentialScope.legacy(record["server_id"], plan["purpose"]),
+                    _server_scope(_planned_record(record, plan), plan["purpose"]),
                     record["value"],
                 )
                 path = Path(staging) / record["file"]
@@ -977,6 +1035,7 @@ def process_credentials(
     *,
     mode: Literal["exclude", "include", "rollback"],
     encrypted: bool,
+    profile_scopes: Mapping[str, str | None] | None = None,
 ) -> tuple[str, ...]:
     """Process a rebound staging inventory; report unsupported coverage honestly."""
     if mode in {"include", "rollback"} and not encrypted:
@@ -1115,7 +1174,14 @@ def process_credentials(
                         _sanitize_connections(item.owner, data)
                     except (ValueError, TypeError):
                         issues.append("credential_connection_format_unsupported")
-                _capture_owned(item.owner, path, data, staging, material, issues)
+                profile_id = (
+                    profile_scopes[item.logical_id.split(":")[1]]
+                    if profile_scopes is not None
+                    else None
+                )
+                _capture_owned(
+                    item.owner, path, data, staging, material, issues, profile_id
+                )
         if mode != "exclude":
             encoded = json.dumps(
                 {"version": 1, "mode": mode, "records": material}, ensure_ascii=False
@@ -1145,7 +1211,11 @@ def replacement_credential_records(staging: Path, scope_map: Mapping[str, str]):
             if set(plan) != {"action", "material"}:
                 raise ValueError("credential_scope_changed")
         elif (
-            set(plan) != {"action", "purpose", "expected", "material"}
+            set(plan)
+            not in (
+                {"action", "purpose", "expected", "material"},
+                {"action", "purpose", "expected", "material", "profile_id"},
+            )
             or plan.get("action") != "create"
             or record["kind"] != "server"
             or not record["remappable"]
@@ -1193,9 +1263,10 @@ def check_replacement_credential(record, plan, *, allow_existing=False) -> None:
         return
     try:
         store = _credential_store()
-        if _fingerprint(_read_scope(record, store)) != plan["expected"]:
+        local_record = _planned_record(record, plan)
+        if _fingerprint(_read_scope(local_record, store)) != plan["expected"]:
             raise ValueError("credential_scope_changed")
-        occupied = _read_scope({**record, "purpose": plan["purpose"]}, store)
+        occupied = _read_scope({**local_record, "purpose": plan["purpose"]}, store)
         if occupied is not None and (not allow_existing or occupied != record["value"]):
             raise ValueError("credential_scope_changed")
     except Exception:  # noqa: BLE001 - backend errors can include secret values
@@ -1204,7 +1275,6 @@ def check_replacement_credential(record, plan, *, allow_existing=False) -> None:
 
 def apply_replacement_credential(record, plan) -> dict[str, str]:
     """Apply/recheck one durably intended fresh scope, never a shared value."""
-    from tldw_chatbook.runtime_policy.server_credentials import ServerCredentialScope
 
     check_replacement_credential(record, plan, allow_existing=True)
     if plan["action"] == "retain":
@@ -1216,7 +1286,7 @@ def apply_replacement_credential(record, plan) -> dict[str, str]:
         }
     try:
         store = _credential_store()
-        scope = ServerCredentialScope.legacy(record["server_id"], plan["purpose"])
+        scope = _server_scope(_planned_record(record, plan), plan["purpose"])
         if store.get_scoped_secret(scope) is None:
             store.set_recovery_secret_if_absent(scope, record["value"])
         actual = store.get_scoped_secret(scope)
@@ -1243,7 +1313,10 @@ def verify_replacement_credential(record, plan) -> dict[str, str]:
             "value_digest": "",
         }
     try:
-        value = _read_scope({**record, "purpose": plan["purpose"]}, _credential_store())
+        value = _read_scope(
+            {**_planned_record(record, plan), "purpose": plan["purpose"]},
+            _credential_store(),
+        )
     except Exception:  # noqa: BLE001 - backend errors can include secret values
         raise ValueError("credential_scope_apply_unavailable") from None
     if value != record["value"]:
@@ -1279,7 +1352,6 @@ def plan_rollback_credential(record):
 
 def verify_rollback_credential(record, plan, *, apply=False):
     """Check/create only the intended fresh scope; never read or mutate the old scope."""
-    from tldw_chatbook.runtime_policy.server_credentials import ServerCredentialScope
 
     if (
         record["kind"] != "server"
@@ -1294,7 +1366,7 @@ def verify_rollback_credential(record, plan, *, apply=False):
         raise ValueError("rollback_credential_plan_invalid")
     try:
         store = _credential_store()
-        scope = ServerCredentialScope.legacy(record["server_id"], plan["purpose"])
+        scope = _server_scope(record, plan["purpose"])
         value = store.get_scoped_secret(scope)
         if value is None and apply:
             store.set_recovery_secret_if_absent(scope, record["value"])

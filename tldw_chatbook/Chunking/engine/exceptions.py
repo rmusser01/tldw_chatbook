@@ -24,16 +24,19 @@ class ChunkingError(Exception):
 
 class InvalidInputError(ChunkingError):
     """Exception raised when input validation fails."""
+
     pass
 
 
 class InvalidChunkingMethodError(ChunkingError):
     """Exception raised when an invalid chunking method is specified."""
+
     pass
 
 
 class TokenizerError(ChunkingError):
     """Exception raised for tokenizer-related errors."""
+
     pass
 
 
@@ -49,7 +52,7 @@ class TemplateError(ChunkingError):
             template_name: Name of the template that caused the error
             **kwargs: Additional error details
         """
-        details = {'template_name': template_name, **kwargs}
+        details = {"template_name": template_name, **kwargs}
         super().__init__(message, details)
 
 
@@ -68,14 +71,21 @@ class LanguageNotSupportedError(ChunkingError):
         if available_languages:
             message += f". Supported languages: {', '.join(available_languages)}"
 
-        super().__init__(message, {'language': language, 'available': available_languages})
+        super().__init__(
+            message, {"language": language, "available": available_languages}
+        )
 
 
 class ChunkSizeError(ChunkingError):
     """Exception raised for invalid chunk size parameters."""
 
-    def __init__(self, message: str, max_size: Optional[int] = None,
-                 overlap: Optional[int] = None, **kwargs):
+    def __init__(
+        self,
+        message: str,
+        max_size: Optional[int] = None,
+        overlap: Optional[int] = None,
+        **kwargs,
+    ):
         """
         Initialize chunk size error.
 
@@ -85,15 +95,20 @@ class ChunkSizeError(ChunkingError):
             overlap: Overlap size that caused the error
             **kwargs: Additional error details
         """
-        details = {'max_size': max_size, 'overlap': overlap, **kwargs}
+        details = {"max_size": max_size, "overlap": overlap, **kwargs}
         super().__init__(message, details)
 
 
 class ProcessingError(ChunkingError):
     """Exception raised during text processing."""
 
-    def __init__(self, message: str, stage: Optional[str] = None,
-                 operation: Optional[str] = None, **kwargs):
+    def __init__(
+        self,
+        message: str,
+        stage: Optional[str] = None,
+        operation: Optional[str] = None,
+        **kwargs,
+    ):
         """
         Initialize processing error.
 
@@ -103,17 +118,19 @@ class ProcessingError(ChunkingError):
             operation: Specific operation that failed
             **kwargs: Additional error details
         """
-        details = {'stage': stage, 'operation': operation, **kwargs}
+        details = {"stage": stage, "operation": operation, **kwargs}
         super().__init__(message, details)
 
 
 class ConfigurationError(ChunkingError):
     """Exception raised for configuration-related errors."""
+
     pass
 
 
 class CacheError(ChunkingError):
     """Exception raised for cache-related errors."""
+
     pass
 
 
@@ -122,15 +139,15 @@ ChunkerError = ChunkingError  # Alias
 
 
 __all__ = [
-    'ChunkingError',
-    'InvalidInputError',
-    'InvalidChunkingMethodError',
-    'TokenizerError',
-    'TemplateError',
-    'LanguageNotSupportedError',
-    'ChunkSizeError',
-    'ProcessingError',
-    'ConfigurationError',
-    'CacheError',
-    'ChunkerError',  # Backward compatibility alias
+    "ChunkingError",
+    "InvalidInputError",
+    "InvalidChunkingMethodError",
+    "TokenizerError",
+    "TemplateError",
+    "LanguageNotSupportedError",
+    "ChunkSizeError",
+    "ProcessingError",
+    "ConfigurationError",
+    "CacheError",
+    "ChunkerError",  # Backward compatibility alias
 ]

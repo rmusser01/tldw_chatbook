@@ -165,6 +165,8 @@ MAX_TLDW_MODULES_AT_UI_READY = 1033
 #: The two package prefixes are TASK-21731's; the exact module names are the
 #: trajectory family TASK-22213 took off the Chat leg.
 ABSENT_AT_READY_PREFIXES = (
+    # Resend execution is first-use work; pure row eligibility is already resident.
+    "tldw_chatbook.Chat.console_turn_resend",
     "tldw_chatbook.Chunking",
     # Personal Context is user/setup/settings/send work. Its encrypted store,
     # interview coordinator, and agent tools must not delay the first frame.
@@ -175,11 +177,28 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Compaction failure copy is needed only when a compaction fails. Shed
+    # this interaction-only edge to cover the chat-start resident (ADR-097).
+    "tldw_chatbook.Chat.console_compaction_failure",
+    # Resend eligibility and dispatch load with transcript rows or an action,
+    # never while mounting an empty Console (TASK-33803, ADR-097).
+    "tldw_chatbook.Chat.console_turn_resend",
+    # TASK-33628.2: message Delete/Undo and its receipt load at first use (a
+    # Delete action, an armed or shown confirmation, or the Inspector's
+    # pending-delete copy), never before first paint.
+    "tldw_chatbook.Chat.console_message_delete",
+    "tldw_chatbook.UI.Console_Modules.message_delete",
+    "tldw_chatbook.Widgets.Console.console_transcript_delete_confirmation",
+    "tldw_chatbook.Widgets.Console.console_message_delete_receipt",
     # TASK-33011: process entry points; reached only via cli.py / `python -m`.
     "tldw_chatbook.app_entry",
     # TASK-33011: TldwCli's destination/handoff/Personal Context bodies; the
     # app stubs import it on first call, which is always post-ready.
     "tldw_chatbook.app_destinations",
+    # TASK-33011: TldwCli's TTS/STTS handler, speech-owner and speech
+    # admission bodies; first called by a speech event, the deferred audio
+    # timer or shutdown, all after ready.
+    "tldw_chatbook.app_speech",
     # Serving metadata discovery is first-use work; pure capacity defaults are not.
     "tldw_chatbook.Chat.console_context_window",
     # Parsing imported notes and assigning settings controls are first-use work.

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from threading import Event
 from typing import TYPE_CHECKING, Protocol
+from uuid import uuid4
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleControllerActivity,
@@ -23,29 +27,48 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueuePauseReason,
     PromptQueueReservation,
     PromptQueueSnapshot,
+    QueuedPrompt,
     QueueMutationStatus,
     QueueThreadViolation,
-    QueuedPrompt,
 )
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.agent_models import PluginContextText
+    from tldw_chatbook.Agents.hooks_v2.continuations import (
+        ContinuationAdmission,
+        ContinuationReceipt,
+    )
+    from tldw_chatbook.Agents.hooks_v2.lifecycle import HookSessionLifecycle
+    from tldw_chatbook.Agents.hooks_v2.models import HookResult
     from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
+    from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
 
 
 _AUTHORIZATION_KEY = object()
+
+# Shown when a press that would run the queue stops at a context review
+# instead (TASK-33621.19). It names no cause and no time, because the change
+# need not be the user's or happen during the pause: an edit, a delete, a
+# compaction, or a failed regeneration the queue itself ran all move the
+# context epoch.
+CONTEXT_CHANGED_REVIEW_NOTICE = (
+    "The conversation has changed. Review it before the queue continues."
+)
 
 
 class QueueGenerationAuthorization:
     """Opaque, coordinator-issued authority to cross a queue-owned send gate."""
 
-    __slots__ = ("_coordinator", "session_id")
+    __slots__ = ("_coordinator", "entry_id", "session_id")
 
     def __init__(self, coordinator: object, session_id: str, *, _key: object) -> None:
         if _key is not _AUTHORIZATION_KEY:
             raise PermissionError("queue generation authority is coordinator-internal")
         self._coordinator = coordinator
         self.session_id = session_id
+        chain = coordinator._chains.get(session_id)
+        self.entry_id = chain.current_entry_id if chain else None
 
     def __repr__(self) -> str:
         return (
@@ -73,6 +96,17 @@ class _PromptChain:
     current_entry_id: str | None = None
     last_terminal_status: ConsoleRunStatus | None = None
     logical_outcome_id: str | None = None
+    request: ConsoleTurnCustodyRequest | None = None
+    hook_parent: object | None = None
+    pending_stop_key: tuple[str, str] | None = None
+    hook_cancel_event: Event | None = None
+    pending_stop_task: asyncio.Task | None = None
+    pending_stop_cancelled: bool = False
+    continuation: object | None = None
+    continuation_started: float | None = None
+    initiator: str = "manual"
+    rollback_epoch: tuple[int, int] | None = None
+    machine_entry_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +167,12 @@ class ConsolePromptQueueCoordinator:
         self._shutting_down = False
         self._maintenance_paused = False
         self._maintenance_suspended: dict[str, int] = {}
+        self._continuation_keys: set[tuple[str, str]] = set()
+        self._stop_parents = {}
+        self._machine_entries = {}
+        self._stop_outcomes = {}
+        self._sealed_continuations: set[str] = set()
+        self._continuation_admission_current = lambda _request: not self._maintenance_paused
 
     def maintenance_close_admission(self) -> None:
         """Stop admissions and next claims, leaving the accepted turn intact."""
@@ -162,6 +202,400 @@ class ConsolePromptQueueCoordinator:
             return self._maintenance_refusal(session_id)
         return await self.resume_and_drain(session_id)
 
+    def bind_turn_request(
+        self, request: ConsoleTurnCustodyRequest, *, origin: ConsoleSubmissionOrigin
+    ) -> None:
+        """Capture the exact runtime-owned inputs while its chain is active."""
+        chain = self._chains.get(request.session_id)
+        if chain is not None:
+            chain.request = request
+            chain.initiator = (
+                "manual" if origin is ConsoleSubmissionOrigin.MANUAL else "scheduled"
+            )
+
+    def capture_hook_parent(
+        self,
+        session_id: str,
+        lifecycle: HookSessionLifecycle,
+        scope: str,
+        assistant_id: str,
+        *,
+        accepted_policy: ConsoleLibraryPolicySnapshot | None = None,
+    ) -> None:
+        """Pin an accepted root before H4 retires its operation scope."""
+        chain = self._chains.get(session_id)
+        if chain is None or not chain.accepted_live_turn or chain.request is None:
+            return
+        request = chain.request
+        if accepted_policy is not None:
+            ceiling = request.configuration.library_policy_maximum
+            if (
+                ceiling is None
+                or ceiling.source != "new_session"
+                or ceiling.policy_revision is not None
+                or accepted_policy.source != "durable"
+                or accepted_policy.policy_revision != 1
+                or replace(
+                    accepted_policy,
+                    source=ceiling.source,
+                    policy_revision=ceiling.policy_revision,
+                )
+                != ceiling
+            ):
+                return
+            request = replace(
+                request,
+                configuration=replace(
+                    request.configuration, library_policy_maximum=accepted_policy
+                ),
+            )
+        if chain.continuation_started is None:
+            chain.continuation_started = time.monotonic()
+        event = lifecycle.event(
+            "Stop",
+            turn_id=request.turn_id,
+            initiator="continuation" if chain.continuation else chain.initiator,
+        )
+        chain.hook_parent = (lifecycle, scope, event, assistant_id, request)
+
+    async def settle_hook_parent(self, session_id: str, scope: str) -> None:
+        """Join exact required gates before the provisional scope retires."""
+        chain = self._chains.get(session_id)
+        parent = chain.hook_parent if chain else None
+        if parent is None or parent[1] != scope:
+            return
+        try:
+            await parent[0].wait(scope)
+        except BaseException:
+            chain.hook_parent = None
+            raise
+
+    async def _stop_then_enqueue(self, session_id: str) -> None:
+        chain = self._chains.get(session_id)
+        parent = chain.hook_parent if chain else None
+        if parent is None:
+            return
+        chain.hook_parent = None
+        lifecycle, _scope, event, _assistant_id, request = parent
+        # Stop has no context effect: execute under the live host session,
+        # never resurrect an H4 retired operation/run owner.
+        key = (request.turn_id, event.event_id)
+        self._stop_parents[key] = (session_id, parent)
+        chain.pending_stop_key = key
+        self._changed(session_id)
+        try:
+            if not lifecycle.live or not lifecycle.current():
+                return
+            stop_task = asyncio.create_task(lifecycle.engine.fire_async(event))
+            chain.pending_stop_task = stop_task
+            try:
+                outcome = await stop_task
+            except asyncio.CancelledError:
+                owner = asyncio.current_task()
+                if not (
+                    chain.pending_stop_cancelled
+                    and stop_task.cancelled()
+                    and owner is not None
+                    and not owner.cancelling()
+                ):
+                    raise
+                return
+            if (
+                outcome.allowed
+                and not outcome.outstanding_cleanup
+                and lifecycle.engine.effects_current(event, outcome)
+            ):
+                self._stop_outcomes[key] = outcome
+                await self.schedule_continuation(
+                    request.turn_id,
+                    event.event_id,
+                    tuple(result for _, result in outcome.accepted),
+                )
+        finally:
+            chain.pending_stop_key = None
+            chain.hook_cancel_event = None
+            chain.pending_stop_task = None
+            chain.pending_stop_cancelled = False
+            self._stop_parents.pop(key, None)
+            self._stop_outcomes.pop(key, None)
+            lifecycle.terminal_budgets.pop(request.turn_id, None)
+            lifecycle.terminal_budget_times.pop(request.turn_id, None)
+            self._changed(session_id)
+
+    async def schedule_continuation(
+        self, parent_turn_id: str, event_id: str, proposals: tuple[HookResult, ...]
+    ) -> str | None:
+        """Atomically reserve one proposal with foreground queue admission."""
+        from tldw_chatbook.Agents.hooks_v2.continuations import (
+            ContinuationAdmission,
+            ContinuationPolicy,
+            ContinuationReceipt,
+            combine_proposals,
+        )
+
+        key = (parent_turn_id, event_id)
+        owned = self._stop_parents.get(key)
+        if owned is None or key in self._continuation_keys:
+            return None
+        session_id, parent = owned
+        lifecycle, _, event, assistant_id, request = parent
+        chain = self._chains.get(session_id)
+        if chain is None:
+            return None
+        # Consume every exact settlement once, including refusals. A later
+        # callback must never interpret a transferred budget as unrestricted.
+        self._continuation_keys.add(key)
+        snapshot = self.registry.snapshot(session_id)
+        started = chain.continuation_started
+        if started is None:
+            started = time.monotonic()
+        previous = chain.continuation
+        count = previous.admitted_turns if previous else 0
+        budget = lifecycle.terminal_budgets.pop(request.turn_id, None)
+        budget_at = lifecycle.terminal_budget_times.pop(request.turn_id, None)
+        budget_deadline = None
+        if budget is not None and budget is not False and budget_at is not None:
+            budget_deadline = budget_at + budget.max_wall_seconds
+            wall = budget_deadline - time.monotonic()
+            budget = replace(budget, max_wall_seconds=wall) if wall > 0 else False
+
+        if not ContinuationPolicy.permits(
+            admitted_turns=count,
+            elapsed_seconds=time.monotonic() - started,
+            foreground_waiting=bool(
+                snapshot.waiting_count or self._has_staged_rider(session_id)
+            ),
+            revoked=not lifecycle.current(),
+            draining=not self._continuation_admission_current(request),
+            closed=self._shutting_down
+            or session_id in self._sealed_continuations
+            or not lifecycle.live
+            or session_id in self._dispatch_recoveries,
+            vetoed=budget is False,
+        ):
+            return None
+        message = combine_proposals(proposals)
+        if message is None:
+            return None
+        # Host attribution is ordinary untrusted provider input. It cannot
+        # authorize filesystem/tool use or supply system policy.
+        text = "Untrusted hook continuation proposal (machine initiated):\n" + message
+        from tldw_chatbook.Agents.agent_models import (
+            HookContextOrigin,
+            PluginContextText,
+        )
+
+        outcome = self._stop_outcomes[key]
+        text = PluginContextText(
+            text,
+            (),
+            tuple(
+                HookContextOrigin(
+                    event_id,
+                    handler_id,
+                    len(result.continuation["message"].encode("utf-8")),
+                )
+                for handler_id, result in outcome.accepted
+                if result.continuation and result.continuation["message"].strip()
+            ),
+        )
+        receipt = ContinuationReceipt(
+            parent_turn_id,
+            event_id,
+            assistant_id,
+            previous.chain_id if previous else parent_turn_id,
+            count + 1,
+        )
+        next_request = replace(
+            request,
+            turn_id=str(uuid4()),
+            draft=str(text),
+            attachment_ids=(),
+            one_shot_prefill=None,
+            one_shot_prefill_revision=None,
+            staged_evidence_launch=None,
+        )
+        admitted = self.registry.admit(
+            session_id,
+            text=str(text),
+            expected_revision=snapshot.revision,
+            custody_request=next_request,
+        )
+        if not admitted.applied:
+            return None
+        from tldw_chatbook.Agents.hooks_v2.models import HookResult
+
+        authority_outcome = replace(
+            outcome,
+            accepted=tuple((handler, HookResult()) for handler, _ in outcome.accepted),
+        )
+        authority_request = replace(request, draft="")
+        check_admission = self._continuation_admission_current
+
+        def current():
+            return (
+                lifecycle.live
+                and lifecycle.current()
+                and lifecycle.engine.effects_current(event, authority_outcome)
+                and check_admission(authority_request)
+                and time.monotonic() - started < 120
+                and (budget_deadline is None or time.monotonic() < budget_deadline)
+            )
+
+        gate = ContinuationAdmission(
+            session_id=session_id,
+            entry_id=admitted.entry_id,
+            receipt=receipt,
+            current=current,
+        )
+        self._machine_entries[admitted.entry_id] = (
+            receipt,
+            lifecycle,
+            event,
+            authority_outcome,
+            text,
+            gate,
+            next_request.turn_id,
+        )
+        chain.continuation = receipt
+        chain.continuation_started = started
+        if budget is not None:
+            lifecycle.inherited_budgets[next_request.turn_id] = (
+                budget,
+                time.monotonic(),
+            )
+        self._changed(session_id)
+        return next_request.turn_id
+
+    def bind_hook_parent_cancellation(
+        self, session_id: str, assistant_id: str, cancellation: Event
+    ) -> None:
+        """Retain only the accepted parent's genuine provider cancellation identity."""
+        chain = self._chains.get(session_id)
+        parent = chain.hook_parent if chain is not None else None
+        if (
+            chain is not None
+            and chain.accepted_live_turn
+            and chain.request is not None
+            and parent is not None
+            and parent[3] == assistant_id
+            and parent[4].session_id == session_id
+            and parent[4].turn_id == chain.request.turn_id
+        ):
+            chain.hook_cancel_event = cancellation
+
+    def pending_stop_cancellation(self, session_id: str) -> Event | None:
+        """Return the original Event only during its exact pending settlement."""
+        chain = self._chains.get(session_id)
+        if (
+            chain is not None
+            and chain.request is not None
+            and chain.pending_stop_key is not None
+            and chain.pending_stop_key[0] == chain.request.turn_id
+            and chain.pending_stop_key in self._stop_parents
+        ):
+            return chain.hook_cancel_event
+        return None
+
+    def cancel_pending_stop(self, session_id: str, cancellation: Event) -> None:
+        """Cancel only the joined Stop event task after sealing its original owner."""
+        if (
+            self.pending_stop_cancellation(session_id) is cancellation
+            and cancellation.is_set()
+            and session_id in self._sealed_continuations
+        ):
+            chain = self._chains[session_id]
+            if (
+                chain.pending_stop_task is not None
+                and not chain.pending_stop_task.done()
+            ):
+                chain.pending_stop_cancelled = True
+                chain.pending_stop_task.cancel()
+
+    def interrupt_parent(
+        self, session_id: str
+    ) -> tuple[HookSessionLifecycle, str] | None:
+        """Return the exact accepted live root or its pending Stop settlement."""
+        chain = self._chains.get(session_id)
+        if chain is None:
+            return None
+        parent = chain.hook_parent if chain.accepted_live_turn else None
+        if parent is None and self.pending_stop_cancellation(session_id) is not None:
+            parent = self._stop_parents[chain.pending_stop_key][1]
+        return (parent[0], parent[4].turn_id) if parent is not None else None
+
+    def continuation_receipt(
+        self, session_id: str, entry_id: str | None
+    ) -> ContinuationReceipt | None:
+        """Expose only the currently claimed machine admission to persistence."""
+        chain = self._chains.get(session_id)
+        if chain is None or entry_id != chain.current_entry_id:
+            return None
+        issued = self._machine_entries.get(entry_id)
+        return issued[0] if issued is not None else None
+
+    def acknowledge_machine_rollback(
+        self, session_id: str, entry_id: str | None, before: int, after: int
+    ) -> None:
+        """Retain only the epoch transition caused by this claim's local echo cleanup."""
+        chain = self._chains.get(session_id)
+        if (
+            chain is not None
+            and self.continuation_receipt(session_id, entry_id) is not None
+            and self.registry.snapshot(session_id).expected_context_epoch == before
+        ):
+            chain.rollback_epoch = (before, after)
+
+    def continuation_contribution(
+        self, session_id: str, entry_id: str | None
+    ) -> ContinuationAdmission | None:
+        """Return the one gate for this exact coordinator-minted live claim."""
+        if self.continuation_receipt(session_id, entry_id) is None:
+            return None
+        return self._machine_entries[entry_id][5]
+
+    def _invalidate_machine_admission(self, session_id: str) -> None:
+        chain = self._chains.get(session_id)
+        if chain is not None:
+            issued = self._machine_entries.get(chain.current_entry_id)
+            if issued is not None:
+                issued[5].invalidate()
+
+    def continuation_input(
+        self, session_id: str, entry_id: str | None, text: str
+    ) -> PluginContextText | None:
+        """Restore only host-issued, whole live input, never parsed metadata."""
+        if self.continuation_receipt(session_id, entry_id) is None:
+            return None
+        source = self._machine_entries[entry_id][4]
+        if str(text) != str(source):
+            raise ValueError("hook_continuation_input_changed")
+        return source
+
+    def continuation_current(self, session_id: str, entry_id: str | None) -> bool:
+        """Recheck machine admission immediately before normal acceptance."""
+        issued = self._machine_entries.get(entry_id)
+        if issued is None:
+            return True
+        _, lifecycle, event, outcome, _, _gate, _turn_id = issued
+        snapshot = self.registry.snapshot(session_id)
+        chain = self._chains.get(session_id)
+        return bool(
+            chain is not None
+            and chain.current_entry_id == entry_id
+            and not self._shutting_down
+            and not snapshot.closing
+            and session_id not in self._sealed_continuations
+            and snapshot.waiting_count == 0
+            and lifecycle.live
+            and lifecycle.current()
+            and chain.request is not None
+            and self._continuation_admission_current(chain.request)
+            and lifecycle.engine.effects_current(event, outcome)
+            and chain.continuation_started is not None
+            and time.monotonic() - chain.continuation_started < 120
+        )
+
     def authorizes(
         self,
         authorization: QueueGenerationAuthorization | None,
@@ -175,6 +609,58 @@ class ConsolePromptQueueCoordinator:
             and authorization.session_id == session_id
             and session_id in self._chains
             and not self._shutting_down
+            and self.continuation_current(
+                session_id, self._chains[session_id].current_entry_id
+            )
+        )
+
+    def owns_machine_claim(
+        self, authorization, session_id: str, entry_id: str | None
+    ) -> bool:
+        """Recognize a minted claim even after its permission has been revoked."""
+        chain = self._chains.get(session_id)
+        return bool(
+            authorization is not None
+            and authorization._coordinator is self
+            and authorization.session_id == session_id
+            and chain is not None
+            and entry_id == authorization.entry_id == chain.current_entry_id
+            and entry_id in self._machine_entries
+        )
+
+    def reuses_claimed_slot(
+        self,
+        authorization: QueueGenerationAuthorization | None,
+        session_id: str,
+        *,
+        recovery: bool = False,
+    ) -> bool:
+        """Reuse held capacity only for a current claim or explicit recovery."""
+        chain = self._chains.get(session_id)
+        snapshot = self.registry.snapshot(session_id)
+        return bool(
+            self.authorizes(authorization, session_id)
+            and chain.current_entry_id == authorization.entry_id
+            and (
+                (authorization.entry_id is not None and snapshot.claimed_count == 1)
+                or (
+                    recovery
+                    and authorization.entry_id is None
+                    and snapshot.claimed_count == 0
+                )
+            )
+            and not chain.accepted_live_turn
+            and snapshot.reservation is PromptQueueReservation.HELD
+            and self._run_status(session_id) in self._TERMINAL
+            and session_id not in self._dispatch_recoveries
+        )
+
+    def bind_continuation_admission(
+        self, check: Callable[[ConsoleTurnCustodyRequest], bool]
+    ) -> None:
+        """Use the runtime's current plugin admission fences without new authority."""
+        self._continuation_admission_current = (
+            lambda request: not self._maintenance_paused and check(request)
         )
 
     def bind_runtime_submitter(self, submit_queued: QueuedTurnSubmitter) -> None:
@@ -223,8 +709,14 @@ class ConsolePromptQueueCoordinator:
             (chain and chain.accepted_live_turn)
             or session_id in self._dispatch_recoveries
         )
+        # TASK-33620.4 review: "preparing before acceptance" promises that a
+        # queue opens once this turn is accepted, which only a prompt-chain
+        # turn ever is. A chainless run (regenerate / continue / agent wake /
+        # manual summary) in the same status occupies the slot but never
+        # opens a queue, so it is not "preparing".
         preparing = (
-            status
+            chain is not None
+            and status
             in {
                 ConsoleRunStatus.VALIDATING,
                 ConsoleRunStatus.RETRYING,
@@ -361,16 +853,55 @@ class ConsolePromptQueueCoordinator:
         if snapshot.total_count == 0:
             return PromptQueueMutationResult(QueueMutationStatus.UNCHANGED, snapshot)
         resumed = self.resume(session_id)
-        if not resumed.applied:
+        # Same guard as resume_and_drain: a context change while the response
+        # was pending makes resume() re-pause as CONTEXT_CHANGED (APPLIED, no
+        # chain). Stop at that review; its detail carries the notice for the
+        # Retry or Discard press that settled the owner (TASK-33621.19).
+        if not resumed.applied or resumed.snapshot.mode is PromptQueueMode.PAUSED:
             return resumed
         await self._drain_waiting(session_id, terminal_status)
         return resumed
 
+    def pending_continuation_stop_available(self, session_id: str) -> bool:
+        """Read exact unsealed pending ownership without changing admission."""
+        chain = self._chains.get(session_id)
+        return bool(
+            chain is not None
+            and not chain.accepted_live_turn
+            and not self._shutting_down
+            and session_id not in self._sealed_continuations
+            and (
+                chain.request is not None
+                and chain.pending_stop_key is not None
+                and chain.pending_stop_key[0] == chain.request.turn_id
+                or chain.current_entry_id in self._machine_entries
+            )
+        )
+
+    def stop_pending_continuation(self, session_id: str) -> bool:
+        """Seal this turn's pending Stop proposal or claimed machine preparation."""
+        if not self.pending_continuation_stop_available(session_id):
+            return False
+        self.pause_for_stop(session_id)
+        return True
+
+    def continuation_cancelled(self, session_id: str) -> bool:
+        """Carry a precommit Stop into the accepted turn's normal cancellation owner."""
+        chain = self._chains.get(session_id)
+        return bool(
+            chain is not None
+            and chain.continuation is not None
+            and session_id in self._sealed_continuations
+        )
+
     def pause_for_stop(self, session_id: str) -> PromptQueueMutationResult:
         """Release a chain reservation as soon as Stop targets its live turn."""
 
+        self._sealed_continuations.add(session_id)
+        self._invalidate_machine_admission(session_id)
         snapshot = self.registry.snapshot(session_id)
         if snapshot.total_count == 0:
+            self._changed(session_id)
             return PromptQueueMutationResult(QueueMutationStatus.UNCHANGED, snapshot)
         result = self.registry.pause(
             session_id,
@@ -410,6 +941,7 @@ class ConsolePromptQueueCoordinator:
             custody_request=custody_request,
         )
         if result.applied:
+            self._invalidate_machine_admission(session_id)
             self._changed(session_id)
         return result
 
@@ -454,6 +986,7 @@ class ConsolePromptQueueCoordinator:
 
         if session_id in self._chains:
             return await initial_turn()
+        self._sealed_continuations.discard(session_id)
         self._chains[session_id] = _PromptChain()
         self._changed(session_id)
         try:
@@ -484,7 +1017,10 @@ class ConsolePromptQueueCoordinator:
     ) -> None:
         """Commit the accepted boundary and settle a queued claim exactly once."""
 
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+        if origin in {
+            ConsoleSubmissionOrigin.AGENT_WAKE,
+            ConsoleSubmissionOrigin.AGENT_CHAT_START,
+        }:
             return
         chain = self._chains.get(session_id)
         if chain is None:
@@ -540,10 +1076,16 @@ class ConsolePromptQueueCoordinator:
         chain = self._chains.get(session_id)
         if chain is not None and chain.current_entry_id not in {None, entry_id}:
             return False
+        # TASK-33621.19: the ordinary durable post-commit path acknowledges
+        # EVERY queued turn while its live chain is still draining. That
+        # chain advances the queue after the turn ends, so only a detached
+        # acknowledgement (no exact live owner) may pause later work.
+        live_owner = chain is not None and chain.current_entry_id == entry_id
         result = self.registry.settle_durable_acceptance(
             session_id,
             entry_id=entry_id,
             preparation_id=preparation_id,
+            live_chain_owns_claim=live_owner,
         )
         if result.status not in {
             QueueMutationStatus.APPLIED,
@@ -566,8 +1108,12 @@ class ConsolePromptQueueCoordinator:
         if chain is not None:
             chain.accepted_live_turn = True
             chain.logical_outcome_id = f"queue-chain:{preparation_id}"
-            if chain.current_entry_id == entry_id:
-                chain.current_entry_id = None
+            # The live owner keeps ``current_entry_id`` exactly as the
+            # ephemeral ``turn_accepted`` path does: its own post-turn step
+            # (the drain loop, or ``finish_recovered_entry`` for a reclaimed
+            # preparation) must still recognise this turn to advance or
+            # finish the chain. Clearing it here left a reclaimed durable
+            # entry's chain DRAINING/HELD with nothing to drive it.
             self._changed(session_id)
         if result.status is QueueMutationStatus.APPLIED:
             callback = self.on_queued_accepted
@@ -636,6 +1182,7 @@ class ConsolePromptQueueCoordinator:
                 self._settle_queued_claim(session_id, current_entry_id)
         chain.current_entry_id = None
         if status not in self._SUCCESS:
+            chain.hook_cancel_event = None
             reason = (
                 PromptQueuePauseReason.STOPPED
                 if status is ConsoleRunStatus.STOPPED
@@ -644,6 +1191,7 @@ class ConsolePromptQueueCoordinator:
             self._pause_or_finish(session_id, reason, status)
             return
 
+        await self._stop_then_enqueue(session_id)
         await self._drain_waiting(session_id, status)
 
     def _settle_queued_claim(self, session_id: str, entry_id: str) -> None:
@@ -715,6 +1263,14 @@ class ConsolePromptQueueCoordinator:
                 return
             claim = claim_result.claim
             chain.current_entry_id = claim.prompt.entry_id
+            chain.machine_entry_id = (
+                claim.prompt.entry_id
+                if claim.prompt.entry_id in self._machine_entries
+                else None
+            )
+            if claim.prompt.entry_id not in self._machine_entries:
+                chain.continuation = None
+                chain.continuation_started = None
             self._changed(session_id)
             if self._has_staged_rider(session_id):
                 self._return_claim(
@@ -744,12 +1300,39 @@ class ConsolePromptQueueCoordinator:
             chain.last_terminal_status = status
             self._changed(session_id)
             if not accepted:
+                if claim.prompt.entry_id in self._machine_entries:
+                    snapshot = self.registry.snapshot(session_id)
+                    if snapshot.claimed_count:
+                        self.registry.settle_claim(
+                            session_id,
+                            entry_id=claim.prompt.entry_id,
+                            expected_revision=snapshot.revision,
+                        )
+                    rollback = chain.rollback_epoch
+                    chain.rollback_epoch = None
+                    snapshot = self.registry.snapshot(session_id)
+                    if (
+                        rollback is not None
+                        and snapshot.expected_context_epoch == rollback[0]
+                        and self._context_epoch(session_id) == rollback[1]
+                    ):
+                        self.registry.adopt_recovery_context_baseline(
+                            session_id,
+                            context_epoch=rollback[1],
+                            expected_revision=snapshot.revision,
+                        )
+                    self._retire_machine_entry(claim.prompt.entry_id)
+                    chain.continuation = None
+                    chain.continuation_started = None
+                    if session_id not in self._dispatch_recoveries:
+                        continue
                 self._return_claim(
                     session_id,
                     claim.prompt.entry_id,
                     PromptQueuePauseReason.DISPATCH_REFUSED,
                 )
                 return
+            self._retire_machine_entry(claim.prompt.entry_id)
             if status not in self._SUCCESS:
                 reason = (
                     PromptQueuePauseReason.STOPPED
@@ -758,11 +1341,20 @@ class ConsolePromptQueueCoordinator:
                 )
                 self._pause_or_finish(session_id, reason, status)
                 return
+            await self._stop_then_enqueue(session_id)
 
     def _return_claim(
         self, session_id: str, entry_id: str, reason: PromptQueuePauseReason
     ) -> None:
         snapshot = self.registry.snapshot(session_id)
+        if entry_id in self._machine_entries:
+            if snapshot.claimed_count:
+                self.registry.settle_claim(
+                    session_id, entry_id=entry_id, expected_revision=snapshot.revision
+                )
+            self._retire_machine_entry(entry_id)
+            self._pause_or_finish(session_id, reason, self._run_status(session_id))
+            return
         result = self.registry.return_claim_to_head(
             session_id,
             entry_id=entry_id,
@@ -822,6 +1414,11 @@ class ConsolePromptQueueCoordinator:
             )
         self._finish_visible_terminal(session_id, ConsoleRunStatus.FAILED)
 
+    def _retire_machine_entry(self, entry_id: str | None) -> None:
+        issued = self._machine_entries.pop(entry_id, None)
+        if issued is not None:
+            issued[1].inherited_budgets.pop(issued[6], None)
+
     def _finish_visible_terminal(
         self, session_id: str, status: ConsoleRunStatus
     ) -> None:
@@ -833,6 +1430,7 @@ class ConsolePromptQueueCoordinator:
         )
         if chain is not None:
             chain.accepted_live_turn = False
+            self._retire_machine_entry(chain.machine_entry_id)
         self._chains.pop(session_id, None)
         self._recovered_logical_outcomes.pop(session_id, None)
         self._changed(session_id)
@@ -841,7 +1439,20 @@ class ConsolePromptQueueCoordinator:
             callback(session_id, status, logical_outcome_id)
 
     def resume(self, session_id: str) -> PromptQueueMutationResult:
-        """Reacquire a slot and resume a manually/dispatch-paused queue."""
+        """Reacquire a slot and resume a manually/dispatch-paused queue.
+
+        Args:
+            session_id: Session whose paused queue should resume.
+
+        Returns:
+            The resume result, or a refusal. If the conversation context
+            changed since the queue's baseline, the queue is re-paused as
+            CONTEXT_CHANGED instead. That result is APPLIED (or UNCHANGED if
+            it already was), its mode is still PAUSED, no chain is created,
+            and ``detail`` carries ``CONTEXT_CHANGED_REVIEW_NOTICE`` for the
+            Resume or Retry press that asked to run. A caller that drains
+            must stop on a PAUSED result (TASK-33621.19).
+        """
         if self._maintenance_paused:
             return self._maintenance_refusal(session_id)
 
@@ -861,6 +1472,11 @@ class ConsolePromptQueueCoordinator:
                 expected_revision=snapshot.revision,
             )
             self._changed(session_id)
+            if result.status in {
+                QueueMutationStatus.APPLIED,
+                QueueMutationStatus.UNCHANGED,
+            }:
+                return replace(result, detail=CONTEXT_CHANGED_REVIEW_NOTICE)
             return result
         if not self._can_reacquire_slot(session_id):
             return PromptQueueMutationResult(
@@ -887,7 +1503,10 @@ class ConsolePromptQueueCoordinator:
         """Reacquire one slot and dispatch the next waiting entry."""
 
         resumed = self.resume(session_id)
-        if not resumed.applied:
+        # A changed context epoch makes resume() re-pause as CONTEXT_CHANGED,
+        # which the registry reports as APPLIED with no chain created. Drain
+        # only a queue that actually resumed (TASK-33621.19).
+        if not resumed.applied or resumed.snapshot.mode is PromptQueueMode.PAUSED:
             return resumed
         await self._drain_waiting(session_id, self._run_status(session_id))
         return resumed
@@ -971,7 +1590,11 @@ class ConsolePromptQueueCoordinator:
         """Run one typed failed/stopped recovery, adopt its epoch, then drain."""
 
         resumed = self.resume(session_id)
-        if not resumed.applied:
+        # Same guard as resume_and_drain: a CONTEXT_CHANGED re-pause is
+        # APPLIED with no chain, so a recovery turn run now is refused, its
+        # refusal is lost and the FAILED/STOPPED pause is written back -- a
+        # Retry that silently did nothing. Stop at the review (TASK-33621.19).
+        if not resumed.applied or resumed.snapshot.mode is PromptQueueMode.PAUSED:
             return resumed
         authorization = QueueGenerationAuthorization(
             self, session_id, _key=_AUTHORIZATION_KEY

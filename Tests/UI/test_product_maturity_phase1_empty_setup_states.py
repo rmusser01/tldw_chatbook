@@ -6,11 +6,11 @@ import asyncio
 import time
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from textual.widgets import Button, Input, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.test_destination_shells import (
     DestinationHarness,
     RaisingLibraryNotesScopeService,
@@ -143,7 +143,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
 ) -> None:
     app = _build_clean_setup_state_app(monkeypatch, tmp_path)
 
-    with patch("tldw_chatbook.app.get_cli_setting", side_effect=_test_cli_setting):
+    with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 40)) as pilot:
             await _wait_until(
                 pilot,
@@ -155,7 +155,7 @@ async def test_clean_run_setup_and_runtime_blockers_expose_recovery_copy(
             )
 
             home_text = _screen_text(app)
-            assert "Model: Blocked" in home_text
+            assert "Model: Not set up" in home_text
             assert "Set up Console model" in home_text
             assert "Console needs a working model before live AI tasks." in home_text
 

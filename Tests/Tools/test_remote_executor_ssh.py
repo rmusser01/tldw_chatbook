@@ -69,7 +69,7 @@ from tldw_chatbook.Tools.remote_workspace_executor import (
     _bundle_payload,
     parse_fs_read_stamps,
 )
-from tldw_chatbook.Tools.remote_workspace_transport import SshMasterManager
+from tldw_chatbook.Tools.remote_workspace_transport import SshMasterManager, TransportFailureKind
 
 #: The fake ssh, generated per test. The per-call path reconstructs
 #: ssh's remote-command flattening from its OWN argv (join the
@@ -948,3 +948,153 @@ def test_transport_start_failure_without_a_typed_failure_is_unreachable(
     assert status.state == BindingState.BLOCKED
     assert env.fake.call_invocations() == []
     assert sessions.spawns == []
+
+
+def test_session_start_against_a_silent_host_is_bounded_by_the_call_budget(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    """TASK-33400: the handshake gives up at budget + grace, not after 30 s."""
+    import subprocess
+
+    def silent(ssh_argv: list[str]) -> subprocess.Popen[bytes]:
+        proc = subprocess.Popen(
+            ["sh", "-c", "exec sleep 30"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        sessions.spawns.append(proc)
+        return proc
+
+    sessions.spawn = silent
+    executor = _session_executor(env, sessions, budget_seconds=1.0, grace=0.5)
+    started = time.monotonic()
+    with pytest.raises(RemoteWorkspaceExecutionError) as raised:
+        env.read(executor)
+    assert time.monotonic() - started < 8
+    assert raised.value.code == TransportFailureKind.UNREACHABLE.value
+
+
+def test_session_reaped_between_acquire_and_call_is_not_a_tool_error(
+    env: SimpleNamespace, sessions: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-33401: the reaper closing a just-handed-out session costs a new session, not an error."""
+    from tldw_chatbook.Tools import remote_session_registry as registry_module
+
+    executor = _session_executor(env, sessions)
+    assert env.read(executor)["outcome"] == "success"
+    real_acquire = registry_module.RemoteSessionRegistry.acquire
+    raced = {"left": 1}
+
+    def racing_acquire(self, key, create):
+        worker = real_acquire(self, key, create)
+        if worker is not None and raced["left"]:
+            raced["left"] -= 1
+            self.reap_idle(time.monotonic() + 1e6, 0)  # reaper wins the race
+            deadline = time.monotonic() + 5
+            while worker.alive and time.monotonic() < deadline:
+                time.sleep(0.01)
+        return worker
+
+    monkeypatch.setattr(registry_module.RemoteSessionRegistry, "acquire", racing_acquire)
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 2
+
+
+def test_stale_control_socket_at_start_runs_one_shot_then_session(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    """TASK-33402: no tool error, and the warm path is back on the next call."""
+    import subprocess
+
+    real_spawn = sessions.spawn
+    stale = {"left": 1}
+
+    def spawn(ssh_argv: list[str]) -> subprocess.Popen[bytes]:
+        if stale["left"]:
+            stale["left"] -= 1
+            proc = subprocess.Popen(
+                ["sh", "-c", "echo 'mux_client_hello_exchange: write packet: Broken pipe' >&2; exit 255"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            sessions.spawns.append(proc)
+            return proc
+        return real_spawn(ssh_argv)
+
+    sessions.spawn = spawn
+    executor = _session_executor(env, sessions)
+    one_shot_before = len(env.fake.call_invocations())
+    assert env.read(executor)["outcome"] == "success"  # one-shot, no error
+    assert len(env.fake.call_invocations()) == one_shot_before + 1
+    assert env.read(executor)["outcome"] == "success"  # a session again
+    assert len(sessions.spawns) == 2
+    assert len(env.fake.call_invocations()) == one_shot_before + 1
+
+
+def test_budget_expiry_mid_upload_is_op_timeout_and_keeps_the_warm_path(
+    env: SimpleNamespace, sessions: SimpleNamespace
+) -> None:
+    """TASK-33420: slow cache-miss upload + short budget -> OP_TIMEOUT, not BLOCKED, session next call."""
+    import subprocess
+
+    real_spawn = sessions.spawn
+    _, compressed, _ = _bundle_payload()
+    stall = {"left": 1}
+    need_no_read = (
+        "import os, sys, time\n"
+        "os.read(0, 1 << 20)\n"
+        "os.write(1, b'TLDW-REMOTE-0001NEED ' + sys.argv[1].encode() + b'\\n')\n"
+        "time.sleep(30)\n"
+    )
+
+    def spawn(ssh_argv: list[str]) -> subprocess.Popen[bytes]:
+        if stall["left"]:
+            stall["left"] -= 1
+            proc = subprocess.Popen(
+                [sys.executable, "-c", need_no_read, hashlib.sha256(compressed).hexdigest()],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            sessions.spawns.append(proc)
+            return proc
+        return real_spawn(ssh_argv)
+
+    sessions.spawn = spawn
+    executor = _session_executor(env, sessions, budget_seconds=1.0, grace=0.5)
+    with pytest.raises(RemoteWorkspaceExecutionError) as raised:
+        env.read(executor)
+    assert raised.value.code == TransportFailureKind.OP_TIMEOUT.value
+    assert env.cache.status("binding-1").state != BindingState.BLOCKED
+    executor = _session_executor(env, sessions)  # a normal budget
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 2  # the key was not disabled: a session again
+
+
+def test_close_between_register_and_write_reacquires(
+    env: SimpleNamespace, sessions: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-33421: no tool error; the call gets a fresh session."""
+    from tldw_chatbook.Tools import remote_session_registry as registry_module
+    from tldw_chatbook.Tools.remote_session_worker import RemoteSessionWorker
+
+    executor = _session_executor(env, sessions)
+    assert env.read(executor)["outcome"] == "success"
+    real_write = RemoteSessionWorker._write
+    raced = {"left": 1}
+
+    def reap_first(self, data, deadline):
+        if raced["left"] and self._alive:
+            raced["left"] -= 1
+            # Exactly what the idle reaper does, made synchronous: pop the
+            # session from the registry, then close it -- after this call
+            # registered its request and before any REQUEST byte is written.
+            registry_module.get_session_registry()._sessions.pop((sessions.key, "binding-1"), None)
+            self.close()
+        return real_write(self, data, deadline)
+
+    monkeypatch.setattr(RemoteSessionWorker, "_write", reap_first)
+    assert env.read(executor)["outcome"] == "success"
+    assert len(sessions.spawns) == 2
+    registry = registry_module.get_session_registry()
+    assert (sessions.key, "binding-1") not in registry._restarted  # a reap costs no restart

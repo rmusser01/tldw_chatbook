@@ -10,7 +10,10 @@ from tldw_chatbook.Chat.console_library_activity_buffer import (
     LibraryActivityFlushResult,
 )
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnExecutionContext
-from tldw_chatbook.Chat.library_activity import LibraryActivityEvent, LibraryActivityView
+from tldw_chatbook.Chat.library_activity import (
+    LibraryActivityEvent,
+    LibraryActivityView,
+)
 
 
 class ConsoleLibraryActivityController:
@@ -58,9 +61,9 @@ class ConsoleLibraryActivityController:
         self.flush_result = LibraryActivityFlushResult(
             "saved", saved_count=0, pending_count=0
         )
-        self._projection_token: tuple[
-            str | None, int, tuple[str, ...], str | None, int
-        ] | None = None
+        self._projection_token: (
+            tuple[str | None, int, tuple[str, ...], str | None, int] | None
+        ) = None
 
     def capture_kwargs(self, turn_context: object) -> dict[str, object]:
         """Return provider capture bindings for a production turn context.

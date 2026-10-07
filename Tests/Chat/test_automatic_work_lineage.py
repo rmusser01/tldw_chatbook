@@ -20,6 +20,7 @@ from Tests.Chat.test_console_fleet_wake import (
     _terminal_subagent_run,
 )
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("agent_enabled", [True, False])
@@ -302,3 +303,74 @@ async def test_prior_wake_token_cannot_authorize_a_later_delivery(tmp_path):
         controller._disposed = True
         db.close()
         chacha.close()
+
+
+@pytest.mark.parametrize("kind", ["wake", "chat_start"])
+def test_native_automatic_context_requires_exact_accepted_kind_and_owner(
+    tmp_path, monkeypatch, kind
+):
+    from Tests.DB.test_automatic_chat_starts import prepare, source_run
+    from Tests.DB.test_automatic_wake_attempts import claim, survivor
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.Agents.automatic_work_runtime import AutomaticWorkContext
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = AgentRunsDB(tmp_path / "authority.sqlite")
+    try:
+        root, source = source_run(db)
+        if kind == "chat_start":
+            attempt = prepare(db, source, "target", "attempt")
+            accept = db.automatic_work.accept_chat_start
+        else:
+            attempt = claim(db, root, [survivor(db, root, conversation="source")])
+            accept = db.automatic_work.accept_wake
+        context = AutomaticWorkContext(
+            db.automatic_work, attempt.chain_id, "owner", attempt.id, attempt_kind=kind
+        )
+        with pytest.raises(AutomaticWorkRefused, match="acceptance_required"):
+            context.check()
+        with pytest.raises(AutomaticWorkRefused, match="acceptance_required"):
+            context.mark_accepted()
+        assert accept(attempt.id, owner_id="owner")
+        # The ledger cutoff alone does not set the process-local latch. The
+        # controller calls mark_accepted only after the conversation receipt.
+        with pytest.raises(AutomaticWorkRefused, match="acceptance_required"):
+            context.check()
+        wrong_owner = AutomaticWorkContext(
+            db.automatic_work, attempt.chain_id, "other", attempt.id, attempt_kind=kind
+        )
+        with pytest.raises(ValueError, match="owner"):
+            wrong_owner.mark_accepted()
+        wrong_kind = AutomaticWorkContext(
+            db.automatic_work,
+            attempt.chain_id,
+            "owner",
+            attempt.id,
+            attempt_kind="wake" if kind == "chat_start" else "chat_start",
+        )
+        with pytest.raises(ValueError, match="unknown"):
+            wrong_kind.mark_accepted()
+        wrong_chain = AutomaticWorkContext(
+            db.automatic_work, "other", "owner", attempt.id, attempt_kind=kind
+        )
+        with pytest.raises(AutomaticWorkRefused, match="acceptance_required"):
+            wrong_chain.mark_accepted()
+        context.mark_accepted()
+        assert context.check().chain_id == attempt.chain_id
+        monkeypatch.setattr(
+            "tldw_chatbook.Agents.automatic_work_runtime._setting",
+            lambda key, default: False if key == "autowake_enabled" else default,
+        )
+        with pytest.raises(AutomaticWorkRefused, match="autowake_disabled"):
+            context.check()
+        assert db.automatic_work.snapshot(root).pause_reason == "autowake_disabled"
+        monkeypatch.setattr(
+            "tldw_chatbook.Agents.automatic_work_runtime._setting",
+            lambda key, default: default,
+        )
+        assert context.check().status == "active"
+        db.automatic_work.recover(current_owner_id="replacement")
+        with pytest.raises(AutomaticWorkRefused, match="review_required"):
+            context.check()
+    finally:
+        db.close()

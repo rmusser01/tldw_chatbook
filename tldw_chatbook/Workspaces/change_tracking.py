@@ -68,6 +68,7 @@ FORCED_EXCLUDES: tuple[str, ...] = (
     "build/",
 )
 
+
 def _exclude_pattern(rel_path: str) -> str:
     """Turn a root-relative path into an anchored, literal exclude pattern.
 
@@ -104,6 +105,7 @@ _GIT_TIMEOUT_SECONDS = 120.0
 
 #: Maximum user-visible tracking-error length stored by this module.
 _TRACKING_ERROR_MAX_CHARS = 400
+
 
 class ChangeTrackingError(Exception):
     """A shadow-repo operation failed. Callers treat this as degradation,
@@ -177,9 +179,7 @@ class ShadowRepoService:
             data_dir = get_user_data_dir() / "change_review"
         self._data_dir = Path(data_dir)
         self._git = (
-            git_executable
-            if git_executable is not None
-            else shutil.which("git")
+            git_executable if git_executable is not None else shutil.which("git")
         )
 
     @property
@@ -253,11 +253,7 @@ class ShadowRepo:
         # Case-INSENSITIVE match: Windows environment variables are
         # case-insensitive, so `Git_Index_File` reaches git just as
         # GIT_INDEX_FILE does. Harmless over-scrub on POSIX.
-        env = {
-            k: v
-            for k, v in os.environ.items()
-            if not k.upper().startswith("GIT_")
-        }
+        env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
         env["GIT_TERMINAL_PROMPT"] = "0"
         return env
 
@@ -269,6 +265,7 @@ class ShadowRepo:
         input_data: str | bytes | None = None,
     ) -> subprocess.CompletedProcess:
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
         with acquire_storage(self.git_dir):
             if input_data is not None and binary != isinstance(input_data, bytes):
                 expected = "bytes" if binary else "str"
@@ -297,15 +294,16 @@ class ShadowRepo:
             except OSError as exc:
                 raise ChangeTrackingUnavailableError(str(exc)) from exc
             if check and proc.returncode != 0:
-                stderr = proc.stderr if isinstance(proc.stderr, str) else (
-                    proc.stderr.decode("utf-8", "replace") if proc.stderr else ""
+                stderr = (
+                    proc.stderr
+                    if isinstance(proc.stderr, str)
+                    else (proc.stderr.decode("utf-8", "replace") if proc.stderr else "")
                 )
                 raise ChangeTrackingError(
                     f"git {args[0]} failed ({proc.returncode}): "
                     f"{stderr.strip()[:_TRACKING_ERROR_MAX_CHARS]}"
                 )
             return proc
-
 
     def _locked(self):
         """Context manager: in-process lock + portable cross-process lockdir."""
@@ -363,6 +361,7 @@ class ShadowRepo:
         """Create + pin the shadow repo. Idempotent, self-healing (config and
         excludes rewritten every call — they are cheap, and drift heals)."""
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
         with acquire_storage(self.git_dir):
             if not (self.git_dir / "HEAD").exists():
                 self.git_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -457,9 +456,7 @@ class ShadowRepo:
             ancestor = ancestor.parent
         return None
 
-    def _update_index_exact_paths(
-        self, option: str, paths: Sequence[str]
-    ) -> None:
+    def _update_index_exact_paths(self, option: str, paths: Sequence[str]) -> None:
         """Update exact index paths through Git's NUL-delimited stdin."""
         if not paths:
             return
@@ -485,9 +482,7 @@ class ShadowRepo:
         cap = change_review_setting("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
         tip = self.tip()
         tip_paths = set(
-            self._z_tokens("ls-tree", "-r", "-z", "--name-only", tip)
-            if tip
-            else ()
+            self._z_tokens("ls-tree", "-r", "-z", "--name-only", tip) if tip else ()
         )
         stage_entries: list[tuple[str, str, str]] = []
         for entry in self._z_tokens("ls-files", "--stage", "-z"):
@@ -557,9 +552,7 @@ class ShadowRepo:
 
         object_ids = tuple(
             dict.fromkeys(
-                object_id
-                for rel, object_id, _mode in regular_entries
-                if rel in safe
+                object_id for rel, object_id, _mode in regular_entries if rel in safe
             )
         )
         sizes: dict[str, int] = {}
@@ -575,9 +568,7 @@ class ShadowRepo:
             for line in lines:
                 fields = line.split()
                 if len(fields) != 3 or fields[1] != "blob":
-                    raise ChangeTrackingError(
-                        "git cat-file returned malformed output"
-                    )
+                    raise ChangeTrackingError("git cat-file returned malformed output")
                 object_id, _object_type, size_text = fields
                 sizes[object_id] = int(size_text)
 
@@ -623,6 +614,7 @@ class ShadowRepo:
             ChangeTrackingError: A git step failed or produced no tip.
         """
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
         with acquire_storage(self.git_dir):
             import sys as _sys
 
@@ -645,13 +637,9 @@ class ShadowRepo:
                 # #1251 finding 5). Such paths are unexcludable; they are
                 # unstaged after add instead (argv is newline-safe).
                 excludable = [
-                    rel
-                    for rel in scan.oversized
-                    if "\n" not in rel and "\r" not in rel
+                    rel for rel in scan.oversized if "\n" not in rel and "\r" not in rel
                 ]
-                unexcludable = [
-                    rel for rel in scan.oversized if rel not in excludable
-                ]
+                unexcludable = [rel for rel in scan.oversized if rel not in excludable]
                 # TASK-1976: nested repos are excluded from tracking entirely.
                 # This is not merely hygiene -- `git add -A` HARD-FAILS (128,
                 # "does not have a commit checked out") on a commitless child
@@ -689,7 +677,12 @@ class ShadowRepo:
                 self._run(*add_args)
                 for rel in unexcludable:
                     self._run(
-                        "rm", "--cached", "--ignore-unmatch", "--quiet", "--", rel,
+                        "rm",
+                        "--cached",
+                        "--ignore-unmatch",
+                        "--quiet",
+                        "--",
+                        rel,
                         check=False,
                     )
                 if force_paths:
@@ -714,7 +707,6 @@ class ShadowRepo:
                 if not new_tip:
                     raise ChangeTrackingError("snapshot commit produced no tip")
                 return new_tip
-
 
     # -- reading changes ---------------------------------------------------
 
@@ -832,6 +824,7 @@ class ShadowRepo:
             paths: Root-relative paths to stage exactly despite ignore rules.
         """
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
         with acquire_storage(self.git_dir):
             if not paths:
                 return
@@ -841,9 +834,7 @@ class ShadowRepo:
                 if exact_paths:
                     self._update_index_exact_paths("--add", exact_paths)
                     unsafe, oversized = self._validate_new_index_paths()
-                    attempt_unsafe = tuple(
-                        rel for rel in unsafe if rel in exact_paths
-                    )
+                    attempt_unsafe = tuple(rel for rel in unsafe if rel in exact_paths)
                     if attempt_unsafe:
                         paths_text = ", ".join(attempt_unsafe)
                         raise ChangeTrackingError(
@@ -882,6 +873,7 @@ class ShadowRepo:
                 absent from ``commit``).
         """
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
         with acquire_storage(self.git_dir):
             if not paths:
                 return

@@ -96,7 +96,7 @@ letters **c / p / d / l**).
 |-----|--------|
 | F1 | Open the current screen's keyboard-shortcuts list (content is screen-specific) |
 | Ctrl+P | Open the command palette — search and jump to any screen or command from anywhere |
-| Ctrl+Q | Quit the app |
+| Ctrl+Q | Quit the app — also while a dialog or picker is open. It asks first when quitting would cancel Console runs or queued prompts, discard unsaved Settings ▸ Theme edits or unsaved [Roleplay](roleplay-chat-dictionaries.md) drafts, discard [Library](library/notes.md) work it could not save for you (in Library, Ctrl+Q first saves the open note or Folder files edit, and asks only about one it cannot save and about an unsaved Prompt or Skill draft), or discard work that a dialog asks about before closing (a Schedules form, a generated video still waiting for a storage choice or in its Save to disk picker, or a memory-only profile interview, for example). If a dialog is still finishing something it will not let you close it during — creating a fork, saving a policy or collection change, writing an export, importing skills — Ctrl+Q stays open, says what is still working, and works on the next press once it finishes; pressed again before then, it asks **Quit while still working?** (**Quit anyway** quits; **Wait** returns to the dialog. A dialog that closes itself when done — fork, Trace export, profile review or interview, Prompt Workbench apply — still closes as usual if it finished in the meantime; a character chat that finished opening from the session switcher meanwhile is rolled back instead, with **Could not open chat** and **Retry**). If that question closes before you answer it, Chatbook stays open and says "Quit cancelled." |
 | Ctrl+1 … Ctrl+9, Ctrl+0 | Switch to the screen with that hotkey digit (see the nav map above) — works from every screen, [Roleplay](roleplay-chat-dictionaries.md) included |
 | F2 / F3 / F4 / F5 / F7 | Switch to Lab / Logs / Settings / Research / Meetings — the five destinations past the digit row; they work while a text field has focus, like the Ctrl+digit chords (F6 is skipped: Next Pane) |
 | F6 | Cycle through the current screen's panes; on screens without a pane cycle it only shows a notice |
@@ -105,6 +105,17 @@ letters **c / p / d / l**).
 Everything else (Enter/Ctrl+K/Ctrl+T in Console, and the single-letter
 mnemonics like `s`/`r`/`t` on Settings) is screen-specific — see that
 screen's own page for its "Keyboard & commands" table.
+
+### When a panel fails
+
+An internal error inside one panel or dialog does not close the app. Chatbook
+shows a red **Something went wrong in …** notice and writes the details to the
+log file. A failed panel may stop responding until you reopen it. A failed
+dialog or overlay is closed, along with anything it opened, so the screen
+underneath takes your keys and clicks again. A screen that fails while you are
+on another one is rebuilt fresh the next time you open it. **Ctrl+Q** still
+quits. If the main screen itself fails, the app exits and reports the error
+instead of leaving a screen that ignores input.
 
 <a id="console-agent-runs-are-screen-scoped"></a>
 ## Console runs continue during navigation

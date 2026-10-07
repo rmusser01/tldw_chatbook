@@ -7,7 +7,7 @@ state changes in a modular, extensible way.
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Optional, List
-from textual.worker import Worker
+from textual.worker import Worker, WorkerState
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -178,4 +178,22 @@ class WorkerHandlerRegistry:
                     )
                     # Continue to next handler if one fails
 
+        # Every event here is an App-owned worker's (StateChanged does not
+        # bubble), and most consume their own results, so an unhandled
+        # transition is routine: warning on each one flooded the Logs
+        # Warnings+ filter (TASK-31806, PERF-03). A failure nobody handles is
+        # the unexpected case, and stays a warning.
+        if event.state is WorkerState.ERROR:
+            self.logger.warning(
+                "No handler found for worker '{}' (Group: {}) that failed",
+                worker_name,
+                worker_group,
+            )
+        else:
+            self.logger.debug(
+                "No handler found for worker '{}' (Group: {}, State: {})",
+                worker_name,
+                worker_group,
+                event.state,
+            )
         return False

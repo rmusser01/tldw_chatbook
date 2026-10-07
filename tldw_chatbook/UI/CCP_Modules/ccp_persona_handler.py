@@ -48,10 +48,13 @@ class CCPPersonaHandler:
         return self._current_mode()
 
     def _notify(self, message: str, severity: str = "warning") -> None:
-        """Surface a CCP notification when a user action cannot complete."""
+        """Surface a CCP notification when a user action cannot complete.
+
+        Literal text (TASK-34400): messages quote server and exception text.
+        """
         notifier = getattr(self.window, "notify", None)
         if callable(notifier):
-            notifier(message, severity=severity)
+            notifier(message, severity=severity, markup=False)
 
     def _current_chat_id(self, chat_id: str | None = None) -> str:
         """Resolve the active chat identifier for chat-scoped execution helpers."""

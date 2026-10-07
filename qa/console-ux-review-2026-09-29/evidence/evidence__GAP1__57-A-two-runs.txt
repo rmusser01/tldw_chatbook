@@ -1,0 +1,52 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                                                            Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Call the todo_create tool o...                                                                                                           │
+                       Context ◂  │   Call the todo_crea…  ✕ Q1 ● Reply with the s ✕    New tab     Temporary                                                                               │  ▸ Inspect
+ 1 other agents running, 0        │                                                                                                                                                         │           Choose folder · Project
+ waiting for approval.            │ Each tab runs its own agent — up to 3 in parallel (change in Settings > Console Behavior).                                                           ✕  │  What happens if I send now?
+   Terminal                       │ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │  Where: Default › Call the todo_create too…
+ ───────────────────────────────  │  ▾ Tasks · 0 of 2 done                                                                                                                                  │  Scope: Everything available
+ Workspaces                  ▸    │  [ ] alpha task                                                                                                                                         │  Run: Ready
+ ───────────────────────────────  │  [ ] beta task                                                                                                                                          │  Sources: None staged
+ Conversations               ▾    │                                                                                                                                                         │  Approvals: None pending
+       Archive this chat          │ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │ Environment                              ▾
+         Archived chats           │  ▊                                                                                                                                                      │   Changes aren't tracked for this workspa…
+       Search all chats…          │  ▊                                                                                                                                                      │   Bind a folder and enable Change Review …
+   Call the todo_create tool      │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │                   Refresh
+   o...                           │   User                                                                                                                                                  │
+                                  │   Call the todo_create tool once with content 'beta task'. Then reply DONE.                                                                             │ Agents                       Run history ▸
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │                View all runs
+  ▊  Filter visible   ▎           │  ▊ Assistant                                                                                                                                            │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ▊   ▸ todo_create                                                                                                              · Succeeded · 0.7s      │  Sources — next send                  none
+                                  │  ▊   {"id":"2","version":1,"content":"beta task","status":"pending"}                                                                                    │  No sources attached. Stage sources from
+  Chats                      ▾    │  ▊                                                                                                                                                      │  Library.                                  ▇
+   Reply with the single …  ⟳     │  ▊                                                                                                                                                      │
+   Queue 1                        │  ▊   ▸ Tasks updated                                                                                                                        · done      │  Sources: Notes, Media, Conversations
+   Call the todo_create t…  ✓     │  ▊                                                                                                                                                      │  (Prompts off)
+                                  │  ▊  DONE                                                                                                                                                │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+ ───────────────────────────────  │  ▊                                                                                                                                                      │  ▊  Ask Library sources before sending   ▎
+ Character · No chats        ▸    │  ▊                                                                                                                                                   ▃  │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+ ───────────────────────────────  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │    Search Library
+ Model                       ▸    │   User                                                                                                                                                  │
+ ───────────────────────────────  │   Count from 1 to 60 in words.                                                                                                                          │  Scope: everything                Narrow…
+ Agent                       ▾    │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+  Agent: done                   ▅ │  ▊ Assistant                                                                                                                                            │ Run
+  · one                           │  ▊                                                                                                                                                      │ Run recipe: Anthropic / claude-haiku-4-5 /
+  two                             │  ▊  one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one      │ sources not staged / tools 6 / approvals 0
+  three                           │  ▊  twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty thirty-one thirty-two thirty-three          │ Live work: No active work
+  four                            │  ▊  thirty-four thirty-five thirty-six thirty-seven thirty-eight thirty-nine forty forty-one forty-two forty-three forty-four forty-five forty-six      │ Provider: ready
+  five                            │  ▊  forty-seven forty-eight forty-nine fifty fifty-one fifty-two fifty-three fifty-four fifty-five fifty-six fifty-seven fifty-eight fifty-nine         │
+  six                             │  ▊  sixty                                                                                                                                               │ Source Readiness
+  seven                           │  ▊                                                                                                                                                      │ Retrieval: not staged
+ ▼ Details                        │  ▊                                                                                                                                                      │ ▼ more sections — scroll
+                                  │  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-haiku-4-5     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Context 1% · Current $0.03
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                                                                                                      Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit

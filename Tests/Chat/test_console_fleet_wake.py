@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -129,6 +130,25 @@ class _RecordingWakeGateway:
         #: Optional hook invoked once per stream, before yielding.
         self.on_stream: object | None = None
 
+    def cached_context_window(self, settings):
+        """The real gateway's offline metadata fallback, for mounted UI.
+
+        The screen's hot context-usage path reads it (task-33081); without it
+        every mounted wake test died with AttributeError before its assertions.
+
+        Args:
+            settings: The effective Console settings; only ``provider`` and
+                ``model`` are read.
+
+        Returns:
+            The ``ContextWindowResolution`` that ``resolve_context_window``
+            reports for that provider/model pair (the double skips the real
+            gateway's provider-identity mapping).
+        """
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
     async def resolve_for_send(self, selection):
         return provider_resolution(ready=self.ready)
 
@@ -149,7 +169,7 @@ class _FakeWakeBridge:
 
     def __init__(self, runs_db):
         self.registered: dict[str, object] = {}
-        self._runs_db = runs_db
+        self._db = runs_db
 
     def on_fleet_drained(self, name, consumer):
         self.registered[name] = consumer
@@ -159,7 +179,7 @@ class _FakeWakeBridge:
 
     @property
     def runs_db(self):
-        return self._runs_db
+        return self._db
 
 
 def _drain(conversation_id, *children):
@@ -525,7 +545,13 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
             assert len(submit_calls) == 1
             assert submit_calls[0]["draft"] == request.draft
             assert submit_calls[0]["origin"] is ConsoleSubmissionOrigin.AGENT_WAKE
-            assert submit_calls[0]["configuration"] is request.configuration
+            assert submit_calls[0]["configuration"] == replace(
+                request.configuration,
+                skill_context_maximum={
+                    **request.configuration.skill_context_maximum,
+                    "plugin_turn_id": request.turn_id,
+                },
+            )
             authorization = submit_calls[0]["wake_authorization"]
             assert isinstance(authorization, AgentWakeAuthorization)
             assert controller.fleet_wake.authorizes(authorization, session.id)
@@ -1513,6 +1539,8 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
     session = SimpleNamespace(id="s-1", persisted_conversation_id="conv-1")
     controller = SimpleNamespace(
         _disposed=False,
+        max_parallel_runs=3,
+        _live_busy_session_ids=lambda: [],
         store=SimpleNamespace(sessions=lambda: [session]),
         send_refusal_copy=lambda session_id: None,
     )

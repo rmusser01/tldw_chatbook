@@ -1379,6 +1379,48 @@ async def test_open_modal_polls_and_reconciles_controller_projection_changes():
 
 
 @pytest.mark.asyncio
+async def test_authority_change_never_pops_a_screen_covering_the_switcher():
+    """TASK-33622.10 review: the switcher closes itself, never the screen above.
+
+    Ctrl+Q is live under modals now, so the "Quit Chatbook?" prompt can sit
+    on top of the switcher. ``Screen.dismiss`` pops the app's TOP screen, so
+    a bare dismiss from this poll would pop that prompt instead and leave
+    its quit worker waiting forever. ADR-031: async cancellation may dismiss
+    only the still-mounted active top screen -- the poll repeats, so the
+    switcher closes as soon as it is on top again.
+    """
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    entry = _active_entry("session:one", "Agent one", session_id="one")
+    state = {"token": "runtime-a"}
+
+    def load_active():
+        return ((entry,), "profile-a", state["token"], 7, "ready")
+
+    app = _ActivitySwitcherApp(
+        active_results=(entry,), active_projection_loader=load_active
+    )
+    async with app.run_test(size=(90, 30)) as pilot:
+        await pilot.pause()
+        switcher = app.screen
+        assert isinstance(switcher, ConsoleSessionSwitcherModal)
+        cover = ConfirmationDialog(title="Quit Chatbook?")
+        await app.push_screen(cover)
+        await pilot.pause()
+
+        state["token"] = "runtime-b"
+        await pilot.pause(ACTIVE_PROJECTION_POLL_SECONDS * 3)
+        assert app.screen is cover, "the poll popped the screen above it"
+        assert switcher in app.screen_stack
+        assert app.result == "unset"
+
+        cover.dismiss(False)
+        await pilot.pause(ACTIVE_PROJECTION_POLL_SECONDS * 3)
+        assert switcher not in app.screen_stack
+        assert app.result is None
+
+
+@pytest.mark.asyncio
 async def test_projection_change_during_history_load_retries_without_stuck_pending():
     entered = asyncio.Event()
     release = asyncio.Event()

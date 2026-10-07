@@ -365,3 +365,8 @@ from centralized backup. Its ordinary `notes.sync_state` owner remains in C50.
 Workflow authoring (C92) uses only the existing checked connection factory.
 Its v1-v4 schema preserves historical file compatibility; no execution lock or
 execution API is initialized. It is excluded from centralized backup.
+
+## Managed plugin registry (TASK-32669, ADR-162)
+
+| C93 | tldw_chatbook/Plugins/registry | PluginRegistry.__init__ | plugins.registry | private_file, memory, read_only_uri | owner-gated mutation and validated secondary browsing | Migrated via `connect_private_sqlite`. Exact v1 schema and integrity validation. Disk mutation requires the acquired runtime owner. No centralized backup authority. |
+| C94 | tldw_chatbook/Plugins/registry | PluginRegistry._reference_schema | plugins.registry | memory | installed schema reference | Migrated via `connect_private_sqlite`. Only packaged SQL enters; no execution or backup authority. |

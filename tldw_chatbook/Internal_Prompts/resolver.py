@@ -39,9 +39,7 @@ def safe_substitute(text: str, **values: object) -> str:
     """
     if not values:
         return text
-    pattern = re.compile(
-        "|".join(re.escape("{" + name + "}") for name in values)
-    )
+    pattern = re.compile("|".join(re.escape("{" + name + "}") for name in values))
     return pattern.sub(lambda m: str(values[m.group(0)[1:-1]]), text)
 
 
@@ -69,8 +67,7 @@ def get_internal_prompt(prompt_id: str) -> str:
             return override
         _warn_once(
             prompt_id,
-            f"override for {prompt_id} is missing a required placeholder; "
-            "falling back",
+            f"override for {prompt_id} is missing a required placeholder; falling back",
         )
     elif raw_override is not None and not isinstance(raw_override, (str, dict)):
         # A present override that is neither text nor a {text, ...} table

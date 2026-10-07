@@ -575,9 +575,9 @@ COMMIT;
             )
             conn.commit()
 
-            # v2 migration: add case-insensitive unique index on non-archived names.
-            # Keep this runner SQL aligned with
-            # tldw_chatbook/DB/migrations/workspaces_v1_to_v2_name_unique_index.sql.
+            # v2 migration: add case-insensitive unique index on non-archived
+            # names. task-19565: this runner is the single source (the
+            # decorative workspaces_v1_to_v2 .sql twin was deleted).
             version_row = conn.execute(
                 "SELECT MAX(version) FROM schema_version"
             ).fetchone()
@@ -717,7 +717,7 @@ COMMIT;
             )
             write_conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (2)"
-                )
+            )
 
         if needs_v3:
             self._migrate_v2_to_v3()
@@ -776,8 +776,8 @@ COMMIT;
         """Add per-workspace reference-backed assistant defaults.
 
         Adds the ``assistant_defaults`` JSON column plus the agent backfill
-        completion flag table. Keep this runner SQL aligned with
-        tldw_chatbook/DB/migrations/workspaces_v6_to_v7_assistant_defaults.sql.
+        completion flag table. (task-19565: this runner is the single
+        source; the decorative workspaces_v6_to_v7 .sql twin was deleted.)
         """
 
         with self.transaction() as write_conn:

@@ -131,6 +131,10 @@ DEFAULT_DISCOVERY_OWNER = "general_chat"
 _CONVERSATION_IDENTITY_TEXT_MAX_BYTES = 256
 _CONVERSATION_ARCHIVE_STATE_BATCH_SIZE = 500
 _SQLITE_POSITIVE_INTEGER_MAX = (1 << 63) - 1
+#: Most ids one ``IN (?, ...)`` list binds; a lower live connection limit wins.
+_ID_LIST_BATCH_CAP = 500
+#: SQLite's compile-time variable limit before 3.32, if the live one is unreadable.
+_SQLITE_DEFAULT_VARIABLE_LIMIT = 999
 _UNSET = object()
 _VOICE_TRACE_IMPORT_GUARD_FUNCTION = "console_voice_trace_import_authorized"
 
@@ -171,6 +175,7 @@ class _VoiceTraceImportAuthorization:
             and call_id in self._call_ids
             and self._connection.in_transaction
         )
+
 
 _CANVAS_REVISION_DELETE_GUARD_FUNCTION = "canvas_revision_delete_authorized"
 _CANVAS_REVISION_PAYLOAD_VALIDATION_FUNCTION = "canvas_revision_payload_valid"
@@ -740,7 +745,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 73  # Note links are persisted, not scanned for.
+    _CURRENT_SCHEMA_VERSION = 78  # Native receipts, then saved fleet progress.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2729,451 +2734,22 @@ UPDATE db_schema_version
    AND version = 15;
 """
 
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v16_to_v17_conversation_local_marks.sql.
-    _MIGRATE_V16_TO_V17_SQL = """
-CREATE TABLE IF NOT EXISTS conversation_local_marks (
-  conversation_id TEXT NOT NULL,
-  mark_type TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY (conversation_id, mark_type)
-);
-
-CREATE INDEX IF NOT EXISTS idx_conversation_local_marks_type
-  ON conversation_local_marks(mark_type, updated_at DESC, conversation_id);
-
-UPDATE db_schema_version
-   SET version = 17
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 16;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v17_to_v18_conversation_system_prompt.sql.
-    _MIGRATE_V17_TO_V18_SQL = """
-ALTER TABLE conversations ADD COLUMN system_prompt TEXT;
-
-DROP TRIGGER IF EXISTS conversations_sync_create;
-DROP TRIGGER IF EXISTS conversations_sync_update;
-DROP TRIGGER IF EXISTS conversations_sync_delete;
-DROP TRIGGER IF EXISTS conversations_sync_undelete;
-
-CREATE TRIGGER conversations_sync_create
-AFTER INSERT ON conversations BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'create',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-CREATE TRIGGER conversations_sync_update
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = NEW.deleted AND (
-     OLD.title IS NOT NEW.title OR
-     OLD.rating IS NOT NEW.rating OR
-     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR
-     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR
-     OLD.character_id IS NOT NEW.character_id OR
-     OLD.assistant_kind IS NOT NEW.assistant_kind OR
-     OLD.assistant_id IS NOT NEW.assistant_id OR
-     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR
-     OLD.scope_type IS NOT NEW.scope_type OR
-     OLD.workspace_id IS NOT NEW.workspace_id OR
-     OLD.state IS NOT NEW.state OR
-     OLD.topic_label IS NOT NEW.topic_label OR
-     OLD.topic_label_source IS NOT NEW.topic_label_source OR
-     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR
-     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR
-     OLD.cluster_id IS NOT NEW.cluster_id OR
-     OLD.source IS NOT NEW.source OR
-     OLD.external_ref IS NOT NEW.external_ref OR
-     OLD.runtime_backend IS NOT NEW.runtime_backend OR
-     OLD.discovery_owner IS NOT NEW.discovery_owner OR
-     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR
-     OLD.system_prompt IS NOT NEW.system_prompt OR
-     OLD.last_modified IS NOT NEW.last_modified OR
-     OLD.version IS NOT NEW.version)
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-CREATE TRIGGER conversations_sync_delete
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = 0 AND NEW.deleted = 1
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'delete',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
-                     'version',NEW.version,'client_id',NEW.client_id));
-END;
-
-CREATE TRIGGER conversations_sync_undelete
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = 1 AND NEW.deleted = 0
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-UPDATE db_schema_version
-   SET version = 18
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 17;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v19_to_v20_conversation_metadata.sql.
-    _MIGRATE_V19_TO_V20_SQL = """
-DROP TRIGGER IF EXISTS conversations_sync_create;
-DROP TRIGGER IF EXISTS conversations_sync_update;
-DROP TRIGGER IF EXISTS conversations_sync_delete;
-DROP TRIGGER IF EXISTS conversations_sync_undelete;
-
-CREATE TRIGGER conversations_sync_create
-AFTER INSERT ON conversations BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'create',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'metadata',NEW.metadata,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-CREATE TRIGGER conversations_sync_update
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = NEW.deleted AND (
-     OLD.title IS NOT NEW.title OR
-     OLD.rating IS NOT NEW.rating OR
-     OLD.forked_from_message_id IS NOT NEW.forked_from_message_id OR
-     OLD.parent_conversation_id IS NOT NEW.parent_conversation_id OR
-     OLD.character_id IS NOT NEW.character_id OR
-     OLD.assistant_kind IS NOT NEW.assistant_kind OR
-     OLD.assistant_id IS NOT NEW.assistant_id OR
-     OLD.persona_memory_mode IS NOT NEW.persona_memory_mode OR
-     OLD.scope_type IS NOT NEW.scope_type OR
-     OLD.workspace_id IS NOT NEW.workspace_id OR
-     OLD.state IS NOT NEW.state OR
-     OLD.topic_label IS NOT NEW.topic_label OR
-     OLD.topic_label_source IS NOT NEW.topic_label_source OR
-     OLD.topic_last_tagged_at IS NOT NEW.topic_last_tagged_at OR
-     OLD.topic_last_tagged_message_id IS NOT NEW.topic_last_tagged_message_id OR
-     OLD.cluster_id IS NOT NEW.cluster_id OR
-     OLD.source IS NOT NEW.source OR
-     OLD.external_ref IS NOT NEW.external_ref OR
-     OLD.runtime_backend IS NOT NEW.runtime_backend OR
-     OLD.discovery_owner IS NOT NEW.discovery_owner OR
-     OLD.discovery_entity_id IS NOT NEW.discovery_entity_id OR
-     OLD.system_prompt IS NOT NEW.system_prompt OR
-     OLD.metadata IS NOT NEW.metadata OR
-     OLD.last_modified IS NOT NEW.last_modified OR
-     OLD.version IS NOT NEW.version)
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'metadata',NEW.metadata,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-CREATE TRIGGER conversations_sync_delete
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = 0 AND NEW.deleted = 1
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'delete',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'deleted',NEW.deleted,'last_modified',NEW.last_modified,
-                     'version',NEW.version,'client_id',NEW.client_id));
-END;
-
-CREATE TRIGGER conversations_sync_undelete
-AFTER UPDATE ON conversations
-WHEN OLD.deleted = 1 AND NEW.deleted = 0
-BEGIN
-  INSERT INTO sync_log(entity,entity_id,operation,timestamp,client_id,version,payload)
-  VALUES('conversations',NEW.id,'update',NEW.last_modified,NEW.client_id,NEW.version,
-         json_object('id',NEW.id,'root_id',NEW.root_id,'forked_from_message_id',NEW.forked_from_message_id,
-                     'parent_conversation_id',NEW.parent_conversation_id,'character_id',NEW.character_id,
-                     'assistant_kind',NEW.assistant_kind,'assistant_id',NEW.assistant_id,
-                     'persona_memory_mode',NEW.persona_memory_mode,'scope_type',NEW.scope_type,
-                     'workspace_id',NEW.workspace_id,'state',NEW.state,'topic_label',NEW.topic_label,
-                     'topic_label_source',NEW.topic_label_source,'topic_last_tagged_at',NEW.topic_last_tagged_at,
-                     'topic_last_tagged_message_id',NEW.topic_last_tagged_message_id,'cluster_id',NEW.cluster_id,
-                     'source',NEW.source,'external_ref',NEW.external_ref,
-                     'runtime_backend',NEW.runtime_backend,'discovery_owner',NEW.discovery_owner,
-                     'discovery_entity_id',NEW.discovery_entity_id,'system_prompt',NEW.system_prompt,
-                     'metadata',NEW.metadata,
-                     'title',NEW.title,'rating',NEW.rating,'created_at',NEW.created_at,'last_modified',NEW.last_modified,
-                     'deleted',NEW.deleted,'client_id',NEW.client_id,'version',NEW.version));
-END;
-
-UPDATE db_schema_version
-   SET version = 20
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 19;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v20_to_v21_world_book_entry_priority.sql.
-    _MIGRATE_V20_TO_V21_SQL = """
-DROP TRIGGER IF EXISTS world_book_entries_sync_create;
-DROP TRIGGER IF EXISTS world_book_entries_sync_update;
-
-CREATE TRIGGER world_book_entries_sync_create
-AFTER INSERT ON world_book_entries BEGIN
-  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
-  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified,
-         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
-         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
-                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
-                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
-                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
-                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
-END;
-
-CREATE TRIGGER world_book_entries_sync_update
-AFTER UPDATE ON world_book_entries
-WHEN OLD.keys IS NOT NEW.keys OR
-     OLD.content IS NOT NEW.content OR
-     OLD.enabled IS NOT NEW.enabled OR
-     OLD.position IS NOT NEW.position OR
-     OLD.insertion_order IS NOT NEW.insertion_order OR
-     OLD.priority IS NOT NEW.priority OR
-     OLD.selective IS NOT NEW.selective OR
-     OLD.secondary_keys IS NOT NEW.secondary_keys OR
-     OLD.case_sensitive IS NOT NEW.case_sensitive OR
-     OLD.extensions IS NOT NEW.extensions
-BEGIN
-  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
-  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified,
-         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
-         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
-                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
-                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
-                     'case_sensitive', NEW.case_sensitive, 'extensions', NEW.extensions,
-                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
-END;
-
-UPDATE db_schema_version
-   SET version = 21
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 20;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v21_to_v22_world_book_entry_regex.sql.
-    _MIGRATE_V21_TO_V22_SQL = """
-DROP TRIGGER IF EXISTS world_book_entries_sync_create;
-DROP TRIGGER IF EXISTS world_book_entries_sync_update;
-
-CREATE TRIGGER world_book_entries_sync_create
-AFTER INSERT ON world_book_entries BEGIN
-  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
-  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'create', NEW.last_modified,
-         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
-         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
-                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
-                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
-                     'case_sensitive', NEW.case_sensitive, 'regex', NEW.regex,
-                     'extensions', NEW.extensions,
-                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
-END;
-
-CREATE TRIGGER world_book_entries_sync_update
-AFTER UPDATE ON world_book_entries
-WHEN OLD.keys IS NOT NEW.keys OR
-     OLD.content IS NOT NEW.content OR
-     OLD.enabled IS NOT NEW.enabled OR
-     OLD.position IS NOT NEW.position OR
-     OLD.insertion_order IS NOT NEW.insertion_order OR
-     OLD.priority IS NOT NEW.priority OR
-     OLD.selective IS NOT NEW.selective OR
-     OLD.secondary_keys IS NOT NEW.secondary_keys OR
-     OLD.case_sensitive IS NOT NEW.case_sensitive OR
-     OLD.regex IS NOT NEW.regex OR
-     OLD.extensions IS NOT NEW.extensions
-BEGIN
-  INSERT INTO sync_log(entity, entity_id, operation, timestamp, client_id, version, payload)
-  VALUES('world_book_entries', CAST(NEW.id AS TEXT), 'update', NEW.last_modified,
-         (SELECT client_id FROM world_books WHERE id = NEW.world_book_id), 1,
-         json_object('id', NEW.id, 'world_book_id', NEW.world_book_id, 'keys', NEW.keys,
-                     'content', NEW.content, 'enabled', NEW.enabled, 'position', NEW.position,
-                     'insertion_order', NEW.insertion_order, 'priority', NEW.priority,
-                     'selective', NEW.selective, 'secondary_keys', NEW.secondary_keys,
-                     'case_sensitive', NEW.case_sensitive, 'regex', NEW.regex,
-                     'extensions', NEW.extensions,
-                     'created_at', NEW.created_at, 'last_modified', NEW.last_modified));
-END;
-
-UPDATE db_schema_version
-   SET version = 22
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 21;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v22_to_v23_character_expression_images.sql.
-    _MIGRATE_V22_TO_V23_SQL = """
-CREATE TABLE IF NOT EXISTS character_expression_images(
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  character_id  INTEGER NOT NULL REFERENCES character_cards(id) ON DELETE CASCADE ON UPDATE CASCADE,
-  state_id      TEXT    NOT NULL,
-  image         BLOB    NOT NULL,
-  mime          TEXT,
-  created_at    TEXT    NOT NULL DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW')),
-  updated_at    TEXT    NOT NULL DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ','NOW')),
-  deleted       INTEGER NOT NULL DEFAULT 0,
-  UNIQUE(character_id, state_id)
-);
-CREATE INDEX IF NOT EXISTS idx_char_expr_images_char ON character_expression_images(character_id);
-UPDATE db_schema_version
-   SET version = 23
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 22;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v23_to_v24_conversation_active_leaf.sql.
-    # NOTE: no trigger DDL. `active_leaf_message_id` is a LOCAL-ONLY pointer that
-    # must never reach sync_log, so the conversations_sync_* triggers are left
-    # untouched and the column is never added to their payloads.
-    _MIGRATE_V23_TO_V24_SQL = """
-UPDATE db_schema_version
-   SET version = 24
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 23;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v24_to_v25_message_generation_metadata.sql.
-    _MIGRATE_V24_TO_V25_SQL = """
-CREATE TABLE IF NOT EXISTS message_generation_metadata(
-  message_id      TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE ON UPDATE CASCADE,
-  position        INTEGER NOT NULL CHECK (position >= 0),
-  prompt          TEXT    NOT NULL,
-  negative_prompt TEXT    NOT NULL DEFAULT '',
-  backend         TEXT    NOT NULL,
-  model           TEXT,
-  seed            INTEGER,
-  style           TEXT,
-  params_json     TEXT    NOT NULL DEFAULT '{}',
-  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (message_id, position)
-);
-CREATE INDEX IF NOT EXISTS idx_msg_gen_meta_message ON message_generation_metadata(message_id);
-UPDATE db_schema_version
-   SET version = 25
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 24;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v25_to_v26_conversation_context_summary.sql.
-    # NOTE: no trigger DDL. ``context_summary``/``summary_boundary_message_id``
-    # are LOCAL-ONLY (Console `/rewind` "summarize up to here") and must never
-    # reach sync_log, so the conversations_sync_* triggers are left untouched
-    # and the columns are never added to their payloads.
-    _MIGRATE_V25_TO_V26_SQL = """
-UPDATE db_schema_version
-   SET version = 26
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 25;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v29_to_v30_message_usage.sql.
-    # NOTE: no trigger DDL. ``usage_json`` is LOCAL-ONLY (Console cost ticker
-    # PR1) and must never reach sync_log, so the messages_sync_* triggers are
-    # left untouched and the column is never added to their payloads. The
-    # schema-version bump is done separately in the runner (not embedded
-    # here) with a rowcount check, matching
-    # ``_update_character_authority_schema_version``.
-    _MIGRATE_V29_TO_V30_SQL = """
-ALTER TABLE messages ADD COLUMN usage_json TEXT DEFAULT NULL;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v30_to_v31_message_metadata.sql.
-    # NOTE: no trigger DDL. ``metadata_json`` is LOCAL-ONLY (task-2364:
-    # engine provenance, interrupted flag, transcript status) and must never
-    # reach sync_log, so the messages_sync_* triggers are left untouched and
-    # the column is never added to their payloads -- byte-for-byte the same
-    # reasoning as ``usage_json`` above. The schema-version bump is done
-    # separately in the runner (not embedded here) with a rowcount check.
-    _MIGRATE_V30_TO_V31_SQL = """
-ALTER TABLE messages ADD COLUMN metadata_json TEXT DEFAULT NULL;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v41_to_v42_console_project_context.sql.
-    # NOTE: no trigger DDL. ``console_project_context_json`` is LOCAL-ONLY and
-    # must never reach sync_log. The guarded version bump is owned by the
-    # migration runner so a column-present/version-41 database can recover.
+    # task-19565: this runner SQL is the SINGLE source of this migration (the
+    # step's Python owns shape validation and the guarded version bump for
+    # half-applied-database recovery, which a bare .sql file cannot express;
+    # the former decorative .sql twin was deleted rather than shipped
+    # unread). NOTE: no trigger DDL. ``console_project_context_json`` is
+    # LOCAL-ONLY and must never reach sync_log.
     _MIGRATE_V41_TO_V42_SQL = """
 ALTER TABLE conversations ADD COLUMN console_project_context_json TEXT;
 """
 
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_research_quick_note_proofs.sql.
-    # This table is private local recovery state: no trigger may project it to
-    # sync_log, FTS, keyword/tag surfaces, exports, graph, or RAG.
+    # task-19565: this runner SQL is the SINGLE source of this migration (the
+    # step's Python owns the existing-table shape validation and version
+    # bump; the former decorative .sql twin was deleted rather than shipped
+    # unread). This table is private local recovery state: no trigger may
+    # project it to sync_log, FTS, keyword/tag surfaces, exports, graph, or
+    # RAG.
     _MIGRATE_V42_TO_V43_CREATE_SQL = """CREATE TABLE research_quick_note_owner_proofs(
   note_id     TEXT PRIMARY KEY NOT NULL
               REFERENCES notes(id) ON DELETE CASCADE ON UPDATE CASCADE,
@@ -3247,69 +2823,6 @@ DELETE FROM keywords
         + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL
         + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL
     )
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql.
-    _MIGRATE_V18_TO_V19_SQL = """
-CREATE TABLE IF NOT EXISTS message_attachments(
-  message_id   TEXT    NOT NULL REFERENCES messages(id) ON DELETE CASCADE ON UPDATE CASCADE,
-  position     INTEGER NOT NULL CHECK (position >= 1),
-  data         BLOB    NOT NULL,
-  mime_type    TEXT    NOT NULL,
-  display_name TEXT    NOT NULL DEFAULT '',
-  PRIMARY KEY (message_id, position)
-);
-CREATE INDEX IF NOT EXISTS idx_message_attachments_message ON message_attachments(message_id);
-UPDATE db_schema_version
-   SET version = 19
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 18;
-"""
-
-    # Keep this runner SQL aligned with
-    # tldw_chatbook/DB/migrations/chachanotes_v28_to_v29_kept_briefings.sql.
-    # Deliberately no sync columns (client_id/version/deleted) and no FTS --
-    # see the migration file's header comment for the full rationale.
-    # `kept_scripts.kept_briefing_id` IS a real intra-ChaChaNotes FK with
-    # ON DELETE CASCADE; `source_briefing_id`/`source_script_id` are plain
-    # ints kept for tracing only, never FKs (the source rows live in a
-    # different database file, Subscriptions_DB).
-    _MIGRATE_V28_TO_V29_SQL = """
-CREATE TABLE IF NOT EXISTS kept_briefings(
-  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
-  source_briefing_id     INTEGER NOT NULL UNIQUE,
-  watchlist_name         TEXT,
-  body_markdown          TEXT NOT NULL,
-  covers_through_item_id INTEGER,
-  covers_from_ts         DATETIME,
-  selection_mode         TEXT,
-  model_used             TEXT,
-  item_count             INTEGER NOT NULL DEFAULT 0,
-  featured_count         INTEGER NOT NULL DEFAULT 0,
-  overflow_count         INTEGER NOT NULL DEFAULT 0,
-  origin                 TEXT NOT NULL CHECK(origin IN ('manual','scheduled')),
-  original_created_at    DATETIME,
-  kept_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_kept_briefings_kept_at ON kept_briefings(kept_at DESC, id DESC);
-
-CREATE TABLE IF NOT EXISTS kept_scripts(
-  id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-  kept_briefing_id     INTEGER NOT NULL REFERENCES kept_briefings(id) ON DELETE CASCADE ON UPDATE CASCADE,
-  source_script_id     INTEGER UNIQUE,
-  preset_name          TEXT NOT NULL,
-  roster_snapshot_json TEXT NOT NULL,
-  turns_json           TEXT NOT NULL,
-  model_used           TEXT,
-  original_created_at  DATETIME,
-  kept_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_kept_scripts_briefing ON kept_scripts(kept_briefing_id);
-UPDATE db_schema_version
-   SET version = 29
- WHERE schema_name = 'rag_char_chat_schema'
-   AND version = 28;
-"""
 
     def __init__(
         self,
@@ -3552,7 +3065,7 @@ UPDATE db_schema_version
                         f"db_sha256={self._db_diagnostic_ref} "
                         f"thread={threading.get_ident()}"
                     )
-                except (sqlite3.Error, PrivatePathError) as exc:
+                except BaseException as exc:
                     if conn is not None:
                         # Initialization owns this unpublished handle; closing it
                         # also retires its native backup lease. Failed closes keep
@@ -3575,9 +3088,11 @@ UPDATE db_schema_version
                         f"exception_type={type(exc).__name__}"
                     )
                     self._local.conn = None
-                    raise CharactersRAGDBError(
-                        f"Failed to connect to database '{self.db_path_str}': {exc}"
-                    ) from exc
+                    if isinstance(exc, (sqlite3.Error, PrivatePathError)):
+                        raise CharactersRAGDBError(
+                            f"Failed to connect to database '{self.db_path_str}': {exc}"
+                        ) from exc
+                    raise
             self._local.conn_last_used = time.monotonic()
             return self._local.conn
         finally:
@@ -3907,6 +3422,7 @@ UPDATE db_schema_version
                         f"thread={threading.get_ident()} "
                         f"exception_type={type(exc).__name__}"
                     )
+
     def backup_database(self, backup_file_path: str) -> bool:
         """
         Creates a backup of the current database to the specified file path.
@@ -4517,9 +4033,9 @@ UPDATE db_schema_version
     # `last_modified`, `deleted`, `client_id`, and `version` are bookkeeping,
     # not content, and are deliberately excluded from the comparison.
     #
-    # Keep this runner content aligned with tldw_chatbook/DB/migrations/
-    # chachanotes_v31_to_v32_default_assistant_enrichment.sql (a hand-apply
-    # reference generated FROM these constants; it is not read at runtime).
+    # task-19565 deleted the hand-apply .sql reference that used to mirror
+    # these constants (alignment lived only in a comment, the exact
+    # decorative-twin anti-pattern); this routine is the single source.
     _DEFAULT_ASSISTANT_BARE_NAME = "Default Assistant"
     _DEFAULT_ASSISTANT_BARE_DESCRIPTION = "A general-purpose assistant."
     _DEFAULT_ASSISTANT_BARE_FIRST_MESSAGE = "Hello! How can I help you today?"
@@ -5320,10 +4836,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V16 to V17 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v16_to_v17_conversation_local_marks.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V16_TO_V17_SQL, "V16→V17"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V16→V17",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V16→V17] Migration script executed.")
 
@@ -5364,10 +4887,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V17 to V18 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v17_to_v18_conversation_system_prompt.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V17_TO_V18_SQL, "V17→V18"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V17→V18",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V17→V18] Migration script executed.")
 
@@ -5408,21 +4938,22 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V19 to V20 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v19_to_v20_conversation_metadata.sql"
+        )
         try:
             with self.transaction() as cursor:
-                # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
-                # skip the ALTER when a replayed/partial migration already left the
-                # column in place (mirrors the v18->v19 ``CREATE TABLE IF NOT EXISTS``).
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute(
-                        "PRAGMA table_info(conversations)"
-                    ).fetchall()
-                }
-                if "metadata" not in existing_columns:
-                    cursor.execute("ALTER TABLE conversations ADD COLUMN metadata TEXT")
+                # Idempotent replay: the file's plain ``ADD COLUMN`` (SQLite
+                # has no IF NOT EXISTS form) is skipped by
+                # ``_skip_already_applied_add_column`` inside
+                # ``_execute_migration_statements`` when a partially-applied
+                # run already left the column in place.
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V19_TO_V20_SQL, "V19→V20"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V19→V20",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V19→V20] Migration script executed.")
 
@@ -5463,23 +4994,22 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V20 to V21 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v20_to_v21_world_book_entry_priority.sql"
+        )
         try:
             with self.transaction() as cursor:
-                # Idempotent column add: SQLite has no ``ADD COLUMN IF NOT EXISTS``, so
-                # skip the ALTER when a replayed/partial migration already left the
-                # column in place (mirrors the v19->v20 ``metadata`` column guard).
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute(
-                        "PRAGMA table_info(world_book_entries)"
-                    ).fetchall()
-                }
-                if "priority" not in existing_columns:
-                    cursor.execute(
-                        "ALTER TABLE world_book_entries ADD COLUMN priority INTEGER DEFAULT 0"
-                    )
+                # Idempotent replay: the file's plain ``ADD COLUMN`` (SQLite
+                # has no IF NOT EXISTS form) is skipped by
+                # ``_skip_already_applied_add_column`` inside
+                # ``_execute_migration_statements`` when a partially-applied
+                # run already left the column in place.
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V20_TO_V21_SQL, "V20→V21"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V20→V21",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V20→V21] Migration script executed.")
 
@@ -5514,20 +5044,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V21 to V22 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v21_to_v22_world_book_entry_regex.sql"
+        )
         try:
             with self.transaction() as cursor:
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute(
-                        "PRAGMA table_info(world_book_entries)"
-                    ).fetchall()
-                }
-                if "regex" not in existing_columns:
-                    cursor.execute(
-                        "ALTER TABLE world_book_entries ADD COLUMN regex BOOLEAN DEFAULT 0"
-                    )
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V21_TO_V22_SQL, "V21→V22"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V21→V22",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V21→V22] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -5560,10 +5087,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V22 to V23 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v22_to_v23_character_expression_images.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V22_TO_V23_SQL, "V22→V23"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V22→V23",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V22→V23] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -5597,20 +5131,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V23 to V24 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v23_to_v24_conversation_active_leaf.sql"
+        )
         try:
             with self.transaction() as cursor:
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute(
-                        "PRAGMA table_info(conversations)"
-                    ).fetchall()
-                }
-                if "active_leaf_message_id" not in existing_columns:
-                    cursor.execute(
-                        "ALTER TABLE conversations ADD COLUMN active_leaf_message_id TEXT"
-                    )
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V23_TO_V24_SQL, "V23→V24"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V23→V24",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V23→V24] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -5644,10 +5175,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V24 to V25 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v24_to_v25_message_generation_metadata.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V24_TO_V25_SQL, "V24→V25"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V24→V25",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V24→V25] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -5682,24 +5220,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V25 to V26 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v25_to_v26_conversation_context_summary.sql"
+        )
         try:
             with self.transaction() as cursor:
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute(
-                        "PRAGMA table_info(conversations)"
-                    ).fetchall()
-                }
-                if "context_summary" not in existing_columns:
-                    cursor.execute(
-                        "ALTER TABLE conversations ADD COLUMN context_summary TEXT"
-                    )
-                if "summary_boundary_message_id" not in existing_columns:
-                    cursor.execute(
-                        "ALTER TABLE conversations ADD COLUMN summary_boundary_message_id TEXT"
-                    )
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V25_TO_V26_SQL, "V25→V26"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V25→V26",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V25→V26] Migration script executed.")
             final_version = self._get_db_version(conn)
@@ -5897,10 +5428,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V28 to V29 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v28_to_v29_kept_briefings.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V28_TO_V29_SQL, "V28→V29"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V28→V29",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V28→V29] Migration script executed.")
 
@@ -5940,32 +5478,26 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V29 to V30 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v29_to_v30_message_usage.sql"
+        )
         try:
-            # The .sql file is the plain, unguarded ALTER (see its header
-            # note); THIS runner owns the idempotence guard. `ALTER TABLE ...
-            # ADD COLUMN` is not conditional in SQLite, so a database that
-            # already carries `usage_json` at v29 -- a partially-applied
-            # migration, or a row added by a concurrent build of this branch --
-            # would abort the whole upgrade with "duplicate column name".
-            # Skipping just the DDL (never the version bump) lands such a
-            # database at v30 exactly like a clean one.
+            # The .sql file is the plain ALTER (see its header note); the
+            # idempotence guard lives in ``_execute_migration_statements``
+            # (``_skip_already_applied_add_column``): a database that already
+            # carries `usage_json` from a partially-applied run has just the
+            # ALTER skipped, and lands at v30 exactly like a clean one.
             with self.transaction() as cursor:
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute("PRAGMA table_info(messages)").fetchall()
-                }
-                if "usage_json" in existing_columns:
-                    logger.info(
-                        f"[{self._SCHEMA_NAME} V29→V30] messages.usage_json already present; "
-                        "skipping the ALTER and applying the version bump only."
-                    )
-                else:
-                    self._execute_migration_statements(
-                        cursor, self._MIGRATE_V29_TO_V30_SQL, "V29→V30"
-                    )
-                    logger.debug(
-                        f"[{self._SCHEMA_NAME} V29→V30] Migration script executed."
-                    )
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V29→V30",
+                )
+                logger.debug(
+                    f"[{self._SCHEMA_NAME} V29→V30] Migration script executed."
+                )
 
                 cursor.execute(
                     """
@@ -6017,32 +5549,26 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V30 to V31 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v30_to_v31_message_metadata.sql"
+        )
         try:
-            # The .sql file is the plain, unguarded ALTER (see its header
-            # note); THIS runner owns the idempotence guard. `ALTER TABLE ...
-            # ADD COLUMN` is not conditional in SQLite, so a database that
-            # already carries `metadata_json` at v30 -- a partially-applied
-            # migration, or a row added by a concurrent build of this branch
-            # -- would abort the whole upgrade with "duplicate column name".
-            # Skipping just the DDL (never the version bump) lands such a
-            # database at v31 exactly like a clean one.
+            # The .sql file is the plain ALTER (see its header note); the
+            # idempotence guard lives in ``_execute_migration_statements``
+            # (``_skip_already_applied_add_column``): a database that already
+            # carries `metadata_json` from a partially-applied run has just
+            # the ALTER skipped, and lands at v31 exactly like a clean one.
             with self.transaction() as cursor:
-                existing_columns = {
-                    row[1]
-                    for row in cursor.execute("PRAGMA table_info(messages)").fetchall()
-                }
-                if "metadata_json" in existing_columns:
-                    logger.info(
-                        f"[{self._SCHEMA_NAME} V30→V31] messages.metadata_json already present; "
-                        "skipping the ALTER and applying the version bump only."
-                    )
-                else:
-                    self._execute_migration_statements(
-                        cursor, self._MIGRATE_V30_TO_V31_SQL, "V30→V31"
-                    )
-                    logger.debug(
-                        f"[{self._SCHEMA_NAME} V30→V31] Migration script executed."
-                    )
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V30→V31",
+                )
+                logger.debug(
+                    f"[{self._SCHEMA_NAME} V30→V31] Migration script executed."
+                )
 
                 cursor.execute(
                     """
@@ -7696,9 +7222,7 @@ UPDATE db_schema_version
                     (self._SCHEMA_NAME,),
                 )
                 if version_cursor.rowcount != 1:
-                    raise SchemaError(
-                        "Notes organization schema version update failed"
-                    )
+                    raise SchemaError("Notes organization schema version update failed")
             if self._get_db_version(conn) != 58:
                 raise SchemaError(
                     f"[{self._SCHEMA_NAME} V57→V58] Migration version check failed"
@@ -7872,7 +7396,9 @@ UPDATE db_schema_version
                     "V62→V63",
                 )
                 if cursor.execute("PRAGMA foreign_key_check").fetchall():
-                    raise SchemaError("Console trace GC migration foreign key audit failed")
+                    raise SchemaError(
+                        "Console trace GC migration foreign key audit failed"
+                    )
                 version_cursor = cursor.execute(
                     "UPDATE db_schema_version SET version = 63 "
                     "WHERE schema_name = ? AND version = 62",
@@ -8114,7 +7640,9 @@ UPDATE db_schema_version
                     "V67→V68",
                 )
                 if cursor.execute("PRAGMA foreign_key_check").fetchall():
-                    raise SchemaError("Canvas runtime migration foreign key audit failed")
+                    raise SchemaError(
+                        "Canvas runtime migration foreign key audit failed"
+                    )
                 version_cursor = cursor.execute(
                     "UPDATE db_schema_version SET version = 68 "
                     "WHERE schema_name = ? AND version = 67",
@@ -8247,6 +7775,66 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v76_to_v77(self, conn: sqlite3.Connection) -> None:
+        """Preserve checkpoint owners while adding native chat-start receipts."""
+        self._require_migration_entry_version(conn, 76, "V76→V77")
+        if conn.execute(
+            "SELECT 1 FROM sqlite_schema WHERE name='fleet_progress_messages'"
+        ).fetchone() is not None:
+            raise SchemaError("V76 to V77 unsupported native receipt catalog (progress predecessor)")
+        migration = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v76_to_v77_agent_chat_starts.sql"
+        )
+        with self.transaction() as cursor:
+            columns = {
+                row[1]
+                for row in cursor.execute(
+                    "PRAGMA table_info(console_dispatch_checkpoints)"
+                )
+            }
+            if "agent_chat_start_attempt_id" in columns:
+                # Column presence selects this gate; only a complete catalog admits it.
+                from .recovery_core_schema import CHACHANOTES_V76_NATIVE_SCHEMAS
+
+                catalog = tuple(
+                    row[0]
+                    for row in cursor.execute(
+                        "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+                    )
+                )
+                qualified = catalog in CHACHANOTES_V76_NATIVE_SCHEMAS
+                if not qualified:
+                    # SiteConfigManager already opens CharactersRAGDB on the
+                    # Subscription file. This runtime gate never changes the
+                    # primary backup adapter's separate catalog policy.
+                    from .recovery_operations import (
+                        _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS,
+                    )
+
+                    qualified = (
+                        catalog in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
+                        and tuple(
+                            cursor.execute(
+                                "SELECT MAX(version) FROM schema_version"
+                            ).fetchone()
+                        )
+                        == (2,)
+                    )
+                if not qualified:
+                    raise SchemaError("V76→V77 unsupported native receipt catalog")
+            else:
+                self._execute_migration_statements(
+                    cursor, migration.read_text(encoding="utf-8"), "V76→V77"
+                )
+            changed = cursor.execute(
+                "UPDATE db_schema_version SET version = 77 WHERE schema_name = ? AND version = 76",
+                (self._SCHEMA_NAME,),
+            )
+            if changed.rowcount != 1:
+                raise SchemaError("V76→V77 version update failed")
+
     def _migrate_from_v72_to_v73(self, conn: sqlite3.Connection) -> None:
         """Persist the note-link relation and backfill it from existing bodies."""
 
@@ -8312,6 +7900,133 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v73_to_v74(self, conn: sqlite3.Connection) -> None:
+        """Record the content-free reason a compaction attempt did not succeed."""
+
+        self._require_migration_entry_version(conn, 73, "V73→V74")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v73_to_v74_auxiliary_failure_reason.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V73→V74",
+                )
+                version_cursor = cursor.execute(
+                    """
+                    UPDATE db_schema_version
+                       SET version = 74
+                     WHERE schema_name = ?
+                       AND version = 73
+                    """,
+                    (self._SCHEMA_NAME,),
+                )
+                if version_cursor.rowcount != 1:
+                    raise SchemaError(
+                        f"[{self._SCHEMA_NAME} V73→V74] Migration version update was not applied"
+                    )
+            if self._get_db_version(conn) != 74:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V73→V74] Migration version check failed"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V73 to V74 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
+    def _migrate_from_v74_to_v75(self, conn: sqlite3.Connection) -> None:
+        """Retain machine continuation dedup independently of checkpoints."""
+        self._require_migration_entry_version(conn, 74, "V74→V75")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v74_to_v75_hook_continuation_receipts.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V74→V75"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 75 WHERE schema_name = ? AND version = 74",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V74→V75 version update failed")
+            if self._get_db_version(conn) != 75:
+                raise SchemaError("V74→V75 version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V74→V75 failed: {type(exc).__name__}"
+            ) from exc
+
+    def _migrate_from_v75_to_v76(self, conn: sqlite3.Connection) -> None:
+        """Ship the guarded ``notes_au`` FTS trigger body as a real migration.
+
+        The trigger originally shipped without its ``deleted = 0`` guards, and
+        because the v4 base script never re-runs on an existing database the
+        repair lived for years in a runtime self-heal that DROP/reCREATEd
+        ``notes_au`` on every open (task-19565 removed it). Every database
+        passes through v75->v76 exactly once, so the correct body lands once
+        and the startup fixup is gone. The recreated body is
+        whitespace-identical to the v4 base script's, so fresh and
+        chain-migrated databases converge on the same sqlite_master row.
+        """
+
+        self._require_migration_entry_version(conn, 75, "V75→V76")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v75_to_v76_notes_fts_undelete_guard.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V75→V76",
+                )
+            if self._get_db_version(conn) != 76:
+                raise SchemaError(
+                    f"[{self._SCHEMA_NAME} V75→V76] Migration version check failed"
+                )
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration from V75 to V76 failed for '{self._SCHEMA_NAME}': "
+                f"{type(exc).__name__}"
+            ) from exc
+
+    def _migrate_from_v77_to_v78(self, conn: sqlite3.Connection) -> None:
+        """Add chat-owned pending progress without restoring live authority."""
+        self._require_migration_entry_version(conn, 77, "V77→V78")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v77_to_v78_fleet_progress.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, migration_path.read_text(encoding="utf-8"), "V77→V78"
+                )
+                result = cursor.execute(
+                    "UPDATE db_schema_version SET version = 78 WHERE schema_name = ? AND version = 77",
+                    (self._SCHEMA_NAME,),
+                )
+                if result.rowcount != 1:
+                    raise SchemaError(
+                        "Migration V77 to V78 version update was not applied."
+                    )
+            if self._get_db_version(conn) != 78:
+                raise SchemaError("Migration V77 to V78 version check failed.")
+        except (OSError, sqlite3.Error) as exc:
+            raise SchemaError("Migration from V77 to V78 failed.") from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -8326,10 +8041,17 @@ UPDATE db_schema_version
         logger.info(
             f"Migrating schema from V18 to V19 for '{self._SCHEMA_NAME}' in DB: db_sha256={self._db_diagnostic_ref}..."
         )
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v18_to_v19_message_attachments.sql"
+        )
         try:
             with self.transaction() as cursor:
                 self._execute_migration_statements(
-                    cursor, self._MIGRATE_V18_TO_V19_SQL, "V18→V19"
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V18→V19",
                 )
             logger.debug(f"[{self._SCHEMA_NAME} V18→V19] Migration script executed.")
 
@@ -8477,7 +8199,6 @@ UPDATE db_schema_version
                         self._repair_missing_notes_organization_sync_ids(conn)
                     if current_db_version >= 58:
                         self._ensure_notes_organization_link_lookup_indexes(conn)
-                    self._ensure_notes_fts_update_trigger_handles_undelete(conn)
                     logger.debug(
                         f"Database schema '{self._SCHEMA_NAME}' is up to date (Version {target_version})."
                     )
@@ -8557,6 +8278,11 @@ UPDATE db_schema_version
                     70: self._migrate_from_v70_to_v71,
                     71: self._migrate_from_v71_to_v72,
                     72: self._migrate_from_v72_to_v73,
+                    73: self._migrate_from_v73_to_v74,
+                    74: self._migrate_from_v74_to_v75,
+                    75: self._migrate_from_v75_to_v76,
+                    76: self._migrate_from_v76_to_v77,
+                    77: self._migrate_from_v77_to_v78,
                 }
 
                 if current_db_version == 0:
@@ -8590,7 +8316,6 @@ UPDATE db_schema_version
                     raise SchemaError(
                         f"Schema migration process completed, but final DB version is {final_version_check}, expected {target_version}. Manual check required."
                     )
-                self._ensure_notes_fts_update_trigger_handles_undelete(conn)
                 logger.info(
                     f"Database schema '{self._SCHEMA_NAME}' successfully initialized/migrated to version {final_version_check}."
                 )
@@ -8992,7 +8717,7 @@ UPDATE db_schema_version
         try:
             with self.transaction() as cursor:
                 char_id = self._insert_character_card_in_transaction(cursor, card_data)
-                logger.info(
+                logger.debug(
                     f"Added character card '{card_data['name']}' with ID: {char_id}."
                 )
 
@@ -9757,7 +9482,7 @@ UPDATE db_schema_version
         # If card_data is empty, treat as a no-op as per original behavior.
         # No version check, no transaction, no version bump.
         if not card_data:
-            logger.info(
+            logger.debug(
                 f"No data provided in card_data for character card update ID {character_id}. No-op."
             )
             # Log metrics for no-op
@@ -9890,7 +9615,7 @@ UPDATE db_schema_version
                     )
 
                 log_msg_fields_updated = f"Fields from payload processed: {fields_updated_log if fields_updated_log else 'None'}."
-                logger.info(
+                logger.debug(
                     f"Updated character card ID {character_id} (SINGLE UPDATE) from client-expected version {expected_version} to final DB version {next_version_val}. {log_msg_fields_updated}"
                 )
 
@@ -10055,7 +9780,7 @@ UPDATE db_schema_version
                     )
                     record_status = check_status_cursor.fetchone()
                     if record_status and record_status["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Character card ID {character_id} already soft-deleted. Soft delete successful (idempotent)."
                         )
                         return True
@@ -10083,7 +9808,7 @@ UPDATE db_schema_version
                         msg = f"Character card ID {character_id} disappeared before soft delete (expected active version {expected_version})."
                     elif final_state["deleted"]:
                         # If it got deleted by another process. Consider this success if the state is 'deleted'.
-                        logger.info(
+                        logger.debug(
                             f"Character card ID {character_id} was soft-deleted concurrently to version {final_state['version']}. Soft delete successful."
                         )
                         return True
@@ -10097,7 +9822,7 @@ UPDATE db_schema_version
                         msg, entity="character_cards", entity_id=character_id
                     )
 
-                logger.info(
+                logger.debug(
                     f"Soft-deleted character card ID {character_id} (was version {expected_version}), new version {next_version_val}."
                 )
                 # Log success metrics
@@ -10250,7 +9975,7 @@ UPDATE db_schema_version
                         entity_id=character_id,
                     )
                 if not current_state["deleted"]:
-                    logger.info(
+                    logger.debug(
                         f"Character card ID {character_id} already active. Restore is idempotent."
                     )
                     return True
@@ -10271,7 +9996,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Character card ID {character_id} disappeared."
                     elif not final_state["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Character card ID {character_id} was restored concurrently. Success."
                         )
                         return True
@@ -10289,7 +10014,7 @@ UPDATE db_schema_version
                         msg, entity="character_cards", entity_id=character_id
                     )
 
-                logger.info(
+                logger.debug(
                     f"Restored character card ID {character_id} "
                     f"(was v{expected_version}), new version {next_version_val}."
                 )
@@ -10977,9 +10702,16 @@ UPDATE db_schema_version
             params += (thinking_history_policy,)
         query = f"INSERT INTO conversations ({insert_columns}) VALUES ({placeholders})"
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): the conversation-create path reserves the
+            # write lock up front, the same standing policy task-21100 put on
+            # the hot `messages` writers. Depth-0 this INSERT is blind (a plain
+            # SQLITE_BUSY would honor the busy timeout), but a DEFERRED begin
+            # cannot be proven safe against future body changes, and every
+            # wrapper that composes this call inherits whatever begin mode it
+            # finds at depth 0 -- reserve here so the default is safe.
+            with self.transaction(immediate=True) as conn:
                 conn.execute(query, params)
-            logger.info(f"Added conversation ID: {conv_id}.")
+            logger.debug(f"Added conversation ID: {conv_id}.")
 
             # Log success metrics
             duration = time.time() - start_time
@@ -11722,18 +11454,24 @@ UPDATE db_schema_version
             params.append(normalized_topic_label)
 
         normalized_query = self._normalize_nullable_text(query)
+        # Message-content matching goes through messages_fts (kept in sync
+        # by triggers -- see schema ~line 326), never a leading-wildcard
+        # LIKE on messages.content (task-249). The subquery is deliberately
+        # UNCORRELATED (PERF-02, TASK-33261): SQLite runs the MATCH once and
+        # probes the materialized id list. The correlated EXISTS TASK-278
+        # shipped re-ran the full-text query per candidate conversation
+        # (~1.1 s vs ~7 ms in the 2026-09-27 audit bench; ~70 s for a common
+        # term at 150k messages). The hidden-column form
+        # (`fts.messages_fts MATCH`) is deliberate: the bare-alias form
+        # (`fts MATCH ?`) fails with "no such column: fts" inside a JOIN.
+        content_match_clause = (
+            "id IN (SELECT m.conversation_id FROM messages_fts fts "
+            "JOIN messages m ON fts.rowid = m.rowid "
+            "WHERE m.deleted = 0 AND fts.messages_fts MATCH ?)"
+        )
         if normalized_query_terms is not None:
             for index, term in enumerate(normalized_query_terms):
-                query_clauses = [
-                    "title LIKE ?",
-                    "EXISTS ("
-                    "SELECT 1 FROM messages_fts fts "
-                    "JOIN messages m ON fts.rowid = m.rowid "
-                    "WHERE m.conversation_id = conversations.id "
-                    "AND m.deleted = 0 "
-                    "AND fts.messages_fts MATCH ?"
-                    ")",
-                ]
+                query_clauses = ["title LIKE ?", content_match_clause]
                 params.extend([f"%{term}%", self._fts_prefix_match_expression(term)])
                 if len(normalized_query_terms) == 1:
                     query_clauses.append("id = ?")
@@ -11748,27 +11486,7 @@ UPDATE db_schema_version
                     params.append(json.dumps(workspace_term_ids, separators=(",", ":")))
                 clauses.append(f"({' OR '.join(query_clauses)})")
         elif normalized_query is not None:
-            # Message-content matching goes through messages_fts (kept in
-            # sync by triggers -- see schema ~line 326) instead of a
-            # correlated leading-wildcard substring scan against the raw
-            # messages.content column: that was index-hostile, re-scanning
-            # every candidate conversation's messages per call (task-249 /
-            # performance audit finding A4). Title and id= matching are
-            # unchanged.
-            query_clauses = [
-                "title LIKE ? OR id = ? OR EXISTS ("
-                "SELECT 1 FROM messages_fts fts "
-                "JOIN messages m ON fts.rowid = m.rowid "
-                "WHERE m.conversation_id = conversations.id "
-                "AND m.deleted = 0 "
-                # NOTE: the hidden-column form (`fts.messages_fts MATCH`) is
-                # deliberate — the bare-alias form (`fts MATCH ?`) fails with
-                # "no such column: fts" inside this correlated EXISTS+JOIN
-                # (verified against the test suite); both forms are
-                # documented FTS5.
-                "AND fts.messages_fts MATCH ?"
-                ")"
-            ]
+            query_clauses = [f"title LIKE ? OR id = ? OR {content_match_clause}"]
             like_query = f"%{normalized_query}%"
             fts_query = self._fts_prefix_match_expression(normalized_query)
             params.extend([like_query, normalized_query, fts_query])
@@ -12244,6 +11962,81 @@ UPDATE db_schema_version
         cursor = self.execute_query(query, (conversation_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_root_message_rows_page(
+        self,
+        conversation_id: str,
+        *,
+        after_message_id: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Fetch one page of a live conversation's live parentless rows.
+
+        TASK-33628.7 (PR #3004 review): the Console's legacy flat Delete looks
+        for never-shown roots after the rows it deletes. It needs only the
+        parentless rows, so it reads them here a bounded page at a time rather
+        than every row of the conversation. Rows come in the order resume
+        reads roots in -- ``get_message_tree_rows_for_conversation``'s
+        timestamp order, equal timestamps in insertion order -- with only the
+        columns that decide whether resume shows a row: presence flags, not
+        the message text.
+
+        Both statements walk ``idx_msgs_conv_ts (conversation_id, timestamp)``
+        with no post-sort; a later page starts its range at the previous
+        page's last row (plans pinned with ``sqlite_stat1`` absent in
+        ``Tests/DB/test_message_root_rows_page.py``). Today's planner picks
+        that plan with or without the unary ``+``; the ``+`` keeps it there,
+        off the parent indexes, which hold every conversation's parentless
+        rows.
+
+        Args:
+            conversation_id: The conversation UUID.
+            after_message_id: The last id of the previous page; ``None`` for
+                the first page. An id that names no row yields an empty page.
+            limit: The most rows to return; at least 1.
+
+        Returns:
+            Up to ``limit`` rows, each with ``id``, ``sender``, ``role``,
+            ``metadata_json`` and the 0/1 flags ``has_content``,
+            ``has_image``, ``has_generation_state`` and
+            ``has_provider_continuation``. A page shorter than ``limit`` is
+            the last.
+
+        Raises:
+            InputError: If ``limit`` is less than 1.
+        """
+        if limit < 1:
+            raise InputError("limit must be at least 1.")
+        query = """
+            SELECT m.id, m.sender, m.role, m.metadata_json,
+                   (m.content <> '') AS has_content,
+                   (m.image_data IS NOT NULL) AS has_image,
+                   (m.assistant_generation_state IS NOT NULL) AS has_generation_state,
+                   (m.provider_continuation_json IS NOT NULL)
+                       AS has_provider_continuation
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND +m.parent_message_id IS NULL
+              AND m.deleted = 0
+              AND c.deleted = 0
+        """
+        params: List[Any] = [conversation_id]
+        if after_message_id is not None:
+            # Row values compare the raw stored timestamp, never one that
+            # took a round trip through the DATETIME converter.
+            query += """
+              AND (m.timestamp, m.rowid) > (
+                  SELECT prev.timestamp, prev.rowid
+                  FROM messages prev
+                  WHERE prev.id = ?
+              )
+            """
+            params.append(after_message_id)
+        query += " ORDER BY m.timestamp, m.rowid LIMIT ?"
+        params.append(limit)
+        cursor = self.execute_query(query, tuple(params))
+        return [dict(row) for row in cursor.fetchall()]
+
     def get_message_images_by_ids(
         self, message_ids: Sequence[str]
     ) -> Dict[str, Dict[str, Any]]:
@@ -12335,7 +12128,10 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): read-then-write (optimistic version
+            # check then UPDATE) on a user-facing chat path -- the standing
+            # task-21100 policy for exactly this shape.
+            with self.transaction(immediate=True) as conn:
                 current_state = conn.execute(
                     """
                     SELECT rowid, title, version, deleted, character_id, assistant_kind, assistant_id,
@@ -12612,7 +12408,7 @@ UPDATE db_schema_version
                         entity_id=conversation_id,
                     )
 
-                logger.info(
+                logger.debug(
                     f"Updated conversation ID {conversation_id} from version {expected_version} to version {next_version_val}."
                 )
                 return True
@@ -12879,7 +12675,10 @@ UPDATE db_schema_version
         )
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): read-then-write (version check then
+            # soft-delete UPDATE) on a user-facing chat path -- the standing
+            # task-21100 policy for exactly this shape.
+            with self.transaction(immediate=True) as conn:
                 try:
                     current_db_version = self._get_current_db_version(
                         conn, "conversations", "id", conversation_id
@@ -12891,7 +12690,7 @@ UPDATE db_schema_version
                     )
                     record_status = check_status_cursor.fetchone()
                     if record_status and record_status["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Conversation ID {conversation_id} already soft-deleted. Success (idempotent)."
                         )
                         return True
@@ -12916,7 +12715,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Conversation ID {conversation_id} disappeared."
                     elif final_state["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Conversation ID {conversation_id} was soft-deleted concurrently. Success."
                         )
                         return True
@@ -12928,7 +12727,7 @@ UPDATE db_schema_version
                         msg, entity="conversations", entity_id=conversation_id
                     )
 
-                logger.info(
+                logger.debug(
                     f"Soft-deleted conversation ID {conversation_id} (was v{expected_version}), new version {next_version_val}."
                 )
                 return True
@@ -12967,7 +12766,10 @@ UPDATE db_schema_version
         )
 
         try:
-            with self.transaction() as conn:
+            # IMMEDIATE (task-22501): read-then-write (deleted/version check
+            # then restore UPDATE) on a user-facing chat path -- the standing
+            # task-21100 policy for exactly this shape.
+            with self.transaction(immediate=True) as conn:
                 current_state = conn.execute(
                     "SELECT deleted, version FROM conversations WHERE id = ?",
                     (conversation_id,),
@@ -12979,7 +12781,7 @@ UPDATE db_schema_version
                         entity_id=conversation_id,
                     )
                 if not current_state["deleted"]:
-                    logger.info(
+                    logger.debug(
                         f"Conversation ID {conversation_id} already active. Restore is idempotent."
                     )
                     return True
@@ -13000,7 +12802,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Conversation ID {conversation_id} disappeared."
                     elif not final_state["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Conversation ID {conversation_id} was restored concurrently. Success."
                         )
                         return True
@@ -13018,7 +12820,7 @@ UPDATE db_schema_version
                         msg, entity="conversations", entity_id=conversation_id
                     )
 
-                logger.info(
+                logger.debug(
                     f"Restored conversation ID {conversation_id} "
                     f"(was v{expected_version}), new version {next_version_val}."
                 )
@@ -13076,7 +12878,9 @@ UPDATE db_schema_version
         safe_search_term = build_and_match_query(title_query)
         if not safe_search_term:
             return []
-        archive_clause = self._conversation_archive_scope_clause(archive_scope).replace("archived", "c.archived")
+        archive_clause = self._conversation_archive_scope_clause(archive_scope).replace(
+            "archived", "c.archived"
+        )
         base_query = f"""
                      SELECT c.*
                      FROM conversations_fts fts
@@ -13510,7 +13314,7 @@ UPDATE db_schema_version
                     message_id=msg_id,
                     creation_reason="message_create",
                 )
-            logger.info(
+            logger.debug(
                 f"Added message ID: {msg_id} to conversation {msg_data['conversation_id']} (Image: {'Yes' if msg_data.get('image_data') else 'No'})."
             )
             return msg_id
@@ -14258,9 +14062,7 @@ UPDATE db_schema_version
             )
             raise
 
-    def get_message_versions_by_ids(
-        self, message_ids: Iterable[str]
-    ) -> Dict[str, int]:
+    def get_message_versions_by_ids(self, message_ids: Iterable[str]) -> Dict[str, int]:
         """Return current positive versions for many non-deleted messages.
 
         task-32804.12 ([D2]): ``_durable_context_snapshots`` read one
@@ -15097,7 +14899,7 @@ UPDATE db_schema_version
         if (
             not fields_to_update_sql
         ):  # If only image was cleared, this list might be empty now if no other fields
-            logger.info(
+            logger.debug(
                 f"No updatable content fields provided for message ID {message_id}, but metadata will be updated if version matches."
             )
             # Proceed to metadata update; SQL query will be constructed accordingly
@@ -15177,8 +14979,7 @@ UPDATE db_schema_version
                             role=current["role"],
                             raw_state=update_data["assistant_generation_state"],
                             has_valid_active_continuation=(
-                                checkpoint is not None
-                                and checkpoint.state == "active"
+                                checkpoint is not None and checkpoint.state == "active"
                             ),
                         )
                     except ValueError:
@@ -15237,20 +15038,24 @@ UPDATE db_schema_version
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
 
                 if content_changed and not preserve_descendants:
+                    # Unary ``+`` keeps both steps off the (conversation_id, id)
+                    # index, as in soft_delete_message_subtree: with no
+                    # sqlite_stat1 the planner otherwise scans the whole
+                    # conversation once per descendant (TASK-33628.11).
                     descendant_rows = conn.execute(
                         """
                         WITH RECURSIVE descendants(id) AS (
                             SELECT id
                               FROM messages
                              WHERE parent_message_id = ?
-                               AND conversation_id = ? AND deleted = 0
+                               AND +conversation_id = ? AND deleted = 0
                             UNION
                             SELECT child.id
                               FROM messages AS child
                               JOIN descendants AS parent
                                 ON child.parent_message_id = parent.id
                              WHERE child.deleted = 0
-                               AND child.conversation_id = ?
+                               AND +child.conversation_id = ?
                         )
                         SELECT id FROM descendants
                         """,
@@ -15269,14 +15074,14 @@ UPDATE db_schema_version
                             SELECT id
                               FROM messages
                              WHERE parent_message_id = ?
-                               AND conversation_id = ? AND deleted = 0
+                               AND +conversation_id = ? AND deleted = 0
                             UNION
                             SELECT child.id
                               FROM messages AS child
                               JOIN descendants AS parent
                                 ON child.parent_message_id = parent.id
                              WHERE child.deleted = 0
-                               AND child.conversation_id = ?
+                               AND +child.conversation_id = ?
                         )
                         UPDATE messages
                            SET deleted = 1,
@@ -15297,7 +15102,7 @@ UPDATE db_schema_version
                     if descendant_rows:
                         self._advance_semantic_graph_epoch(conn)
 
-                logger.info(
+                logger.debug(
                     f"Updated message ID {message_id} from version {expected_version} to version {next_version_val}. Fields updated: {fields_to_update_sql if fields_to_update_sql else 'None'}"
                 )
                 return True
@@ -15920,7 +15725,7 @@ UPDATE db_schema_version
                     )
                     record_status = check_status_cursor.fetchone()
                     if record_status and record_status["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Message ID {message_id} already soft-deleted. Success (idempotent)."
                         )
                         return True
@@ -15949,7 +15754,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Message ID {message_id} disappeared."
                     elif final_state["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Message ID {message_id} was soft-deleted concurrently. Success."
                         )
                         return True
@@ -15962,7 +15767,7 @@ UPDATE db_schema_version
                 self._attach_chat_delete_base_hashes(conn, delete_proofs)
                 self._advance_semantic_graph_epoch(conn)
 
-                logger.info(
+                logger.debug(
                     f"Soft-deleted message ID {message_id} (was v{expected_version}), new version {next_version_val}."
                 )
                 return True
@@ -15975,7 +15780,11 @@ UPDATE db_schema_version
             raise
 
     def soft_delete_message_subtree(
-        self, message_id: str, expected_version: int
+        self,
+        message_id: str,
+        expected_version: int,
+        *,
+        subtree_message_ids: Sequence[str | None] = (),
     ) -> List[Dict[str, Any]]:
         """Atomically soft-delete an active message and all active descendants.
 
@@ -15983,8 +15792,33 @@ UPDATE db_schema_version
         project the exact entity versions to another outbox after this local
         transaction succeeds. Provider-visible bytes and semantic lineage are
         retained unchanged; deletion changes only visibility and ownership.
+
+        Args:
+            message_id: The selected message; its version is the fence.
+            expected_version: The version the caller expects it to hold.
+            subtree_message_ids: The ids the caller shows in the selected
+                message's subtree. The Console sends its whole in-memory
+                subtree: the selected id, parent-linked rows, and ``None`` for
+                unsaved nodes (ignored). It matters for rows WITHOUT a
+                ``parent_message_id`` link -- a legacy flat conversation
+                (every parent NULL) that the Console chains in memory
+                (TASK-33628.6). Each id seeds the same descent as the selected
+                message; ids outside its conversation, or already deleted, are
+                never touched.
+
+        Returns:
+            One ``message_id``/``conversation_id``/``version`` mapping per
+            committed tombstone, carrying its new version.
+
+        Raises:
+            ConflictError: The selected message is missing or at another
+                version.
         """
         now = self._get_current_utc_timestamp_iso()
+        seeds = json.dumps(
+            [message_id, *(str(extra) for extra in subtree_message_ids if extra)],
+            separators=(",", ":"),
+        )
         # IMMEDIATE: hot messages writer; see add_message's scoping comment.
         with self.transaction(immediate=True) as conn:
             current = conn.execute(
@@ -16007,24 +15841,28 @@ UPDATE db_schema_version
                     entity="messages",
                     entity_id=message_id,
                 )
-
+            # Unary ``+`` keeps the recursive step off the (conversation_id, id)
+            # index: with no sqlite_stat1 the planner otherwise scans the whole
+            # conversation once per subtree row instead of searching by parent.
+            scope = (seeds, current["conversation_id"], current["conversation_id"])
             rows = conn.execute(
                 """
                 WITH RECURSIVE subtree(id) AS (
                     SELECT id FROM messages
-                     WHERE id = ? AND conversation_id = ? AND deleted = 0
+                     WHERE id IN (SELECT value FROM json_each(?))
+                       AND conversation_id = ? AND deleted = 0
                     UNION
                     SELECT child.id
                       FROM messages AS child
                       JOIN subtree AS parent ON child.parent_message_id = parent.id
                      WHERE child.deleted = 0
-                       AND child.conversation_id = ?
+                       AND +child.conversation_id = ?
                 )
                 SELECT id, conversation_id, version
                   FROM messages
                  WHERE id IN (SELECT id FROM subtree)
                 """,
-                (message_id, current["conversation_id"], current["conversation_id"]),
+                scope,
             ).fetchall()
             delete_proofs = self._capture_chat_delete_base_hashes(
                 conn, tuple(row["id"] for row in rows)
@@ -16033,13 +15871,14 @@ UPDATE db_schema_version
                 """
                 WITH RECURSIVE subtree(id) AS (
                     SELECT id FROM messages
-                     WHERE id = ? AND conversation_id = ? AND deleted = 0
+                     WHERE id IN (SELECT value FROM json_each(?))
+                       AND conversation_id = ? AND deleted = 0
                     UNION
                     SELECT child.id
                       FROM messages AS child
                       JOIN subtree AS parent ON child.parent_message_id = parent.id
                      WHERE child.deleted = 0
-                       AND child.conversation_id = ?
+                       AND +child.conversation_id = ?
                 )
                 UPDATE messages
                    SET deleted = 1,
@@ -16048,13 +15887,7 @@ UPDATE db_schema_version
                        client_id = ?
                  WHERE id IN (SELECT id FROM subtree)
                 """,
-                (
-                    message_id,
-                    current["conversation_id"],
-                    current["conversation_id"],
-                    now,
-                    self.client_id,
-                ),
+                (*scope, now, self.client_id),
             )
             self._attach_chat_delete_base_hashes(conn, delete_proofs)
             if rows:
@@ -16067,6 +15900,71 @@ UPDATE db_schema_version
                 }
                 for row in rows
             ]
+
+    def restore_message_subtree(
+        self, tombstones: Sequence[tuple[str, int]]
+    ) -> List[Dict[str, Any]]:
+        """Atomically undelete exactly the tombstones one subtree delete wrote.
+
+        The Undo half of ``soft_delete_message_subtree`` (TASK-33628.2). Each
+        ``(message_id, version)`` must still be a tombstone at exactly that
+        version -- the version the delete returned -- or nothing is restored,
+        so an Undo can never resurrect a row something else changed since.
+        Content was never touched by the delete, so the ``messages_sync_
+        undelete`` trigger records an ordinary ``update`` intent.
+
+        Args:
+            tombstones: ``(message_id, tombstone_version)`` pairs.
+
+        Returns:
+            One ``message_id``/``conversation_id``/``version`` mapping per
+            restored row, carrying its new version.
+
+        Raises:
+            ConflictError: A row is missing, live, or at another version.
+        """
+        pairs = [(str(message_id), int(version)) for message_id, version in tombstones]
+        if not pairs:
+            return []
+        now = self._get_current_utc_timestamp_iso()
+        with self.transaction(immediate=True) as conn:
+            current: dict[str, sqlite3.Row] = {}
+            for batch in self._bounded_id_batches(
+                conn, list(dict.fromkeys(message_id for message_id, _version in pairs))
+            ):
+                placeholders = ",".join("?" for _ in batch)
+                current.update(
+                    (row["id"], row)
+                    for row in conn.execute(
+                        "SELECT id, conversation_id, version, deleted FROM messages "
+                        f"WHERE id IN ({placeholders})",  # nosec B608 - placeholders only
+                        tuple(batch),
+                    ).fetchall()
+                )
+            for message_id, version in pairs:
+                row = current.get(message_id)
+                if row is None or not row["deleted"] or row["version"] != version:
+                    raise ConflictError(
+                        f"Message ID {message_id} changed after it was deleted.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+            for message_id, version in pairs:
+                conn.execute(
+                    "UPDATE messages SET deleted = 0, last_modified = ?, "
+                    "version = version + 1, client_id = ? "
+                    "WHERE id = ? AND version = ? AND deleted = 1",
+                    (now, self.client_id, message_id, version),
+                )
+            self._advance_semantic_graph_epoch(conn)
+        return [
+            {
+                "message_id": message_id,
+                "conversation_id": current[message_id]["conversation_id"],
+                "version": version + 1,
+            }
+            for message_id, version in pairs
+        ]
 
     @staticmethod
     def _chat_sync_payload_hash_from_row(row: Mapping[str, Any]) -> str:
@@ -16116,6 +16014,36 @@ UPDATE db_schema_version
             payload["thinking_blocks_json"] = canonical_thinking
         return canonical_payload_hash(payload)
 
+    @staticmethod
+    def _bounded_id_batches(
+        conn: sqlite3.Connection | sqlite3.Cursor, ids: Sequence[str]
+    ) -> Iterator[Sequence[str]]:
+        """Yield ``ids`` in slices one ``IN (?, ...)`` list can bind.
+
+        A subtree delete reaches as many rows as the conversation holds, but
+        one statement may bind only ``SQLITE_LIMIT_VARIABLE_NUMBER``
+        variables; past it SQLite refuses the statement and the whole delete
+        rolls back (TASK-33628.6 review). Callers run every batch inside one
+        transaction, so the batches still read and write one snapshot.
+
+        Args:
+            conn: The connection, or the ``transaction()`` cursor, the
+                statements will run on; its connection's live limit bounds
+                the batch.
+            ids: The ids to bind, one variable each.
+
+        Yields:
+            Consecutive slices of at most ``min(500, limit)`` ids.
+        """
+        connection = getattr(conn, "connection", conn)
+        try:
+            limit = connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+        except (AttributeError, sqlite3.Error):
+            limit = _SQLITE_DEFAULT_VARIABLE_LIMIT
+        size = max(1, min(_ID_LIST_BATCH_CAP, limit))
+        for start in range(0, len(ids), size):
+            yield ids[start : start + size]
+
     def _capture_chat_delete_base_hashes(
         self, conn: sqlite3.Connection, message_ids: Sequence[str]
     ) -> dict[str, tuple[int, str]]:
@@ -16132,17 +16060,23 @@ UPDATE db_schema_version
             # writers against their genuinely older schemas. Those schemas
             # predate the content-free Sync-v2 delete proof and cannot emit it.
             return {}
-        placeholders = ",".join("?" for _ in message_ids)
-        rows = conn.execute(
-            f"""
-            SELECT id, role, content, provider_continuation_json,
-                   thinking_blocks_json, assistant_generation_state, version
-              FROM messages
-             WHERE deleted = 0 AND id IN ({placeholders})
-            """,
-            tuple(message_ids),
-        ).fetchall()
-        if len(rows) != len(set(message_ids)):
+        unique_ids = list(dict.fromkeys(message_ids))
+        rows: list[sqlite3.Row] = []
+        # The caller's transaction spans every batch, so one snapshot answers.
+        for batch in self._bounded_id_batches(conn, unique_ids):
+            placeholders = ",".join("?" for _ in batch)
+            rows.extend(
+                conn.execute(
+                    f"""
+                    SELECT id, role, content, provider_continuation_json,
+                           thinking_blocks_json, assistant_generation_state, version
+                      FROM messages
+                     WHERE deleted = 0 AND id IN ({placeholders})
+                    """,  # nosec B608 - placeholders only
+                    tuple(batch),
+                ).fetchall()
+            )
+        if len(rows) != len(unique_ids):
             raise CharactersRAGDBError("Chat delete proof owner changed.")
         return {
             row["id"]: (
@@ -16183,16 +16117,20 @@ UPDATE db_schema_version
         Returns:
             Committed tombstone identity, conversation, and version mappings.
         """
-        ids = [message_id for message_id in message_ids if message_id]
+        ids = list(dict.fromkeys(value for value in message_ids if value))
         if not ids:
             return []
-        placeholders = ",".join("?" for _ in ids)
+        rows: list[sqlite3.Row] = []
         with self.transaction() as conn:
-            rows = conn.execute(
-                f"SELECT id, conversation_id, version FROM messages "
-                f"WHERE deleted = 1 AND id IN ({placeholders})",
-                tuple(ids),
-            ).fetchall()
+            for batch in self._bounded_id_batches(conn, ids):
+                placeholders = ",".join("?" for _ in batch)
+                rows.extend(
+                    conn.execute(
+                        f"SELECT id, conversation_id, version FROM messages "
+                        f"WHERE deleted = 1 AND id IN ({placeholders})",  # nosec B608 - placeholders only
+                        tuple(batch),
+                    ).fetchall()
+                )
         return [
             {
                 "message_id": row["id"],
@@ -16367,7 +16305,7 @@ UPDATE db_schema_version
                     (variant_stats["count"] + 1, root_variant_id, root_variant_id),
                 )
 
-                logger.info(
+                logger.debug(
                     f"Created variant {new_msg_id} (#{variant_number}) of message {original_message_id}"
                 )
                 return new_msg_id
@@ -16491,7 +16429,7 @@ UPDATE db_schema_version
                 )
                 self._advance_semantic_graph_epoch(conn)
 
-                logger.info(f"Selected variant {variant_id}")
+                logger.debug(f"Selected variant {variant_id}")
                 return True
 
         except InputError:
@@ -16721,7 +16659,7 @@ UPDATE db_schema_version
                             entity=table_name,
                             entity_id=conflict_entity_id,
                         )
-                    logger.info(
+                    logger.debug(
                         f"Undeleted and updated {table_name} '{logged_value}' with ID: {item_id}, new version {next_version}."
                     )
                     return item_id
@@ -16729,7 +16667,7 @@ UPDATE db_schema_version
                 # If not undeleting, proceed with insert
                 cursor_insert = conn.execute(query, params_tuple_insert)
                 item_id_insert = cursor_insert.lastrowid
-                logger.info(
+                logger.debug(
                     f"Added {table_name} '{logged_value}' with ID: {item_id_insert}."
                 )
                 return item_id_insert
@@ -16918,7 +16856,7 @@ UPDATE db_schema_version
             # For safety, ensure metadata is only updated if there are actual field changes or if it's an explicit "touch".
             # The calling methods (e.g., update_note) handle this: "if not fields_to_update_sql: return True"
             # This helper should proceed if there's anything to set.
-            logger.info(
+            logger.debug(
                 f"No recognized updatable fields provided in update_data for {table_name} ID {item_id}. Will only update metadata if version matches."
             )
             # If we must update metadata anyway if version matches:
@@ -16978,7 +16916,7 @@ UPDATE db_schema_version
                         msg = f"{table_name} ID {item_id} version changed to {final_state['version']} concurrently (expected {expected_version} for update)."
                     raise ConflictError(msg, entity=table_name, entity_id=item_id)
 
-                logger.info(
+                logger.debug(
                     f"Updated {table_name} ID {item_id} from version {expected_version} to version {next_version_val}."
                 )
                 return True
@@ -17074,7 +17012,7 @@ UPDATE db_schema_version
                     record_status = check_deleted_cursor.fetchone()
 
                     if record_status and record_status["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"{table_name} ID {item_id} already soft-deleted. Operation considered successful (idempotent)."
                         )
                         return True
@@ -17107,7 +17045,7 @@ UPDATE db_schema_version
                     if changed_record["deleted"]:
                         # If it got deleted by another process, and the new version matches what we intended, it's fine.
                         if changed_record["version"] == next_version_val:
-                            logger.info(
+                            logger.debug(
                                 f"{table_name} ID {item_id} was soft-deleted concurrently to version {next_version_val}. Operation successful."
                             )
                             return True
@@ -17133,7 +17071,7 @@ UPDATE db_schema_version
                         entity_id=item_id,
                     )
 
-                logger.info(
+                logger.debug(
                     f"Soft-deleted {table_name} ID {item_id} (was version {expected_version}), new version {next_version_val}."
                 )
                 return True
@@ -17598,7 +17536,7 @@ UPDATE db_schema_version
 
         cursor.execute(query, params)
         self.replace_note_links(cursor, final_note_id, content)
-        logger.info(f"Added note ID: {final_note_id}.")
+        logger.debug(f"Added note ID: {final_note_id}.")
         return final_note_id
 
     def add_note(
@@ -17791,9 +17729,7 @@ UPDATE db_schema_version
         row = cursor.fetchone()
         return int(row["cnt"] if row else 0)
 
-    def list_deleted_notes(
-        self, limit: int = 20, offset: int = 0
-    ) -> Dict[str, Any]:
+    def list_deleted_notes(self, limit: int = 20, offset: int = 0) -> Dict[str, Any]:
         """Page the soft-deleted notes behind the Library Notes Trash view.
 
         task-32144: the inverse of ``list_notes``' visibility. Both the page
@@ -17859,9 +17795,7 @@ UPDATE db_schema_version
         """
 
     @staticmethod
-    def replace_note_links(
-        cursor: sqlite3.Cursor, note_id: str, content: str
-    ) -> None:
+    def replace_note_links(cursor: sqlite3.Cursor, note_id: str, content: str) -> None:
         """Rewrite one note's outgoing links to match its body.
 
         Call this from every writer of ``notes.content``, inside that writer's
@@ -18082,9 +18016,7 @@ UPDATE db_schema_version
                 tuple(note_ids),
             ).fetchall()
         }
-        link_tuples: Dict[str, List[List[Any]]] = {
-            note_id: [] for note_id in note_ids
-        }
+        link_tuples: Dict[str, List[List[Any]]] = {note_id: [] for note_id in note_ids}
         subject_expression = """
             CASE
               WHEN domain = 'notes.folder_link'
@@ -18215,8 +18147,7 @@ UPDATE db_schema_version
             result[note_id] = {
                 "keyword_metadata": visible_keywords,
                 "keyword_metadata_total": keyword_total,
-                "keyword_metadata_truncated": keyword_total
-                > len(visible_keywords),
+                "keyword_metadata_truncated": keyword_total > len(visible_keywords),
                 "folders": visible_folders,
                 "folder_total": folder_total,
                 "folders_truncated": folder_total > len(visible_folders),
@@ -18448,9 +18379,7 @@ UPDATE db_schema_version
                 if normalized_query is not None:
                     if row["hit_0"] or row["hit_1"]:
                         matched_fields.add("title")
-                    content_hit_indexes = [2] + (
-                        [3] if fts_query is not None else []
-                    )
+                    content_hit_indexes = [2] + ([3] if fts_query is not None else [])
                     keyword_hit_index = 4 if fts_query is not None else 3
                     if any(row[f"hit_{index}"] for index in content_hit_indexes):
                         matched_fields.add("content")
@@ -19093,7 +19022,7 @@ UPDATE db_schema_version
                 )
 
         if not fields_to_update_sql:
-            logger.info(f"No updatable fields provided for note ID {note_id}.")
+            logger.debug(f"No updatable fields provided for note ID {note_id}.")
             return True
 
         next_version_val = expected_version + 1
@@ -19139,7 +19068,7 @@ UPDATE db_schema_version
         if "content" in update_data:
             self.replace_note_links(cursor, note_id, update_data["content"])
 
-        logger.info(
+        logger.debug(
             f"Updated note ID {note_id} from version {expected_version} to version {next_version_val}."
         )
         return True
@@ -19203,9 +19132,7 @@ UPDATE db_schema_version
             or any(character not in "0123456789abcdef" for character in fingerprint)
         ):
             fingerprint = hashlib.sha256(
-                ("cancelled:" + str(receipt["requested_keywords_json"])).encode(
-                    "utf-8"
-                )
+                ("cancelled:" + str(receipt["requested_keywords_json"])).encode("utf-8")
             ).hexdigest()
         base_version = stored_request.get("expected_version")
         if not isinstance(base_version, int) or isinstance(base_version, bool):
@@ -19344,7 +19271,7 @@ UPDATE db_schema_version
                         cancelled_at=now,
                     )
 
-                logger.info(
+                logger.debug(
                     f"Soft-deleted note ID {note_id} (was v{expected_version}), new version {next_version_val}."
                 )
                 return True
@@ -19355,43 +19282,6 @@ UPDATE db_schema_version
                 f"Database error soft-deleting note ID {note_id} (expected v{expected_version}): exception_type={type(e).__name__}"
             )
             raise
-
-    @staticmethod
-    def _ensure_notes_fts_update_trigger_handles_undelete(
-        conn: sqlite3.Connection,
-    ) -> None:
-        """Repair a legacy Notes FTS update trigger only when required.
-
-        Args:
-            conn: Active database connection used during schema initialization.
-        """
-        trigger_row = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
-            ("notes_au",),
-        ).fetchone()
-        trigger_sql = "" if trigger_row is None else str(trigger_row["sql"] or "")
-        normalized_sql = " ".join(trigger_sql.lower().split())
-        if (
-            "where old.deleted = 0" in normalized_sql
-            and "where new.deleted = 0" in normalized_sql
-        ):
-            return
-
-        conn.execute("DROP TRIGGER IF EXISTS notes_au")
-        conn.execute(
-            """
-            CREATE TRIGGER notes_au
-            AFTER UPDATE ON notes BEGIN
-              INSERT INTO notes_fts(notes_fts,rowid,title,content)
-              SELECT 'delete',old.rowid,old.title,old.content
-              WHERE old.deleted = 0;
-
-              INSERT INTO notes_fts(rowid,title,content)
-              SELECT new.rowid,new.title,new.content
-              WHERE new.deleted = 0;
-            END;
-            """
-        )
 
     def restore_note(self, note_id: str, expected_version: int) -> Optional[bool]:
         """Restore one soft-deleted note using optimistic locking.
@@ -19427,7 +19317,7 @@ UPDATE db_schema_version
                         entity_id=note_id,
                     )
                 if not current_state["deleted"]:
-                    logger.info("Note restore was already active")
+                    logger.debug("Note restore was already active")
                     return True
                 if current_state["version"] != expected_version:
                     raise ConflictError(
@@ -19446,7 +19336,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Note ID {note_id} disappeared."
                     elif not final_state["deleted"]:
-                        logger.info("Note restore completed concurrently")
+                        logger.debug("Note restore completed concurrently")
                         return True
                     elif final_state["version"] != expected_version:
                         msg = (
@@ -19460,7 +19350,7 @@ UPDATE db_schema_version
                         )
                     raise ConflictError(msg, entity="notes", entity_id=note_id)
 
-                logger.info("Note restore completed normally")
+                logger.debug("Note restore completed normally")
                 return True
         except ConflictError:
             raise
@@ -19605,7 +19495,7 @@ UPDATE db_schema_version
                         f"Logged sync event for {link_table}: {sync_op} on {sync_entity_id}"
                     )
 
-            logger.info(
+            logger.debug(
                 f"{operation.capitalize()}ed {link_table}: {col1_name}={col1_val}, {col2_name}={col2_val}. Rows affected: {rows_affected}"
             )
             return rows_affected > 0
@@ -24295,7 +24185,9 @@ class TransactionContextManager:
                         self.cursor = None
                 finally:
                     if self.connection_use_token is not None:
-                        self.db._connection_quiescence.end_use(self.connection_use_token)
+                        self.db._connection_quiescence.end_use(
+                            self.connection_use_token
+                        )
                         self.connection_use_token = None
         finally:
             self._maintenance_context.__exit__(exc_type, exc_val, exc_tb)

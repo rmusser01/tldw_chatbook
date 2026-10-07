@@ -263,8 +263,7 @@ async def test_study_screen_mounts_destination_header_and_clears_nav_highlight()
         library_button = screen.query_one("#nav-library")
         assert not library_button.has_class("is-active")
         assert not any(
-            button.has_class("is-active")
-            for button in screen.query(".nav-button")
+            button.has_class("is-active") for button in screen.query(".nav-button")
         )
 
 

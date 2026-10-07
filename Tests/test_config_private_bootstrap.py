@@ -717,10 +717,10 @@ def test_corrupt_config_produces_a_loud_load_failure_not_a_silent_default_fallba
     # TOML -- the exact shape tomllib rejects with "Cannot overwrite a
     # value" (a table re-declared with a key it already set).
     target.write_text(
-        '[api_settings.openrouter]\n'
+        "[api_settings.openrouter]\n"
         'api_key = "sk-real-key"\n'
-        '\n'
-        '[api_settings.openrouter]\n'
+        "\n"
+        "[api_settings.openrouter]\n"
         'api_key = "sk-real-key"\n',
         encoding="utf-8",
     )
@@ -742,7 +742,11 @@ def test_corrupt_config_produces_a_loud_load_failure_not_a_silent_default_fallba
     failure = config_module.get_config_load_failure()
     assert failure is not None
     assert failure.path == target
-    assert "api_settings" in failure.message or "twice" in failure.message.lower() or "overwrite" in failure.message.lower()
+    assert (
+        "api_settings" in failure.message
+        or "twice" in failure.message.lower()
+        or "overwrite" in failure.message.lower()
+    )
 
     # Repair the file: the very next successful load retires the failure
     # signal, exactly like the existing `_CONFIG_CACHE`/`_SETTINGS_CACHE`

@@ -293,7 +293,8 @@ class DailyReportDemoService:
                 "Daily brief failed to generate",
                 "The LLM provider refused or failed"
                 + (f": {row.get('error')}" if row.get("error") else "")
-                + "." + _PROVIDER_GUIDANCE,
+                + "."
+                + _PROVIDER_GUIDANCE,
                 severity="warning",
             )
             return
@@ -311,12 +312,8 @@ class DailyReportDemoService:
             outcome["reasons"].append("audio:skipped:empty-window")
             await self._notify("Audio skipped", _EMPTY_WINDOW_AUDIO_HINT)
         elif audio_ready:
-            await self._notify(
-                "Recording audio", "Synthesizing your audio brief…"
-            )
-            outcome["audio"] = await self._generate_audio(
-                row, preset_id, outcome
-            )
+            await self._notify("Recording audio", "Synthesizing your audio brief…")
+            outcome["audio"] = await self._generate_audio(row, preset_id, outcome)
         else:
             outcome["audio"] = "skipped"
             await self._notify("Audio skipped", _AUDIO_SETTINGS_HINT)
@@ -379,9 +376,7 @@ class DailyReportDemoService:
         usable = [p for p in profiles if getattr(p, "profile_id", None) is not None]
         if not usable:
             return [{"name": "Host", "voice_profile_id": None}], False
-        speakers = [
-            {"name": "Host", "voice_profile_id": str(usable[0].profile_id)}
-        ]
+        speakers = [{"name": "Host", "voice_profile_id": str(usable[0].profile_id)}]
         if len(usable) > 1:
             speakers.append(
                 {"name": "Analyst", "voice_profile_id": str(usable[1].profile_id)}
@@ -414,9 +409,7 @@ class DailyReportDemoService:
             to launch (nothing was fetched either way; the seed path always
             attaches three).
         """
-        source_ids = await asyncio.to_thread(
-            self._watchlist_source_ids, watchlist_id
-        )
+        source_ids = await asyncio.to_thread(self._watchlist_source_ids, watchlist_id)
         any_success = False
         for source_id in source_ids:
             # Per-source isolation, matching the run pipeline's own
@@ -476,17 +469,14 @@ class DailyReportDemoService:
             }
             if self._synthesize is not None:
                 kwargs["synthesize"] = self._synthesize
-            audio = await generate_script_audio(
-                self._db, int(script["id"]), **kwargs
-            )
+            audio = await generate_script_audio(self._db, int(script["id"]), **kwargs)
             if str(audio.get("status")) != "complete":
                 outcome["reasons"].append(
                     f"audio:{audio.get('status')}:{audio.get('error')}"
                 )
                 await self._notify(
                     "Audio could not be synthesized",
-                    "Today's text brief is ready. "
-                    + _AUDIO_SETTINGS_HINT,
+                    "Today's text brief is ready. " + _AUDIO_SETTINGS_HINT,
                     severity="warning",
                 )
                 return "failed"
@@ -495,8 +485,7 @@ class DailyReportDemoService:
             outcome["reasons"].append(f"audio-error:{type(exc).__name__}")
             await self._notify(
                 "Audio could not be synthesized",
-                "Today's text brief is ready. "
-                + _AUDIO_SETTINGS_HINT,
+                "Today's text brief is ready. " + _AUDIO_SETTINGS_HINT,
                 severity="warning",
             )
             return "failed"
@@ -541,9 +530,7 @@ class DailyReportDemoService:
                 source_entity_kind="daily_report_demo",
             )
         except Exception as exc:  # noqa: BLE001 - notifications must never fail the demo
-            logger.warning(
-                f"Demo stage notification failed: {type(exc).__name__}"
-            )
+            logger.warning(f"Demo stage notification failed: {type(exc).__name__}")
 
     async def _notify(
         self, title: str, message: str, *, severity: str = "information"

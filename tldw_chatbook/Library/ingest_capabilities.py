@@ -1309,9 +1309,7 @@ def generic_option_default(name: str, fallback: Any = None) -> Any:
 ANALYSIS_STATE_FIELD = "analyze"
 
 
-def type_group_state_summary(
-    cap: TypeGroupCapabilities, values: dict[str, Any]
-) -> str:
+def type_group_state_summary(cap: TypeGroupCapabilities, values: dict[str, Any]) -> str:
     """The group's collapsed-title label, carrying state the fold hides.
 
     task-28007 AC#6: "Import behavior" is collapsed by default and its
@@ -1538,8 +1536,7 @@ def selected_stt_warnings(
     return [
         warning
         for warning in warnings
-        if warning.get("feature") not in backends
-        or warning.get("feature") == selected
+        if warning.get("feature") not in backends or warning.get("feature") == selected
     ]
 
 
@@ -1571,9 +1568,7 @@ def get_tooling_warnings(group: str) -> list[dict[str, Any]]:
                 {
                     "feature": feature,
                     "label": _feature_label(feature, group),
-                    "hint": _GROUP_FEATURE_HINTS.get(
-                        (group, feature), hint["hint"]
-                    ),
+                    "hint": _GROUP_FEATURE_HINTS.get((group, feature), hint["hint"]),
                     "command": hint["command"],
                 }
             )

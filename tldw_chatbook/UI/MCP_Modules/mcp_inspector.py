@@ -347,6 +347,8 @@ def _risk_floored_notice(effective: EffectiveToolState) -> str:
     if effective.origin == "tool_override":
         return _ALWAYS_ASK_NOTICE
     return _RISK_FLOORED_NOTICE
+
+
 # task-32281: cap on one exact-input allow rule row's displayed argument
 # summary -- long enough to be legible, short enough that a row with a big
 # argument payload doesn't dominate the permission block.
@@ -2287,7 +2289,9 @@ class MCPInspector(VerticalScroll):
         """
         # Capture before yielding; cached refreshes retain the original review.
         if tool is not None and reviewed_definition_hash is None:
-            reviewed_definition_hash = definition_hash(tool.description, tool.input_schema)
+            reviewed_definition_hash = definition_hash(
+                tool.description, tool.input_schema
+            )
         self._current_permission_definition_hash = reviewed_definition_hash
         container = self.query_one("#mcp-inspector-permission", Vertical)
         self._retire_permission_navigation("mcp-inspector-goto-permission")
@@ -2440,8 +2444,7 @@ class MCPInspector(VerticalScroll):
             )
             widgets.append(
                 Static(
-                    f"{rule_prefix} · {_arg_rule_summary(args_json)}"
-                    f"{inherited_suffix}",
+                    f"{rule_prefix} · {_arg_rule_summary(args_json)}{inherited_suffix}",
                     id=f"mcp-inspector-arg-rule-{index}",
                     classes="ds-field-row",
                     markup=False,
@@ -2497,7 +2500,9 @@ class MCPInspector(VerticalScroll):
                 tooltip=_SESSION_APPROVAL_REVOKE_TOOLTIP,
             )
             self._session_approval_actions[button] = (
-                server_key, tool_name, self._current_permission_profile_context
+                server_key,
+                tool_name,
+                self._current_permission_profile_context,
             )
             widgets.append(button)
         if show_goto_button:
@@ -2577,7 +2582,8 @@ class MCPInspector(VerticalScroll):
                 session_approvals=session_approvals,
                 reviewed_definition_hash=(
                     self._current_permission_definition_hash
-                    if expected_view is not None else None
+                    if expected_view is not None
+                    else None
                 ),
             )
 

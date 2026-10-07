@@ -1,4 +1,5 @@
 """WsTransport passes the app TLS policy to websockets.connect for wss:// URLs."""
+
 import ssl
 import types
 
@@ -43,7 +44,9 @@ def _set_ssl_config(monkeypatch):
         ("wss://example.invalid/rt", True, None),  # default policy -> no ssl kwarg
     ],
 )
-async def test_transport_passes_tls_policy(_set_ssl_config, url, config_value, ssl_expected):
+async def test_transport_passes_tls_policy(
+    _set_ssl_config, url, config_value, ssl_expected
+):
     _set_ssl_config(config_value)
     fake = _FakeWebsockets()
     t = transport_mod.WsTransport()

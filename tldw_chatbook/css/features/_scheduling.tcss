@@ -544,22 +544,18 @@ DetailValueRow .detail-value-row-error {
     margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
 }
 
-/* 31712 AC#4: Textual's own `Collapsible`/`Contents` body chrome --
- * `Collapsible`'s widget-tier `padding-bottom: 1`, the app-wide
- * `Collapsible { margin-bottom: 1 }` / `Collapsible { border: tall
- * $surface }` / `Collapsible > Contents { padding: 1 }` rules
- * (`tldw_cli_modular.tcss`, "Collapsible styling enhancements") -- costs 5
- * blank rows per EXPANDED group before a single row of real content is
- * drawn (measured: a 4-row Frequency group rendered at height 13, only 4
- * of those rows readable). The stray `border: tall` is the sneaky one:
- * this rule already set `border-top` only, but CSS `border-top` never
- * clears the other 3 edges, so the app-wide rule's bottom/left/right
- * `tall` border kept bleeding through underneath a rule that reads as a
- * full override -- an explicit `border: none;` before `border-top:` is
- * what actually clears it. Same idiom `LibraryIngestCanvas Collapsible`/
- * `Collapsible Contents` already uses for the same complaint (task-2043)
- * -- scoped to `DetailGroup` only, not the app-wide type, so every other
- * Collapsible in the app keeps its own spacing/border. */
+/* 31712 AC#4: Collapsible body chrome -- Textual's widget-tier
+ * `padding-bottom: 1` plus components/_widgets.tcss's app-wide
+ * `Collapsible { margin-bottom: 1; border: round $surface-lighten-1 }` and
+ * `Collapsible > Contents { padding: 1 }` -- costs blank rows per EXPANDED
+ * group before any real content is drawn (measured in 31712: a 4-row
+ * Frequency group rendered at height 13; that count also included the
+ * `border: tall $surface` leak TASK-33003.1 retired). CSS `border-top`
+ * never clears the other 3 edges, so the explicit `border: none;` before
+ * `border-top:` is what stops that round frame bleeding through. Same
+ * idiom `LibraryIngestCanvas Collapsible`/`Collapsible Contents` uses
+ * (task-2043) -- scoped to `DetailGroup` only, so every other Collapsible
+ * in the app keeps its own spacing/border. */
 DetailGroup {
     background: $ds-surface-panel;
     border: none;

@@ -19,6 +19,7 @@ from tldw_chatbook.Agents.agent_models import (
     RUN_ERROR,
     RUN_STUCK,
 )
+
 if TYPE_CHECKING:
     from .fleet_messages import MessageInbox, MessageSender
 
@@ -120,6 +121,15 @@ class FleetHandle:
     # Admitted per-run ceiling for a lineage that has encountered a definition
     # cap. This is deliberately not the mutable configured definition value.
     definition_wall_seconds: float | None = None
+    managed_required: bool = False
+    managed_pin: str | None = dataclasses.field(default=None, repr=False)
+    managed_resume_ceiling: object = dataclasses.field(default=None, repr=False)
+    managed_resume_pin: str | None = dataclasses.field(default=None, repr=False)
+    managed_resume_run_id: str | None = None
+    managed_resume_handle_id: str | None = None
+    # Frozen run selection; no endpoint credentials or sampling parameters.
+    resolved_provider: str | None = None
+    resolved_model: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -178,6 +188,8 @@ class RetainedTranscript:
     steering_with_causes: tuple[tuple[str, str, str | None], ...] = ()
     isolation: str | None = None
     definition_wall_seconds: float | None = None
+    managed_required: bool = False
+    managed_pin: str | None = dataclasses.field(default=None, repr=False)
 
 
 class FleetCoordinator:
@@ -216,6 +228,8 @@ class FleetCoordinator:
         """
         self._message_inbox = message_inbox
         self._progress_senders: dict[str, MessageSender] = {}
+        self._peer_messengers: dict[str, PeerMessenger] = {}
+        self._revoked_message_handles: set[str] = set()
         self._max_live = max_live
         self._clock = clock
         self._lock = threading.Lock()  # No reentrant calls, lock to catch bugs
@@ -251,6 +265,8 @@ class FleetCoordinator:
         *,
         isolation: str | None = None,
         definition_wall_seconds: float | None = None,
+        resolved_provider: str | None = None,
+        resolved_model: str | None = None,
     ) -> FleetHandle | None:
         """Reserve a slot for a new task, returning a handle or None if at cap.
 
@@ -262,6 +278,8 @@ class FleetCoordinator:
             isolation: The isolation mode this child launches under
                 (``None`` or ``"worktree"``) -- recorded on the handle so
                 a later retention/resume can see it (finding 7).
+            resolved_provider: Frozen provider selection for this child.
+            resolved_model: Frozen model selection for this child.
 
         Returns:
             A copy of the new FleetHandle if a slot is available, else
@@ -292,6 +310,8 @@ class FleetCoordinator:
                 finished_at=None,
                 isolation=isolation,
                 definition_wall_seconds=definition_wall_seconds,
+                resolved_provider=resolved_provider,
+                resolved_model=resolved_model,
             )
             self._handles[handle_id] = handle
             self._live_ids.add(handle_id)
@@ -339,6 +359,33 @@ class FleetCoordinator:
         with self._lock:
             self._fenced = False
 
+    def set_managed_custody(
+        self,
+        handle_id: str,
+        *,
+        required: bool,
+        pin: str | None = None,
+        resume_ceiling=None,
+        resume_pin=None,
+        resume_run_id=None,
+        resume_handle_id=None,
+    ) -> None:
+        """Attach host-only restrictions to this existing live execution owner."""
+        with self._lock:
+            handle = self._handles.get(handle_id)
+            if handle is None or handle_id not in self._live_ids:
+                raise ValueError("managed fleet owner unavailable")
+            if handle.managed_pin is not None and pin != handle.managed_pin:
+                raise ValueError("managed fleet pin already captured")
+            handle.managed_required = required
+            handle.managed_pin = pin
+            handle.managed_resume_ceiling = (
+                None if resume_ceiling is None else dict(resume_ceiling)
+            )
+            handle.managed_resume_pin = resume_pin
+            handle.managed_resume_run_id = resume_run_id
+            handle.managed_resume_handle_id = resume_handle_id
+
     def attach_run(self, handle_id: str, run_id: str) -> None:
         """Attach a run ID to an existing handle.
 
@@ -352,6 +399,17 @@ class FleetCoordinator:
                     return  # A reporting capability has frozen this run identity.
                 self._handles[handle_id].run_id = run_id
 
+    def set_resolved_target(self, run_id: str, provider: str, model: str) -> bool:
+        """Publish a persisted fallback selection for its exact live child."""
+        with self._lock:
+            for handle_id in self._live_ids:
+                handle = self._handles[handle_id]
+                if handle.run_id == run_id:
+                    handle.resolved_provider = provider
+                    handle.resolved_model = model
+                    return True
+        return False
+
     @property
     def message_inbox(self) -> MessageInbox | None:
         """Return the injected progress owner without allocating an inbox."""
@@ -362,7 +420,7 @@ class FleetCoordinator:
     ) -> MessageSender | None:
         """Bind once to an exact live, attached child under coordinator ownership.
 
-        Coordinator lock precedes inbox lock for both admission and revocation.
+        Queue preparation releases coordinator custody before waiting on SQL.
         Unknown, terminal, mismatched, invalid, or closed owners yield no sender.
         """
         if self._message_inbox is None:
@@ -370,23 +428,81 @@ class FleetCoordinator:
         from .fleet_messages import MessageError, MessageIdentity
 
         with self._lock:
-            if self._message_inbox is None or handle_id not in self._live_ids:
+            if (
+                self._fenced or self._message_inbox is None
+                or handle_id not in self._live_ids
+                or handle_id in self._revoked_message_handles
+            ):
                 return None
             handle = self._handles.get(handle_id)
             if handle is None or handle.run_id is None:
                 return None
             identity = MessageIdentity(
-                handle_id, handle.run_id, parent_run_id, chain_id, handle.agent or "agent"
+                handle_id,
+                handle.run_id,
+                parent_run_id,
+                chain_id,
+                handle.agent or "agent",
             )
             existing = self._progress_senders.get(handle_id)
-            if existing is not None:
-                return existing if existing._is_bound_to(identity) else None
+            inbox = self._message_inbox
+        # The queue may be waiting on another inbox's durable SQL. Retain no
+        # coordinator lock through that preparation, then recheck exact custody.
+        if existing is not None:
+            if not existing._is_bound_to(identity):
+                return None
+            sender = existing
+        else:
             try:
-                sender = self._message_inbox.sender(identity)
+                sender = inbox.sender(identity)
             except MessageError:
                 return None
-            self._progress_senders[handle_id] = sender
-            return sender
+        with self._lock:
+            if (
+                not self._fenced
+                and self._message_inbox is inbox
+                and handle_id in self._live_ids
+                and handle_id not in self._revoked_message_handles
+                and self._handles.get(handle_id) is handle
+                and handle.run_id == identity.run_id
+                and self._progress_senders.get(handle_id) is existing
+            ):
+                self._progress_senders[handle_id] = sender
+                return sender
+        if existing is None:
+            sender.close()
+        return None
+
+    def bind_peer_messenger(
+        self, handle_id: str, *, parent_run_id: str, chain_id: str | None
+    ) -> PeerMessenger | None:
+        """Bind exact child authority, sharing its report sender allowance."""
+        if chain_id is None:
+            return None
+        sender = self.bind_progress_sender(
+            handle_id, parent_run_id=parent_run_id, chain_id=chain_id
+        )
+        if sender is None:
+            return None
+        with self._lock:
+            if self._fenced or self._progress_senders.get(handle_id) is not sender:
+                return None
+            existing = self._peer_messengers.get(handle_id)
+            if existing is None:
+                existing = PeerMessenger(self, sender)
+                self._peer_messengers[handle_id] = existing
+            return existing
+
+    def revoke_child_messages(self, handle_id: str) -> None:
+        """Revoke late report/peer callbacks as soon as cancellation begins."""
+        with self._lock:
+            if handle_id not in self._handles:
+                return
+            self._revoked_message_handles.add(handle_id)
+            self._peer_messengers.pop(handle_id, None)
+            sender = self._progress_senders.pop(handle_id, None)
+            if sender is not None:
+                sender.close()
 
     def post_steering(self, handle_id: str, source: str, text: str) -> bool:
         """Queue one steering entry for a LIVE child (PR3b Task 1, spec SS6).
@@ -544,6 +660,7 @@ class FleetCoordinator:
 
             # Serialize terminalization with progress admission before releasing
             # the handle. Closing a disposed inbox capability remains harmless.
+            self._peer_messengers.pop(handle_id, None)
             sender = self._progress_senders.pop(handle_id, None)
             if sender is not None:
                 sender.close()
@@ -599,9 +716,7 @@ class FleetCoordinator:
             A list of copies of all FleetHandle objects.
         """
         with self._lock:
-            return [
-                self._copy_with_queued(h) for h in self._handles.values()
-            ]
+            return [self._copy_with_queued(h) for h in self._handles.values()]
 
     def durable_handle_map(self) -> dict[str, str]:
         """Snapshot process handles that still have a durable run identity.
@@ -637,6 +752,11 @@ class FleetCoordinator:
             handle,
             queued_steering=len(self._steering.get(handle.handle_id, ())),
             can_resume=handle.handle_id in self._retained,
+            managed_resume_ceiling=(
+                None
+                if handle.managed_resume_ceiling is None
+                else dict(handle.managed_resume_ceiling)
+            ),
         )
 
     @property
@@ -717,9 +837,7 @@ class FleetCoordinator:
             oldest = next(iter(self._retained))
             del self._retained[oldest]
 
-    def retain_transcript(
-        self, handle_id: str, messages: "list[dict] | None"
-    ) -> bool:
+    def retain_transcript(self, handle_id: str, messages: "list[dict] | None") -> bool:
         """Retain a finished child's coherent transcript for continuation.
 
         The standalone seam over ``_retain_locked``. Production retention
@@ -754,16 +872,14 @@ class FleetCoordinator:
         with self._lock:
             return self._retain_locked(handle_id, messages)
 
-    def _retain_locked(
-        self, handle_id: str, messages: "list[dict] | None"
-    ) -> bool:
+    def _retain_locked(self, handle_id: str, messages: "list[dict] | None") -> bool:
         """The retention rules + claim. Caller must hold ``self._lock``."""
         handle = self._handles.get(handle_id)
         if handle is None or handle_id in self._live_ids:
             return False
         if handle.status not in RETAINED_TRANSCRIPT_STATUSES:
             return False
-        if messages is None:
+        if messages is None or handle.managed_required and handle.managed_pin is None:
             return False
         if self._retained_transcripts_cap <= 0:
             return False
@@ -787,6 +903,11 @@ class FleetCoordinator:
                     {
                         "messages": messages,
                         "steering": self._steering.get(handle_id, ()),
+                        **(
+                            {"managed_pin": handle.managed_pin}
+                            if handle.managed_pin is not None
+                            else {}
+                        ),
                     },
                     default=retained_json_value,
                 )
@@ -813,6 +934,8 @@ class FleetCoordinator:
             steering_with_causes=steering_with_causes,
             isolation=handle.isolation,
             definition_wall_seconds=handle.definition_wall_seconds,
+            managed_required=handle.managed_required,
+            managed_pin=handle.managed_pin,
         )
         self._evict_over_cap_locked()
         return True
@@ -845,9 +968,7 @@ class FleetCoordinator:
                 )
             if entry is None:
                 return None
-            return dataclasses.replace(
-                entry, messages=copy.deepcopy(entry.messages)
-            )
+            return dataclasses.replace(entry, messages=copy.deepcopy(entry.messages))
 
     def get_pruned_identity(self, target_id: str) -> PrunedFleetIdentity | None:
         """Resolve recent pruned identity by handle ID, then run ID.
@@ -905,6 +1026,7 @@ class FleetCoordinator:
                 # 4's retention (retain_transcript runs at finish time,
                 # from run_child's finally); by prune time it is garbage.
                 self._steering.pop(handle_id, None)
+                self._revoked_message_handles.discard(handle_id)
             while len(self._pruned_identities) > MAX_PRUNED_IDENTITIES:
                 del self._pruned_identities[next(iter(self._pruned_identities))]
             # No production consumer drains these advisory events. Their
@@ -943,3 +1065,149 @@ class FleetCoordinator:
         """
         with self._lock:
             return len(self._live_ids) == 0
+
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class PeerMessenger:
+    """Exact child capability; no supervisor routing or terminal continuation."""
+
+    _coordinator: FleetCoordinator
+    _sender: MessageSender
+
+    def _check_locked(self) -> None:
+        from .fleet_messages import MessageError
+
+        fleet = self._coordinator
+        handle_id = self._sender._identity.handle_id
+        if (
+            fleet._fenced
+            or handle_id not in fleet._live_ids
+            or fleet._peer_messengers.get(handle_id) is not self
+            or fleet._progress_senders.get(handle_id) is not self._sender
+        ):
+            raise MessageError("unavailable")
+        self._sender._state_locked()
+
+    def _siblings_locked(self) -> list[tuple[FleetHandle, MessageSender]]:
+        from .fleet_messages import MessageError
+
+        self._check_locked()
+        source = self._sender._identity
+        siblings = []
+        for handle_id, sender in self._coordinator._progress_senders.items():
+            identity = sender._identity
+            if (
+                handle_id == source.handle_id
+                or handle_id not in self._coordinator._live_ids
+                or sender._inbox is not self._sender._inbox
+                or identity.parent_run_id != source.parent_run_id
+                or identity.chain_id != source.chain_id
+            ):
+                continue
+            try:
+                sender._state_locked()
+            except MessageError:
+                continue
+            handle = self._coordinator._handles.get(handle_id)
+            if handle is not None and handle.run_id == identity.run_id:
+                siblings.append((handle, sender))
+        return siblings
+
+    def list(self) -> list[dict[str, str]]:
+        """Return body-free attached siblings under exact live owner authority.
+
+        Returns:
+            Handle IDs, agent names and status for eligible live siblings.
+
+        Raises:
+            MessageError: The bound sender or coordinator authority is revoked.
+        """
+        fleet = self._coordinator
+        store = self._sender._inbox._store
+        while True:
+            with fleet._lock:
+                if store._lock.acquire(blocking=False):
+                    try:
+                        return [
+                            {
+                                "handle_id": handle.handle_id,
+                                "agent": sender._identity.agent,
+                                "status": handle.status,
+                            }
+                            for handle, sender in self._siblings_locked()
+                        ]
+                    finally:
+                        store._lock.release()
+            # A durable writer in another chat must not hold fleet custody.
+            # Waiting grants no authority; the next attempt rechecks all owners.
+            store.wait_for_writer()
+
+    def send(self, handle_id: object, message: object) -> str:
+        """Admit peer steering and sender allowance atomically, without eviction.
+
+        Args:
+            handle_id: Exact live sibling handle returned by list().
+            message: Nonblank untrusted text within the existing message limit.
+
+        Returns:
+            Generated message ID acknowledging queued delivery, not consumption.
+
+        Raises:
+            MessageError: Invalid or oversized text, unavailable sibling or
+                sender authority, full recipient queue, or exhausted allowance.
+        """
+        from .fleet_messages import (
+            MAX_ENVELOPE_CHARS,
+            MAX_IDENTITY_CHARS,
+            MAX_MESSAGE_CHARS,
+            MessageError,
+            _json,
+            _validate_text,
+        )
+
+        target = _validate_text(handle_id, MAX_IDENTITY_CHARS)
+        body = _validate_text(message, MAX_MESSAGE_CHARS, size_code="message_too_large")
+        message_id = uuid.uuid4().hex
+        identity = self._sender._identity
+        metadata = {
+            "message_id": message_id,
+            "handle_id": identity.handle_id,
+            "run_id": identity.run_id,
+            "parent_run_id": identity.parent_run_id,
+            "chain_id": identity.chain_id,
+        }
+        if (
+            len(_json({**metadata, "recipient_handle_id": target, "body": body}))
+            > MAX_ENVELOPE_CHARS
+        ):
+            raise MessageError("message_too_large")
+        source = "peer:" + _json(metadata)
+        fleet = self._coordinator
+        store = self._sender._inbox._store
+        # Keep steering and allowance atomic under coordinator then queue custody.
+        while True:
+            with fleet._lock:
+                if store._lock.acquire(blocking=False):
+                    try:
+                        siblings = self._siblings_locked()
+                        if not any(
+                            handle.handle_id == target for handle, _sender in siblings
+                        ):
+                            raise MessageError("unavailable")
+                        state = self._sender._allowance_locked(body)
+                        pending = fleet._steering.get(target, ())
+                        if (
+                            len(pending) >= MAX_QUEUED_STEERING_ENTRIES
+                            or sum(len(text) for _, text, _cause in pending) + len(body)
+                            > MAX_QUEUED_STEERING_CHARS
+                        ):
+                            raise MessageError("queue_full")
+                        fleet._steering.setdefault(target, []).append(
+                            (source, body, "peer-message:" + message_id)
+                        )
+                        state.accepted_count += 1
+                        state.accepted_chars += len(body)
+                        return message_id
+                    finally:
+                        store._lock.release()
+            store.wait_for_writer()

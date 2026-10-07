@@ -141,6 +141,611 @@ def test_later_preview_retains_actual_unreferenced_builtin_members(
     assert not set(reviewed.safety_scope).intersection(dict(reviewed.restore))
 
 
+@pytest.fixture
+def shared_later_case(complete_builtin_case, tmp_path, monkeypatch):
+    """Publish two real profile declarations before creating any journal proof."""
+    import hashlib
+    import json
+    import shutil
+    import zipfile
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery import archive_reader
+    from tldw_chatbook.Backup_Recovery.control_records import (
+        bind_profile,
+    )
+    from tldw_chatbook.Backup_Recovery.inventory import classify_entries
+    from tldw_chatbook.Backup_Recovery.limits import ArchiveLimits
+    from tldw_chatbook.Backup_Recovery.owner_registry import install_adapters
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+
+    archive, plan_for, first_members, selected = complete_builtin_case
+    original = plan_for(item.logical_id for item in first_members)
+    live = tmp_path / "live"
+    (live / "data").mkdir(mode=0o700)
+    peer = live / "peer.toml"
+    peer_core = live / "peer-core.db"
+    shutil.copy2(live / "core.db", peer_core)
+    peer.write_text(
+        '[general]\nusers_name="Peer"\n[database]\nchachanotes_db_path='
+        + json.dumps(str(peer_core))
+        + "\n"
+    )
+    peer.chmod(0o600)
+    original_configs = {
+        path: path.read_bytes() for path in (live / "config.toml", peer)
+    }
+    declarations = install_adapters()
+    builtin = next(
+        a for a in recovery_adapters() if a.owner_id == first_members[0].owner
+    )
+
+    def peer_items():
+        config = tomllib.loads(peer.read_text())
+        config[DISCOVERY_CONTEXT_KEY] = DiscoveryContext(peer, "peer")
+        coupled = tuple(
+            item
+            for adapter in declarations
+            if adapter.owner_id
+            in {"db.chachanotes.primary", "chat.attachments", "notes.sync_bindings"}
+            for item in adapter.discover(config)
+        )
+        return (
+            StorageItem("config", "profile:peer:config", peer, "included", ()),
+            *coupled,
+            *_sqlite_sidecars(coupled, declarations),
+            *builtin.discover(config),
+        )
+
+    def aliases(items):
+        return tuple(
+            replace(
+                item,
+                shared_group="builtin-"
+                + hashlib.sha256(str(item.path).encode()).hexdigest(),
+            )
+            if item.owner == builtin.owner_id
+            else item
+            for item in items
+        )
+
+    core_owner = next(a for a in declarations if a.owner_id == "db.chachanotes.primary")
+    first_core = core_owner.discover(
+        {
+            "database": {"chachanotes_db_path": str(live / "core.db")},
+            DISCOVERY_CONTEXT_KEY: DiscoveryContext(live / "config.toml", "profile"),
+        }
+    )[0]
+    target = classify_entries(
+        aliases(
+            (
+                *(
+                    first_core if item.logical_id == first_core.logical_id else item
+                    for item in original.target.items
+                ),
+                *peer_items(),
+            )
+        )
+    )
+    assert target.complete
+    members = tuple(item for item in target.items if item.owner == builtin.owner_id)
+    root = tmp_path / "bootstrap"
+    bind_profile(root, peer, ("profile",), root / "admission")
+    document = json.loads(archive.manifest_bytes)
+    with zipfile.ZipFile(archive.path) as packed:
+        payloads = {
+            row["payload"]: packed.read(row["payload"]) for row in document["files"]
+        }
+    # Keep the normal empty incoming core; ordinary app writes below will later
+    # reference both unchanged, authenticated original builtin trees.
+    core_row = next(
+        row
+        for row in document["files"]
+        if row["logical_id"] == "profile:profile:db.chachanotes.primary"
+    )
+    producer = {row["logical_id"]: row for row in document["producer_inventory"]}
+    group = producer[core_row["logical_id"]]["shared_group"]
+    core_rows = [
+        row
+        for row in document["files"]
+        if producer[row["logical_id"]]["shared_group"] == group
+    ]
+    incoming_core = payloads[core_row["payload"]]
+    peer_roots = {}
+    for row in core_rows:
+        key = row["logical_id"].replace("profile:profile:", "profile:peer:")
+        root_id = row["root_id"].replace("profile:profile:", "profile:peer:")
+        peer_roots[root_id] = live
+        directory = next(
+            item
+            for item in document["directories"]
+            if item["logical_id"] == row["root_id"]
+        )
+        document["directories"].append(
+            {**directory, "logical_id": root_id, "root_id": root_id}
+        )
+        root_producer = producer[row["root_id"]]
+        document["producer_inventory"].append({**root_producer, "logical_id": root_id})
+        data = incoming_core
+        payload = "payload/peer-" + row["owner_id"]
+        payloads[payload] = data
+        document["files"].append(
+            {
+                **row,
+                "logical_id": key,
+                "root_id": root_id,
+                "parent_id": root_id,
+                "relative_path": peer_core.name,
+                "payload": payload,
+                "size": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+        )
+        prior = producer[row["logical_id"]]
+        document["producer_inventory"].append(
+            {
+                **prior,
+                "logical_id": key,
+                "dependencies": [
+                    value.replace("profile:profile:", "profile:peer:")
+                    for value in prior["dependencies"]
+                ],
+                "shared_group": prior["shared_group"].replace(
+                    "profile:profile", "profile:peer"
+                ),
+            }
+        )
+        document["dependency_groups"][0]["members"].extend((root_id, key))
+    document["profile_ids"].append("peer")
+    for owner, path in (("config", peer),):
+        key = "profile:peer:" + owner
+        payload = "payload/peer-" + owner
+        data = path.read_bytes()
+        payloads[payload] = data
+        document["files"].append(
+            {
+                "logical_id": key,
+                "root_id": "root",
+                "parent_id": "root",
+                "relative_path": path.name,
+                "owner_id": owner,
+                "payload": payload,
+                "size": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+            }
+        )
+        document["producer_inventory"].append(
+            {
+                "logical_id": key,
+                "owner_id": owner,
+                "status": "included",
+                "dependencies": [],
+                "shared_group": None,
+            }
+        )
+        document["dependency_groups"][0]["members"].append(key)
+    source = tmp_path / "shared-input.zip"
+    with zipfile.ZipFile(source, "w") as packed:
+        packed.writestr("manifest.json", json.dumps(document))
+        for key, data in payloads.items():
+            packed.writestr(key, data)
+    acquired = archive_reader.acquire(
+        source, tmp_path / "shared-input", ArchiveLimits(), None, Event()
+    )
+
+    def reviewed(keys, issues=("credential_format_unreadable",)):
+        return plan_restore(
+            acquired,
+            mode="replace",
+            target=target,
+            destinations={
+                **dict((*original.destinations, *original.selectors)),
+                **peer_roots,
+                "profile:peer:paths.data_dir": live / "data",
+            },
+            profile_names={"profile": "Local", "peer": "Peer"},
+            safety_scope=tuple(keys),
+            acknowledged_credential_issues=issues,
+        )
+
+    _complete_original(
+        (acquired, reviewed, members, selected), tmp_path, monkeypatch, False
+    )
+    operation = next(
+        row["activation"]["operation_id"]
+        for row in bootstrap._records(root)[1]
+        if row["selector"] == str(live / "config.toml")
+    )
+    original = load_plan(Journal(tmp_path / "control", operation))
+
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
+
+    for path in (
+        (live / "core.db", peer_core)
+        if builtin.owner_id == "persona.visual_identity_builtin"
+        else ()
+    ):
+        db = CharactersRAGDB(path, "current-shared-builtin")
+        try:
+            actor = db.add_character_card({"name": "Current builtin"})
+            VisualIdentityRepository(db).activate_pack(
+                pack={
+                    "title": "builtin",
+                    "default_expression_key": "neutral",
+                    "source_kind": "builtin",
+                },
+                manifest={},
+                assets=[
+                    {
+                        "expression_key": "neutral",
+                        "original_expression_key": "neutral",
+                        "source_filename": selected.name,
+                        "storage_relpath": selected.relative_to(
+                            selected.parents[1]
+                        ).as_posix(),
+                        "content_type": "image/png",
+                        "bytes": selected.stat().st_size,
+                        "sha256": hashlib.sha256(selected.read_bytes()).hexdigest(),
+                        "width": 1,
+                        "height": 1,
+                    }
+                ],
+                actor_kind="character",
+                actor_id=actor,
+            )
+        finally:
+            db.close()
+
+    def current():
+        return classify_entries(
+            aliases((*_current(tmp_path, builtin.owner_id).items, *peer_items()))
+        )
+
+    assert current().complete
+    return operation, original, current, selected, original_configs
+
+
+@pytest.mark.parametrize("complete_builtin_case", ["persona.assets"], indirect=True)
+def test_shared_legacy_later_preview_retains_authenticated_member_dependencies(
+    shared_later_case, tmp_path
+):
+    operation, original, current, selected, original_configs = shared_later_case
+    before = selected.read_bytes(), selected.stat().st_ino
+    configs_before = {path: path.read_bytes() for path in original_configs}
+    roots = {
+        item.logical_id: item
+        for item in original.target.items
+        if item.owner == "persona.assets" and item.metadata.parent_id is None
+    }
+    assert len(roots) == 2
+    assert all(
+        set(item.dependencies) < set(roots[item.logical_id].dependencies)
+        for item in current().items
+        if item.logical_id in roots
+    )
+    reviewed = preview_rollback(
+        operation,
+        control_root=tmp_path / "control",
+        old_password=b"test-only",
+        target=current(),
+        cancel=Event(),
+    )
+    assert set(reviewed.safety_scope) == set(original.safety_scope)
+    assert all(
+        set(item.dependencies) == set(roots[item.logical_id].dependencies)
+        for item in reviewed.target.items
+        if item.logical_id in roots
+    )
+    assert (selected.read_bytes(), selected.stat().st_ino) == before
+    assert {path: path.read_bytes() for path in configs_before} == configs_before
+
+
+@pytest.mark.parametrize(
+    "complete_builtin_case",
+    ["persona.visual_identity_builtin", "persona.assets"],
+    indirect=True,
+)
+def test_shared_builtin_later_preview_and_execution_preserve_both_profile_trees(
+    shared_later_case, complete_builtin_case, tmp_path
+):
+    operation, original, current, selected, original_configs = shared_later_case
+    owner = complete_builtin_case[2][0].owner
+    before = selected.read_bytes(), selected.stat().st_ino
+    reviewed = preview_rollback(
+        operation,
+        control_root=tmp_path / "control",
+        old_password=b"test-only",
+        target=current(),
+        cancel=Event(),
+    )
+    assert set(reviewed.safety_scope) == set(original.safety_scope)
+    assert {
+        item.logical_id for item in reviewed.target.items if item.owner == owner
+    } == set(original.safety_scope)
+    result = _execute_current(
+        operation,
+        reviewed.target,
+        tmp_path,
+        reviewed,
+        selected=selected,
+        owner_id=owner,
+        current_provider=current,
+    )
+    assert result != operation
+    assert (selected.read_bytes(), selected.stat().st_ino) == before
+    assert {path: path.read_bytes() for path in original_configs} == original_configs
+
+
+def _snapshot_aliases(tmp_path):
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata
+
+    root = tmp_path / "shared"
+    root.mkdir(mode=0o700)
+    return tuple(
+        StorageItem(
+            "persona.visual_identity_builtin",
+            f"profile:{profile}:persona.visual_identity_builtin",
+            root,
+            "included_directory",
+            (f"profile:{profile}:config", f"profile:{profile}:db.chachanotes.primary"),
+            "shared-builtin",
+            metadata=FileMetadata(
+                1,
+                f"profile:{profile}:persona.visual_identity_builtin",
+                "",
+                None,
+                "directory",
+                0o700,
+                0,
+                "private",
+            ),
+        )
+        for profile in ("first", "second")
+    )
+
+
+def _legacy_snapshot_aliases(tmp_path):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.models import FileMetadata
+
+    roots = tuple(
+        replace(
+            item,
+            owner="persona.assets",
+            logical_id=item.logical_id.replace(
+                "persona.visual_identity_builtin", "persona.assets"
+            ),
+            metadata=replace(
+                item.metadata,
+                root_id=item.logical_id.replace(
+                    "persona.visual_identity_builtin", "persona.assets"
+                ),
+            ),
+        )
+        for item in _snapshot_aliases(tmp_path)
+    )
+    members = tuple(
+        StorageItem(
+            "persona.assets",
+            root.logical_id + ":selected",
+            root.path / "selected.png",
+            "included",
+            (root.logical_id,),
+            "shared-selected",
+            metadata=FileMetadata(
+                1,
+                root.logical_id,
+                "selected.png",
+                root.logical_id,
+                "file",
+                0o600,
+                0,
+                "private",
+            ),
+        )
+        for root in roots
+    )
+    roots = tuple(
+        replace(root, dependencies=(*root.dependencies, member.logical_id))
+        for root, member in zip(roots, members)
+    )
+    return roots, members
+
+
+@pytest.mark.parametrize("selected", [0, 1])
+def test_legacy_snapshot_alias_root_accepts_only_authenticated_own_member_removal(
+    tmp_path, selected
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.later_rollback import _snapshot_target_matches
+
+    roots, members = _legacy_snapshot_aliases(tmp_path)
+    originals = {item.logical_id: item for item in (*roots, *members)}
+    current = tuple(replace(root, dependencies=root.dependencies[:2]) for root in roots)
+    assert _snapshot_target_matches(
+        current, roots[selected], originals, retained=members
+    ) == [current[selected]]
+
+
+@pytest.mark.parametrize(
+    "damage",
+    ["config", "core", "foreign_tree", "new_edge", "sibling_drift", "unauthenticated"],
+)
+def test_legacy_snapshot_alias_root_refuses_other_dependency_changes(tmp_path, damage):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.later_rollback import _snapshot_target_matches
+
+    roots, members = _legacy_snapshot_aliases(tmp_path)
+    if damage == "foreign_tree":
+        roots = (
+            roots[0],
+            replace(
+                roots[1], dependencies=(*roots[1].dependencies, members[0].logical_id)
+            ),
+        )
+    originals = {item.logical_id: item for item in (*roots, *members)}
+    current = [replace(root, dependencies=root.dependencies[:2]) for root in roots]
+    sibling = current[1]
+    if damage in {"config", "core"}:
+        key = roots[1].dependencies[0 if damage == "config" else 1]
+        current[1] = replace(
+            sibling,
+            dependencies=tuple(value for value in sibling.dependencies if value != key),
+        )
+    elif damage == "new_edge":
+        current[1] = replace(
+            sibling, dependencies=(*sibling.dependencies, "unreviewed")
+        )
+    elif damage == "sibling_drift":
+        current[1] = replace(
+            sibling, metadata=replace(sibling.metadata, relative_path="unreviewed")
+        )
+    with pytest.raises(ValueError, match="^local_snapshot_preservation_unverified$"):
+        _snapshot_target_matches(
+            current,
+            roots[0],
+            originals,
+            retained=() if damage == "unauthenticated" else members,
+        )
+
+
+@pytest.mark.parametrize("selected", [0, 1])
+def test_snapshot_alias_match_preserves_every_reviewed_sibling(tmp_path, selected):
+    from tldw_chatbook.Backup_Recovery.later_rollback import _snapshot_target_matches
+
+    aliases = _snapshot_aliases(tmp_path)
+    originals = {item.logical_id: item for item in aliases}
+    assert _snapshot_target_matches(aliases, aliases[selected], originals) == [
+        aliases[selected]
+    ]
+    assert tuple(originals.values()) == aliases
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "id",
+        "moved",
+        "owner",
+        "group",
+        "status",
+        "root",
+        "parent",
+        "relative",
+        "kind",
+        "dependencies",
+        "duplicate",
+        "duplicate_sibling",
+    ],
+)
+def test_snapshot_alias_match_refuses_unreviewed_or_changed_competitors(
+    tmp_path, damage
+):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.later_rollback import _snapshot_target_matches
+
+    aliases = _snapshot_aliases(tmp_path)
+    originals = {item.logical_id: item for item in aliases}
+    sibling = aliases[1]
+    if damage in {"root", "parent", "relative", "kind"}:
+        field = {
+            "root": "root_id",
+            "parent": "parent_id",
+            "relative": "relative_path",
+            "kind": "kind",
+        }[damage]
+        sibling = replace(
+            sibling,
+            metadata=replace(
+                sibling.metadata,
+                **{field: "file" if damage == "kind" else "unreviewed"},
+            ),
+        )
+    elif damage not in {"duplicate", "duplicate_sibling"}:
+        field, value = {
+            "id": ("logical_id", "unreviewed"),
+            "moved": ("path", tmp_path / "moved"),
+            "owner": ("owner", "ui.state"),
+            "group": ("shared_group", "unreviewed"),
+            "status": ("status", "unsupported"),
+            "dependencies": ("dependencies", ("unreviewed",)),
+        }[damage]
+        sibling = replace(sibling, **{field: value})
+    current = (
+        (aliases[0], sibling, aliases[0])
+        if damage == "duplicate"
+        else (aliases[0], sibling, sibling)
+        if damage == "duplicate_sibling"
+        else (aliases[0], sibling)
+    )
+    with pytest.raises(ValueError, match="^local_snapshot_preservation_unverified$"):
+        _snapshot_target_matches(
+            current, aliases[1] if damage == "moved" else aliases[0], originals
+        )
+    assert tuple(originals.values()) == aliases
+
+
+def test_snapshot_alias_match_keeps_singleton_unused_projection(tmp_path):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.later_rollback import _snapshot_target_matches
+
+    original = _snapshot_aliases(tmp_path)[0]
+    unused = replace(
+        original,
+        logical_id="new-profile",
+        status="unused",
+        metadata=None,
+        shared_group=None,
+        dependencies=(),
+    )
+    assert _snapshot_target_matches(
+        (unused,), original, {original.logical_id: original}
+    ) == [unused]
+
+
+def test_snapshot_alias_match_keeps_current_shared_core_role_dependencies(tmp_path):
+    from dataclasses import replace
+
+    from tldw_chatbook.Backup_Recovery.later_rollback import _snapshot_target_matches
+
+    core = tmp_path / "core.db"
+    core.write_bytes(b"owned core fixture")
+    aliases = tuple(
+        StorageItem(
+            owner,
+            f"profile:profile:{owner}",
+            core,
+            "included",
+            ("profile:profile:persona.visual_identity_builtin",)
+            if owner == "db.chachanotes.primary"
+            else ("profile:profile:db.chachanotes.primary",),
+            shared_group="reviewed-core",
+        )
+        for owner in (
+            "db.chachanotes.primary",
+            "chat.attachments",
+            "notes.sync_bindings",
+        )
+    )
+    originals = {item.logical_id: item for item in aliases}
+    current = (
+        replace(
+            aliases[0],
+            dependencies=("profile:profile:config",)
+            + tuple(item.logical_id for item in aliases[1:]),
+        ),
+        *aliases[1:],
+    )
+    assert _snapshot_target_matches(current, aliases[0], originals) == [current[0]]
+    assert tuple(originals.values()) == aliases
+
+
 def _execute_current(
     operation,
     current,
@@ -149,6 +754,7 @@ def _execute_current(
     *,
     selected=None,
     owner_id="persona.visual_identity_builtin",
+    current_provider=None,
 ):
     from tldw_chatbook.Backup_Recovery.later_rollback import execute_rollback
 
@@ -190,7 +796,9 @@ def _execute_current(
             operation,
             control_root=tmp_path / "control",
             old_password=b"test-only",
-            target=_current(tmp_path, owner_id),
+            target=current_provider()
+            if current_provider
+            else _current(tmp_path, owner_id),
             cancel=Event(),
             acknowledged_credential_issues=review.issues,
         )

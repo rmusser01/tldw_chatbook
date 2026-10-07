@@ -52,6 +52,7 @@ def test_stop_dictation_does_not_construct_a_recorder_when_none_exists():
 
     assert service._audio_service is None
 
+
 # --------------------------------------------------------------------------
 # The PCM bound the recorder is (or is not) built with
 # --------------------------------------------------------------------------

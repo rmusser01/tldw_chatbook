@@ -39,8 +39,9 @@ from tldw_chatbook.LLM_Calls.realtime.protocol import (
     RealtimeSessionConfig,
 )
 
+# The transport reads real TLS settings from the admitted bootstrap profile.
 # Every case uses this module's in-process WebSocket server on 127.0.0.1.
-pytestmark = pytest.mark.allow_network
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.loopback_network]
 
 
 _WIRE_STEP_TIMEOUT_SECONDS = 30

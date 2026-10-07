@@ -656,6 +656,16 @@ headless round writes no audit row at all — not even that one — since the
 log is reached through the app, and this path exists precisely because
 there is no app to reach it through.
 
+### Approval timeouts
+
+`[mcp] approval_timeout_seconds` has one default, `0`, for Console approval
+cards and live MCP confirmation requests. Unset, unparsable, zero or negative
+values mean no approval deadline: the request waits for a decision or cancellation.
+Set a positive value (for example, `120`) to expire unanswered requests after
+that many seconds. An expired or cancelled MCP confirmation cannot be approved
+later. This ceiling applies to human decisions; tool execution timeouts remain
+separate, and waiting never grants permission to run a tool.
+
 ### Session approvals
 
 The approval card's **This session** decision ("Every call to this tool until

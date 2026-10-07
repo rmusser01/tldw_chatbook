@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from rich.cells import cell_len
+from rich.table import Table
 from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import on, work
@@ -33,6 +34,7 @@ from textual.events import DescendantFocus, Key, Resize
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.selection import Selection
 from textual.strip import Strip
 from textual.suggester import SuggestFromList
 from textual.validation import ValidationResult, Validator
@@ -60,6 +62,7 @@ from tldw_chatbook.UI.focus_ownership import (
 # is imported where it is rendered rather than at module scope -- this
 # module is reached by the screen pre-importer.
 
+from ...Chat.console_runtime import ensure_console_runtime
 from ...Agents.agent_models import LOOP_DETECTION_N
 from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
@@ -69,7 +72,6 @@ from ...Chat.console_exchange_capture import CaptureDetail
 from ...Chat.console_context_policy import (
     CompactionFailureBehavior,
     ContextBudgetMode,
-    ContextCarryForwardMode,
     ContextCompactionMode,
     ContextCompactionRepresentation,
 )
@@ -89,6 +91,8 @@ from ...Chat.local_reasoning import (
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
+    builtin_provider_endpoint,
+    effective_provider_endpoint,
     first_configured_endpoint,
     generic_endpoint_differs,
     safe_endpoint_display,
@@ -96,12 +100,21 @@ from ...Chat.console_provider_endpoints import (
 )
 from ...Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
+    CustomEndpointEntry,
     build_entry_mutation,
+    canonical_custom_endpoint_id,
     entry_for,
     load_custom_endpoints,
+    split_custom_endpoint_id,
     validate_entry,
 )
-from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
+from ...Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
+from ...Chat.provider_readiness import (
+    KEYLESS_PROVIDER_KEYS,
+    ProviderReadiness,
+    get_provider_readiness,
+    provider_config_key,
+)
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
     build_provider_setup_mutation,
@@ -111,19 +124,32 @@ from ...Chat.provider_setup_persistence import (
     resolve_remembered_provider_model,
 )
 from ...Chat.provider_test_evidence import (
+    PUBLIC_MODEL_LISTING_PROVIDER_KEYS,
     ProviderDraftIdentity,
     ProviderProbeResult,
+    ProviderReadinessSnapshot,
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
+    connection_credential_revision,
+    shared_connection_evidence,
 )
 from ...Chat.console_provider_support import (
+    CARRY_FORWARD_OPTIONS,
+    GENERATION_FIELD_REQUEST_KEYS,
+    MODEL_CONFIG_FIELDS,
+    MODEL_FIELD_LABELS,
     ConsoleProviderCatalogEntry,
-    supported_console_provider_catalog,
+    reasoning_effort_values_sent,
     supported_generation_fields,
 )
 from ...Chat.console_session_settings import (
-    CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    _custom_endpoint_declared_credential,
+    build_console_settings_readiness,
+    build_target_default_console_session_settings,
     normalize_console_model_value,
+    readiness_words,
+    settings_provider_catalog,
+    verdict_readiness_words,
 )
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
@@ -149,7 +175,11 @@ from ...Workspaces.registry_service import (
     WorkspaceRegistryServiceError,
     binding_exclusion_entries,
 )
-from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.confirmation_dialog import (
+    QUIT_CANCELLED_NOTICE,
+    ConfirmationDialog,
+    await_quit_prompt,
+)
 from ...Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
 )
@@ -160,7 +190,6 @@ from ...Widgets.workbench_focus import (
 )
 from ...Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
-    PROVIDER_DISPLAY_NAMES,
     PROVIDER_GROUP_CLOUD,
     PROVIDER_GROUP_CUSTOM,
     PROVIDER_GROUP_LOCAL,
@@ -169,6 +198,7 @@ from ...Chat.provider_catalog import (
 )
 from ...config import (
     ConfigMutationResult,
+    resolve_provider_api_key,
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
     DEFAULT_CONSOLE_AGENT_MAX_STEPS,
@@ -255,7 +285,9 @@ from .settings_search_index import (
     # rebuilds the index via settings_screen_module._build_field_search_index.
     build_field_search_index as _build_field_search_index,  # noqa: F401
 )
-from tldw_chatbook.Backup_Recovery.rag_definition_participant import definition_operation
+from tldw_chatbook.Backup_Recovery.rag_definition_participant import (
+    definition_operation,
+)
 from .settings_rag_definition_actions import QueuedDefinitionAction
 from .settings_context_memory import (
     CONTEXT_MEMORY_CONFIG_KEYS,
@@ -450,6 +482,7 @@ from ..Navigation.vllm_handoff import (
 )
 
 if TYPE_CHECKING:
+    from ...Agents.hook_permissions import HookReviewSnapshot
     from ...Tool_Packs.contracts import ToolPackError
     from ...Tool_Packs.service import ToolProfileListing
     from ...Widgets.Settings_Widgets.personal_context_panel import (
@@ -460,10 +493,27 @@ if TYPE_CHECKING:
     # one call site (handle_workspace_create) to avoid a real import cycle.
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from .settings_endpoint_probe import SettingsEndpointProbeOutcome
+    from .settings_hooks import HooksSettingsPanel
     from .settings_network_defaults import SettingsNetworkTLS
 
 
 logger = logging.getLogger(__name__)
+
+
+#: The Hooks panel's widget id; the screen queries it by this selector.
+_HOOKS_PANEL_ID = "settings-hooks-panel"
+_HOOKS_PANEL_SELECTOR = f"#{_HOOKS_PANEL_ID}"
+
+
+def _hooks_settings_panel_class() -> type["HooksSettingsPanel"]:
+    """Load the hook editor only when the Hooks category opens.
+
+    TASK-33642: a module-level import added it to the Settings pre-import pass.
+    """
+
+    from .settings_hooks import HooksSettingsPanel
+
+    return HooksSettingsPanel
 
 
 def _personal_context_settings_panel_class() -> type["PersonalContextSettingsPanel"]:
@@ -685,7 +735,8 @@ class _ConsoleToggleWrite:
 
     confirmed: bool | str
     desired: bool | str
-    screen: "SettingsScreen"
+    #: The latest mounted Settings screen; None once it unmounts (TASK-33264).
+    screen: "SettingsScreen | None"
     running: bool = False
     revision: int = 0
     result: str = ""
@@ -696,7 +747,8 @@ class _ConsoleToggleWrite:
 class _PermissionSummaryWrite:
     """Keep immediate form edits and their writer across Settings recreation."""
 
-    screen: "SettingsScreen"
+    #: The latest mounted Settings screen; None once it unmounts (TASK-33264).
+    screen: "SettingsScreen | None"
     form: dict[str, str] | None = None
     pending: tuple[int, dict[str, str]] | None = None
     running: bool = False
@@ -714,9 +766,10 @@ class _VllmDefaultPresentationSnapshot:
     draft: SettingsDraft | None
     provider_save_result: str
     provider_test_result: str
-    provider_test_evidence_store: ProviderTestEvidenceStore
+    # TASK-33005.1: no evidence store and no credential counter here. Test
+    # evidence is shared with Chat settings and the Console, so restoring a
+    # private copy would roll back what another surface settled.
     provider_draft_generation: int
-    provider_credential_revision: int
     model_discovery_status: str
     model_discovery_models: tuple[object, ...]
     model_discovery_selected_model_ids: frozenset[str]
@@ -881,6 +934,16 @@ MAX_CATEGORY_SEARCH_QUERY_CHARS = 80
 # compact layout (fixed-width category sidebar, inspector pane hidden),
 # following the personas-workbench-compact precedent (task-1342).
 SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH = 100
+# TASK-33003.7: from this width the Scope Inspector keeps 36 columns
+# (.settings-inspector-floor) and the detail pane still keeps 56: a 24-cell
+# label plus a 20-cell field (test_settings_compact_fields). Rail and
+# gutters take 42.
+SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH = 42 + 56 + 36
+# cubic review of #2937: the detail pane width that fits the widest action row
+# (Library > RAG's built-in profile row, 83 cells). Narrower, the rows stack:
+# at 140 columns the floor above leaves the pane 62, which cut "Open Advanced
+# Config" to "Open Adva" (test_settings_action_rows_keep_every_button_whole).
+SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH = 84
 PROVIDER_ENDPOINT_KEYS = ("api_base_url", "api_base", "base_url", "api_url", "endpoint")
 PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_temperature": "temperature",
@@ -897,24 +960,6 @@ PROVIDER_MODEL_PROFILE_FIELD_KEYS = {
     "model_profile_thinking_effort": "thinking_effort",
     "model_profile_thinking_budget_tokens": "thinking_budget_tokens",
     "model_profile_streaming": "streaming",
-}
-# Generation defaults row labels, as the one-line hidden-rows summary names
-# them (TASK-33001.2). TASK-33002 owns the single field table.
-MODEL_PROFILE_ROW_LABELS = {
-    "model_profile_temperature": "Temperature",
-    "model_profile_top_p": "Top P",
-    "model_profile_min_p": "Min P",
-    "model_profile_top_k": "Top K",
-    "model_profile_max_tokens": "Response max tokens",
-    "model_profile_seed": "Seed",
-    "model_profile_presence_penalty": "Presence",
-    "model_profile_frequency_penalty": "Frequency",
-    "model_profile_reasoning_effort": "Reasoning",
-    "model_profile_reasoning_summary": "Summary",
-    "model_profile_verbosity": "Verbosity",
-    "model_profile_thinking_effort": "Thinking",
-    "model_profile_thinking_budget_tokens": "Think budget",
-    "model_profile_streaming": "Streaming",
 }
 REASONING_EFFORT_OPTIONS = frozenset(
     {"", "none", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -1001,6 +1046,72 @@ class _SettingsWorkspaceLifecycleResult(Static):
             screen._reveal_workspace_lifecycle_result()
 
 
+#: Cells the Test result's label column takes ("Generation" plus a gap).
+_PROVIDER_TEST_LABEL_CELLS = 12
+#: TASK-33005.4 (ADR-012 amendment 2026-09-26): what 't' checks, said once
+#: for the Test button's tooltip, its visible guidance and the F1 notes.
+PROVIDER_TEST_GUIDANCE = (
+    "Checks the settings, then lists models without generating: a cloud "
+    "provider's listing checks the API key, a local server's shows it "
+    "answers. Nothing is saved."
+)
+#: Providers whose 't' is the local probe (or a local check), never a key check.
+_LOCAL_TEST_PROVIDER_KEYS = URL_BASED_PROVIDER_KEYS | KEYLESS_PROVIDER_KEYS
+#: Cloud handlers the Console gateway leaves unpinned, which read only
+#: ``api_base_url`` from their own table (TASK-2117 open); proven against the
+#: real handlers in Tests/UI/test_settings_provider_key_check.py.
+_SEND_READS_ONLY_API_BASE_URL = frozenset(
+    {"openai", "cohere", "google", "groq", "openrouter", "deepseek"}
+)
+#: TASK-30014 AC#1's wording, for a key check that would prove nothing.
+_NO_KEY_CHECK_COPY = (
+    "No non-billable key check is available for {name} at this endpoint; "
+    "the configuration was checked locally."
+)
+
+
+def _listed_models_copy(model_ids: tuple[str, ...]) -> str:
+    """Count a listing's models; evidence keeps at most 100 of them."""
+    count = len(model_ids)
+    if count >= MODEL_IDS_MAX_COUNT:
+        return f"{MODEL_IDS_MAX_COUNT}+ models listed"
+    return f"{count} model{'' if count == 1 else 's'} listed"
+
+
+class _ProviderTestResult(Static):
+    """Paint the Test rows as label and value columns.
+
+    The content stays the plain padded string that Overview and the
+    snapshot parse; only the paint splits it, so a wrapped value continues
+    under its value instead of under the labels (gap review Critical 1).
+    """
+
+    def render(self):
+        content = self.content
+        lines = content.split("\n") if isinstance(content, str) else []
+        if not lines or not all(
+            line[_PROVIDER_TEST_LABEL_CELLS - 1 : _PROVIDER_TEST_LABEL_CELLS] == " "
+            for line in lines
+        ):
+            return super().render()
+        grid = Table.grid(expand=True)
+        grid.add_column(width=_PROVIDER_TEST_LABEL_CELLS, no_wrap=True)
+        grid.add_column(ratio=1, overflow="fold")
+        for line in lines:
+            grid.add_row(
+                Text(line[:_PROVIDER_TEST_LABEL_CELLS]),
+                Text(line[_PROVIDER_TEST_LABEL_CELLS:]),
+            )
+        return grid
+
+    def get_selection(self, selection: Selection) -> tuple[str, str] | None:
+        """Select and copy the plain rows; the grid paint is not a text visual."""
+        content = self.content
+        if not isinstance(content, str):
+            return super().get_selection(selection)
+        return selection.extract(content), "\n"
+
+
 class _SettingsWorkspaceAssistantResult(Static):
     """Recheck visibility when wrapping changes the receipt's measured height."""
 
@@ -1085,12 +1196,37 @@ STAGED_SAVE_BEHAVIOR_COPY = "staged - press s to save, r to revert"
 # Mirrored (with an Enter-to-apply clause) in
 # Widgets/settings_splash_screen_viewer.py, which cannot import this module.
 INSTANT_APPLY_BEHAVIOR_COPY = "applies immediately - no Save needed"
+#: TASK-33002.3: what a Providers & Models save reaches (ADR-095 D1). Shared
+#: by the save result and its toast; the State line says it in one row. The
+#: short form lives in `_category_state_scope_text`: change both together.
+PROVIDER_SAVE_SCOPE_COPY = (
+    "new chats and open chats nobody has used yet take them; chats with work "
+    "keep their own settings (change them in Console with Alt+M)."
+)
 #: Value of the Scope Inspector's "Focused setting" row while focus sits on
 #: a container, an action button, or anything else that is not a setting.
 #: TASK-23192: the three categories that render the row each named their own
 #: CATEGORY here ("Appearance defaults", "Storage defaults", "Provider
 #: setup"), which a keyboard user cannot tell apart from a setting's name.
 NO_FOCUSED_SETTING_COPY = "None — Tab to a setting"
+#: TASK-33002.12: Providers & Models status for a saved default naming an
+#: ADR-146 registry entry that no longer exists.
+ENDPOINT_NOT_FOUND_SETTINGS_COPY = (
+    "Not ready · endpoint not found; choose another provider"
+)
+#: Placeholder for a Connect field a registry default does not offer.
+REGISTRY_FIELD_PLACEHOLDER = "Managed in Custom endpoints"
+#: Connect fields Save cannot apply for an ADR-146 ``custom-ep:`` id (Qodo
+#: #2876): their drafts stage under ``api_settings`` or ride the provider
+#: mutation, and both reject a registry id. Enabled for every other provider.
+_REGISTRY_LOCKED_FIELD_SELECTORS = (
+    "#settings-model-value",
+    "#settings-provider-endpoint-value",
+    "#settings-provider-api-key",
+    "#settings-provider-credential-env-var",
+    "#settings-model-context-window",
+    "#settings-generation-defaults",
+)
 #: The categories whose Scope Inspector renders a "Focused setting" row,
 #: mapped to the method that builds those rows. `_guided_field_id` asks the
 #: named method whether a focused widget is one it can name, so the set of
@@ -1144,6 +1280,14 @@ PERMISSION_SUMMARY_FIELD_IDS = frozenset(
         "settings-permission-summary-retry",
     }
 )
+# Console Behavior's generation fallbacks by widget id; their focused guide
+# reads the one field table (TASK-33002 final review I2).
+CONSOLE_DEFAULT_FIELD_NAMES = {
+    f"settings-console-default-{name.replace('_', '-')}": name
+    for name in GENERATION_FIELD_REQUEST_KEYS
+}
+
+
 # TASK-18600: the Console agent's run budget, driven by ONE spec table
 # rather than five copies of the per-setting boilerplate every other
 # numeric Console field uses. Five near-identical settings is where that
@@ -1458,6 +1602,36 @@ QWENCLOUD_API_MODE_HELP_COPY = (
     "replay; existing function tools work in both; QwenCloud built-in tools are "
     "excluded."
 )
+def _anthropic_auth_sources() -> tuple[str, str]:
+    """Return ``(api_key, subscription)``: the sign-in values Settings accepts.
+
+    The one allow-list for Anthropic's "Sign in with" choice (TASK-34201),
+    taken from the credential module so the two cannot drift. Imported
+    lazily: Settings must not add that module to the UI-ready set.
+    """
+    from ...LLM_Calls.anthropic_subscription import (
+        AUTH_SOURCE_API_KEY,
+        AUTH_SOURCE_SUBSCRIPTION,
+    )
+
+    return AUTH_SOURCE_API_KEY, AUTH_SOURCE_SUBSCRIPTION
+
+
+def _anthropic_auth_source_options() -> tuple[tuple[str, str], ...]:
+    """Return the "Sign in with" select options (owner-approved design, 2026-10-03)."""
+    api_key, subscription = _anthropic_auth_sources()
+    return (("API key", api_key), ("Claude subscription", subscription))
+
+
+ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY = (
+    "Uses the credential Claude Code already holds (Keychain or "
+    "~/.claude/.credentials.json). Chatbook reads it, never stores or "
+    "refreshes it. Bills your Claude plan, not API credits."
+)
+ANTHROPIC_API_KEY_GUIDANCE_COPY = (
+    "Choose Claude subscription to use the plan Claude Code is signed in "
+    "with instead of an API key."
+)
 QWENCLOUD_API_MODE_INVALID_COPY = (
     "QwenCloud API mode is invalid. Open API mode and choose Responses or Chat "
     "Completions, then Save."
@@ -1480,9 +1654,7 @@ _NETWORK_TLS_MODE_OPTIONS: list[tuple[str, str]] = [
 # The Selectable subset of load_network_tls's modes ("invalid" is a load
 # state, never an option): used to fold an unselectable effective mode back
 # to "verify" when seeding the Select.
-_NETWORK_TLS_MODE_VALUES = frozenset(
-    value for _, value in _NETWORK_TLS_MODE_OPTIONS
-)
+_NETWORK_TLS_MODE_VALUES = frozenset(value for _, value in _NETWORK_TLS_MODE_OPTIONS)
 # Dreams (task-33244): the provider Select's "unset" is a REAL option, never
 # Select.NULL -- the dropdown must list "Follow chat defaults" so following
 # chat defaults is an explicit choice, and picking it deletes the key from
@@ -1579,6 +1751,7 @@ GUIDED_SETTINGS_MUTATION_CATEGORIES = frozenset(
         SettingsCategoryId.WEB_SEARCH,
         SettingsCategoryId.APPEARANCE,
         SettingsCategoryId.CONSOLE_BEHAVIOR,
+        SettingsCategoryId.HOOKS,
         SettingsCategoryId.LIBRARY_RAG,
         SettingsCategoryId.STORAGE,
         SettingsCategoryId.PRIVACY_SECURITY,
@@ -2112,6 +2285,17 @@ _RAG_GROUP_GUIDANCE: dict[str, tuple[tuple[str, str], ...]] = {
 # SettingsCategoryId MUST have an entry: this table is read inside compose, so
 # a missing key would otherwise take down the whole app (see PR #713 / #742).
 _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
+    SettingsCategoryId.HOOKS: (
+        ("Affected config", "[hooks] and standalone Console lifecycle commands"),
+        (
+            "Recovery",
+            "Revert reloads saved definitions; Review saved offers permission recovery",
+        ),
+        (
+            "Boundary",
+            "Saving a definition grants no permission; hooks cannot approve tool access",
+        ),
+    ),
     SettingsCategoryId.WEB_SEARCH: (
         ("Affected config", "shared search default and backend credentials"),
         (
@@ -2135,11 +2319,11 @@ _INSPECTOR_GUIDANCE: dict[SettingsCategoryId, tuple[tuple[str, str], ...]] = {
         ),
         (
             "Recovery",
-            "test provider readiness before saving provider-backed Console defaults",
+            "test provider readiness before saving provider-backed defaults",
         ),
         (
             "Boundary",
-            "Sampling and transport defaults are routed to Console Defaults",
+            "Sampling and transport defaults are routed to Console Behavior",
         ),
     ),
     SettingsCategoryId.SPEECH_TTS: (
@@ -2629,42 +2813,6 @@ class SettingsURLInput(Input):
         return strip.apply_style(self.rich_style)
 
 
-def _mask_url_userinfo(url: object) -> str:
-    """Mask a password embedded in a URL's userinfo before display.
-
-    ``redact_secret_text`` is assignment-name based and misses credentials in
-    ``scheme://user:pass@host`` form, so mask them positionally here. Non-URL
-    or password-less input is returned unchanged.
-
-    Args:
-        url: A candidate endpoint string.
-
-    Returns:
-        The URL with any userinfo password replaced by ``***``.
-    """
-    from urllib.parse import urlsplit, urlunsplit
-
-    text = str(url or "")
-    try:
-        parts = urlsplit(text)
-    except ValueError:
-        return text
-    # Reconstruct from the raw netloc substring rather than the lazy
-    # ``.hostname``/``.port`` properties: ``.port`` raises ValueError on a
-    # malformed/out-of-range port (crashing the Test on a typo'd endpoint), and
-    # ``.hostname`` strips IPv6 brackets. Keep host:port verbatim; only the
-    # userinfo password is masked. (Never fall back to returning ``text`` with
-    # the password intact -- redact_secret_text can't catch ``user:pass@host``.)
-    netloc = parts.netloc
-    userinfo, at, hostport = netloc.rpartition("@")
-    if not at or ":" not in userinfo:
-        # No userinfo, or a username with no password -> nothing to mask.
-        return text
-    user = userinfo.partition(":")[0]
-    masked = f"{user}:***@{hostport}" if user else f"***@{hostport}"
-    return urlunsplit((parts.scheme, masked, parts.path, parts.query, parts.fragment))
-
-
 def overlay_provider_draft_config(
     app_config,
     *,
@@ -2674,6 +2822,7 @@ def overlay_provider_draft_config(
     draft_env_var: str | None,
     draft_api_key: str | None,
     draft_api_mode: object | None = None,
+    draft_auth_source: str | None = None,
 ) -> dict:
     """Return a deep copy of ``app_config`` with unsaved draft provider fields overlaid.
 
@@ -2685,6 +2834,8 @@ def overlay_provider_draft_config(
         draft_env_var: Draft credential env-var name, or ``None`` to leave saved.
         draft_api_key: Draft API key (``""`` models an explicit clear), or ``None``.
         draft_api_mode: Draft QwenCloud API mode, or ``None`` to leave saved.
+        draft_auth_source: Draft Anthropic sign-in choice, or ``None`` to leave
+            saved (TASK-34201).
 
     Returns:
         A new config dict; ``app_config`` is never mutated.
@@ -2706,6 +2857,8 @@ def overlay_provider_draft_config(
         section["api_key"] = draft_api_key
     if draft_api_mode is not None:
         section["api_mode"] = draft_api_mode
+    if draft_auth_source is not None:
+        section["auth_source"] = draft_auth_source
     return merged
 
 
@@ -2774,7 +2927,10 @@ class RagProfileNameModal(ModalScreen[str | None]):
             yield Input(value=self._initial, id="settings-rag-profile-name-input")
             # Untrusted text (a file's reason, a typed path): never markup.
             error = Static(
-                "", id="settings-rag-profile-name-error", classes="settings-rag-profile-name-error", markup=False
+                "",
+                id="settings-rag-profile-name-error",
+                classes="settings-rag-profile-name-error",
+                markup=False,
             )
             error.display = False
             yield error
@@ -2893,19 +3049,39 @@ class SettingsRegion(Vertical):
     matching (Textual type selectors match base classes too).
     """
 
-    def __init__(self, builder: Callable[[], ComposeResult], **kwargs: Any) -> None:
+    def __init__(
+        self,
+        builder: Callable[[], ComposeResult],
+        *,
+        stack_actions_below: int = 0,
+        **kwargs: Any,
+    ) -> None:
         """Store the screen-side builder for this region's children.
 
         Args:
             builder: Zero-argument callable yielding the region's children.
+            stack_actions_below: Below this own width the region carries
+                ``settings-stacked-actions``, which stacks its action rows
+                (0: never).
             **kwargs: Forwarded to ``Vertical`` (id, classes, ...).
         """
         super().__init__(**kwargs)
         self._builder = builder
+        self._stack_actions_below = stack_actions_below
 
     def compose(self) -> ComposeResult:
         """Yield this region's children from the screen's builder."""
         yield from self._builder()
+
+    def on_resize(self, event: Resize) -> None:
+        """Stack the action rows while one cannot fit (a Horizontal never wraps).
+
+        Args:
+            event: The resize event carrying this region's new size.
+        """
+        self.set_class(
+            event.size.width < self._stack_actions_below, "settings-stacked-actions"
+        )
 
 
 @contextmanager
@@ -3632,13 +3808,13 @@ class SettingsScreen(BaseAppScreen):
         self._console_capture_applying = False
         self._personal_context_service_injection = personal_context_service
         self._settings_drafts: dict[SettingsCategoryId, SettingsDraft] = {}
+        self._hooks_snapshot: HookReviewSnapshot | None = None
+        self._hooks_saving = False
         self._raw_cli_save_pending = False
         self._raw_cli_unlock_confirmation_pending = False
         self._raw_cli_arm_confirmation_pending = False
         self._terminal_confirmation_pending = False
-        self._tool_profiles_listing = ToolProfileListing(
-            unavailable_category="loading"
-        )
+        self._tool_profiles_listing = ToolProfileListing(unavailable_category="loading")
         self._tool_profiles_listing_generation = 0
         self._tool_profiles_result = ""
         self._tool_profiles_result_profile_id: str | None = None
@@ -3658,15 +3834,17 @@ class SettingsScreen(BaseAppScreen):
         self._snapshot_preferences_unavailable = False
         self._web_search_settings: WebSearchSettings | None = None
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
-        self._provider_test_evidence_store = ProviderTestEvidenceStore()
+        # TASK-33005.1: draft-scoped, publishing to the app's shared owner.
+        self._provider_test_evidence_store = ProviderTestEvidenceStore(lambda: self.app)
         self._provider_draft_generation = 0
+        # Bumped whenever the Test rows go stale; every live probe carries it.
+        self._provider_test_draft_generation = 0
         self._openai_reconnect_token = None
         self._openai_reconnect_busy = False
         self._openai_reconnect_prompt_open = False
         self._local_model_review_token = None
         self._local_model_review_busy = False
         self._local_model_review_prompt_open = False
-        self._provider_credential_revision = 0
         self._subscription_readiness_timer = None
         self._subscription_readiness_observation: tuple[str, str, str | None] | None = (
             None
@@ -3675,7 +3853,9 @@ class SettingsScreen(BaseAppScreen):
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
-        self._vllm_default_claim: HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent] | None = None
+        self._vllm_default_claim: (
+            HandoffClaim[VllmDefaultIntent | LlamaCppDefaultIntent] | None
+        ) = None
         self._vllm_default_before_presentation: (
             _VllmDefaultPresentationSnapshot | None
         ) = None
@@ -3705,6 +3885,7 @@ class SettingsScreen(BaseAppScreen):
         self._custom_endpoints_status = ""
         self._syncing_provider_endpoint = False
         self._syncing_provider_api_mode = False
+        self._syncing_provider_auth_source = False
         # Input.Changed is delivered after a programmatic value assignment
         # returns, so a synchronous boolean cannot suppress that deferred
         # message. Consume exact expected values once instead.
@@ -3733,7 +3914,9 @@ class SettingsScreen(BaseAppScreen):
         for pending in toggle_writes.values():
             with pending.lock:
                 pending.screen = self
-        summary_write = getattr(app_instance, "_settings_permission_summary_write", None)
+        summary_write = getattr(
+            app_instance, "_settings_permission_summary_write", None
+        )
         if summary_write is None:
             summary_write = _PermissionSummaryWrite(self)
             app_instance._settings_permission_summary_write = summary_write
@@ -3857,7 +4040,9 @@ class SettingsScreen(BaseAppScreen):
         #: lifetime of a Library/RAG category visit (the load is ~53 ms,
         #: re-run 7x per keystroke before this). Invalidated by
         #: _invalidate_library_rag_loaded_cache at every on-disk-change point.
-        self._library_rag_loaded_defaults_cache: "SettingsLibraryRagDefaults | None" = None
+        self._library_rag_loaded_defaults_cache: "SettingsLibraryRagDefaults | None" = (
+            None
+        )
         # task-1369: set from the manual-sync confirm callback until the run
         # worker lands; on_screen_resume skips its sync-rows refresh while
         # this is True so it cannot overwrite the "running" rows.
@@ -4032,7 +4217,9 @@ class SettingsScreen(BaseAppScreen):
         self._settings_workspace_lifecycle_result: tuple[str, str, str] | None = None
         self._settings_workspace_first_bind_intent: object | None = None
         self._settings_workspace_first_bind_modal: object | None = None
-        self._settings_workspace_folder_result: tuple[str, str | None, str] | None = None
+        self._settings_workspace_folder_result: tuple[str, str | None, str] | None = (
+            None
+        )
         #: task-33244: latest Dreams-section action outcome; re-rendered into
         #: #settings-dreams-result across the pane recomposes its own actions
         #: trigger (mirrors the workspace folder result retention idiom).
@@ -4117,6 +4304,9 @@ class SettingsScreen(BaseAppScreen):
         if self._web_search_settings is not None:
             self._web_search_settings.capture_pending_input()
             state["web_search_session"] = self._web_search_settings
+        for panel in self.query(_HOOKS_PANEL_SELECTOR):
+            panel.capture()
+        state["hooks_snapshot"] = self._hooks_snapshot
         state["settings_drafts"] = copy.deepcopy(self._settings_drafts)
         if self._advanced_config_settings is not None:
             try:
@@ -4193,6 +4383,13 @@ class SettingsScreen(BaseAppScreen):
                 self._settings_drafts = copy.deepcopy(valid_drafts)
             except Exception:
                 logger.debug("Ignoring malformed Settings draft state", exc_info=True)
+
+        hooks_snapshot = state.get("hooks_snapshot")
+        if hooks_snapshot is not None:
+            from ...Agents.hook_permissions import HookReviewSnapshot
+
+            if isinstance(hooks_snapshot, HookReviewSnapshot):
+                self._hooks_snapshot = hooks_snapshot
 
         search_session = state.get("web_search_session")
         if type(search_session) is WebSearchSettings:
@@ -4291,9 +4488,7 @@ class SettingsScreen(BaseAppScreen):
         active = self._active_category_id()
         if active not in GUIDED_SETTINGS_MUTATION_CATEGORIES:
             dropped = "r" if active is SettingsCategoryId.NETWORK else {"s", "r"}
-            shortcuts = tuple(
-                entry for entry in shortcuts if entry[0] not in dropped
-            )
+            shortcuts = tuple(entry for entry in shortcuts if entry[0] not in dropped)
         if active not in self.TESTABLE_SETTINGS_CATEGORIES:
             shortcuts = tuple(entry for entry in shortcuts if entry[0] != "t")
         else:
@@ -4335,9 +4530,7 @@ class SettingsScreen(BaseAppScreen):
     def _active_personal_context_shortcuts(self) -> tuple[tuple[str, str], ...]:
         panel_class = _personal_context_settings_panel_class()
         try:
-            panel = self.query_one(
-                "#personal-context-settings-panel", panel_class
-            )
+            panel = self.query_one("#personal-context-settings-panel", panel_class)
         except QueryError:
             return ()
         return panel.available_shortcuts()
@@ -4617,9 +4810,7 @@ class SettingsScreen(BaseAppScreen):
         )
 
         self.app.push_screen(
-            WorkbenchHelpPanel(
-                self._workbench_help_state(self._active_category_id())
-            )
+            WorkbenchHelpPanel(self._workbench_help_state(self._active_category_id()))
         )
 
     def _workbench_help_state(self, category: SettingsCategoryId):
@@ -4655,9 +4846,7 @@ class SettingsScreen(BaseAppScreen):
             shortcuts=shortcuts,
         )
 
-    def _category_help_notes(
-        self, category: SettingsCategoryId
-    ) -> tuple[str, ...]:
+    def _category_help_notes(self, category: SettingsCategoryId) -> tuple[str, ...]:
         """Category-contract notes for the F1 help panel (TASK-23110).
 
         Reuses copy the screen already maintains -- the persistence badge
@@ -4693,10 +4882,7 @@ class SettingsScreen(BaseAppScreen):
             ]
             if ownership.recovery_copy:
                 notes.append(f"Recovery: {ownership.recovery_copy}")
-        elif (
-            category in DOMAIN_SETTINGS_CATEGORY_IDS
-            and not ownership.writes_allowed
-        ):
+        elif category in DOMAIN_SETTINGS_CATEGORY_IDS and not ownership.writes_allowed:
             # One sentence, once -- Scope/Runtime owner/Boundary/Recovery
             # all restated "X owns the workflow" on these pages.
             contract = self._domain_category_contract(category)
@@ -4746,8 +4932,12 @@ class SettingsScreen(BaseAppScreen):
                 notes.append(f"{prefix}{value}")
         if not self._category_footer_shortcuts(category):
             notes.append("No shortcut keys are specific to this category.")
+        if category is SettingsCategoryId.PROVIDERS_MODELS:
+            notes.append(f"Test provider (t): {PROVIDER_TEST_GUIDANCE}")
         if category is SettingsCategoryId.THEME:
-            notes.append("The keys below act on the highlighted theme while the theme list has focus.")
+            notes.append(
+                "The keys below act on the highlighted theme while the theme list has focus."
+            )
         return tuple(notes)
 
     def on_mount(self) -> None:
@@ -4789,6 +4979,18 @@ class SettingsScreen(BaseAppScreen):
     def on_unmount(self) -> None:
         """Fence late credential and Model Library results before replacement."""
 
+        # TASK-33264: an app-level Signal pins its subscriber until that
+        # signal next publishes; without this every visit leaked the screen.
+        self.app.theme_changed_signal.unsubscribe(self)
+        # The app-lifetime writers below outlive this screen; a late result
+        # falls back to the screen that started it (see _finish_*).
+        for state in (
+            *self._console_toggle_writes.values(),
+            self._permission_summary_write,
+        ):
+            with state.lock:
+                if state.screen is self:
+                    state.screen = None
         self._tool_profile_review_intent = None
         self._settings_workspace_first_bind_intent = None
         if self._subscription_readiness_timer is not None:
@@ -4838,7 +5040,9 @@ class SettingsScreen(BaseAppScreen):
         )
         readiness = get_provider_readiness(
             provider,
-            self._provider_readiness_app_config(),
+            self._provider_readiness_app_config()
+            if category is SettingsCategoryId.OVERVIEW
+            else self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
         observation = (category.value, provider, readiness.subscription_status)
@@ -4874,6 +5078,9 @@ class SettingsScreen(BaseAppScreen):
     def _workbench_compact_now(self) -> bool:
         return self.size.width <= SETTINGS_COMPACT_WORKBENCH_MAX_WIDTH
 
+    def _inspector_floor_now(self) -> bool:
+        return self.size.width >= SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH
+
     def _sync_responsive_workbench(self) -> None:
         """Toggle compact workbench classes to match the terminal width.
 
@@ -4882,6 +5089,12 @@ class SettingsScreen(BaseAppScreen):
         recompose=True reactives cannot drop them; this sync only handles
         live resizes between recomposes.
         """
+        try:
+            self.query_one("#settings-impact-pane").set_class(
+                self._inspector_floor_now(), "settings-inspector-floor"
+            )
+        except QueryError:
+            pass
         compact = self._workbench_compact_now()
         if self._workbench_compact == compact:
             return
@@ -5012,8 +5225,128 @@ class SettingsScreen(BaseAppScreen):
             ("Pending outgoing", "Loading"),
         )
 
+    def _hooks_owner(self):
+        return ensure_console_runtime(self.app_instance).ensure_hook_permissions()
+
+    # Textual routes HooksSettingsPanel.Requested here by name, so the panel
+    # module is not needed to define this screen (TASK-33642).
+    def on_hooks_settings_panel_requested(
+        self, event: "HooksSettingsPanel.Requested"
+    ) -> None:
+        """Run the Hooks panel's requested action.
+
+        Args:
+            event: The panel's request; ``action`` is one of ``load``,
+                ``edited``, ``save``, ``revert``, ``review`` or ``advanced``.
+        """
+        event.stop()
+        if event.action == "load":
+            self.run_worker(
+                self._load_hooks_settings, group="settings-hooks-load", exclusive=True
+            )
+        elif event.action == "edited":
+            self._update_draft_status_widgets(SettingsCategoryId.HOOKS)
+        elif event.action == "save":
+            self._start_hooks_save()
+        elif event.action == "revert":
+            self.action_settings_revert_category(allow_text_entry_focus=True)
+        elif event.action == "review":
+            self.run_worker(
+                self._review_saved_hooks, group="settings-hooks-review", exclusive=True
+            )
+        elif event.action == "advanced":
+            self.apply_navigation_context({"category": "advanced-config"})
+
+    async def _load_hooks_settings(self, *, reset: bool = False) -> None:
+        snapshot = await asyncio.to_thread(self._hooks_owner().snapshot)
+        draft = self._settings_drafts.setdefault(
+            SettingsCategoryId.HOOKS, SettingsDraft(SettingsCategoryId.HOOKS)
+        )
+        if reset or not draft.is_dirty:
+            self._hooks_snapshot = snapshot
+        for panel in self.query(_HOOKS_PANEL_SELECTOR):
+            panel.load(snapshot, reset=reset)
+        self._update_draft_status_widgets(SettingsCategoryId.HOOKS)
+
+    async def _review_saved_hooks(self) -> None:
+        from ...Widgets.Console.console_hooks_review_modal import request_hook_review
+
+        snapshot = await asyncio.to_thread(self._hooks_owner().snapshot)
+        await request_hook_review(
+            self, self._hooks_owner(), snapshot, False, lambda: None
+        )
+        await self._load_hooks_settings()
+
+    def _start_hooks_save(self) -> None:
+        if self._hooks_saving or self._hooks_snapshot is None:
+            return
+        try:
+            panel = self.query_one(_HOOKS_PANEL_SELECTOR)
+            section, legacy_ids = panel.submission()
+        except (QueryError, ValueError) as error:
+            self.app.notify(str(error), severity="error")
+            return
+        if not panel.draft.is_dirty:
+            self.app.notify("No hook settings changes to save.", severity="information")
+            return
+        expected = self._hooks_snapshot
+        submitted_draft = copy.deepcopy(panel.draft.values)
+        self._hooks_saving = True
+        panel.disabled = True
+        self._update_draft_status_widgets(SettingsCategoryId.HOOKS)
+
+        async def save() -> None:
+            try:
+                result, snapshot = await asyncio.to_thread(
+                    self._hooks_owner().save_configuration,
+                    expected,
+                    section,
+                    legacy_ids=legacy_ids,
+                )
+                draft = self._settings_drafts[SettingsCategoryId.HOOKS]
+                # A detached/returned screen must never replace a newer edit.
+                if result.file_replaced and draft.values == submitted_draft:
+                    draft.originals = {
+                        "section": copy.deepcopy(section),
+                        "origins": list(range(len(section.get("hook", [])))),
+                    }
+                    draft.values = copy.deepcopy(draft.originals)
+                    self._hooks_snapshot = snapshot
+                    if panel.is_mounted:
+                        panel.load(snapshot)
+                elif panel.is_mounted:
+                    panel.snapshot = snapshot
+                    for status in panel.query("#settings-hooks-status").results(Static):
+                        status.update(
+                            snapshot.notice
+                            or snapshot.blocked_reason
+                            or "Reload before retrying."
+                        )
+                self.app.notify(
+                    snapshot.notice or "Hook settings updated.",
+                    severity="information" if result.caches_reloaded else "warning",
+                )
+            except (OSError, ValueError):
+                self.app.notify(
+                    "Hooks changed or could not be saved. Revert to reload before retrying.",
+                    severity="error",
+                )
+            finally:
+                self._hooks_saving = False
+                if panel.is_mounted:
+                    panel.disabled = False
+                self._update_draft_status_widgets(SettingsCategoryId.HOOKS)
+
+        self.run_worker(save, group="settings-hooks-save", exclusive=True)
+
     def _category_summaries(self) -> tuple[SettingsCategorySummary, ...]:
         return (
+            SettingsCategorySummary(
+                SettingsCategoryId.HOOKS,
+                "Hooks",
+                "Console lifecycle commands and one-time permission review.",
+                "Guided",
+            ),
             SettingsCategorySummary(
                 SettingsCategoryId.OVERVIEW,
                 "Overview",
@@ -5300,9 +5633,7 @@ class SettingsScreen(BaseAppScreen):
                     else ToolProfileListing(unavailable_category="store_invalid")
                 )
             except Exception:  # noqa: BLE001 - optional service must not crash UI
-                listing = ToolProfileListing(
-                    unavailable_category="store_invalid"
-                )
+                listing = ToolProfileListing(unavailable_category="store_invalid")
         self.app.call_from_thread(
             self._apply_tool_profiles_listing,
             generation,
@@ -5908,7 +6239,9 @@ class SettingsScreen(BaseAppScreen):
                 pending = {
                     "workspace_id": active.workspace_id,
                     "persona_id": getattr(defaults, "assistant_id", None),
-                    "memory_mode": getattr(defaults, "persona_memory_mode", "read_only"),
+                    "memory_mode": getattr(
+                        defaults, "persona_memory_mode", "read_only"
+                    ),
                 }
             self._settings_workspace_assistant_pending = {
                 **pending,
@@ -6024,6 +6357,7 @@ class SettingsScreen(BaseAppScreen):
             (
                 "Expert",
                 (
+                    SettingsCategoryId.HOOKS,
                     SettingsCategoryId.INTERNAL_PROMPTS,
                     SettingsCategoryId.ADVANCED_CONFIG,
                 ),
@@ -6156,9 +6490,7 @@ class SettingsScreen(BaseAppScreen):
                 records.append(
                     SettingsOwnershipRecord(
                         category=contract.category,
-                        owns_config_sections=(
-                            "scheduling.briefing_schedules_enabled",
-                        ),
+                        owns_config_sections=("scheduling.briefing_schedules_enabled",),
                         reads_runtime_state_from=contract.source_of_truth,
                         writes_allowed=True,
                         runtime_owner=(
@@ -6249,6 +6581,18 @@ class SettingsScreen(BaseAppScreen):
     def _category_ownership_records(self) -> tuple[SettingsOwnershipRecord, ...]:
         return (
             SettingsOwnershipRecord(
+                category=SettingsCategoryId.HOOKS,
+                owns_config_sections=("hooks",),
+                reads_runtime_state_from=(
+                    "saved hook definitions",
+                    "local exact-definition consent",
+                ),
+                writes_allowed=True,
+                runtime_owner="Console hook permission owner",
+                boundary_copy="Edits stay staged until Save; enabled new or changed hooks require review before Send. Tool permissions remain separate.",
+                recovery_copy="Revert edits, disable a hook, or retry permission refresh in Review saved.",
+            ),
+            SettingsOwnershipRecord(
                 category=SettingsCategoryId.WEB_SEARCH,
                 owns_config_sections=(
                     "SearchSettings.search_provider_default",
@@ -6309,7 +6653,7 @@ class SettingsScreen(BaseAppScreen):
                     "provider+model profile defaults are shared with Console."
                 ),
                 recovery_copy=(
-                    "Test provider readiness, then use Console Defaults for sampling and transport settings."
+                    "Test provider readiness, then use Console Behavior for sampling and transport settings."
                 ),
             ),
             SettingsOwnershipRecord(
@@ -6801,8 +7145,7 @@ class SettingsScreen(BaseAppScreen):
             projections = tuple(runtime.projections())
         except Exception:
             logger.exception(
-                "Failed to inspect Terminal sessions before disarm "
-                "(runtime_type=%s)",
+                "Failed to inspect Terminal sessions before disarm (runtime_type=%s)",
                 type(runtime).__name__,
             )
             return None
@@ -7084,9 +7427,7 @@ class SettingsScreen(BaseAppScreen):
             int(field.default),
             minimum=int(field.minimum),
             maximum=(
-                MAX_CONSOLE_AGENT_MAX_STEPS
-                if field.key == "agent_max_steps"
-                else None
+                MAX_CONSOLE_AGENT_MAX_STEPS if field.key == "agent_max_steps" else None
             ),
         )
 
@@ -7640,17 +7981,15 @@ class SettingsScreen(BaseAppScreen):
         supported = self._model_profile_field_supported(
             provider, draft_key, values.get("model")
         )
-        allowed = (
-            self._model_profile_reasoning_effort_options(provider, values.get("model"))
-            if draft_key == "model_profile_reasoning_effort"
-            else CLOSED_ENUM_SELECT_OPTIONS[
-                PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
-            ]
+        options = self._model_profile_enum_options(
+            provider, values.get("model"), draft_key, values[draft_key]
         )
         return Select(
-            [(value, value) for value in allowed],
+            options,
             value=(
-                self._select_option_value(values[draft_key], allowed)
+                self._select_option_value(
+                    values[draft_key], tuple(value for _label, value in options)
+                )
                 if supported
                 else Select.NULL
             ),
@@ -7854,7 +8193,7 @@ class SettingsScreen(BaseAppScreen):
         with state.lock:
             if revision != state.revision:
                 return
-            screen, value = state.screen, state.desired
+            screen, value = state.screen or self, state.desired
         label = {
             "remote-images": "Linked images",
             "status-row-position": "Status row placement",
@@ -7901,9 +8240,7 @@ class SettingsScreen(BaseAppScreen):
                 state.result = "Saved settings reloaded."
             form = state.form
         return (
-            dict(form)
-            if form is not None
-            else self._saved_permission_summary_payload()
+            dict(form) if form is not None else self._saved_permission_summary_payload()
         )
 
     def _persist_permission_summary_settings(self, *, retry: bool = False) -> None:
@@ -8025,7 +8362,7 @@ class SettingsScreen(BaseAppScreen):
             else:
                 state.form = None
                 state.result = "Saved. Applies immediately."
-            screen = state.screen
+            screen = state.screen or self
         if screen.is_attached:
             screen._refresh_permission_summary_save_widgets()
 
@@ -8294,9 +8631,7 @@ class SettingsScreen(BaseAppScreen):
         try:
             cfg = get_image_generation_config(reload=True)
             cleared = {
-                key.split("::")[1]: image_gen_key_source_after_clear(
-                    key.split("::")[1]
-                )
+                key.split("::")[1]: image_gen_key_source_after_clear(key.split("::")[1])
                 for key in overlay
                 if key.startswith("cleared::")
             }
@@ -8895,16 +9230,40 @@ class SettingsScreen(BaseAppScreen):
             and self._snapshot_preferences_dirty()
         )
 
+    def _category_unsaved_count(self, category: SettingsCategoryId) -> int:
+        """Count the fields in ``category`` that differ from their saved values.
+
+        TASK-33002.4: fields, not draft keys -- the context window and its
+        reset flag are one field, and Advanced Config's raw TOML draft counts
+        as one. Only read while the category is dirty, so never below 1.
+        """
+        snapshot = self._speech_tts_draft_snapshot
+        if category is SettingsCategoryId.PROVIDERS_MODELS:
+            count = len(self._provider_return_dirty_field_names())
+            count += self._snapshot_preferences_dirty_count()
+        elif category is SettingsCategoryId.SPEECH_TTS and snapshot is not None:
+            count = snapshot.unsaved_field_count()
+        else:
+            draft = self._settings_drafts.get(category)
+            count = len(draft.dirty_keys) if draft is not None else 0
+        return max(count, 1)
+
     _SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY = (
         "Snapshot preferences unavailable. In Advanced Config, correct "
         "llamacpp_snapshots.enabled (true/false) and keep_count (1–1000), then Revert."
     )
 
     def _snapshot_preferences_dirty(self) -> bool:
+        return self._snapshot_preferences_dirty_count() > 0
+
+    def _snapshot_preferences_dirty_count(self) -> int:
+        """How many of the two snapshot fields (enabled, keep count) are unsaved."""
         loaded = getattr(self, "_snapshot_preferences_loaded", None)
-        return loaded is not None and self._snapshot_preferences_raw != (
-            loaded.enabled,
-            str(loaded.keep_count),
+        if loaded is None:
+            return 0
+        saved = (loaded.enabled, str(loaded.keep_count))
+        return sum(
+            raw != value for raw, value in zip(self._snapshot_preferences_raw, saved)
         )
 
     @on(Input.Changed, "#settings-snapshot-keep")
@@ -9106,9 +9465,7 @@ class SettingsScreen(BaseAppScreen):
         try:
             cfg = get_video_generation_config(reload=True)
             cleared = {
-                key.split("::")[1]: video_gen_key_source_after_clear(
-                    key.split("::")[1]
-                )
+                key.split("::")[1]: video_gen_key_source_after_clear(key.split("::")[1])
                 for key in overlay
                 if key.startswith("cleared::")
             }
@@ -9565,7 +9922,9 @@ class SettingsScreen(BaseAppScreen):
         if category == SettingsCategoryId.INTERNAL_PROMPTS:
             return "Use each prompt's Save / Reset buttons in the editor to manage overrides."
         if category is SettingsCategoryId.SCHEDULES:
-            return "Applies immediately: use the global briefing-schedules control below."
+            return (
+                "Applies immediately: use the global briefing-schedules control below."
+            )
         if category is SettingsCategoryId.DREAMS:
             return (
                 "Applies immediately: the toggle, provider, model, region, and "
@@ -9607,6 +9966,10 @@ class SettingsScreen(BaseAppScreen):
         return messages.get(category, "Guided edits: read-only.")
 
     def _guided_actions_enabled(self, category: SettingsCategoryId) -> bool:
+        if category is SettingsCategoryId.HOOKS:
+            return (
+                self._category_has_unsaved_changes(category) and not self._hooks_saving
+            )
         if category is SettingsCategoryId.WEB_SEARCH:
             return (
                 self._category_has_unsaved_changes(category)
@@ -9741,6 +10104,10 @@ class SettingsScreen(BaseAppScreen):
                     ).disabled = not has_unsaved_changes
                 except QueryError:
                     pass
+        if category is SettingsCategoryId.HOOKS:
+            for button_id in ("settings-hooks-save", "settings-hooks-revert"):
+                for button in self.query(f"#{button_id}"):
+                    button.disabled = not has_unsaved_changes or self._hooks_saving
         if category is SettingsCategoryId.VIDEO_GENERATION:
             # task-3401.12: same sibling idiom for Video Gen's in-panel
             # Save/Revert.
@@ -9996,15 +10363,12 @@ class SettingsScreen(BaseAppScreen):
                 # Review finding 10: the Next segment states the SAME
                 # landing contract Enter would honour if this match were
                 # first -- never advertise a field landing the gate refuses.
-                status += (
-                    " | Next: "
-                    + self._search_match_scope_text(
-                        query,
-                        matches[1],
-                        field_landing=self._search_match_is_field_landing(
-                            query, matches[1]
-                        ),
-                    )
+                status += " | Next: " + self._search_match_scope_text(
+                    query,
+                    matches[1],
+                    field_landing=self._search_match_is_field_landing(
+                        query, matches[1]
+                    ),
                 )
             return status
         return f"Filter: {query} | 0 matches | Esc clears"
@@ -10220,42 +10584,40 @@ class SettingsScreen(BaseAppScreen):
             _focus_now()
 
     def _category_state_banner_text(self, category: SettingsCategoryId) -> str:
-        if (
-            category is SettingsCategoryId.ADVANCED_CONFIG
-            and self._category_has_unsaved_changes(category)
-        ):
-            return "State: Unsaved raw TOML | Draft kept when you leave; use raw editor controls."
-        if (
-            category is SettingsCategoryId.APPEARANCE
-            and self._category_has_unsaved_changes(category)
-        ):
-            validation = self._appearance_validation_result()
-            if not validation.valid:
-                return f"State: Needs correction | {validation.message}"
-        if (
-            category is SettingsCategoryId.LIBRARY_RAG
-            and self._category_has_unsaved_changes(category)
-        ):
-            validation = self._library_rag_validation_result()
-            if not validation.valid:
-                return f"State: Needs correction | {validation.message}"
-        if (
-            category is SettingsCategoryId.STORAGE
-            and self._category_has_unsaved_changes(category)
-        ):
-            validation = self._storage_validation_result()
-            if not validation.valid:
-                return f"State: Needs correction | {validation.message}"
         if self._category_has_unsaved_changes(category):
+            # TASK-33002.4: the badge stays (ADR-033) and the line counts the
+            # unsaved fields. "revert with r" rides along where r is the
+            # category's key and the 120-cell row at 211x44 has room: not on
+            # Providers & Models (its scope fills the row) or Speech & TTS
+            # (its leave wording does), nor Image/Video Gen (the badge names
+            # their own Save/Revert).
+            unsaved = (
+                f"{self._persistence_badge(category)} · "
+                f"{self._category_unsaved_count(category)} unsaved"
+            )
+            # Final review (Task 4): an invalid draft keeps its badge and count.
+            validate = {
+                SettingsCategoryId.APPEARANCE: self._appearance_validation_result,
+                SettingsCategoryId.LIBRARY_RAG: self._library_rag_validation_result,
+                SettingsCategoryId.STORAGE: self._storage_validation_result,
+            }.get(category)
+            validation = validate() if validate is not None else None
+            if validation is not None and not validation.valid:
+                return f"State: {unsaved} | Needs correction: {validation.message}"
+            if category is SettingsCategoryId.ADVANCED_CONFIG:
+                return f"State: {unsaved} | Draft kept when you leave; use raw editor controls."
             if category is SettingsCategoryId.SPEECH_TTS:
-                # task-2708: the generic contract below is false here -- this
-                # category resolves its draft through the leave modal instead
-                # of carrying it across a category switch.
+                # task-2708: this category resolves its draft through the
+                # leave modal instead of carrying it across a category switch.
                 return (
-                    "State: Unsaved changes | Save (s) or Revert (r) — leaving "
-                    "Speech & TTS resolves this draft: save or discard first."
+                    f"State: {unsaved} | Leaving Speech & TTS resolves this "
+                    "draft: save or discard first."
                 )
-            return "State: Unsaved changes | Save (s) or Revert (r) — switching categories keeps this draft."
+            if category in GUIDED_SETTINGS_MUTATION_CATEGORIES and (
+                category is not SettingsCategoryId.PROVIDERS_MODELS
+            ):
+                unsaved += " · revert with r"
+            return f"State: {unsaved} | {self._category_state_scope_text(category)}"
         # task-1717: lead with the persistence badge -- the footer hints
         # already honestly come and go with each category's save model,
         # but nothing NAMED the model, so users trained on Save/Revert got
@@ -10311,12 +10673,18 @@ class SettingsScreen(BaseAppScreen):
 
     def _category_state_scope_text(self, category: SettingsCategoryId) -> str:
         """The category-scope half of the State banner (after the badge)."""
+        if category is SettingsCategoryId.HOOKS:
+            return "Saved enabled changes require review before the next Send."
         if category is SettingsCategoryId.WEB_SEARCH:
             return "Shared by basic and deep search; changes apply after Save."
         if category is SettingsCategoryId.ADVANCED_CONFIG:
             return "Save blocked until the text validates; backup before overwrite."
         if category is SettingsCategoryId.PROVIDERS_MODELS:
-            return "Shared with Console"
+            # One-row form of PROVIDER_SAVE_SCOPE_COPY: change both together.
+            return (
+                "Applies to new and unused open chats · used chats keep theirs "
+                "(Console: Alt+M)"
+            )
         if category is SettingsCategoryId.SPEECH_TTS:
             return "Application-wide defaults; Studio preferences remain separate."
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
@@ -10335,8 +10703,9 @@ class SettingsScreen(BaseAppScreen):
             return "Changes apply on next launch; active handles stay unchanged."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             return (
-                "Canvas availability and create auto-open are editable; hard quotas, "
-                "privacy posture, and secrets remain read-only and redacted."
+                "Key encryption, Canvas availability and create auto-open are "
+                "editable; hard quotas, privacy posture, and secret values remain "
+                "read-only and redacted."
             )
         if category is SettingsCategoryId.PERSONAL_CONTEXT:
             return "Encrypted local profile; record and authority actions apply immediately."
@@ -10559,7 +10928,9 @@ class SettingsScreen(BaseAppScreen):
         registered = getattr(self.app, "available_themes", {}) or {}
         if launch not in registered:
             return f"launch default missing: {launch} · active: {display_name(active)}"
-        return f"{display_name(launch)} (launch default) · active: {display_name(active)}"
+        return (
+            f"{display_name(launch)} (launch default) · active: {display_name(active)}"
+        )
 
     def _refresh_appearance_theme_summary(self, _theme: object = None) -> None:
         # No-op when Appearance is not mounted (_set_static_text swallows QueryError).
@@ -10921,10 +11292,7 @@ class SettingsScreen(BaseAppScreen):
         # ADR-090: one shared branch for the instant-apply permission-summary
         # group -- the trio is one consent surface (the disclosure copy above
         # the controls), not three independent fields.
-        if (
-            self._active_settings_field_id
-            in PERMISSION_SUMMARY_FIELD_IDS
-        ):
+        if self._active_settings_field_id in PERMISSION_SUMMARY_FIELD_IDS:
             return (
                 (
                     "Purpose",
@@ -10948,6 +11316,15 @@ class SettingsScreen(BaseAppScreen):
                     "Applies",
                     "Approval rounds rendered after the change; no Save step.",
                 ),
+            )
+        name = CONSOLE_DEFAULT_FIELD_NAMES.get(self._active_settings_field_id or "")
+        if name is not None:
+            spec = MODEL_CONFIG_FIELDS[name]
+            return (
+                ("Focused setting", spec.label),
+                ("Purpose", spec.help),
+                ("Saved as", f"chat_defaults.{name}"),
+                ("Validation", spec.valid_range),
             )
         return (
             (
@@ -11442,10 +11819,12 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=0.0,
             max_value=2.0,
-            label="Temperature",
+            label=MODEL_FIELD_LABELS["temperature"],
         )
         if normalized == "":
-            raise ValueError("Temperature must be between 0.0 and 2.0.")
+            raise ValueError(
+                f"{MODEL_FIELD_LABELS['temperature']} must be between 0.0 and 2.0."
+            )
         return float(normalized)
 
     def _normalise_console_default_top_p(self, value: object) -> float:
@@ -11453,10 +11832,12 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=0.0,
             max_value=1.0,
-            label="Top P",
+            label=MODEL_FIELD_LABELS["top_p"],
         )
         if normalized == "":
-            raise ValueError("Top P must be between 0.0 and 1.0.")
+            raise ValueError(
+                f"{MODEL_FIELD_LABELS['top_p']} must be between 0.0 and 1.0."
+            )
         return float(normalized)
 
     @staticmethod
@@ -11466,7 +11847,7 @@ class SettingsScreen(BaseAppScreen):
             return ""
         if not text_value.isdecimal() or int(text_value) < 1:
             raise ValueError(
-                "Response max tokens must be a whole number of at least 1."
+                f"{MODEL_FIELD_LABELS['max_tokens']} must be a whole number of at least 1."
             )
         return int(text_value)
 
@@ -12648,40 +13029,28 @@ class SettingsScreen(BaseAppScreen):
         return "Provider readiness: needs provider and model"
 
     def _provider_overview_readiness_status(self) -> str:
-        """One-line send-path readiness verdict for the Overview status row.
+        """The Overview status row's readiness word, as the Console says it.
 
-        TASK-31805: the Overview 'Status:' must reflect what an actual send
-        would do, never the mere presence of a provider/model name. Two
-        blockers are surfaced, in the SAME order the send path enforces them
-        (``build_console_settings_readiness``): the credential check first
-        (``get_provider_readiness`` / ``resolve_provider_api_key``), then a
-        selected model. Without the credential check a fresh no-key profile
-        read as usable ("Status: OpenAI / gpt-4o") while a send failed with
-        "OpenAI API Key is required but not found."; without the model check a
-        provider whose credential resolves but with no model selected would
-        still read "Ready" while the identity shows "not selected" and the
-        send gateway blocks with "Select a model before sending."
+        TASK-31805: what a send would do, never the mere presence of a name.
+        TASK-33005: the Console's future-chat builder and words, test evidence
+        included, so it never reads "Ready" above a refused last test.
 
         Returns:
-            "Ready" when a send would proceed, "Not ready: <reason>" when a
-            credential or model blocker applies, or "needs provider and model"
-            when no provider is selected yet.
+            'Ready · not tested', 'Ready · reachable/verified HH:MM' or
+            'Not ready · <reason>'.
         """
         resolved = self._resolve_provider_model_for_settings()
-        provider = str(resolved.provider or "").strip()
-        if not provider or provider == "not selected":
-            return "needs provider and model"
-        readiness = get_provider_readiness(
-            provider,
-            self._provider_readiness_app_config(),
-            background_credentials=True,
+        app_config = self._provider_readiness_app_config()
+        settings = build_target_default_console_session_settings(
+            app_config, str(resolved.provider or ""), resolved.model
         )
-        if not readiness.ready:
-            return f"Not ready: {readiness.reason}"
-        # Credential resolves (or is not required); a send still needs a model.
-        if normalize_console_model_value(resolved.model) is None:
-            return "Not ready: Select a model"
-        return "Ready"
+        readiness = build_console_settings_readiness(
+            # The model the Overview names, never a provider-table fallback.
+            replace(settings, model=normalize_console_model_value(resolved.model)),
+            app_config=app_config,
+            connection_evidence=shared_connection_evidence(lambda: self.app),
+        )
+        return readiness_words(readiness)
 
     def _provider_draft(self) -> SettingsDraft | None:
         return self._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
@@ -12767,15 +13136,21 @@ class SettingsScreen(BaseAppScreen):
         draft = self._provider_draft()
         if draft is None:
             return {}, {}
-        excluded_key = (
+        excluding_key = provider_config_key(str(excluding_provider or ""))
+        excluded_keys = {
             self._provider_api_mode_draft_key(excluding_provider)
-            if provider_config_key(str(excluding_provider or "")) == "qwencloud"
-            else ""
-        )
+            if excluding_key == "qwencloud"
+            else "",
+            # TASK-34201: Anthropic's sign-in choice is provider-scoped too.
+            self._provider_auth_source_draft_key(excluding_provider)
+            if excluding_key == "anthropic"
+            else "",
+        }
         values = {
             key: value
             for key, value in draft.values.items()
-            if key.startswith("provider_api_mode:") and key != excluded_key
+            if key.startswith(("provider_api_mode:", "provider_auth_source:"))
+            and key not in excluded_keys
         }
         originals = {
             key: value for key, value in draft.originals.items() if key in values
@@ -12807,6 +13182,87 @@ class SettingsScreen(BaseAppScreen):
             ), True
         except ChatConfigurationError:
             return Select.NULL, False
+
+    @staticmethod
+    def _provider_auth_source_draft_key(provider: object) -> str:
+        """Return the provider-scoped draft key for Anthropic's sign-in choice."""
+        return f"provider_auth_source:{provider_config_key(str(provider or ''))}"
+
+    def _provider_saved_auth_source(self, provider: object) -> str:
+        """Return the saved sign-in choice; only Anthropic has one (TASK-34201)."""
+        if provider_config_key(str(provider or "")) != "anthropic":
+            return _anthropic_auth_sources()[0]
+        from ...LLM_Calls.anthropic_subscription import anthropic_auth_source
+
+        return anthropic_auth_source(self._provider_config("anthropic"))
+
+    def _provider_auth_readiness_config(
+        self, provider: object, *, auth_source: str | None = None
+    ) -> Mapping[str, object]:
+        """Return readiness config with Anthropic's unsaved sign-in choice applied.
+
+        The credential status, placeholder, key status and the subscription
+        poller read this, so an unsaved choice shows at once and a cold
+        subscription check is followed to completion (Qodo #2990). Forcing
+        ``auth_source`` to the API key lets the saved-key check see a stored
+        key even while the saved choice is the subscription.
+
+        Args:
+            provider: The provider the panel shows.
+            auth_source: A choice to apply instead of the current one.
+
+        Returns:
+            The saved config, or a copy with the choice overlaid.
+        """
+        config = self._provider_readiness_app_config()
+        if provider_config_key(str(provider or "")) != "anthropic":
+            return config
+        value = auth_source or self._provider_auth_source_value(provider)
+        if value == self._provider_saved_auth_source(provider):
+            return config
+        save_key, _config = self._provider_config_entry(str(provider))
+        return overlay_provider_draft_config(
+            config,
+            provider_save_key=save_key or "anthropic",
+            endpoint_key=self._provider_endpoint_setting_key(str(provider)),
+            draft_endpoint=None,
+            draft_env_var=None,
+            draft_api_key=None,
+            draft_auth_source=value,
+        )
+
+    def _provider_auth_source_value(self, provider: object) -> str:
+        """Resolve Anthropic's sign-in choice from the draft, then saved config."""
+        if provider_config_key(str(provider or "")) != "anthropic":
+            return _anthropic_auth_sources()[0]
+        draft = self._provider_draft()
+        draft_key = self._provider_auth_source_draft_key("anthropic")
+        if draft is not None and draft_key in draft.values:
+            return str(draft.values[draft_key])
+        return self._provider_saved_auth_source("anthropic")
+
+    def _stage_provider_auth_source(self, provider: object, value: str) -> None:
+        """Stage Anthropic's sign-in choice as an ordinary unsaved edit."""
+        if provider_config_key(str(provider or "")) != "anthropic":
+            return
+        category = SettingsCategoryId.PROVIDERS_MODELS
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        self._pin_provider_draft_selection(
+            draft, self._provider_setting_values_mapping()
+        )
+        draft_key = self._provider_auth_source_draft_key("anthropic")
+        original = draft.originals.get(
+            draft_key, self._provider_saved_auth_source("anthropic")
+        )
+        draft.set_value(draft_key, original, value)
+        if value == original:
+            draft.values.pop(draft_key, None)
+            draft.originals.pop(draft_key, None)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+        self._mark_provider_test_result_stale()
 
     def _resolve_provider_model_for_settings(self):
         draft = self._provider_draft()
@@ -12857,6 +13313,7 @@ class SettingsScreen(BaseAppScreen):
             "api_key": "",
             "credential_env_var": self._provider_credential_env_var(provider),
             "api_mode": self._provider_saved_api_mode_value(provider),
+            "auth_source": self._provider_saved_auth_source(provider),
             "model_context_window": self._provider_model_context_window(provider, model)
             or "",
             "model_profile_temperature": profile.get("temperature", ""),
@@ -12891,6 +13348,7 @@ class SettingsScreen(BaseAppScreen):
             for key, value in loaded.items()
         }
         values["api_mode"] = self._provider_api_mode_value(values.get("provider"))
+        values["auth_source"] = self._provider_auth_source_value(values.get("provider"))
         return values
 
     def _provider_setting_values_mapping(self) -> Mapping[str, object]:
@@ -12998,34 +13456,27 @@ class SettingsScreen(BaseAppScreen):
         draft = self._provider_draft()
         if draft is None:
             return ()
+        # Table fields take their labels from the one field table (TASK-33002.1).
         labels = {
             "provider": "Provider",
             "model": "Model",
-            "endpoint": "Endpoint",
+            "endpoint": MODEL_FIELD_LABELS["endpoint"],
             "api_key": "API key",
             "credential_env_var": "Credential environment variable",
             "model_context_window": "Model context window",
             "model_context_window_reset": "Model context window",
-            "model_profile_temperature": "Temperature",
-            "model_profile_top_p": "Top P",
-            "model_profile_min_p": "Min P",
-            "model_profile_top_k": "Top K",
-            "model_profile_max_tokens": "Max tokens",
-            "model_profile_seed": "Seed",
-            "model_profile_presence_penalty": "Presence penalty",
-            "model_profile_frequency_penalty": "Frequency penalty",
-            "model_profile_reasoning_effort": "Reasoning effort",
-            "model_profile_reasoning_summary": "Reasoning summary",
-            "model_profile_verbosity": "Verbosity",
-            "model_profile_thinking_effort": "Thinking effort",
-            "model_profile_thinking_budget_tokens": "Thinking budget",
-            "model_profile_streaming": "Streaming",
+            **{
+                draft_key: MODEL_FIELD_LABELS[name]
+                for draft_key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
+            },
         }
         names: list[str] = []
         for key in sorted(draft.dirty_keys):
             label = labels.get(key)
             if label is None and key.startswith("provider_api_mode:"):
                 label = "API mode"
+            if label is None and key.startswith("provider_auth_source:"):
+                label = "Sign in with"
             if label is not None and label not in names:
                 names.append(label)
         return tuple(names)
@@ -13070,9 +13521,12 @@ class SettingsScreen(BaseAppScreen):
         return f"Discard changes and configure {provider}"
 
     def _provider_return_continuation_copy(self) -> str:
-        if self._provider_return_outcome is ConversationSettingsReturnOutcome.CREDENTIAL_SAVED:
+        if (
+            self._provider_return_outcome
+            is ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
+        ):
             return (
-                "Credential saved. Return to Conversation settings to check "
+                "Credential saved. Return to Chat settings to check "
                 "readiness; provider acceptance is not yet verified."
             )
         if (
@@ -13080,7 +13534,7 @@ class SettingsScreen(BaseAppScreen):
             is ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
         ):
             return (
-                "Provider settings saved. Return to Conversation settings to check "
+                "Provider settings saved. Return to Chat settings to check "
                 "readiness; generation is not yet verified."
             )
         return "Provider settings handoff is inactive."
@@ -13115,26 +13569,26 @@ class SettingsScreen(BaseAppScreen):
             self.query_one(
                 "#settings-provider-navigation-conflict-summary", Static
             ).update(self._provider_navigation_conflict_copy())
-            self.query_one("#settings-provider-conflict-discard", Button).label = (
-                self._provider_conflict_discard_label()
-            )
+            self.query_one(
+                "#settings-provider-conflict-discard", Button
+            ).label = self._provider_conflict_discard_label()
             continuation = self.query_one("#settings-provider-return-continuation")
             continuation.display = self._provider_return_outcome is not None
             self.query_one(
                 "#settings-provider-return-continuation-status", Static
             ).update(self._provider_return_continuation_copy())
-            self.query_one("#settings-provider-return", Button).disabled = (
-                self._provider_return_actions_disabled()
-            )
+            self.query_one(
+                "#settings-provider-return", Button
+            ).disabled = self._provider_return_actions_disabled()
             self.query_one(
                 "#settings-provider-return-without-save", Button
             ).display = self._provider_can_return_without_saving()
             self.query_one(
                 "#settings-provider-return-without-save", Button
             ).disabled = self._provider_return_actions_disabled()
-            self.query_one("#settings-provider-conflict-return", Button).disabled = (
-                self._provider_return_actions_disabled()
-            )
+            self.query_one(
+                "#settings-provider-conflict-return", Button
+            ).disabled = self._provider_return_actions_disabled()
         except QueryError:
             return
 
@@ -13159,7 +13613,10 @@ class SettingsScreen(BaseAppScreen):
 
     def _claim_provider_return_intent(
         self,
-    ) -> tuple[PendingHandoffStore, HandoffClaim, ConversationSettingsReturnIntent] | None:
+    ) -> (
+        tuple[PendingHandoffStore, HandoffClaim, ConversationSettingsReturnIntent]
+        | None
+    ):
         target = self._provider_return_target
         store = getattr(self.app_instance, "pending_handoffs", None)
         if target is None or not isinstance(store, PendingHandoffStore):
@@ -13200,7 +13657,7 @@ class SettingsScreen(BaseAppScreen):
         claimed = self._claim_provider_return_intent()
         if claimed is None:
             self.app.notify(
-                "Conversation settings return is no longer available.",
+                "Chat settings return is no longer available.",
                 severity="warning",
             )
             self._settle_provider_return_state()
@@ -13270,7 +13727,7 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=0.0,
             max_value=2.0,
-            label="Temperature",
+            label=MODEL_FIELD_LABELS["temperature"],
         )
 
     def _normalise_model_profile_top_p(self, value: object) -> float | str:
@@ -13278,7 +13735,7 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=0.0,
             max_value=1.0,
-            label="Top P",
+            label=MODEL_FIELD_LABELS["top_p"],
         )
 
     def _normalise_model_profile_min_p(self, value: object) -> float | str:
@@ -13286,7 +13743,7 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=0.0,
             max_value=1.0,
-            label="Min P",
+            label=MODEL_FIELD_LABELS["min_p"],
         )
 
     def _normalise_optional_int(
@@ -13304,13 +13761,15 @@ class SettingsScreen(BaseAppScreen):
         return int(text)
 
     def _normalise_model_profile_top_k(self, value: object) -> int | str:
-        return self._normalise_optional_int(value, min_value=0, label="Top K")
+        return self._normalise_optional_int(
+            value, min_value=0, label=MODEL_FIELD_LABELS["top_k"]
+        )
 
     def _normalise_model_profile_max_tokens(self, value: object) -> int | str:
         return self._normalise_optional_int(
             value,
             min_value=1,
-            label="Response max tokens",
+            label=MODEL_FIELD_LABELS["max_tokens"],
         )
 
     def _normalise_model_context_window(self, value: object) -> int | str:
@@ -13319,14 +13778,16 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _normalise_model_profile_seed(self, value: object) -> int | str:
-        return self._normalise_optional_int(value, min_value=0, label="Seed")
+        return self._normalise_optional_int(
+            value, min_value=0, label=MODEL_FIELD_LABELS["seed"]
+        )
 
     def _normalise_model_profile_presence_penalty(self, value: object) -> float | str:
         return self._normalise_optional_float(
             value,
             min_value=-2.0,
             max_value=2.0,
-            label="Presence penalty",
+            label=MODEL_FIELD_LABELS["presence_penalty"],
         )
 
     def _normalise_model_profile_frequency_penalty(self, value: object) -> float | str:
@@ -13334,7 +13795,7 @@ class SettingsScreen(BaseAppScreen):
             value,
             min_value=-2.0,
             max_value=2.0,
-            label="Frequency penalty",
+            label=MODEL_FIELD_LABELS["frequency_penalty"],
         )
 
     @staticmethod
@@ -13354,28 +13815,28 @@ class SettingsScreen(BaseAppScreen):
         return self._normalise_optional_choice(
             value,
             allowed=REASONING_EFFORT_OPTIONS,
-            label="Reasoning effort",
+            label=MODEL_FIELD_LABELS["reasoning_effort"],
         )
 
     def _normalise_model_profile_reasoning_summary(self, value: object) -> str:
         return self._normalise_optional_choice(
             value,
             allowed=REASONING_SUMMARY_OPTIONS,
-            label="Reasoning summary",
+            label=MODEL_FIELD_LABELS["reasoning_summary"],
         )
 
     def _normalise_model_profile_verbosity(self, value: object) -> str:
         return self._normalise_optional_choice(
             value,
             allowed=VERBOSITY_OPTIONS,
-            label="Verbosity",
+            label=MODEL_FIELD_LABELS["verbosity"],
         )
 
     def _normalise_model_profile_thinking_effort(self, value: object) -> str:
         return self._normalise_optional_choice(
             value,
             allowed=THINKING_EFFORT_OPTIONS,
-            label="Thinking effort",
+            label=MODEL_FIELD_LABELS["thinking_effort"],
         )
 
     def _normalise_model_profile_thinking_budget_tokens(
@@ -13384,7 +13845,7 @@ class SettingsScreen(BaseAppScreen):
         return self._normalise_optional_int(
             value,
             min_value=1024,
-            label="Thinking budget tokens",
+            label=MODEL_FIELD_LABELS["thinking_budget_tokens"],
         )
 
     @staticmethod
@@ -13403,7 +13864,9 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _model_profile_reasoning_effort_options(
-        provider: object, model: object
+        provider: object,
+        model: object,
+        app_config: Mapping[str, object] | None = None,
     ) -> tuple[str, ...]:
         # TASK-19170: derive the curated lists from the 18803 request-side
         # family predicates -- the same gates the builders enforce -- so a
@@ -13417,7 +13880,36 @@ class SettingsScreen(BaseAppScreen):
             return KIMI_REASONING_EFFORT_SELECT_OPTIONS
         if provider_key == "zai" and zai_model_supports_reasoning_effort(model_key):
             return GLM_REASONING_EFFORT_SELECT_OPTIONS
-        return REASONING_EFFORT_SELECT_OPTIONS
+        # TASK-33002.1: never offer a level the local request silently drops.
+        return reasoning_effort_values_sent(
+            str(provider or ""), REASONING_EFFORT_SELECT_OPTIONS, app_config
+        )
+
+    def _model_profile_enum_options(
+        self, provider: object, model: object, draft_key: str, saved: object
+    ) -> list[tuple[str, str]]:
+        """Return the (label, value) options of a model-default enum Select.
+
+        The one list for compose, sync and Revert. A saved reasoning level
+        that the provider's narrowed list no longer offers stays as a
+        labelled option: without it Revert raised InvalidSelectValueError
+        and an unrelated Save deleted the value (TASK-33002 final review C1).
+        """
+        if draft_key != "model_profile_reasoning_effort":
+            return [
+                (value, value)
+                for value in CLOSED_ENUM_SELECT_OPTIONS[
+                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+                ]
+            ]
+        offered = self._model_profile_reasoning_effort_options(
+            provider, model, self._app_config_mapping()
+        )
+        options = [(value, value) for value in offered]
+        saved_text = str(saved or "").strip().lower()
+        if saved_text in REASONING_EFFORT_OPTIONS - {""} - set(offered):
+            options.append((f"{saved_text} (not supported here)", saved_text))
+        return options
 
     def _model_profile_field_supported(
         self, provider: object, draft_key: str, model: object
@@ -13476,8 +13968,8 @@ class SettingsScreen(BaseAppScreen):
         if not provider_label:
             provider_label = "this provider"
         hidden = [
-            label
-            for draft_key, label in MODEL_PROFILE_ROW_LABELS.items()
+            MODEL_FIELD_LABELS[name]
+            for draft_key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
             if not self._model_profile_field_supported(provider, draft_key, model)
         ]
         if not hidden:
@@ -13533,6 +14025,7 @@ class SettingsScreen(BaseAppScreen):
             Input,
         ).value.strip()
         api_mode = self._provider_api_mode_value(provider)
+        auth_source = self._provider_auth_source_value(provider)
         model_context_window = self._normalise_model_context_window(
             self.query_one("#settings-model-context-window", Input).value
         )
@@ -13603,6 +14096,7 @@ class SettingsScreen(BaseAppScreen):
             "api_key": api_key,
             "credential_env_var": credential_env_var,
             "api_mode": api_mode,
+            "auth_source": auth_source,
             "model_context_window": model_context_window,
             "model_profile_temperature": model_profile_temperature,
             "model_profile_top_p": model_profile_top_p,
@@ -13686,11 +14180,7 @@ class SettingsScreen(BaseAppScreen):
             draft=copy.deepcopy(self._provider_draft()),
             provider_save_result=self._provider_save_result,
             provider_test_result=self._provider_test_result,
-            provider_test_evidence_store=copy.copy(
-                self._provider_test_evidence_store
-            ),
             provider_draft_generation=self._provider_draft_generation,
-            provider_credential_revision=self._provider_credential_revision,
             model_discovery_status=self._model_discovery_status,
             model_discovery_models=tuple(self._model_discovery_models),
             model_discovery_selected_model_ids=frozenset(
@@ -13716,9 +14206,7 @@ class SettingsScreen(BaseAppScreen):
         try:
             card = self.query_one("#settings-providers-models-card", Vertical)
             card.disabled = (
-                True
-                if fenced
-                else bool(self._vllm_default_recovery_card_disabled)
+                True if fenced else bool(self._vllm_default_recovery_card_disabled)
             )
         except QueryError:
             pass
@@ -13741,10 +14229,9 @@ class SettingsScreen(BaseAppScreen):
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return None
-        return (
-            store.release_recovery(HandoffChannel.VLLM_DEFAULT)
-            or store.release_recovery(HandoffChannel.LLAMACPP_DEFAULT)
-        )
+        return store.release_recovery(
+            HandoffChannel.VLLM_DEFAULT
+        ) or store.release_recovery(HandoffChannel.LLAMACPP_DEFAULT)
 
     def _sync_vllm_default_recovery_widgets(self) -> None:
         """Expose surviving cleanup authority without leaking the handoff value."""
@@ -13753,9 +14240,7 @@ class SettingsScreen(BaseAppScreen):
         fenced = self._vllm_default_claim is not None or recovery is not None
         self._set_vllm_default_compensation_fence(fenced)
         try:
-            status = self.query_one(
-                "#settings-vllm-handoff-recovery-status", Static
-            )
+            status = self.query_one("#settings-vllm-handoff-recovery-status", Static)
             button = self.query_one("#settings-vllm-handoff-recovery", Button)
         except QueryError:
             return
@@ -13785,11 +14270,7 @@ class SettingsScreen(BaseAppScreen):
                 snapshot.draft
             )
         self._provider_test_result = snapshot.provider_test_result
-        self._provider_test_evidence_store = copy.copy(
-            snapshot.provider_test_evidence_store
-        )
         self._provider_draft_generation = snapshot.provider_draft_generation
-        self._provider_credential_revision = snapshot.provider_credential_revision
         self._model_discovery_status = snapshot.model_discovery_status
         self._model_discovery_models = tuple(snapshot.model_discovery_models)
         self._model_discovery_selected_model_ids = set(
@@ -13870,15 +14351,21 @@ class SettingsScreen(BaseAppScreen):
     def _consume_pending_vllm_default_intent(self) -> bool:
         """Stage one current verified vLLM target without saving it."""
         return self._consume_verified_default_intent(
-            HandoffChannel.VLLM_DEFAULT, VllmDefaultIntent, "vllm",
-            "_vllm_connection_owner", owner_has_current_intent,
+            HandoffChannel.VLLM_DEFAULT,
+            VllmDefaultIntent,
+            "vllm",
+            "_vllm_connection_owner",
+            owner_has_current_intent,
         )
 
     def _consume_pending_llamacpp_default_intent(self) -> bool:
         """Stage one current verified llama.cpp target without saving it."""
         return self._consume_verified_default_intent(
-            HandoffChannel.LLAMACPP_DEFAULT, LlamaCppDefaultIntent, "llama_cpp",
-            "_llamacpp_connection_owner", llama_owner_has_current_intent,
+            HandoffChannel.LLAMACPP_DEFAULT,
+            LlamaCppDefaultIntent,
+            "llama_cpp",
+            "_llamacpp_connection_owner",
+            llama_owner_has_current_intent,
         )
 
     def _consume_verified_default_intent(
@@ -13914,8 +14401,7 @@ class SettingsScreen(BaseAppScreen):
                 raise ValueError("vLLM Settings handoff is stale")
             if (
                 not self.is_mounted
-                or self._active_category_id()
-                is not SettingsCategoryId.PROVIDERS_MODELS
+                or self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS
             ):
                 raise RuntimeError("Providers Settings is not mounted")
             self._vllm_default_before_presentation = (
@@ -13931,9 +14417,7 @@ class SettingsScreen(BaseAppScreen):
             self._stage_provider_value("endpoint", intent.api_url)
             self._sync_provider_manual_widget(provider)
             model_input = self.query_one("#settings-model-value", Input)
-            endpoint_input = self.query_one(
-                "#settings-provider-endpoint-value", Input
-            )
+            endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
             with model_input.prevent(Input.Changed):
                 model_input.value = intent.model_id
             with endpoint_input.prevent(Input.Changed):
@@ -14016,7 +14500,9 @@ class SettingsScreen(BaseAppScreen):
                 != intent.api_url
                 or not store.acknowledge_current(claim)
             ):
-                raise RuntimeError("verified provider Settings handoff changed before render")
+                raise RuntimeError(
+                    "verified provider Settings handoff changed before render"
+                )
         except BaseException:
             self._rollback_vllm_default_intent(claim=claim)
             return
@@ -14049,9 +14535,7 @@ class SettingsScreen(BaseAppScreen):
             if self.is_mounted:
                 self._restore_vllm_default_presentation(presentation)
             elif presentation.draft is None:
-                self._settings_drafts.pop(
-                    SettingsCategoryId.PROVIDERS_MODELS, None
-                )
+                self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
             else:
                 self._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS] = (
                     copy.deepcopy(presentation.draft)
@@ -14077,9 +14561,7 @@ class SettingsScreen(BaseAppScreen):
             self._vllm_default_release_retry_scheduled = False
             if self.is_mounted:
                 self._set_vllm_default_compensation_fence(False)
-                self._update_draft_status_widgets(
-                    SettingsCategoryId.PROVIDERS_MODELS
-                )
+                self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
             return
 
         if type(store) is PendingHandoffStore:
@@ -14176,7 +14658,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_evidence_store(self) -> ProviderTestEvidenceStore:
         store = getattr(self, "_provider_test_evidence_store", None)
         if not isinstance(store, ProviderTestEvidenceStore):
-            store = ProviderTestEvidenceStore()
+            store = ProviderTestEvidenceStore(lambda: self.app)
             self._provider_test_evidence_store = store
         return store
 
@@ -14186,10 +14668,6 @@ class SettingsScreen(BaseAppScreen):
             self._provider_draft_generation = (
                 getattr(self, "_provider_draft_generation", 0) + 1
             )
-            if key in {"credential_env_var", "api_key"}:
-                self._provider_credential_revision = (
-                    getattr(self, "_provider_credential_revision", 0) + 1
-                )
             self._provider_evidence_store().invalidate()
             self._mark_provider_test_result_stale()
             return
@@ -14277,13 +14755,90 @@ class SettingsScreen(BaseAppScreen):
             return "stored"
         return "none"
 
-    def _provider_current_draft_identity(self) -> ProviderDraftIdentity | None:
+    def _provider_draft_credential_revision(
+        self,
+        provider: str,
+        credential_source: str,
+        values: Mapping[str, object],
+    ) -> int:
+        """Return the draft's credential as a cross-surface revision.
+
+        TASK-33005.1: the digest of the key a send would use once this draft
+        is saved -- the readiness key for an untouched credential, exactly as
+        Chat settings and the Console compute it -- so one key is one
+        connection on every surface, and Save carries Test evidence only when
+        the saved key is the tested one.
+
+        Args:
+            provider: The draft provider.
+            credential_source: ``_provider_current_credential_source`` result.
+            values: Draft values holding ``api_key`` and ``credential_env_var``.
+
+        Returns:
+            The :func:`connection_credential_revision` of that key.
+        """
+        return connection_credential_revision(
+            self._provider_draft_credential(provider, credential_source, values)
+        )
+
+    def _provider_current_draft_values(self) -> Mapping[str, object]:
         try:
-            values = self._provider_form_values_from_widgets()
+            return self._provider_form_values_from_widgets()
         except (QueryError, ValueError, AttributeError):
-            values = self._provider_setting_values_mapping()
+            return self._provider_setting_values_mapping()
+
+    def _provider_current_draft_credential(self) -> str | None:
+        """Return the key the current draft sends: what 't' probes with.
+
+        TASK-33005.2 review I-1: the probe must carry the key the evidence
+        identity digests (ADR-012), or a keyed local server answers 401 and
+        the Console reads "key rejected" for a key that was never sent.
+        """
+        values = self._provider_current_draft_values()
+        provider = str(values.get("provider") or "").strip()
+        if not provider:
+            return None
+        return self._provider_draft_credential(
+            provider, self._provider_current_credential_source(provider), values
+        )
+
+    def _provider_draft_credential(
+        self,
+        provider: str,
+        credential_source: str,
+        values: Mapping[str, object],
+    ) -> str | None:
+        """Return the key a send would use once this draft is saved."""
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()
+        if credential_source == "none":
+            key = None
+        elif credential_source == "draft":
+            key = str(values.get("api_key") or "").strip()
+        elif not {"api_key", "credential_env_var"} & dirty:
+            key = get_provider_readiness(
+                provider, self._app_config_mapping(), background_credentials=True
+            ).api_key
+        elif credential_source == "environment":
+            env_var = str(values.get("credential_env_var") or "").strip()
+            key = os.environ.get(env_var) if env_var else None
+        else:
+            key = self._provider_api_key_value(provider)
+        return resolve_provider_api_key(key)
+
+    def _provider_current_draft_identity(self) -> ProviderDraftIdentity | None:
+        values = self._provider_current_draft_values()
         provider = str(values.get("provider") or "").strip()
         endpoint = str(values.get("endpoint") or "").strip()
+        if provider and not endpoint and not self._provider_endpoint_value(provider):
+            # TASK-33005.1: no endpoint saved or typed -> the built-in one a
+            # send uses, the connection Chat settings and the Console key.
+            endpoint = (
+                builtin_provider_endpoint(
+                    provider_config_key(provider), self._provider_config(provider)
+                )
+                or ""
+            )
         if not provider or not endpoint:
             return None
         credential_source = self._provider_current_credential_source(provider)
@@ -14294,8 +14849,8 @@ class SettingsScreen(BaseAppScreen):
                     model=str(values.get("model") or "").strip(),
                     endpoint=endpoint,
                     credential_source=credential_source,
-                    credential_revision=getattr(
-                        self, "_provider_credential_revision", 0
+                    credential_revision=self._provider_draft_credential_revision(
+                        provider, credential_source, values
                     ),
                     draft_generation=getattr(self, "_provider_draft_generation", 0),
                     credential_value=(
@@ -14402,9 +14957,13 @@ class SettingsScreen(BaseAppScreen):
         return app_config or {}
 
     def _provider_saved_api_key_present(self, provider: str) -> bool:
+        # Qodo #2990: judge the stored key with the API-key path, so a saved
+        # subscription choice cannot hide it (Clear stays usable).
         readiness = get_provider_readiness(
             provider,
-            self._provider_readiness_app_config(),
+            self._provider_auth_readiness_config(
+                provider, auth_source=_anthropic_auth_sources()[0]
+            ),
             background_credentials=True,
         )
         return bool(
@@ -14415,9 +14974,11 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Select provider first"
+        if self._provider_is_registry_id(provider):
+            return REGISTRY_FIELD_PLACEHOLDER
         readiness = get_provider_readiness(
             provider,
-            self._provider_readiness_app_config(),
+            self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
         if readiness.subscription_status is not None:
@@ -14431,9 +14992,12 @@ class SettingsScreen(BaseAppScreen):
     def _provider_credential_status(self, provider: str) -> str:
         readiness = get_provider_readiness(
             provider,
-            self._provider_readiness_app_config(),
+            self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
+        registry_status = self._provider_registry_credential_status(provider, readiness)
+        if registry_status is not None:
+            return registry_status
         if readiness.subscription_status is not None:
             return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
@@ -14454,6 +15018,8 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Select provider first"
+        if self._provider_is_registry_id(provider):
+            return REGISTRY_FIELD_PLACEHOLDER
         readiness = get_provider_readiness(
             provider,
             self._provider_readiness_app_config(),
@@ -14478,24 +15044,125 @@ class SettingsScreen(BaseAppScreen):
         }[status]
 
     def _provider_catalog_entries(self) -> tuple[ConsoleProviderCatalogEntry, ...]:
-        return supported_console_provider_catalog(
-            handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
-        )
+        return settings_provider_catalog()
 
     def _provider_catalog_keys(self) -> frozenset[str]:
         return frozenset(
             entry.readiness_key for entry in self._provider_catalog_entries()
         )
 
+    @staticmethod
+    def _provider_is_registry_id(provider: object) -> bool:
+        """Whether ``provider`` addresses an ADR-146 entry (dangling included)."""
+        return canonical_custom_endpoint_id(provider) is not None
+
+    def _provider_registry_entry(self, provider: object) -> CustomEndpointEntry | None:
+        """The ADR-146 entry ``provider`` names, in either spelling, else None."""
+        return entry_for(
+            self._provider_readiness_app_config(),
+            canonical_custom_endpoint_id(provider),
+        )
+
+    def _provider_registry_credential_status(
+        self, provider: str, readiness: ProviderReadiness
+    ) -> str | None:
+        """Markup of :meth:`_provider_registry_credential_text`."""
+        text = self._provider_registry_credential_text(provider, readiness)
+        return None if text is None else escape_markup(text)
+
+    def _provider_registry_credential_text(
+        self, provider: str, readiness: ProviderReadiness
+    ) -> str | None:
+        """Plain credential status for a registry id, from its entry.
+
+        Qodo #2876: the registry record rides the keyless family readiness,
+        which would say "not required" while a send authenticates with the
+        entry's own credential. The source is named, never the secret, and
+        never the family slot's credential.
+
+        Args:
+            provider: Provider id shown in Providers & Models.
+            readiness: ``get_provider_readiness`` for ``provider``.
+
+        Returns:
+            The status line, or None for an ordinary provider.
+        """
+        if not self._provider_is_registry_id(provider):
+            return None
+        entry = self._provider_registry_entry(provider)
+        if entry is None:
+            return ENDPOINT_NOT_FOUND_SETTINGS_COPY
+        if not readiness.ready:
+            return f"Not ready · {readiness.recovery or readiness.reason}"
+        declared = _custom_endpoint_declared_credential(entry, None)
+        if declared is None:
+            return "API key source: none required by this endpoint"
+        if declared[1] == "environment":
+            return f"API key source: env var {entry.api_key_env} (this endpoint)"
+        return "API key source: saved in this endpoint"
+
+    def _provider_registry_endpoint(
+        self, provider: str
+    ) -> tuple[str, str | None] | None:
+        """Config key and display URL (plain text) of a registry id's endpoint.
+
+        Qodo #2876: a registry id has no ``api_settings`` table; its URL is
+        the entry's ``base_url``. Both parts are plain: every sink is a
+        ``_detail_row`` (``markup=False``), where an escape would show its
+        backslash on a hand-edited id (rider TASK-33002.18) or an IPv6 host.
+
+        Args:
+            provider: Provider id shown in Providers & Models.
+
+        Returns:
+            ``(key, url)`` with ``url`` None when the entry is gone, or None
+            for an ordinary provider.
+        """
+        slug = split_custom_endpoint_id(provider)
+        if slug is None:
+            return None
+        entry = self._provider_registry_entry(provider)
+        if entry is None:
+            return f"custom_endpoints.{slug}.base_url", None
+        return (
+            f"custom_endpoints.{entry.slug}.base_url",
+            safe_endpoint_display(entry.base_url),
+        )
+
+    def _sync_provider_registry_lock(self, provider: str) -> None:
+        """Offer no Connect field a registry id cannot save (Qodo #2876)."""
+        locked = self._provider_is_registry_id(provider)
+        for selector in _REGISTRY_LOCKED_FIELD_SELECTORS:
+            try:
+                self.query_one(selector).disabled = locked
+            except QueryError:
+                continue
+        try:
+            edit = self.query_one("#settings-provider-edit-custom-endpoint", Button)
+        except QueryError:
+            return
+        edit.display = self._provider_registry_entry(provider) is not None
+        # Revert restores a registry id without the provider-change reset;
+        # without this, llama_cpp's live Discover survived it (TASK-33002.12).
+        self._refresh_model_discovery_widgets()
+
     def _provider_display_name(self, provider: str) -> str:
-        provider_key = provider_config_key(provider)
-        display_name = PROVIDER_DISPLAY_NAMES.get(provider_key)
-        if display_name:
-            return display_name
-        for entry in self._provider_catalog_entries():
-            if entry.readiness_key == provider_key:
-                return entry.display_name
-        return provider
+        """Markup display name (see :meth:`_provider_display_label`).
+
+        For markup sinks (Statics, Buttons, toasts): a registry entry's name
+        or a hand-edited id is user text, where "[local]" would render as a
+        tag and "[/]" would crash (TASK-33002.12). Plain sinks -- every
+        ``_detail_row`` and the Test rows -- take the label instead.
+        """
+        return escape_markup(self._provider_display_label(provider))
+
+    def _provider_display_label(self, provider: str) -> str:
+        """Plain display name: the registry entry's (either spelling), else
+        the catalog name, else the raw id."""
+        entry = self._provider_registry_entry(provider)
+        if entry is not None:
+            return entry.display_name
+        return provider_display_name(provider, self._app_config_mapping())
 
     @staticmethod
     def _provider_catalog_group(entry: ConsoleProviderCatalogEntry) -> str:
@@ -14702,14 +15369,19 @@ class SettingsScreen(BaseAppScreen):
                     ).value.strip()
                 except QueryError:
                     return ""
-            return selected_value
+            if selected_value:
+                return selected_value
+            # Textual applies a Select's value only on mount, and the 0.25s
+            # subscription poll can tick in between: a composed Select reads
+            # NULL, so read the saved selection as if it were not there yet.
         except QueryError:
             try:
                 return self.query_one("#settings-provider-value", Input).value.strip()
             except QueryError:
-                return str(
-                    self._provider_setting_values_mapping().get("provider") or ""
-                ).strip()
+                pass
+        return str(
+            self._provider_setting_values_mapping().get("provider") or ""
+        ).strip()
 
     def _sync_provider_manual_widget(self, provider: str) -> None:
         from ...Widgets.select_values import assign_select_value
@@ -14812,6 +15484,77 @@ class SettingsScreen(BaseAppScreen):
                 else QWENCLOUD_API_MODE_HELP_COPY
             )
         )
+
+    def _sync_provider_auth_source_widget(self, provider: str) -> None:
+        """Show Anthropic's sign-in select; disable the key rows on subscription.
+
+        Runs after ``_sync_provider_registry_lock``, which resets the key and
+        env-var inputs, so the subscription choice is applied on top of it.
+        The rows stay visible and keep their values, so switching back to an
+        API key loses nothing (TASK-34201).
+        """
+        try:
+            row = self.query_one("#settings-provider-auth-source-row", Horizontal)
+            selector = self.query_one("#settings-provider-auth-source", Select)
+            guidance = self.query_one(
+                "#settings-provider-auth-source-guidance", Static
+            )
+        except QueryError:
+            return
+        is_anthropic = provider_config_key(provider) == "anthropic"
+        value = self._provider_auth_source_value(provider)
+        subscription = is_anthropic and value == _anthropic_auth_sources()[1]
+        row.set_class(not is_anthropic, "settings-gated-profile-hidden")
+        guidance.set_class(not is_anthropic, "settings-gated-profile-hidden")
+        selector.disabled = not is_anthropic
+        if is_anthropic and selector.value != value:
+            self._syncing_provider_auth_source = True
+            try:
+                with selector.prevent(Select.Changed):
+                    selector.value = value
+            finally:
+                self._syncing_provider_auth_source = False
+        guidance.update(
+            ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
+            if subscription
+            else ANTHROPIC_API_KEY_GUIDANCE_COPY
+        )
+        locked = self._provider_is_registry_id(provider)
+        for selector_id in (
+            "#settings-provider-api-key",
+            "#settings-provider-credential-env-var",
+        ):
+            try:
+                self.query_one(selector_id).disabled = locked or subscription
+            except QueryError:
+                continue
+        try:
+            clear = self.query_one("#settings-provider-api-key-clear", Button)
+            api_key = self.query_one("#settings-provider-api-key", Input).value
+        except QueryError:
+            return
+        clear.disabled = subscription or (
+            not self._provider_saved_api_key_present(provider)
+            and not api_key.strip()
+        )
+
+    def _snapshot_provider_auth_source_widget(self, provider: object) -> None:
+        """Capture the visible sign-in choice before switching providers or saving.
+
+        A provider switch or Save can run before the select's queued Changed
+        event; without this the choice would be lost (as for the API mode).
+        """
+        if provider_config_key(str(provider or "")) != "anthropic":
+            return
+        try:
+            selector = self.query_one("#settings-provider-auth-source", Select)
+        except QueryError:
+            return
+        value = self._select_value_text(selector.value)
+        if value in _anthropic_auth_sources() and value != (
+            self._provider_auth_source_value(provider)
+        ):
+            self._stage_provider_auth_source(provider, value)
 
     def _snapshot_provider_api_mode_widget(self, provider: object) -> None:
         """Capture the visible QwenCloud selector before switching providers."""
@@ -15046,23 +15789,15 @@ class SettingsScreen(BaseAppScreen):
                                 else Select.NULL
                             )
                         else:
-                            allowed = (
-                                self._model_profile_reasoning_effort_options(
-                                    provider, model
-                                )
-                                if draft_key == "model_profile_reasoning_effort"
-                                else CLOSED_ENUM_SELECT_OPTIONS[
-                                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
-                                ]
+                            options = self._model_profile_enum_options(
+                                provider, model, draft_key, value
                             )
                             if draft_key == "model_profile_reasoning_effort":
-                                select.set_options(
-                                    [(option, option) for option in allowed]
-                                )
+                                select.set_options(options)
                             select.value = (
                                 self._select_option_value(
                                     value,
-                                    allowed,
+                                    tuple(option for _label, option in options),
                                 )
                                 if supported
                                 else Select.NULL
@@ -15118,9 +15853,10 @@ class SettingsScreen(BaseAppScreen):
             self._provider_model_context_window_status(provider, model, value),
         )
         try:
-            self.query_one(
-                "#settings-model-context-window-reset", Button
-            ).disabled = not state.has_configured_override
+            self.query_one("#settings-model-context-window-reset", Button).disabled = (
+                not state.has_configured_override
+                or self._provider_is_registry_id(provider)
+            )
         except QueryError:
             pass
 
@@ -15168,6 +15904,8 @@ class SettingsScreen(BaseAppScreen):
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Select a provider before setting an endpoint"
+        if self._provider_is_registry_id(provider):
+            return REGISTRY_FIELD_PLACEHOLDER
         if provider_key in PROVIDER_ENDPOINT_PLACEHOLDERS:
             return PROVIDER_ENDPOINT_PLACEHOLDERS[provider_key]
         if provider_key in API_URL_PROVIDER_KEYS:
@@ -15213,33 +15951,12 @@ class SettingsScreen(BaseAppScreen):
             )
         return ""
 
-    def _provider_endpoint_summary(
-        self, provider: str, endpoint: object | None = None
-    ) -> str:
-        provider_key = provider_config_key(provider)
-        endpoint_key = self._provider_endpoint_setting_key(provider)
-        endpoint_value = str(
-            endpoint
-            if endpoint is not None
-            else self._provider_endpoint_value(provider)
-        ).strip()
-        if not provider_key:
-            return "Endpoint: provider required before saving"
-        if endpoint_value:
-            return (
-                f"Endpoint: api_settings.{provider_key}.{endpoint_key}={endpoint_value}"
-            )
-        if provider_key in API_URL_PROVIDER_KEYS:
-            return (
-                f"Endpoint: api_settings.{provider_key}.{endpoint_key} not configured"
-            )
-        return (
-            f"Endpoint: api_settings.{provider_key}.{endpoint_key} or provider default"
-        )
-
     def _provider_endpoint_display_value(
         self, provider: str, endpoint: object | None = None
     ) -> str:
+        registry = self._provider_registry_endpoint(provider)
+        if registry is not None:
+            return registry[1] or "endpoint not found"
         provider_key = provider_config_key(provider)
         endpoint_value = str(
             endpoint
@@ -15255,6 +15972,9 @@ class SettingsScreen(BaseAppScreen):
         return "provider default"
 
     def _provider_endpoint_row(self, provider: str) -> str:
+        registry = self._provider_registry_endpoint(provider)
+        if registry is not None:
+            return f"Endpoint key: {registry[0]}"
         provider_key = provider_config_key(provider)
         if not provider_key:
             return "Endpoint key: provider required"
@@ -15303,9 +16023,12 @@ class SettingsScreen(BaseAppScreen):
     def _provider_key_status(self, provider: str) -> str:
         readiness = get_provider_readiness(
             provider,
-            self._provider_readiness_app_config(),
+            self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
+        registry_status = self._provider_registry_credential_status(provider, readiness)
+        if registry_status is not None:
+            return registry_status
         if readiness.subscription_status is not None:
             return self._subscription_credential_copy(readiness.subscription_status)
         if readiness.reason == "Invalid provider settings":
@@ -15321,6 +16044,8 @@ class SettingsScreen(BaseAppScreen):
     def _model_discovery_available(self, provider: str) -> bool:
         return (
             bool(provider_config_key(provider))
+            # A registry entry's models are edited in Custom endpoints.
+            and not self._provider_is_registry_id(provider)
             and getattr(
                 self.app_instance,
                 "llm_provider_catalog_scope_service",
@@ -15351,8 +16076,16 @@ class SettingsScreen(BaseAppScreen):
         dirty = draft.dirty_keys if draft is not None else set()
         provider_key = provider_config_key(provider)
         api_mode_draft_key = self._provider_api_mode_draft_key(provider)
+        auth_source_draft_key = self._provider_auth_source_draft_key(provider)
         if not (
-            {"endpoint", "credential_env_var", "api_key", api_mode_draft_key} & dirty
+            {
+                "endpoint",
+                "credential_env_var",
+                "api_key",
+                api_mode_draft_key,
+                auth_source_draft_key,
+            }
+            & dirty
         ):
             return app_config
         provider_save_key, _config = self._provider_config_entry(provider)
@@ -15387,6 +16120,11 @@ class SettingsScreen(BaseAppScreen):
             draft_api_mode=(
                 draft_api_mode
                 if provider_key == "qwencloud" and provider_save_key == "qwencloud"
+                else None
+            ),
+            draft_auth_source=(
+                self._provider_auth_source_value(provider)
+                if provider_key == "anthropic" and auth_source_draft_key in dirty
                 else None
             ),
         )
@@ -15494,27 +16232,27 @@ class SettingsScreen(BaseAppScreen):
             ).display = not self._model_discovery_models
         except QueryError:
             pass
+        available = self._model_discovery_available(self._provider_widget_value())
         try:
             discover_button = self.query_one(
                 "#settings-discover-provider-models", Button
             )
-            discover_button.disabled = not self._model_discovery_available(
-                self._provider_widget_value()
-            )
+            discover_button.disabled = not available
         except QueryError:
             pass
+        # Another provider's list must not save under a registry id.
         try:
             save_button = self.query_one(
                 "#settings-save-discovered-provider-models", Button
             )
-            save_button.disabled = not self._model_discovery_models
+            save_button.disabled = not (available and self._model_discovery_models)
         except QueryError:
             pass
         try:
             clear_button = self.query_one(
                 "#settings-clear-discovered-provider-models", Button
             )
-            clear_button.disabled = not self._model_discovery_models
+            clear_button.disabled = not (available and self._model_discovery_models)
         except QueryError:
             pass
         try:
@@ -15988,19 +16726,21 @@ class SettingsScreen(BaseAppScreen):
                 pass
 
     def _provider_readiness_test_report(
-        self, *, probes_when_passing: bool = False
+        self,
+        *,
+        checking: bool = False,
+        probe: ProviderProbeResult | None = None,
     ) -> tuple[str, str, bool]:
         """Run the local provider readiness test against the DRAFT config.
 
         Args:
-            probes_when_passing: The caller probes the endpoint when this
-                report passes. A passing report then leaves out the stored
-                evidence: the probe renders fresh evidence for the same facts,
-                and a stored copy would repeat them (TASK-33001.3).
+            checking: A model-listing probe for this draft is in flight.
+            probe: A settled probe to show when the draft has no stored
+                evidence (a draft without a semantic identity).
 
         Returns:
-            Tuple of (detail line for the results row, toast summary stating
-            the pass/fail outcome with its reason, whether the test passed).
+            Tuple of (labelled result rows, one-line toast summary stating the
+            outcome, whether the configuration check passed).
         """
         try:
             provider = self._provider_widget_value()
@@ -16027,63 +16767,273 @@ class SettingsScreen(BaseAppScreen):
             if readiness.subscription_status is not None
             else None
         )
-        detail, summary, passed = self._build_provider_readiness_findings(
-            provider, model, readiness, draft_endpoint=draft_endpoint, dirty=dirty
-        )
         identity = self._provider_current_draft_identity()
         evidence = (
             self._provider_evidence_store().evidence_for(identity)
             if identity is not None
             else None
         )
-        if evidence is not None and not (probes_when_passing and passed):
-            detail = f"{detail} | {self._provider_exact_evidence_copy(evidence, model)}"
-        return detail, summary, passed
+        # TASK-33001.3 / TASK-33002.2: the rows are rebuilt from the one
+        # current evidence value on every render, so no fact can repeat.
+        return self._build_provider_readiness_findings(
+            provider,
+            model,
+            readiness,
+            draft_endpoint=draft_endpoint,
+            dirty=dirty,
+            evidence=probe if evidence is None else evidence,
+            checking=checking,
+        )
 
     @staticmethod
-    def _provider_exact_evidence_copy(
-        evidence: ProviderTestEvidence,
-        selected_model: str,
-    ) -> str:
-        """Render bounded facts for one already identity-matched evidence value."""
+    def _provider_test_rows(
+        readiness,
+        *,
+        display_name: str,
+        model: str,
+        endpoint: str,
+        dirty: set[str] | frozenset[str] = frozenset(),
+        evidence: ProviderTestEvidence | ProviderProbeResult | None = None,
+        checking: bool = False,
+    ) -> tuple[tuple[str, str], ...]:
+        """Return the Test result as (label, text) rows, one fact per row.
 
-        endpoint_category = SettingsScreen._provider_endpoint_category_copy(
-            evidence.category
+        TASK-33002.2 (spec §5): Config, Key, Endpoint, Model and Generation --
+        never a " | " dump, a config-key spelling or a secret. The row that
+        holds the failure that matters leads them; otherwise the rows keep
+        that order. TASK-33005.3: above them all, the Readiness row gives the
+        one readiness word every other model surface shows for this
+        connection. Reads no widgets, config or environment.
+
+        Args:
+            readiness: ``ProviderReadiness`` of the draft-overlaid config.
+            display_name: The provider's display name.
+            model: The model under test (may be empty).
+            endpoint: The endpoint under test. Only its safe display is shown:
+                no user info, query or fragment (TASK-486).
+            dirty: The draft's dirty field keys, to tag unsaved values.
+            evidence: Stored evidence, or a settled probe, for this draft.
+            checking: A model-listing probe is in flight.
+
+        Returns:
+            The rows as (label, text) pairs in display order.
+        """
+        if isinstance(evidence, ProviderTestEvidence):
+            # Qodo #2958: a paid test proves only the model it sent.
+            evidence = evidence.for_model(model.strip() or None)
+        listing = "testing" if checking else getattr(evidence, "endpoint", "not_tested")
+        model_ids = getattr(evidence, "model_ids", ())
+        # TASK-33005.4: a cloud provider's listing is its key check.
+        cloud = readiness.provider_key not in _LOCAL_TEST_PROVIDER_KEYS
+        # A blocker owned by the Key or Endpoint row is stated there, with a
+        # Settings-local next step; Config then keeps only the verdict, so no
+        # fact repeats and readiness.recovery's config-table spellings never
+        # show (spec §5, parent AC#2).
+        issue = None if readiness.ready else readiness.configuration_issue
+        if readiness.ready:
+            config = f"{display_name} is configured"
+        elif issue in ("credential_missing", "endpoint_missing"):
+            config = f"{display_name} is not ready"
+        else:
+            config = f"{display_name} is not ready: {readiness.reason}"
+            config += {
+                "Unknown provider": " — choose a supported provider",
+                "Invalid provider settings": (
+                    " — fix this provider's settings in Advanced Config"
+                ),
+            }.get(readiness.reason, "")
+
+        source = readiness.api_key_source or ""
+        if readiness.subscription_status is not None:
+            key = {
+                "pending": "Claude subscription, being checked",
+                "ready": "Claude subscription (Claude Code login)",
+                "expired": "Claude subscription, expired — log in with Claude Code",
+                "missing": "Claude subscription, missing — log in with Claude Code",
+            }[readiness.subscription_status]
+        elif source.startswith("env:"):
+            draft_tag = " (draft)" if "credential_env_var" in dirty else ""
+            key = f"from env var {readiness.env_var}{draft_tag}"
+        elif source:
+            key = (
+                "entered here, not saved yet"
+                if "api_key" in dirty
+                else "saved in config"
+            )
+        elif issue not in (None, "credential_missing"):
+            # Readiness drops the credential source whenever it blocks, so a
+            # set key is unknowable here -- never call it missing (AC#3).
+            key = "not checked until the provider is ready"
+        elif not readiness.requires_api_key:
+            key = "not required"
+        elif readiness.env_var:
+            key = f"missing — enter one in the API key field or set {readiness.env_var}"
+        else:
+            key = "missing — enter one in the API key field"
+        credential = getattr(evidence, "credential", "")
+        if source and credential == "listing_accepted":
+            key += f" · key accepted ({_listed_models_copy(model_ids)})"
+        elif source and credential == "authenticated":
+            key += " · accepted by a generation test"
+        elif (
+            source
+            and listing == "reachable"
+            and readiness.provider_key in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
+        ):
+            # ADR-020: this listing is public, so it proves nothing (AC#6).
+            key += " · models listed; key not checked"
+        elif (
+            source
+            and listing == "unreachable"
+            and getattr(evidence, "category", None) == "unauthorized"
+        ):
+            # Only a 401 rejects a key (Qodo #2958, owner ruling).
+            key += " · key rejected"
+        elif source:
+            key += " · present, not verified"
+
+        shown = safe_endpoint_display(endpoint)
+        if issue == "endpoint_missing":
+            shown = "not set — enter the workspace URL in the Endpoint field"
+        elif readiness.provider_key in API_URL_PROVIDER_KEYS and not shown:
+            shown = "not set"
+        elif not shown:
+            # Name the address the empty Endpoint field shows as its hint.
+            default = PROVIDER_ENDPOINT_PLACEHOLDERS.get(readiness.provider_key)
+            shown = f"{default} (provider default)" if default else "provider default"
+        elif "endpoint" in dirty:
+            shown += " (draft)"
+        shown += {
+            "testing": " · checking the model listing",
+            "reachable": " · model listing reached",
+            "model_listing_unavailable": (
+                " · model listing unavailable; chat endpoint not tested"
+            ),
+        }.get(listing, "")
+        if listing == "unreachable":
+            shown += " · " + SettingsScreen._provider_listing_failure_copy(
+                getattr(evidence, "category", None), cloud=cloud
+            )
+
+        if not model:
+            model_text = "not set — choose a default model"
+        else:
+            model_text = f"{model} (draft)" if "model" in dirty else model
+            if listing == "reachable" and model_ids:
+                model_text += (
+                    " · listed by the server"
+                    if model in model_ids
+                    else " · not listed by the server — pick a listed model"
+                )
+
+        generation = getattr(evidence, "generation", "not_tested")
+        failure = getattr(evidence, "generation_category", None) or "provider_error"
+        generation_text = {
+            "testing": "checking",
+            "succeeded": "succeeded",
+            "failed": f"failed ({failure.replace('_', ' ')})",
+            "changed_since_test": "stale — settings changed since the test",
+        }.get(generation, "not tested")
+
+        if not readiness.ready:
+            lead = {"credential_missing": "Key", "endpoint_missing": "Endpoint"}.get(
+                issue or "", "Config"
+            )
+        elif listing == "unreachable":
+            lead = "Endpoint"
+        elif not model:
+            lead = "Model"
+        elif generation == "failed":
+            lead = "Generation"
+        else:
+            lead = "Config"
+        rows = (
+            ("Config", config),
+            ("Key", key),
+            ("Endpoint", shown),
+            ("Model", model_text),
+            ("Generation", generation_text),
         )
-        generation_category = {
-            "authentication": "authentication",
-            "rate_limit": "rate limit",
-            "bad_request": "bad request",
-            "timeout": "timeout",
-            "connection_error": "connection error",
-            "provider_error": "provider error",
-        }.get(evidence.generation_category or "", "provider error")
+        word = verdict_readiness_words(
+            ProviderReadinessSnapshot(
+                configuration=readiness.configuration_facet,
+                endpoint=listing,
+                model=(
+                    "missing"
+                    if not model
+                    else "confirmed"
+                    if listing == "reachable" and model in model_ids
+                    else "unconfirmed"
+                ),
+                category=(
+                    getattr(evidence, "category", None)
+                    if listing in {"unreachable", "model_listing_unavailable"}
+                    else None
+                ),
+                configuration_issue=readiness.configuration_issue,
+            ),
+            evidence,
+            subscription_status=readiness.subscription_status,
+        )
+        return (("Readiness", word), *sorted(rows, key=lambda row: row[0] != lead))
 
-        endpoint_copy = {
-            "not_tested": "model listing not tested",
-            "testing": "model listing checking",
-            "reachable": "model listing reached",
-            "unreachable": f"model listing failed ({endpoint_category})",
-            "model_listing_unavailable": "model listing unavailable",
-        }[evidence.endpoint]
-        model_copy = "model unconfirmed"
-        if selected_model and selected_model in evidence.model_ids:
-            model_copy = "selected model confirmed"
-        credential_copy = {
-            "not_required": "credential not required",
-            "missing": "credential missing",
-            "present_unverified": "credential present, not verified",
-            "authenticated": "credential authenticated by generation",
-        }[evidence.credential]
-        generation_copy = {
-            "not_tested": "generation not tested",
-            "testing": "generation checking",
-            "succeeded": "generation succeeded",
-            "failed": f"generation failed ({generation_category})",
-            "changed_since_test": "generation evidence stale",
-        }[evidence.generation]
-        return " | ".join(
-            (credential_copy, endpoint_copy, model_copy, generation_copy)
+    @staticmethod
+    def _provider_test_headline(result: str) -> str:
+        """Return a Test result's leading row, then its Endpoint row, as one
+        line (for Overview), so it says whether the endpoint was reached."""
+        rows = [line.partition("  ") for line in result.split("\n")]
+        label, _gap, text = rows[0]
+        if not text:
+            return label
+        headline = f"{label}: {text.strip()}"
+        for other, _gap, other_text in rows[1:]:
+            if other == "Endpoint" and other_text:
+                headline += f"; Endpoint: {other_text.strip()}"
+        return headline
+
+    @staticmethod
+    def _provider_listing_failure_copy(
+        category: str | None, *, cloud: bool = False
+    ) -> str:
+        """Name a failed model listing and the next step (TASK-33002.2 AC#2).
+
+        A cloud provider has no server to start (TASK-33005.4).
+        """
+        next_step = {
+            "unauthorized": "check the API key",
+            "forbidden": "check the API key's permissions",
+            "http_status": "check the URL",
+            "invalid_payload": "check the URL",
+        }.get(
+            category or "",
+            "check your network or the endpoint URL"
+            if cloud
+            else "start the server or check the URL",
+        )
+        failure = SettingsScreen._provider_endpoint_category_copy(category)
+        return f"model listing failed ({failure}) — {next_step}"
+
+    @staticmethod
+    def _provider_key_check_copy(display_name: str, evidence: object) -> str:
+        """Say what one cloud key-check listing proved (ADR-012 table)."""
+        listing = getattr(evidence, "endpoint", None)
+        category = getattr(evidence, "category", None)
+        if listing == "reachable":
+            listed = _listed_models_copy(getattr(evidence, "model_ids", ()))
+            if getattr(evidence, "credential", "") == "listing_accepted":
+                return f"key accepted ({listed}) · generation not tested"
+            return f"{listed}; key not checked · generation not tested"
+        if listing == "unreachable" and category == "unauthorized":
+            return (
+                f"{display_name} rejected the API key ("
+                f"{SettingsScreen._provider_endpoint_category_copy(category)}); "
+                "enter a valid key, then Test again"
+            )
+        if listing == "unreachable":
+            return SettingsScreen._provider_listing_failure_copy(category, cloud=True)
+        return (
+            "the model listing gave no usable list, so the key was not checked; "
+            "generation not tested"
         )
 
     @staticmethod
@@ -16107,12 +17057,14 @@ class SettingsScreen(BaseAppScreen):
         readiness,
         *,
         draft_endpoint: str,
-        dirty: set[str],
+        dirty: set[str] | frozenset[str],
+        evidence: ProviderTestEvidence | ProviderProbeResult | None = None,
+        checking: bool = False,
     ) -> tuple[str, str, bool]:
-        """Assemble the Test evidence line + toast from resolved inputs.
+        """Assemble the Test result rows + toast from resolved inputs.
 
-        Reads only ``app_config`` (via helpers) and ``os.environ`` -- never widgets
-        -- so it is unit-testable on a bare screen instance.
+        Reads only ``app_config`` (via helpers) -- never widgets -- so it is
+        unit-testable on a bare screen instance.
 
         Args:
             provider: Provider under test (draft widget value).
@@ -16120,111 +17072,121 @@ class SettingsScreen(BaseAppScreen):
             readiness: ``ProviderReadiness`` from the draft-overlaid config.
             draft_endpoint: The endpoint the test used (draft widget, may be empty).
             dirty: The provider draft's dirty field keys.
+            evidence: Stored evidence, or a settled probe, for this draft.
+            checking: A model-listing probe is in flight.
 
         Returns:
-            Tuple of (redacted detail line, redacted toast summary, passed).
+            Tuple of (redacted labelled rows, one line each, redacted toast
+            summary, passed).
         """
-        provider_key = provider_config_key(provider)
         passed = bool(readiness.ready and model)
         display_name = self._provider_display_name(provider) if provider else "Provider"
-        # TASK-366: lead with ONE verdict consistent with the configuration line.
-        # A config-ready provider with no default model is still blocked, so it
-        # must not read "<provider> is ready" next to "configuration=blocked".
-        if readiness.ready and not model:
-            verdict_message = (
-                f"{display_name} is configured, but no default model is set."
-            )
-        elif readiness.ready and readiness.requires_api_key:
-            verdict_message = (
-                f"{display_name} configuration is complete. Credential is present; "
-                "provider acceptance has not been tested."
-            )
-        elif readiness.ready:
-            verdict_message = (
-                f"{display_name} configuration is complete. No API key is required."
-            )
-        else:
-            verdict_message = readiness.user_message
-        findings: list[str] = ["Configuration check", verdict_message]
-
-        if not model:
-            findings.append("model=missing")
-        else:
-            findings.append(f"model={model}{' (draft)' if 'model' in dirty else ''}")
-
-        # This literal marker holds no secret material (just a provenance
-        # label). redact_secret_text() pattern-matches on "...key...=value",
-        # so if it were run through the same redaction pass as the other
-        # findings it would truncate the word "draft" right after "=". It is
-        # therefore excluded from redaction below (see `api_key_relabelled`).
-        draft_api_key_label = "api_key_source=draft api_key (unsaved)"
-        api_key_relabelled = False
-        if readiness.api_key_source:
-            if (
-                "api_key" in dirty
-                and readiness.api_key_source
-                == f"config:api_settings.{provider_key}.api_key"
-            ):
-                findings.append(draft_api_key_label)
-                api_key_relabelled = True
-            else:
-                findings.append(f"api_key_source={readiness.api_key_source}")
-        if readiness.env_var:
-            # Report presence only, never the raw value. ``redact_secret_text``
-            # is name-pattern based (it redacts only ``*_API_KEY``/``TOKEN``/...),
-            # so a custom-named credential env var (e.g. ``MY_LLAMA_CRED``) would
-            # otherwise print its secret verbatim into this screenshot-able UI.
-            # Emitting the established ``<redacted>`` marker for any set value
-            # keeps the standard-name output identical while closing that gap
-            # (folds in task-483).
-            env_present = bool(os.environ.get(readiness.env_var))
-            env_tag = " (draft env var)" if "credential_env_var" in dirty else ""
-            findings.append(
-                f"{readiness.env_var}={'<redacted>' if env_present else 'missing'}{env_tag}"
-            )
-        elif not readiness.requires_api_key:
-            findings.append("api_key=not required")
-
-        # Mask any password embedded in the endpoint's userinfo before display
-        # (name-pattern redaction misses ``scheme://user:pass@host``).
-        endpoint_summary = self._provider_endpoint_summary(
-            provider, endpoint=_mask_url_userinfo(draft_endpoint)
+        # Qodo #2876: a registry id's URL and credential are its entry's, never
+        # the family slot's ("provider default", "not required"). The rows are
+        # plain text (the widget sets markup=False), so they take the plain name.
+        entry = self._provider_registry_entry(provider)
+        rows = self._provider_test_rows(
+            readiness,
+            display_name=(
+                self._provider_display_label(provider) if provider else "Provider"
+            ),
+            model=model,
+            endpoint=draft_endpoint if entry is None else entry.base_url,
+            dirty=dirty,
+            evidence=evidence,
+            checking=checking,
         )
-        if "endpoint" in dirty:
-            endpoint_summary = f"{endpoint_summary} (draft)"
-        findings.append(endpoint_summary)
-
-        findings.append(f"configuration={'complete' if passed else 'blocked'}")
-
-        # task-185: the toast must state the outcome, not just "finished".
-        if passed:
-            summary = (
-                f"Configuration check complete: {display_name} is configured; "
-                f"model {model}. Live generation has not been tested."
+        registry_rows: dict[str, str] = {}
+        if entry is not None:
+            registry_rows["Key"] = str(
+                self._provider_registry_credential_text(provider, readiness)
+            ).removeprefix("API key source: ")
+        elif self._provider_is_registry_id(provider):
+            registry_rows["Endpoint"] = (
+                "not found — choose another provider, or recreate it under "
+                "Custom endpoints"
             )
-        elif not readiness.ready:
-            summary = f"Configuration check blocked: {readiness.user_message}"
+        rows = tuple((label, registry_rows.get(label, text)) for label, text in rows)
+        generation = dict(rows)["Generation"]
+        listing = None if checking else getattr(evidence, "endpoint", None)
+        choose = "" if model else " Choose a default model."
+        # task-185 / TASK-33002.2 AC#6: one line stating the outcome that the
+        # first row states.
+        if not readiness.ready:
+            summary = (
+                f"Configuration check blocked: {display_name} is not ready: "
+                f"{readiness.reason}."
+            )
             if not model:
                 summary += " Also set a default model."
-        else:
+        elif (
+            entry is None
+            and readiness.provider_key not in _LOCAL_TEST_PROVIDER_KEYS
+            and listing in {"reachable", "unreachable", "model_listing_unavailable"}
+        ):
+            # TASK-33005.4 (ADR-012 amendment 2026-09-26): a key check's
+            # outcome, led by the readiness word (it carries the time).
+            summary = (
+                f"{rows[0][1]} — "
+                f"{self._provider_key_check_copy(display_name, evidence)}.{choose}"
+            )
+        elif listing == "unreachable":
+            failure = self._provider_listing_failure_copy(
+                getattr(evidence, "category", None)
+            )
+            summary = (
+                f"{failure[:1].upper()}{failure[1:]}; generation {generation}.{choose}"
+            )
+        elif not model and listing == "reachable":
+            # AC#11: the listing is how a first run finds a model to choose.
+            summary = (
+                "Model listing reached "
+                f"({_listed_models_copy(getattr(evidence, 'model_ids', ()))});"
+                " choose a default model."
+            )
+        elif not model:
             summary = (
                 f"Configuration check blocked: {display_name} is configured but "
                 "no default model is set."
             )
-        if api_key_relabelled:
-            detail = " | ".join(
-                finding
-                if finding == draft_api_key_label
-                else redact_secret_text(finding)
-                for finding in findings
+        elif listing == "model_listing_unavailable":
+            summary = (
+                "Configuration valid; model listing unavailable; "
+                "chat endpoint and generation not tested."
+            )
+        elif listing == "reachable":
+            summary = (
+                f"Configuration check complete: {display_name} is configured; "
+                f"model {model}. Model listing reached; generation {generation}."
             )
         else:
-            detail = redact_secret_text(" | ".join(findings))
-        return (
-            detail,
-            redact_secret_text(summary),
-            passed,
+            summary = (
+                f"Configuration check complete: {display_name} is configured; "
+                f"model {model}. Live generation has not been tested."
+            )
+        detail = "\n".join(
+            f"{label:<{_PROVIDER_TEST_LABEL_CELLS}}{text}" for label, text in rows
         )
+        return redact_secret_text(detail), redact_secret_text(summary), passed
+
+    def _adopt_shared_provider_test_evidence(self) -> str:
+        """Show the saved connection's last result from any surface on a visit.
+
+        TASK-33005.1 (AC#6): Settings is rebuilt on every visit, so its draft
+        store starts empty, while the app's shared owner still holds what
+        Chat settings, the Console or an earlier visit settled.
+
+        Returns:
+            The Test result text to render.
+        """
+        if self._provider_test_result == self._PROVIDER_TEST_NOT_RUN_COPY:
+            identity = self._provider_current_draft_identity()
+            if (
+                identity is not None
+                and self._provider_evidence_store().evidence_for(identity) is not None
+            ):
+                self._provider_test_result = self._provider_readiness_test_report()[0]
+        return self._provider_test_result
 
     def _run_provider_readiness_test(self) -> str:
         detail, _summary, _passed = self._provider_readiness_test_report()
@@ -16234,8 +17196,8 @@ class SettingsScreen(BaseAppScreen):
         """Return the endpoint to live-probe after a passing readiness test.
 
         task-191: only URL-based/local providers with a concrete endpoint
-        (unsaved widget value first, then saved config) are probed; cloud and
-        key-based providers keep the local-only Test behavior.
+        (unsaved widget value first, then saved config) are probed here; a
+        cloud provider's 't' is the key-check listing (TASK-33005.4).
 
         Returns:
             The endpoint base URL, or ``""`` when no live probe applies.
@@ -16256,10 +17218,11 @@ class SettingsScreen(BaseAppScreen):
         self,
         base_url: str,
         provider: str,
-        detail: str,
-        summary: str,
         identity: ProviderDraftIdentity | None = None,
         token: object | None = None,
+        generation: int | None = None,
+        *,
+        key_check: bool = False,
     ) -> None:
         from .settings_endpoint_probe import (
             SettingsEndpointProbePurpose,
@@ -16267,11 +17230,18 @@ class SettingsScreen(BaseAppScreen):
         )
 
         try:
-            outcome = await probe_settings_endpoint(
-                base_url,
-                provider=provider,
-                purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
-            )
+            # Resolved here, not passed in: a worker argument lands in the
+            # worker's description, and this is the identity's key.
+            api_key = self._provider_current_draft_credential()
+            if key_check:
+                outcome = await self._provider_key_check(provider, base_url, api_key)
+            else:
+                outcome = await probe_settings_endpoint(
+                    base_url,
+                    provider=provider,
+                    purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+                    **({"api_key": api_key} if api_key else {}),
+                )
         except asyncio.CancelledError:
             cancelled_current = bool(
                 token is not None
@@ -16281,15 +17251,30 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_test_result = "Configuration check cancelled; run again."
                 self._update_provider_test_result()
             raise
-        except Exception:  # noqa: BLE001 - probe failures must settle as bounded UI state.
-            outcome = self._provider_probe_connection_error_outcome()
+        except Exception as exc:  # noqa: BLE001 - probe failures must settle as bounded UI state.
+            logger.debug("Provider test probe failed: %s", type(exc).__name__)
+            # The discovery client turns every transport failure into a
+            # result, so a key check that raised (e.g. a runtime-policy
+            # denial in server mode) learned nothing -- never a send blocker.
+            outcome = (
+                "Key not checked: the model listing could not run for "
+                f"{self._provider_display_name(provider)}."
+                if key_check
+                else self._provider_probe_connection_error_outcome()
+            )
+        if isinstance(outcome, str):
+            # Nothing was sent, so nothing was learned (TASK-33005.4 AC#8).
+            if token is not None:
+                self._provider_evidence_store().cancel_probe(token)
+            if self._provider_probe_generation_current(generation):
+                self._show_provider_key_check_unavailable(outcome)
+            return
         try:
             self._apply_provider_endpoint_probe_outcome(
-                detail,
-                summary,
                 outcome,
                 identity=identity,
                 token=token,
+                generation=generation,
             )
         except Exception:  # noqa: BLE001 - UI settlement must not strand probe state.
             failure = self._provider_probe_connection_error_outcome()
@@ -16298,10 +17283,129 @@ class SettingsScreen(BaseAppScreen):
                     token,
                     self._provider_probe_result_from_outcome(failure),
                 )
-            self._provider_test_result = redact_secret_text(
-                f"{detail} | endpoint {failure.summary}"
+            if not self._provider_probe_generation_current(generation):
+                return
+            # A fixed line: rebuilding the rows could raise again in here.
+            self._provider_test_result = (
+                "Configuration check could not finish; run it again."
             )
             self._update_provider_test_result()
+
+    def _provider_key_check_applies(self, provider: str) -> bool:
+        """Whether 't' checks this provider's key by a listing (TASK-33005.4).
+
+        Cloud providers only: URL-based and keyless providers keep the local
+        probe or check, and a custom endpoint is a local connection.
+        """
+        provider_key = provider_config_key(provider)
+        return bool(provider_key) and not (
+            provider_key in _LOCAL_TEST_PROVIDER_KEYS
+            or self._provider_is_registry_id(provider)
+        )
+
+    def _provider_key_check_unavailable(
+        self, provider: str, readiness: ProviderReadiness
+    ) -> str | None:
+        """Why a configured cloud provider gets no key check, sending nothing.
+
+        Returns:
+            The sentence to show, or ``None`` when the listing may run.
+        """
+        name = self._provider_display_name(provider)
+        if readiness.subscription_status is not None:
+            return (
+                f"No non-billable key check is available for {name} with a "
+                "Claude subscription; the login was checked locally."
+            )
+        key = self._provider_current_draft_credential()
+        if readiness.requires_api_key and key is None:
+            # TASK-32806.1's rule: a placeholder or blank key is no key.
+            return (
+                f"Key not checked: {name}'s API key is missing or a placeholder — "
+                "enter one in the API key field."
+            )
+        provider_key = provider_config_key(provider)
+        draft_endpoint = str(
+            self._provider_current_draft_values().get("endpoint") or ""
+        ).strip()
+        if provider_key == "huggingface" or (
+            provider_key in _SEND_READS_ONLY_API_BASE_URL
+            and (
+                self._provider_endpoint_setting_key(provider) != "api_base_url"
+                # A blank draft sends to the default, while the listing
+                # would follow any saved alias (fix round 2).
+                or (
+                    not draft_endpoint
+                    and first_configured_endpoint(self._provider_config(provider))
+                )
+            )
+        ):
+            # ADR-012 "same destination" (AC#10): a send would not use the
+            # endpoint this listing resolves -- Hugging Face sends read the
+            # legacy [API] table, and these handlers no other spelling.
+            # TASK-2117 (the gateway pins api_base_url) retires this guard.
+            return _NO_KEY_CHECK_COPY.format(name=name)
+        return None
+
+    def _show_provider_key_check_unavailable(self, note: str) -> None:
+        """Show the readiness rows plus why no key check ran (AC#7/#8)."""
+        detail, _summary, _passed = self._provider_readiness_test_report()
+        self._provider_test_result = (
+            f"{detail}\n{'Key check':<{_PROVIDER_TEST_LABEL_CELLS}}{note}"
+        )
+        self._update_provider_test_result()
+        self.app.notify(note, severity="warning")
+
+    async def _provider_key_check(
+        self, provider: str, endpoint: str, api_key: str | None
+    ) -> ProviderProbeResult | str:
+        """List a cloud provider's models with the draft key (TASK-33005.4).
+
+        ADR-012 amendment 2026-09-26: one explicit, non-generating listing
+        through the shared discovery client, at the endpoint and with the
+        key a send would use for this draft. Nothing is cached or saved
+        (ADR-002/ADR-020).
+
+        Returns:
+            The listing's evidence, or why nothing was sent.
+        """
+        from .settings_endpoint_probe import key_check_probe_result
+
+        name = self._provider_display_name(provider)
+        scope = getattr(self.app_instance, "llm_provider_catalog_scope_service", None)
+        if scope is None:
+            return f"Key not checked: model listing is unavailable for {name} here."
+        section, _config = self._provider_config_entry(provider)
+        staged: dict[str, object] = {}
+        if endpoint:
+            staged[self._provider_endpoint_setting_key(provider)] = endpoint
+        if api_key:
+            staged["api_key"] = api_key
+        result = await scope.discover_models(
+            mode="local",
+            provider=provider_config_key(provider),
+            staged_settings={
+                "api_settings": {section or provider_config_key(provider): staged}
+            },
+            use_shared_cache=False,
+        )
+        probe = key_check_probe_result(
+            result,
+            key_sent=bool(api_key),
+            model=str(self._provider_current_draft_values().get("model") or "").strip(),
+        )
+        if probe is not None:
+            return probe
+        kind = getattr(getattr(result, "error", None), "kind", "")
+        if kind in {"unsupported_endpoint", "malformed_endpoint"}:
+            return _NO_KEY_CHECK_COPY.format(name=name)
+        no_list = getattr(result, "provider_list_key", "") is None
+        if kind == "missing_endpoint" and no_list:
+            return (
+                f"Key not checked: no model list is configured for {name} in "
+                "[providers]."
+            )
+        return f"Key not checked: {name}'s settings could not be resolved."
 
     @staticmethod
     def _provider_probe_connection_error_outcome() -> "SettingsEndpointProbeOutcome":
@@ -16323,61 +17427,63 @@ class SettingsScreen(BaseAppScreen):
 
     def _apply_provider_endpoint_probe_outcome(
         self,
-        detail: str,
-        summary: str,
         outcome,
         *,
         identity: ProviderDraftIdentity | None = None,
         token: object | None = None,
+        generation: int | None = None,
     ) -> None:
-        """Fold a live endpoint probe outcome into the Test result and toast.
+        """Fold a live endpoint probe outcome into the Test rows and toast.
 
         Args:
-            detail: Readiness detail line shown in the results row.
-            summary: Passing readiness toast summary the probe extends.
             outcome: ``SettingsEndpointProbeOutcome`` from the probe helper.
+            identity: The tested draft's identity, when it has one.
+            token: The evidence-store token of this probe.
+            generation: The Test draft generation the probe launched under;
+                an outcome from an older generation is dropped.
         """
         from .settings_endpoint_probe import SettingsEndpointProbeOutcome
 
-        if type(outcome) is not SettingsEndpointProbeOutcome:
-            outcome = self._provider_probe_connection_error_outcome()
-        probe_result = self._provider_probe_result_from_outcome(outcome)
-        if identity is not None and token is not None:
-            if not self._provider_evidence_store().settle(token, probe_result):
-                return
-            evidence = self._provider_evidence_store().evidence_for(identity)
-            if evidence is not None:
-                try:
-                    selected_model = self.query_one(
-                        "#settings-model-value", Input
-                    ).value.strip()
-                except QueryError:
-                    selected_model = ""
-                detail = (
-                    f"{detail} | "
-                    f"{self._provider_exact_evidence_copy(evidence, selected_model)}"
-                )
-        self._provider_test_result = redact_secret_text(detail)
-        self._update_provider_test_result()
-        if probe_result.endpoint == "reachable":
-            combined = (
-                f"{summary.rstrip('.')}; model-listing evidence updated; "
-                "generation not tested."
-            )
-        elif probe_result.endpoint == "model_listing_unavailable":
-            combined = (
-                "Configuration valid; model listing unavailable; "
-                "chat endpoint and generation not tested."
-            )
+        if type(outcome) is ProviderProbeResult:  # A key check's (TASK-33005.4).
+            probe_result = outcome
         else:
-            category = self._provider_endpoint_category_copy(outcome.category)
-            combined = (
-                f"Configuration valid; model-listing check failed ({category}); "
-                "generation not tested."
-            )
+            if type(outcome) is not SettingsEndpointProbeOutcome:
+                outcome = self._provider_probe_connection_error_outcome()
+            probe_result = self._provider_probe_result_from_outcome(outcome)
+        if (
+            identity is not None
+            and token is not None
+            and not self._provider_evidence_store().settle(token, probe_result)
+        ):
+            return
+        if not self._provider_probe_generation_current(generation):
+            return
+        detail, summary, passed = self._provider_readiness_test_report(
+            probe=probe_result
+        )
+        self._provider_test_result = detail
+        self._update_provider_test_result()
         self.app.notify(
-            redact_secret_text(combined),
-            severity="information" if probe_result.endpoint == "reachable" else "warning",
+            summary,
+            severity=(
+                "information"
+                if passed and probe_result.endpoint == "reachable"
+                else "warning"
+            ),
+        )
+
+    def _provider_probe_generation_current(self, generation: int | None) -> bool:
+        """Whether a probe launched at ``generation`` still describes the draft.
+
+        Args:
+            generation: The Test draft generation captured at launch, or
+                ``None`` for a caller that does not track one.
+
+        Returns:
+            ``True`` when no edit has staled the Test rows since launch.
+        """
+        return generation is None or generation == getattr(
+            self, "_provider_test_draft_generation", 0
         )
 
     def _update_provider_test_result(self) -> None:
@@ -16402,6 +17508,10 @@ class SettingsScreen(BaseAppScreen):
         it never clobbers the not-run sentinel or thrashes on every keystroke.
         """
         self._provider_subscription_test = None
+        # Any in-flight probe, identified or not, now describes an old draft.
+        self._provider_test_draft_generation = (
+            getattr(self, "_provider_test_draft_generation", 0) + 1
+        )
         if self._provider_test_result in (
             self._PROVIDER_TEST_NOT_RUN_COPY,
             self._PROVIDER_TEST_STALE_COPY,
@@ -16478,6 +17588,8 @@ class SettingsScreen(BaseAppScreen):
             pass
         self._refresh_generation_support_summary(provider, model)
         self._sync_provider_api_mode_widget(provider)
+        self._sync_provider_registry_lock(provider)
+        self._sync_provider_auth_source_widget(provider)
         self._refresh_provider_field_guidance()
 
     def _detail_row(
@@ -16491,10 +17603,13 @@ class SettingsScreen(BaseAppScreen):
         if isinstance(value, str):
             # task-1583: dotted keys/paths fold at separators, never mid-word.
             value = _fold_long_tokens(value)
+        # Plain text: values name config sections like "[console]", which
+        # markup would swallow (captures: "Scope:  response fallbacks").
         row = Static(
             f"{label}: {value}",
             id=identifier,
             classes="settings-detail-row",
+            markup=False,
         )
         if tooltip is not None:
             row.tooltip = tooltip
@@ -16524,9 +17639,9 @@ class SettingsScreen(BaseAppScreen):
         return self._with_save_behavior_row(rows, save_copy)
 
     def _provider_field_guidance_rows_base(self) -> tuple[tuple[str, str], ...]:
-        provider = str(
-            self._provider_setting_values_mapping().get("provider") or ""
-        ).strip()
+        values = self._provider_setting_values_mapping()
+        provider = str(values.get("provider") or "").strip()
+        model = str(values.get("model") or "").strip() or "<model>"
         endpoint_key = self._provider_endpoint_row(provider).removeprefix(
             "Endpoint key: "
         )
@@ -16560,12 +17675,20 @@ class SettingsScreen(BaseAppScreen):
                     "On or Off" if enabled else "whole number from 1 to 1000",
                 ),
             )
-        if field_id == "settings-provider-value":
+        # TASK-33002.3: the Select is hidden; users focus the search and list.
+        if field_id in {
+            "settings-provider-value",
+            "settings-provider-search",
+            "settings-provider-picker",
+        }:
             return (
                 ("Focused setting", "Provider"),
                 (
                     "Purpose",
-                    "Selects the provider used for Console generation defaults.",
+                    (
+                        "Sets the provider new chats start with; open chats "
+                        "nobody has used yet follow it."
+                    ),
                 ),
                 ("Saved as", "chat_defaults.provider"),
                 (
@@ -16591,7 +17714,10 @@ class SettingsScreen(BaseAppScreen):
                 ("Focused setting", "Model"),
                 (
                     "Purpose",
-                    "Selects the model used when Console has no narrower override.",
+                    (
+                        "Sets the model new chats start with; open chats nobody "
+                        "has used yet follow it."
+                    ),
                 ),
                 ("Saved as", "chat_defaults.model"),
                 (
@@ -16606,21 +17732,19 @@ class SettingsScreen(BaseAppScreen):
                     "Purpose",
                     "Defines the model's total token capacity for request safety.",
                 ),
-                ("Saved as", "model_capabilities.models.<model>.context_window"),
+                ("Saved as", f"model_capabilities.models.{model}.context_window"),
                 (
                     "Validation",
                     "positive whole tokens from the provider's model documentation",
                 ),
             )
         if field_id == "settings-provider-endpoint-value":
+            endpoint = MODEL_CONFIG_FIELDS["endpoint"]
             return (
-                ("Focused setting", "Endpoint"),
-                (
-                    "Purpose",
-                    "Controls the provider endpoint used by Console generation.",
-                ),
+                ("Focused setting", endpoint.label),
+                ("Purpose", endpoint.help),
                 ("Saved as", endpoint_key),
-                ("Validation", "must start with http:// or https:// when set"),
+                ("Validation", f"{endpoint.valid_range} when set"),
             )
         if field_id == "settings-provider-api-mode":
             purpose = (
@@ -16657,113 +17781,16 @@ class SettingsScreen(BaseAppScreen):
                     "environment variable names must start with a letter or underscore",
                 ),
             )
-        if field_id == "settings-model-profile-temperature":
-            return (
-                ("Focused setting", "Temperature"),
-                (
-                    "Purpose",
-                    "Optional creativity default for this provider and model profile.",
-                ),
-                (
-                    "Saved as",
-                    f"{provider_config_prefix}.model_defaults.<model>.temperature",
-                ),
-                (
-                    "Validation",
-                    "number from 0.0 to 2.0, or blank for inherited default",
-                ),
-            )
-        if field_id == "settings-model-profile-top-p":
-            return (
-                ("Focused setting", "Top P"),
-                (
-                    "Purpose",
-                    "Optional token-probability cutoff for this provider and model profile.",
-                ),
-                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.top_p"),
-                (
-                    "Validation",
-                    "number from 0.0 to 1.0, or blank for inherited default",
-                ),
-            )
-        model_profile_guidance = {
-            "settings-model-profile-min-p": (
-                "Min P",
-                "Optional minimum-probability sampling cutoff for local/provider profiles.",
-                "min_p",
-                "number from 0.0 to 1.0, or blank for inherited default",
-            ),
-            "settings-model-profile-top-k": (
-                "Top K",
-                "Optional token candidate count for providers that support top-k sampling.",
-                "top_k",
-                "whole number of at least 0, or blank for inherited default",
-            ),
-            "settings-model-profile-max-tokens": (
-                "Response max tokens",
-                "Optional response length ceiling for this provider and model profile.",
-                "max_tokens",
-                "whole number of at least 1, or blank for inherited default",
-            ),
-            "settings-model-profile-seed": (
-                "Seed",
-                "Optional deterministic generation seed for providers that support it.",
-                "seed",
-                "whole number of at least 0, or blank for inherited default",
-            ),
-            "settings-model-profile-presence-penalty": (
-                "Presence penalty",
-                "Optional penalty for introducing tokens already present in the conversation.",
-                "presence_penalty",
-                "number from -2.0 to 2.0, or blank for inherited default",
-            ),
-            "settings-model-profile-frequency-penalty": (
-                "Frequency penalty",
-                "Optional penalty for repeating frequent tokens in the response.",
-                "frequency_penalty",
-                "number from -2.0 to 2.0, or blank for inherited default",
-            ),
-            "settings-model-profile-reasoning-effort": (
-                "Reasoning effort",
-                "Optional OpenAI Responses reasoning level for reasoning-capable models.",
-                "reasoning_effort",
-                "choose none, minimal, low, medium, high, or xhigh; Inherit default keeps the inherited default",
-            ),
-            "settings-model-profile-reasoning-summary": (
-                "Reasoning summary",
-                "Optional OpenAI reasoning summary detail for supported models.",
-                "reasoning_summary",
-                "choose auto, concise, detailed, or none; Inherit default keeps the inherited default",
-            ),
-            "settings-model-profile-verbosity": (
-                "Verbosity",
-                "Optional OpenAI text verbosity hint for GPT-5-style Responses models.",
-                "verbosity",
-                "choose low, medium, or high; Inherit default keeps the inherited default",
-            ),
-            "settings-model-profile-thinking-effort": (
-                "Thinking effort",
-                "Optional Anthropic-style thinking level mapped to provider token budgets.",
-                "thinking_effort",
-                "choose off, low, medium, high, xhigh, or max; Inherit default keeps the inherited default",
-            ),
-            "settings-model-profile-thinking-budget-tokens": (
-                "Think budget",
-                "Optional explicit thinking token budget for providers that expose it.",
-                "thinking_budget_tokens",
-                "whole number of at least 1024, or blank for inherited default",
-            ),
-        }
-        if field_id in model_profile_guidance:
-            label, purpose, key, validation = model_profile_guidance[field_id]
-            draft_key = field_id.removeprefix("settings-").replace("-", "_")
+        # TASK-33002.1: every model-default row reads the one field table.
+        draft_key = (field_id or "").removeprefix("settings-").replace("-", "_")
+        if draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS:
+            name = PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
+            spec = MODEL_CONFIG_FIELDS[name]
             if not self._model_profile_field_supported(
-                provider,
-                draft_key,
-                self._provider_setting_values_mapping().get("model"),
+                provider, draft_key, values.get("model")
             ):
                 return (
-                    ("Focused setting", label),
+                    ("Focused setting", spec.label),
                     (
                         "Availability",
                         self._unsupported_model_profile_placeholder(provider),
@@ -16775,26 +17802,10 @@ class SettingsScreen(BaseAppScreen):
                     ),
                 )
             return (
-                ("Focused setting", label),
-                ("Purpose", purpose),
-                ("Saved as", f"{provider_config_prefix}.model_defaults.<model>.{key}"),
-                ("Validation", validation),
-            )
-        if field_id == "settings-model-profile-streaming":
-            return (
-                ("Focused setting", "Streaming"),
-                (
-                    "Purpose",
-                    "Optional streaming preference for this provider and model profile.",
-                ),
-                (
-                    "Saved as",
-                    f"{provider_config_prefix}.model_defaults.<model>.streaming",
-                ),
-                (
-                    "Validation",
-                    "choose On or Off; Inherit default keeps the inherited default",
-                ),
+                ("Focused setting", spec.label),
+                ("Purpose", spec.help),
+                ("Saved as", f"{provider_config_prefix}.model_defaults.{model}.{name}"),
+                ("Validation", f"{spec.valid_range}; blank inherits the default"),
             )
         if field_id == "settings-model-catalog-stale-hours":
             return (
@@ -16829,7 +17840,7 @@ class SettingsScreen(BaseAppScreen):
                 "Configure the default provider, model, endpoint, and credential source.",
             ),
             ("Saved as", "chat_defaults plus provider-specific api_settings"),
-            ("Validation", "test provider readiness before saving Console defaults"),
+            ("Validation", "test provider readiness before saving these defaults"),
         )
 
     def _refresh_provider_field_guidance(self) -> None:
@@ -17443,7 +18454,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _settings_overview_presentation(self) -> SettingsOverviewPresentation:
         resolved = self._resolve_provider_model_for_settings()
-        provider = self._provider_display_name(str(resolved.provider or ""))
+        # Plain: every Overview row is a ``_detail_row`` (``markup=False``).
+        provider = self._provider_display_label(str(resolved.provider or ""))
         model = str(resolved.model or "not selected")
         source_rows = dict(self.server_sync_workspace_handoff_rows)
         conversation_updates = "; ".join(
@@ -17460,7 +18472,9 @@ class SettingsScreen(BaseAppScreen):
                     f"{provider or 'Not selected'} / {model}; Status: "
                     f"{self._provider_overview_readiness_status()}"
                 ),
-                "last_connection_test": self._provider_test_result,
+                "last_connection_test": self._provider_test_headline(
+                    self._adopt_shared_provider_test_evidence()
+                ),
                 "storage_privacy": (
                     f"Config path: {self._config_path_overview_value()}; "
                     "Privacy: local config by default; secret-looking diagnostics "
@@ -17623,6 +18637,8 @@ class SettingsScreen(BaseAppScreen):
         context_window_state = model_context_window_state(
             self._app_config_mapping(), provider, str(values["model"])
         )
+        # Qodo #2876: a registry default is edited in Custom endpoints.
+        registry_locked = self._provider_is_registry_id(provider)
         yield Static(
             "Providers & Models", classes="destination-section settings-column-title"
         )
@@ -17733,6 +18749,18 @@ class SettingsScreen(BaseAppScreen):
                         != PROVIDER_MANUAL_SELECT_VALUE
                     ),
                 )
+            edit_endpoint = Button(
+                "Edit this endpoint in Custom endpoints",
+                id="settings-provider-edit-custom-endpoint",
+                tooltip=(
+                    "This provider is a named custom endpoint: its URL, "
+                    "credential, and models are edited there."
+                ),
+            )
+            edit_endpoint.display = registry_locked and (
+                self._provider_registry_entry(provider) is not None
+            )
+            yield edit_endpoint
             with Horizontal(classes="settings-input-row"):
                 yield Static("Model", classes="settings-input-label")
                 yield Input(
@@ -17741,6 +18769,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="Model name",
                     suggester=self._model_field_suggester(),
+                    disabled=registry_locked,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("Endpoint", classes="settings-input-label")
@@ -17751,6 +18780,7 @@ class SettingsScreen(BaseAppScreen):
                     placeholder=self._provider_endpoint_placeholder(provider),
                     validators=[ProviderEndpointURLValidator()],
                     validate_on={"blur", "submitted"},
+                    disabled=registry_locked,
                 )
             api_mode_value, api_mode_valid = self._provider_api_mode_display_value(
                 provider
@@ -17804,6 +18834,42 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-provider-credential-status",
                 classes="settings-status-row",
             )
+            # TASK-34201: Anthropic only -- an API key or the Claude subscription.
+            is_anthropic = provider_config_key(provider) == "anthropic"
+            subscription_selected = (
+                is_anthropic
+                and self._provider_auth_source_value(provider)
+                == _anthropic_auth_sources()[1]
+            )
+            with Horizontal(
+                id="settings-provider-auth-source-row",
+                classes=(
+                    "settings-input-row settings-select-row"
+                    if is_anthropic
+                    else "settings-input-row settings-select-row settings-gated-profile-hidden"
+                ),
+            ):
+                yield Static("Sign in with", classes="settings-input-label")
+                yield Select(
+                    _anthropic_auth_source_options(),
+                    value=self._provider_auth_source_value(provider),
+                    id="settings-provider-auth-source",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                    disabled=not is_anthropic,
+                )
+            yield Static(
+                ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
+                if subscription_selected
+                else ANTHROPIC_API_KEY_GUIDANCE_COPY,
+                id="settings-provider-auth-source-guidance",
+                classes=(
+                    "settings-status-row"
+                    if is_anthropic
+                    else "settings-status-row settings-gated-profile-hidden"
+                ),
+            )
             with Horizontal(classes="settings-input-row"):
                 yield Static("API key", classes="settings-input-label")
                 yield Input(
@@ -17812,13 +18878,14 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder=self._provider_api_key_placeholder(provider),
                     password=True,
+                    disabled=registry_locked or subscription_selected,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("", classes="settings-input-label")
                 yield Button(
                     "Clear saved key",
                     id="settings-provider-api-key-clear",
-                    disabled=(
+                    disabled=subscription_selected or (
                         not self._provider_saved_api_key_present(provider)
                         and not bool(str(values.get("api_key") or "").strip())
                     ),
@@ -17831,6 +18898,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-credential-env-var",
                     classes="settings-compact-input",
                     placeholder=self._provider_credential_placeholder(provider),
+                    disabled=registry_locked or subscription_selected,
                 )
             yield Static(
                 "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.",
@@ -17862,21 +18930,21 @@ class SettingsScreen(BaseAppScreen):
             yield Button(
                 "Test Provider",
                 id="settings-test-provider",
-                tooltip=(
-                    "Run a local readiness check for this provider configuration; "
-                    "URL-based local providers also get a short live endpoint probe."
-                ),
+                tooltip=PROVIDER_TEST_GUIDANCE,
             )
             # TASK-386 (AC#2): the readiness / live-probe explanation must also
             # exist as visible static text -- a hover tooltip is invisible to
             # keyboard users and self-occludes the result line below it.
             yield Static(
-                "Runs a local readiness check; URL-based local providers also get "
-                "a short live endpoint probe.",
+                PROVIDER_TEST_GUIDANCE,
                 id="settings-test-provider-guidance",
                 classes="settings-status-row",
             )
-            yield Static(self._provider_test_result, id="settings-provider-test-result")
+            yield _ProviderTestResult(
+                self._adopt_shared_provider_test_evidence(),
+                id="settings-provider-test-result",
+                markup=False,
+            )
             yield Static(
                 self._provider_save_result,
                 id="settings-provider-save-result",
@@ -17909,7 +18977,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-conflict-discard",
                 )
                 yield Button(
-                    "Return to Conversation settings",
+                    "Return to Chat settings",
                     id="settings-provider-conflict-return",
                     disabled=self._provider_return_actions_disabled(),
                 )
@@ -17923,7 +18991,7 @@ class SettingsScreen(BaseAppScreen):
                     markup=False,
                 )
                 yield Button(
-                    "Return to Conversation settings",
+                    "Return to Chat settings",
                     id="settings-provider-return",
                     variant="primary",
                     disabled=self._provider_return_actions_disabled(),
@@ -17986,13 +19054,17 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder="tokens (required when unknown)",
                     restrict=r"^[0-9]*$",
+                    disabled=registry_locked,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("", classes="settings-input-label")
                 yield Button(
                     "Reset to detected",
                     id="settings-model-context-window-reset",
-                    disabled=not context_window_state.has_configured_override,
+                    disabled=(
+                        not context_window_state.has_configured_override
+                        or registry_locked
+                    ),
                     tooltip=(
                         "Remove only the configured context-window override and "
                         "return to the detected capability value."
@@ -18111,7 +19183,7 @@ class SettingsScreen(BaseAppScreen):
                     _pid = _provider.lower()
                     with Horizontal(classes="settings-input-row"):
                         yield Checkbox(
-                            f"{_provider}: refresh",
+                            f"{provider_display_name(_provider)}: refresh",
                             value=(
                                 _provider_key
                                 not in model_catalog_settings.auto_refresh_disabled
@@ -18149,6 +19221,7 @@ class SettingsScreen(BaseAppScreen):
                 title="Generation defaults",
                 collapsed=self._generation_defaults_collapsed,
                 id="settings-generation-defaults",
+                disabled=registry_locked,
             ):
                 yield Static(
                     "Selected model defaults",
@@ -18156,12 +19229,15 @@ class SettingsScreen(BaseAppScreen):
                     classes="destination-section",
                 )
                 yield Static(
-                    "Global fallbacks live under Console Defaults; these values apply only "
+                    "Global fallbacks live under Console Behavior; these values apply only "
                     "to the provider+model above.",
                     classes="settings-detail-row",
                 )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Temperature", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["temperature"],
+                        classes="settings-input-label",
+                    )
                     yield Input(
                         value=self._profile_input_value(
                             values["model_profile_temperature"]
@@ -18176,7 +19252,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_top_p"]
                     ),
                 ):
-                    yield Static("Top P", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["top_p"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(values["model_profile_top_p"]),
                         id="settings-model-profile-top-p",
@@ -18190,7 +19268,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_min_p"]
                     ),
                 ):
-                    yield Static("Min P", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["min_p"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(values["model_profile_min_p"]),
                         id="settings-model-profile-min-p",
@@ -18204,7 +19284,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_top_k"]
                     ),
                 ):
-                    yield Static("Top K", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["top_k"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(values["model_profile_top_k"]),
                         id="settings-model-profile-top-k",
@@ -18214,7 +19296,9 @@ class SettingsScreen(BaseAppScreen):
                         restrict=r"^[0-9]*$",
                     )
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Response max tokens", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["max_tokens"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(
                             values["model_profile_max_tokens"]
@@ -18230,7 +19314,9 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_seed"]
                     ),
                 ):
-                    yield Static("Seed", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["seed"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=self._profile_input_value(values["model_profile_seed"]),
                         id="settings-model-profile-seed",
@@ -18245,7 +19331,10 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_presence_penalty"]
                     ),
                 ):
-                    yield Static("Presence", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["presence_penalty"],
+                        classes="settings-input-label",
+                    )
                     yield Input(
                         value=self._profile_input_value(
                             values["model_profile_presence_penalty"]
@@ -18261,7 +19350,10 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_frequency_penalty"]
                     ),
                 ):
-                    yield Static("Frequency", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["frequency_penalty"],
+                        classes="settings-input-label",
+                    )
                     yield Input(
                         value=self._profile_input_value(
                             values["model_profile_frequency_penalty"]
@@ -18290,7 +19382,10 @@ class SettingsScreen(BaseAppScreen):
                     )
                     + " settings-select-row",
                 ):
-                    yield Static("Reasoning", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["reasoning_effort"],
+                        classes="settings-input-label",
+                    )
                     yield self._model_profile_enum_select(
                         provider,
                         "model_profile_reasoning_effort",
@@ -18303,7 +19398,10 @@ class SettingsScreen(BaseAppScreen):
                     )
                     + " settings-select-row",
                 ):
-                    yield Static("Summary", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["reasoning_summary"],
+                        classes="settings-input-label",
+                    )
                     yield self._model_profile_enum_select(
                         provider,
                         "model_profile_reasoning_summary",
@@ -18316,7 +19414,9 @@ class SettingsScreen(BaseAppScreen):
                     )
                     + " settings-select-row",
                 ):
-                    yield Static("Verbosity", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["verbosity"], classes="settings-input-label"
+                    )
                     yield self._model_profile_enum_select(
                         provider,
                         "model_profile_verbosity",
@@ -18329,7 +19429,10 @@ class SettingsScreen(BaseAppScreen):
                     )
                     + " settings-select-row",
                 ):
-                    yield Static("Thinking", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["thinking_effort"],
+                        classes="settings-input-label",
+                    )
                     yield self._model_profile_enum_select(
                         provider,
                         "model_profile_thinking_effort",
@@ -18341,7 +19444,10 @@ class SettingsScreen(BaseAppScreen):
                         row_supported["model_profile_thinking_budget_tokens"]
                     ),
                 ):
-                    yield Static("Think budget", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["thinking_budget_tokens"],
+                        classes="settings-input-label",
+                    )
                     yield Input(
                         value=self._model_profile_input_value(
                             provider,
@@ -18362,7 +19468,9 @@ class SettingsScreen(BaseAppScreen):
                         ],
                     )
                 with Horizontal(classes="settings-input-row settings-select-row"):
-                    yield Static("Streaming", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["streaming"], classes="settings-input-label"
+                    )
                     yield Select(
                         list(MODEL_PROFILE_STREAMING_SELECT_OPTIONS),
                         value=self._streaming_select_value(
@@ -18391,7 +19499,7 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
             yield Static(
-                "Sampling and transport defaults are routed to Console Defaults.",
+                "Sampling and transport defaults are routed to Console Behavior.",
                 id="settings-provider-sampling-route",
                 classes="settings-status-row",
             )
@@ -18454,7 +19562,7 @@ class SettingsScreen(BaseAppScreen):
         if not rows:
             yield Static(
                 "No named endpoints yet. Create one from a template in "
-                "Console conversation settings (New endpoint…), or "
+                "Console's Chat settings (New endpoint…), or "
                 "convert a built-in custom slot below.",
                 id="settings-custom-endpoints-empty",
                 classes="settings-status-row",
@@ -18531,7 +19639,9 @@ class SettingsScreen(BaseAppScreen):
                     yield Button("Cancel", id="settings-cep-rename-cancel")
             if self._custom_endpoint_edit_slug == slug:
                 with Horizontal(classes="settings-input-row"):
-                    yield Static("Base URL", classes="settings-input-label")
+                    yield Static(
+                        MODEL_FIELD_LABELS["endpoint"], classes="settings-input-label"
+                    )
                     yield Input(
                         value=entry.base_url,
                         id="settings-cep-edit-url",
@@ -18638,9 +19748,7 @@ class SettingsScreen(BaseAppScreen):
         if not isinstance(section, Mapping):
             raw = fresh.get("COMPREHENSIVE_CONFIG_RAW")
             section = (
-                raw.get("custom_endpoints")
-                if isinstance(raw, Mapping)
-                else section
+                raw.get("custom_endpoints") if isinstance(raw, Mapping) else section
             )
         if isinstance(section, Mapping):
             app_config["custom_endpoints"] = copy.deepcopy(dict(section))
@@ -18714,9 +19822,7 @@ class SettingsScreen(BaseAppScreen):
             return
         try:
             base_url = self.query_one("#settings-cep-edit-url", Input).value.strip()
-            env_var = (
-                self.query_one("#settings-cep-edit-key-env", Input).value.strip()
-            )
+            env_var = self.query_one("#settings-cep-edit-key-env", Input).value.strip()
             models_raw = self.query_one("#settings-cep-edit-models", Input).value
         except QueryError:
             return
@@ -18821,8 +19927,7 @@ class SettingsScreen(BaseAppScreen):
             fresh = self._custom_endpoints_view_config()
             if entry_for(fresh, provider_id) is None:
                 self._custom_endpoints_status_update(
-                    f"Endpoint '{slug}' is no longer available; "
-                    "the list was refreshed."
+                    f"Endpoint '{slug}' is no longer available; the list was refreshed."
                 )
                 self._refresh_custom_endpoints_section()
                 return
@@ -19000,9 +20105,10 @@ class SettingsScreen(BaseAppScreen):
             )
             self._reasoning_override_target = self._current_reasoning_target()
             target = self._reasoning_override_target
-            with Collapsible(title="Override current Console model", collapsed=True):
+            with Collapsible(title="Reasoning replay override", collapsed=True):
                 yield Static(
-                    f"{target[0]} / {target[2]} — {safe_endpoint_display(target[1])}"
+                    f"{provider_display_name(target[0], self._app_config_mapping())}"
+                    f" / {target[2]} — {safe_endpoint_display(target[1])}"
                     if target
                     else "Select a local model in Console to set a remembered override.",
                     markup=False,
@@ -19367,7 +20473,10 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Budget strategy", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["conversation_budget_mode"],
+                    classes="settings-input-label",
+                )
                 yield Select(
                     [
                         ("Automatic", ContextBudgetMode.AUTOMATIC.value),
@@ -19391,7 +20500,10 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("When limit nears", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["compaction_mode"],
+                    classes="settings-input-label",
+                )
                 yield Select(
                     [
                         ("Ask", ContextCompactionMode.ASK.value),
@@ -19447,7 +20559,8 @@ class SettingsScreen(BaseAppScreen):
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
-                    "Reduce context to (%)", classes="settings-input-label"
+                    MODEL_FIELD_LABELS["compaction_target_ratio"],
+                    classes="settings-input-label",
                 )
                 yield Input(
                     value=format_ratio_percent(
@@ -19492,18 +20605,12 @@ class SettingsScreen(BaseAppScreen):
                     compact=True,
                 )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Keep after compaction", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["compaction_carry_forward_mode"],
+                    classes="settings-input-label",
+                )
                 yield Select(
-                    [
-                        (
-                            "Memory + recent turns",
-                            ContextCarryForwardMode.MEMORY_WITH_RECENT_TURNS.value,
-                        ),
-                        (
-                            "Memory + latest exchange",
-                            ContextCarryForwardMode.MEMORY_WITH_LATEST_EXCHANGE.value,
-                        ),
-                    ],
+                    CARRY_FORWARD_OPTIONS,
                     value=str(
                         self._console_behavior_value("compaction_carry_forward_mode")
                     ),
@@ -19551,7 +20658,9 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Streaming", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["streaming"], classes="settings-input-label"
+                )
                 yield Checkbox(
                     value=coerce_bool_setting(
                         self._console_behavior_value("streaming"), True
@@ -19559,7 +20668,9 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-console-default-streaming",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Temperature", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["temperature"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("temperature")
@@ -19569,7 +20680,9 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="0.0 - 2.0",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Top P", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["top_p"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("top_p")
@@ -19579,7 +20692,9 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="0.0 - 1.0",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Min P", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["min_p"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("min_p")
@@ -19589,7 +20704,9 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="optional 0.0 - 1.0",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Top K", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["top_k"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("top_k")
@@ -19600,7 +20717,9 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Response max tokens", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["max_tokens"], classes="settings-input-label"
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("max_tokens")
@@ -19611,18 +20730,21 @@ class SettingsScreen(BaseAppScreen):
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Seed", classes="settings-input-label")
+                yield Static(MODEL_FIELD_LABELS["seed"], classes="settings-input-label")
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("seed")
                     ),
                     id="settings-console-default-seed",
                     classes="settings-compact-input",
-                    placeholder="optional deterministic seed",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_seed"],
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Presence", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["presence_penalty"],
+                    classes="settings-input-label",
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("presence_penalty")
@@ -19632,7 +20754,10 @@ class SettingsScreen(BaseAppScreen):
                     placeholder="-2.0 - 2.0",
                 )
             with Horizontal(classes="settings-input-row"):
-                yield Static("Frequency", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["frequency_penalty"],
+                    classes="settings-input-label",
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("frequency_penalty")
@@ -19647,26 +20772,42 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Reasoning", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["reasoning_effort"],
+                    classes="settings-input-label",
+                )
                 yield self._console_default_enum_select("reasoning_effort")
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Summary", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["reasoning_summary"],
+                    classes="settings-input-label",
+                )
                 yield self._console_default_enum_select("reasoning_summary")
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Verbosity", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["verbosity"], classes="settings-input-label"
+                )
                 yield self._console_default_enum_select("verbosity")
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Thinking", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["thinking_effort"],
+                    classes="settings-input-label",
+                )
                 yield self._console_default_enum_select("thinking_effort")
             with Horizontal(classes="settings-input-row"):
-                yield Static("Think budget", classes="settings-input-label")
+                yield Static(
+                    MODEL_FIELD_LABELS["thinking_budget_tokens"],
+                    classes="settings-input-label",
+                )
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("thinking_budget_tokens")
                     ),
                     id="settings-console-default-thinking-budget-tokens",
                     classes="settings-compact-input",
-                    placeholder="optional tokens, min 1024",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[
+                        "model_profile_thinking_budget_tokens"
+                    ],
                     restrict=r"^[0-9]*$",
                 )
             yield Static(
@@ -20452,7 +21593,9 @@ class SettingsScreen(BaseAppScreen):
             yield Button("Backfill", id="settings-library-rag-index-backfill")
         with Horizontal(classes="settings-action-row"):
             yield Button("Review recovery", id="settings-library-rag-recovery-review")
-            yield Button("Reconcile / rebuild", id="settings-library-rag-recovery-reconcile")
+            yield Button(
+                "Reconcile / rebuild", id="settings-library-rag-recovery-reconcile"
+            )
         with Horizontal(classes="settings-action-row"):
             yield Button("Review local model", id="settings-library-rag-model-review")
 
@@ -21213,9 +22356,7 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _briefing_schedules_toggle_label(enabled: bool) -> str:
         return (
-            "Disable scheduled briefings"
-            if enabled
-            else "Enable scheduled briefings"
+            "Disable scheduled briefings" if enabled else "Enable scheduled briefings"
         )
 
     def _render_domain_category_detail(
@@ -21231,20 +22372,14 @@ class SettingsScreen(BaseAppScreen):
             id=f"settings-{category.value}-card", classes="settings-focus-card"
         ):
             if category is SettingsCategoryId.SCHEDULES:
-                briefing_schedules_enabled = (
-                    self._briefing_schedules_gate_enabled()
-                )
+                briefing_schedules_enabled = self._briefing_schedules_gate_enabled()
                 yield Static(
-                    self._briefing_schedules_gate_copy(
-                        briefing_schedules_enabled
-                    ),
+                    self._briefing_schedules_gate_copy(briefing_schedules_enabled),
                     id="settings-briefing-schedules-status",
                     classes="settings-status-row",
                 )
                 yield Button(
-                    self._briefing_schedules_toggle_label(
-                        briefing_schedules_enabled
-                    ),
+                    self._briefing_schedules_toggle_label(briefing_schedules_enabled),
                     id="settings-briefing-schedules-toggle",
                     compact=True,
                 )
@@ -21311,7 +22446,9 @@ class SettingsScreen(BaseAppScreen):
                     compact=True,
                 )
         yield Static(
-            "" if self._current_workspace_lifecycle_result() else self._settings_workspaces_result,
+            ""
+            if self._current_workspace_lifecycle_result()
+            else self._settings_workspaces_result,
             id="settings-workspaces-result",
             classes="settings-status-row",
             markup=False,
@@ -21514,9 +22651,7 @@ class SettingsScreen(BaseAppScreen):
             self._settings_workspace_persona_page = (workspace_id, 0)
         persona_offset = self._settings_workspace_persona_page[1]
         persona_options: list[Option] = []
-        highlight_persona = (
-            pending or {}
-        ).get("persona_id") or (
+        highlight_persona = (pending or {}).get("persona_id") or (
             effective.assistant_id if effective.status == "available" else None
         )
         try:
@@ -21696,9 +22831,7 @@ class SettingsScreen(BaseAppScreen):
             return []
         from ...MCP.hub_tool_catalog import builtin_tools_from_inventory
 
-        return [
-            tool.name for tool in builtin_tools_from_inventory(inventory or {})
-        ]
+        return [tool.name for tool in builtin_tools_from_inventory(inventory or {})]
 
     def _render_workspace_folder_bindings(
         self,
@@ -21875,8 +23008,9 @@ class SettingsScreen(BaseAppScreen):
         """
         from ...Tools.remote_binding_status import cached_status_display
 
-        yield Static("SSH folders (remote agent file-tool access)",
-                    classes="destination-section")
+        yield Static(
+            "SSH folders (remote agent file-tool access)", classes="destination-section"
+        )
         for binding in registry.list_ssh_bindings(workspace_id):
             access = binding.metadata.get("access", "ro")
             status_word = cached_status_display(str(binding.binding_id))
@@ -21929,7 +23063,9 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-workspace-ssh-python",
                 classes="settings-compact-input",
             )
-            yield Button("Add SSH folder", id="settings-workspace-ssh-add", compact=True)
+            yield Button(
+                "Add SSH folder", id="settings-workspace-ssh-add", compact=True
+            )
         yield self._workspace_ssh_result_widget(workspace_id)
 
     def _workspace_ssh_result_widget(
@@ -22097,7 +23233,9 @@ class SettingsScreen(BaseAppScreen):
         )
         local = self._current_workspace_lifecycle_result()
         self._set_static_text("#settings-workspaces-result", "" if local else text)
-        self._set_static_text("#settings-workspace-lifecycle-result", text if local else "")
+        self._set_static_text(
+            "#settings-workspace-lifecycle-result", text if local else ""
+        )
         if local:
             self.call_after_refresh(self._reveal_workspace_lifecycle_result)
 
@@ -22319,7 +23457,14 @@ class SettingsScreen(BaseAppScreen):
 
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
-        if category is SettingsCategoryId.OVERVIEW:
+        if category is SettingsCategoryId.HOOKS:
+            yield _hooks_settings_panel_class()(
+                self._settings_drafts.setdefault(category, SettingsDraft(category)),
+                self._hooks_snapshot,
+                id=_HOOKS_PANEL_ID,
+                disabled=self._hooks_saving,
+            )
+        elif category is SettingsCategoryId.OVERVIEW:
             yield from self._render_overview_detail()
         elif category is SettingsCategoryId.PERSONAL_CONTEXT:
             panel_class = _personal_context_settings_panel_class()
@@ -22717,9 +23862,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-imagegen-panel",
                 overlay=image_gen_overlay,
             )
-            self.call_after_refresh(
-                self._start_image_gen_panel_load, image_gen_overlay
-            )
+            self.call_after_refresh(self._start_image_gen_panel_load, image_gen_overlay)
         elif category is SettingsCategoryId.VIDEO_GENERATION:
             yield Static(
                 "Video Gen", classes="destination-section settings-column-title"
@@ -22730,9 +23873,7 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-videogen-panel",
                 overlay=video_gen_overlay,
             )
-            self.call_after_refresh(
-                self._start_video_gen_panel_load, video_gen_overlay
-            )
+            self.call_after_refresh(self._start_video_gen_panel_load, video_gen_overlay)
         elif category is SettingsCategoryId.STORAGE:
             values = self._storage_setting_values()
             try:
@@ -22838,14 +23979,20 @@ class SettingsScreen(BaseAppScreen):
                 "Privacy & Security",
                 classes="destination-section settings-column-title",
             )
+            # TASK-34100.4: the key-encryption lifecycle's Settings home (its
+            # own module, imported on first render to keep the screen's
+            # pre-import payload unchanged).
+            from .settings_encryption import EncryptionSettingsCard
+            from ...config import get_encryption_password
+
+            yield EncryptionSettingsCard(
+                enabled=posture.encryption_enabled,
+                unlocked=get_encryption_password() is not None,
+            )
             with Vertical(
                 id="settings-privacy-security-card", classes="settings-focus-card"
             ):
                 yield Static("Privacy posture", classes="destination-section")
-                yield self._detail_row(
-                    "Config encryption",
-                    "enabled" if posture.encryption_enabled else "disabled",
-                )
                 yield self._detail_row(
                     "Redaction",
                     "active; raw secret values hidden",
@@ -22915,10 +24062,6 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Data boundary", classes="destination-section")
                 yield self._detail_row("Local data", posture.data_boundary)
                 yield self._detail_row("Server tokens", posture.server_boundary)
-                yield self._detail_row(
-                    "Credential mutation",
-                    "not available yet - password-gated flow required",
-                )
                 yield Static(
                     self._privacy_check_text(),
                     id="settings-privacy-check-result",
@@ -22926,9 +24069,7 @@ class SettingsScreen(BaseAppScreen):
                 )
             canvas_policy = self._loaded_canvas_policy()
             limits: CanvasLimits = canvas_policy.limits
-            with Vertical(
-                id="settings-canvas-card", classes="settings-focus-card"
-            ):
+            with Vertical(id="settings-canvas-card", classes="settings-focus-card"):
                 yield Static(
                     "Canvas",
                     classes="destination-section settings-column-title",
@@ -22983,7 +24124,8 @@ class SettingsScreen(BaseAppScreen):
                     "Inline script", f"{limits.script_bytes // 1024} KiB"
                 )
                 yield self._detail_row(
-                    "Data assets", f"{limits.aggregate_asset_bytes // (1024 * 1024)} MiB aggregate"
+                    "Data assets",
+                    f"{limits.aggregate_asset_bytes // (1024 * 1024)} MiB aggregate",
                 )
                 yield self._detail_row("DOM nodes", f"{limits.dom_nodes:,}")
                 yield self._detail_row("CSS rules", f"{limits.css_rules:,}")
@@ -23294,29 +24436,25 @@ class SettingsScreen(BaseAppScreen):
         """Scrollable inspector remainder: guides, ownership, boundaries."""
         summary = self._active_summary()
         ownership = self._ownership_record(summary.category)
+        if summary.category is SettingsCategoryId.HOOKS:
+            yield Static("Hook permissions", classes="destination-section")
+            yield Static(
+                "Commands receive event data on stdin and run as an argument array. "
+                "Review binds to the exact event, arguments, matcher and timeout. "
+                "Editing an executable at the same path is outside this review. "
+                "Revoking permission prevents later launches; it does not stop a hook already running.",
+                classes="settings-detail-row",
+                markup=False,
+            )
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Control guide", classes="destination-section")
             yield self._detail_row(
                 "Default chat display name",
                 "Speaker label and trusted character-template human name",
             )
-            yield self._detail_row(
-                "Streaming",
-                "Global fallback for streaming responses when no Console session "
-                "or provider+model profile overrides it",
-            )
-            yield self._detail_row(
-                "Temperature",
-                "Creativity fallback, 0.0 is focused and 2.0 is exploratory",
-            )
-            yield self._detail_row(
-                "Top P",
-                "Probability cutoff fallback; lower values narrow token choices",
-            )
-            yield self._detail_row(
-                "Response max tokens",
-                "Optional response cap for new/default Console sends",
-            )
+            for name in ("streaming", "temperature", "top_p", "max_tokens"):
+                spec = MODEL_CONFIG_FIELDS[name]
+                yield self._detail_row(spec.label, spec.help)
             yield self._detail_row(
                 "Paste collapse",
                 "Only pasted chunks over the threshold become compact placeholders; "
@@ -23441,7 +24579,9 @@ class SettingsScreen(BaseAppScreen):
                 classes="destination-section",
             )
             yield Static("Focused field guide", classes="destination-section")
-            yield self._detail_row("Save target", f"{_display_path(_theme_save_target())}{os.sep}")
+            yield self._detail_row(
+                "Save target", f"{_display_path(_theme_save_target())}{os.sep}"
+            )
             yield self._detail_row(
                 "Save",
                 "editor-owned - Use/Try switch themes; the editor's Save stores a file",
@@ -23582,6 +24722,7 @@ class SettingsScreen(BaseAppScreen):
                 # which read the category's content).
                 detail_pane = SettingsRegion(
                     self._compose_detail_pane_region,
+                    stack_actions_below=SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH,
                     id="settings-detail-pane",
                     classes="destination-workbench-pane" + pane_class_suffix,
                 )
@@ -23601,6 +24742,9 @@ class SettingsScreen(BaseAppScreen):
                 # this the 1fr body below collapses to zero (StyledSettings
                 # harness caught it; the plain harness cannot).
                 impact_pane.add_class("h-full")
+                impact_pane.set_class(
+                    self._inspector_floor_now(), "settings-inspector-floor"
+                )
                 yield impact_pane
             # task-2835: keyboard-reachable mirror of the focused control's
             # hover-only tooltip; updated by handle_descendant_focus.
@@ -23900,9 +25044,9 @@ class SettingsScreen(BaseAppScreen):
             current_provider = str(
                 self._provider_setting_values_mapping().get("provider") or ""
             )
-            same_provider = provider_config_key(current_provider) == provider_config_key(
-                provider
-            )
+            same_provider = provider_config_key(
+                current_provider
+            ) == provider_config_key(provider)
             if return_target is not None and same_provider:
                 self._provider_navigation_conflict_target = None
                 self._clear_navigation_provider_context()
@@ -25102,7 +26246,7 @@ class SettingsScreen(BaseAppScreen):
             self._speech_tts_leave_bypass = False
             self._speech_tts_leave_in_progress = False
 
-    async def confirm_navigation(self) -> bool:
+    async def confirm_navigation(self, *, quitting: bool = False) -> bool:
         """Save / Discard / Stay before leaving Settings with an edited theme.
 
         TASK-32949: the app awaits this before every screen switch -- tab
@@ -25111,10 +26255,21 @@ class SettingsScreen(BaseAppScreen):
         reusable route, so leaving drops the editor's unsaved palette. Same
         prompt and outcomes as a category switch (TASK-32941).
 
+        The prompt is awaited through ``await_quit_prompt`` (TASK-33622.10):
+        if a covered modal's own ``dismiss()`` pops it unanswered, this
+        answers Stay instead of waiting forever with the one-prompt latch
+        below still set.
+
+        Args:
+            quitting: True when the app's quit flow asks (``confirm_quit``);
+                a prompt that vanished unanswered then says the quit was
+                cancelled.
+
         Returns:
             True to let navigation proceed; False to stay on Settings ▸ Theme
             (Stay, a Save that was refused or waits on its overwrite
-            confirmation, or a theme leave prompt that is already open).
+            confirmation, a theme leave prompt that is already open, or one
+            that vanished unanswered).
         """
         try:
             editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
@@ -25128,20 +26283,29 @@ class SettingsScreen(BaseAppScreen):
             # on its overwrite confirmation keeps them: stay.
             await editor.save_settled()
             return not editor.is_modified
-        if self._theme_leave_in_progress or isinstance(self.app.screen, ThemeLeaveModal):
+        if self._theme_leave_in_progress or isinstance(
+            self.app.screen, ThemeLeaveModal
+        ):
             # One prompt at a time: a category-leave (or earlier navigation)
             # prompt is already asking about these edits; stay put.
             return False
         self._theme_leave_in_progress = True
         try:
-            choice = await self.app.push_screen_wait(ThemeLeaveModal())
+            choice = await await_quit_prompt(
+                self.app,
+                ThemeLeaveModal(),
+                no_answer="cancel",
+                vanished_notice=QUIT_CANCELLED_NOTICE if quitting else None,
+            )
         finally:
             self._theme_leave_in_progress = False
-        if choice == "cancel":
-            return False
         if choice == "save":
             await editor.save_theme()
             return not editor.is_modified
+        if choice != "discard":
+            # Stay -- and fail closed: a prompt closed with no answer keeps
+            # the edits rather than dropping them (TASK-33622.10 review).
+            return False
         # TASK-33060: Discard undoes the Try before the leave/quit proceeds;
         # a clean leave relies on the editor's unmount (review I-1).
         editor.discard_try()
@@ -25156,7 +26320,7 @@ class SettingsScreen(BaseAppScreen):
         Returns:
             True to let the quit proceed; False to stay.
         """
-        return await self.confirm_navigation()
+        return await self.confirm_navigation(quitting=True)
 
     def _theme_editor_shown(self) -> bool:
         try:
@@ -25509,6 +26673,7 @@ class SettingsScreen(BaseAppScreen):
                 "settings-console-sidechat-prompt-template",
                 "settings-console-default-user-display-name",
                 *PERMISSION_SUMMARY_FIELD_IDS,
+                *CONSOLE_DEFAULT_FIELD_NAMES,
             }
             self._active_settings_field_id = (
                 widget_id if widget_id in console_behavior_field_ids else None
@@ -25687,7 +26852,10 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         old = event.theme_id
         # TASK-33073: the list's name with its file ("'Mine' (mine.toml)").
-        label = self._with_theme_editor(lambda editor: editor.dialog_label(old)) or f"'{old}'"
+        label = (
+            self._with_theme_editor(lambda editor: editor.dialog_label(old))
+            or f"'{old}'"
+        )
         self.app.push_screen(
             RagProfileNameModal(
                 # R27 (7): [theme].name is hand-editable; x[/] must not crash.
@@ -25849,10 +27017,14 @@ class SettingsScreen(BaseAppScreen):
         self._reveal_settings_focus_after_refresh()
 
     def _reveal_settings_focus_after_refresh(self) -> None:
-        """Keep the same attached control visible after a layout change."""
+        """Keep the same attached control, and its field guide, visible after a layout change."""
         focused = self.focused
         if focused is None:
             return
+        if focused.id and focused.id == self._active_settings_field_id:
+            # TASK-33003.9: a resize re-wraps the inspector but keeps its
+            # scroll offset, which slid the guide past the fold.
+            self._scroll_impact_pane_to_field_guide(self._active_category_id())
 
         def reveal_retained_focus() -> None:
             if self.is_current and focused is self.focused and focused.is_attached:
@@ -26253,9 +27425,7 @@ class SettingsScreen(BaseAppScreen):
         mode = self._network_effective_mode()
         if mode in ("verify", "off", "invalid"):
             return SettingsNetworkTLS(mode, raw=loaded.raw)
-        path = str(
-            self._network_pending.get("ca_bundle_path", loaded.ca_bundle_path)
-        )
+        path = str(self._network_pending.get("ca_bundle_path", loaded.ca_bundle_path))
         return SettingsNetworkTLS(mode, ca_bundle_path=path, raw=loaded.raw)
 
     @on(Button.Pressed, "#settings-preview-appearance")
@@ -26314,7 +27484,6 @@ class SettingsScreen(BaseAppScreen):
         if not base_url:
             return
 
-
         if not validate_url(base_url):
             self.app.notify(
                 "Rejected server URL; nothing was changed.", severity="error"
@@ -26341,9 +27510,7 @@ class SettingsScreen(BaseAppScreen):
             return
 
         try:
-            refreshed_config = await asyncio.to_thread(
-                load_settings, force_reload=True
-            )
+            refreshed_config = await asyncio.to_thread(load_settings, force_reload=True)
         except Exception as exc:
             logger.warning(
                 "Saved server settings could not be loaded (exception_category=%s).",
@@ -26705,7 +27872,9 @@ class SettingsScreen(BaseAppScreen):
         self.app.push_screen(
             WorkspaceCreateModal(
                 registry_service=registry,
-                persona_service=getattr(self.app_instance, "local_character_persona_service", None),
+                persona_service=getattr(
+                    self.app_instance, "local_character_persona_service", None
+                ),
                 description="Local workspace created from Settings.",
             ),
             _done,
@@ -27265,7 +28434,9 @@ class SettingsScreen(BaseAppScreen):
         raw_path = self.query_one("#settings-workspace-ssh-path", Input).value.strip()
         python = self.query_one("#settings-workspace-ssh-python", Input).value.strip()
         if not target:
-            self._set_workspace_ssh_result("Enter a target (user@host[:port] or alias).")
+            self._set_workspace_ssh_result(
+                "Enter a target (user@host[:port] or alias)."
+            )
             return
         if not raw_path.startswith("/"):
             self._set_workspace_ssh_result(
@@ -27424,7 +28595,8 @@ class SettingsScreen(BaseAppScreen):
             return
         step = -1 if event.button.id == "settings-workspace-persona-previous" else 1
         self._settings_workspace_persona_page = (
-            workspace_id, max(0, offset + step * WORKSPACE_PERSONA_PAGE_SIZE)
+            workspace_id,
+            max(0, offset + step * WORKSPACE_PERSONA_PAGE_SIZE),
         )
         self._refresh_settings_workspaces_pane()
         self._after_category_panes(
@@ -27705,7 +28877,8 @@ class SettingsScreen(BaseAppScreen):
             except Exception:  # noqa: BLE001 - keep optional UI failure bounded
                 if review_is_current():
                     self._set_workspace_assistant_result(
-                        workspace_id, "Default assistant apply failed · operation_failed"
+                        workspace_id,
+                        "Default assistant apply failed · operation_failed",
                     )
                 return
         except WorkspaceRegistryServiceError as exc:
@@ -27796,9 +28969,11 @@ class SettingsScreen(BaseAppScreen):
                     pending.get("profile_id")
                     if pending is not None and pending.get("persona_id")
                     else getattr(defaults, "tool_policy_profile_id", None)
-                ) or None,
+                )
+                or None,
             )
-            if persona_id else None
+            if persona_id
+            else None
         )
         confirmation = self._settings_workspace_memory_armed
         if confirmation is not None:
@@ -27827,8 +29002,10 @@ class SettingsScreen(BaseAppScreen):
         if pending is not None and pending.get("persona_id"):
             if str(pending.get("memory_mode", "read_only")) == "read_write":
                 assert intended is not None
-                self._settings_workspace_memory_armed = _SettingsWorkspaceMemoryConfirmation(
-                    workspace_id, defaults, intended
+                self._settings_workspace_memory_armed = (
+                    _SettingsWorkspaceMemoryConfirmation(
+                        workspace_id, defaults, intended
+                    )
                 )
                 event.button.label = "Confirm read_write?"
                 self._set_workspace_assistant_result(
@@ -27860,8 +29037,10 @@ class SettingsScreen(BaseAppScreen):
                 )
             else:
                 assert intended is not None
-                self._settings_workspace_memory_armed = _SettingsWorkspaceMemoryConfirmation(
-                    workspace_id, defaults, intended
+                self._settings_workspace_memory_armed = (
+                    _SettingsWorkspaceMemoryConfirmation(
+                        workspace_id, defaults, intended
+                    )
                 )
                 event.button.label = "Confirm read_write?"
                 self._set_workspace_assistant_result(
@@ -29321,7 +30500,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _local_model_review_current(self, token) -> bool:
         return (
-            self.is_mounted and token is self._local_model_review_token
+            self.is_mounted
+            and token is self._local_model_review_token
             and self._active_category_id() == SettingsCategoryId.LIBRARY_RAG
             and not self._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG)
             and self._rag_preview_profile_id is None
@@ -29342,7 +30522,8 @@ class SettingsScreen(BaseAppScreen):
             return
         self.run_worker(
             self._prepare_local_model_review(token),
-            group="settings-local-model-preview", exit_on_error=False,
+            group="settings-local-model-preview",
+            exit_on_error=False,
         )
 
     async def _prepare_local_model_review(self, token) -> None:
@@ -29379,7 +30560,8 @@ class SettingsScreen(BaseAppScreen):
         self.app.push_screen(
             ConfirmationDialog(
                 title="Review restored local embedding model",
-                message=message, confirm_label="Approve local model",
+                message=message,
+                confirm_label="Approve local model",
             ),
             lambda accepted: self._confirm_local_model_review(token, review, accepted),
         )
@@ -29394,7 +30576,8 @@ class SettingsScreen(BaseAppScreen):
         # Accepted native receipt writes belong to the app across view navigation.
         self.app.run_worker(
             self._record_local_model_review(review.fingerprint),
-            group="settings-local-model-confirm", exit_on_error=False,
+            group="settings-local-model-confirm",
+            exit_on_error=False,
         )
 
     async def _record_local_model_review(self, fingerprint: str) -> None:
@@ -29418,7 +30601,8 @@ class SettingsScreen(BaseAppScreen):
 
     def _openai_reconnect_review_current(self, token) -> bool:
         if (
-            not self.is_mounted or token is not self._openai_reconnect_token
+            not self.is_mounted
+            or token is not self._openai_reconnect_token
             or self._active_category_id() != SettingsCategoryId.PROVIDERS_MODELS
             or self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
         ):
@@ -29431,7 +30615,10 @@ class SettingsScreen(BaseAppScreen):
         if self._openai_reconnect_busy:
             return
         if self._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS):
-            self.app.notify("Save or discard provider changes before reviewing reconnect.", severity="warning")
+            self.app.notify(
+                "Save or discard provider changes before reviewing reconnect.",
+                severity="warning",
+            )
             return
         token = self._openai_reconnect_token = object()
         if not self._openai_reconnect_review_current(token):
@@ -29439,7 +30626,8 @@ class SettingsScreen(BaseAppScreen):
             return
         self.run_worker(
             self._prepare_openai_reconnect_review(token),
-            group="settings-openai-reconnect-preview", exit_on_error=False,
+            group="settings-openai-reconnect-preview",
+            exit_on_error=False,
         )
 
     async def _prepare_openai_reconnect_review(self, token) -> None:
@@ -29453,9 +30641,15 @@ class SettingsScreen(BaseAppScreen):
         except (OSError, ValueError, RuntimeError):
             if self._openai_reconnect_review_current(token):
                 self._discard_openai_reconnect_review()
-                self.app.notify("OpenAI recovery review is unavailable or changed. Check connection setup and request a fresh review.", severity="warning")
+                self.app.notify(
+                    "OpenAI recovery review is unavailable or changed. Check connection setup and request a fresh review.",
+                    severity="warning",
+                )
             return
-        if not self._openai_reconnect_review_current(token) or self.app.screen is not self:
+        if (
+            not self._openai_reconnect_review_current(token)
+            or self.app.screen is not self
+        ):
             return
         message = (
             f"Endpoint: {review.endpoint}\nCredential source: {review.auth_source}\n"
@@ -29467,14 +30661,19 @@ class SettingsScreen(BaseAppScreen):
         self.app.push_screen(
             ConfirmationDialog(
                 title="Review restored OpenAI connection",
-                message=message, confirm_label="Allow OpenAI requests",
+                message=message,
+                confirm_label="Allow OpenAI requests",
             ),
-            lambda accepted: self._confirm_openai_reconnect_review(token, review, accepted),
+            lambda accepted: self._confirm_openai_reconnect_review(
+                token, review, accepted
+            ),
         )
 
     def _confirm_openai_reconnect_review(self, token, review, accepted: bool) -> None:
         self._openai_reconnect_prompt_open = False
-        current = self._openai_reconnect_review_current(token) and self.app.screen is self
+        current = (
+            self._openai_reconnect_review_current(token) and self.app.screen is self
+        )
         self._discard_openai_reconnect_review()
         if not accepted or not current or self._openai_reconnect_busy:
             return
@@ -29484,7 +30683,8 @@ class SettingsScreen(BaseAppScreen):
         # request cancels it; the owner rechecks actual sources in its worker.
         self.app.run_worker(
             self._record_openai_reconnect_review(review),
-            group="settings-openai-reconnect-confirm", exit_on_error=False,
+            group="settings-openai-reconnect-confirm",
+            exit_on_error=False,
         )
 
     async def _record_openai_reconnect_review(self, review) -> None:
@@ -29493,10 +30693,14 @@ class SettingsScreen(BaseAppScreen):
 
         message = "OpenAI reconnect review recorded. No connection test was run."
         try:
-            task = asyncio.create_task(asyncio.to_thread(confirm_openai_reconnect, review))
+            task = asyncio.create_task(
+                asyncio.to_thread(confirm_openai_reconnect, review)
+            )
             await join_retained_task(task)
         except (OSError, ValueError, RuntimeError):
-            message = "OpenAI connection changed or is unavailable. Request a fresh review."
+            message = (
+                "OpenAI connection changed or is unavailable. Request a fresh review."
+            )
         finally:
             self._openai_reconnect_busy = False
         if self.is_mounted and self.app.is_running:
@@ -29541,17 +30745,22 @@ class SettingsScreen(BaseAppScreen):
             f"Model: {review.model}\nProvider host: {review.provider_host}\n"
             f"Owners: {', '.join(review.owners)}\n"
             f"Prerequisites: {', '.join(review.prerequisites) or 'none reported'}\n"
-            "Sources:\n" + "\n".join(review.sources) +
-            "\nApprove these RAG owners for the displayed local generation? "
+            "Sources:\n"
+            + "\n".join(review.sources)
+            + "\nApprove these RAG owners for the displayed local generation? "
             "Approval does not rebuild the index or approve configuration or models."
         )
         self.app.push_screen(
             ConfirmationDialog(
-                title="Review restored RAG execution", message=message,
+                title="Review restored RAG execution",
+                message=message,
                 confirm_label="Approve RAG owners",
             ),
-            lambda accepted: self._rag_recovery_review_worker(review.fingerprint)
-            if accepted else None,
+            lambda accepted: (
+                self._rag_recovery_review_worker(review.fingerprint)
+                if accepted
+                else None
+            ),
         )
 
     @on(Button.Pressed, "#settings-library-rag-recovery-review")
@@ -29570,9 +30779,11 @@ class SettingsScreen(BaseAppScreen):
                 "permit execution. This can take a while for large libraries.",
                 confirm_label="Reconcile / rebuild",
             ),
-            lambda accepted: self._trigger_library_rag_index_backfill(
-                reconcile_for_recovery=True
-            ) if accepted else None,
+            lambda accepted: (
+                self._trigger_library_rag_index_backfill(reconcile_for_recovery=True)
+                if accepted
+                else None
+            ),
         )
 
     @on(Button.Pressed, "#settings-library-rag-index-backfill")
@@ -29588,7 +30799,9 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._trigger_library_rag_index_backfill()
 
-    def _trigger_library_rag_index_backfill(self, *, reconcile_for_recovery: bool = False) -> None:
+    def _trigger_library_rag_index_backfill(
+        self, *, reconcile_for_recovery: bool = False
+    ) -> None:
         # task-13 (spec §10.3): the in-flight state is the SHARED bulk-RAG
         # slot guard -- the own-slot refusal reproduces the historical
         # "already running" behavior, and the other-slot refusal is the new
@@ -29852,6 +31065,7 @@ class SettingsScreen(BaseAppScreen):
             return
         self._clear_navigation_provider_context()
         self._snapshot_provider_api_mode_widget(previous_provider)
+        self._snapshot_provider_auth_source_widget(previous_provider)
         provider_changed = bool(provider) and provider_config_key(
             provider
         ) != provider_config_key(previous_provider)
@@ -30142,6 +31356,29 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
+    @on(Select.Changed, "#settings-provider-auth-source")
+    def handle_provider_auth_source_changed(self, event: Select.Changed) -> None:
+        """Stage Anthropic's sign-in choice as an ordinary unsaved edit.
+
+        Args:
+            event: The "Sign in with" select's change; its value is one of
+                ``_anthropic_auth_sources()``, and anything else is ignored.
+        """
+        event.stop()
+        if self._syncing_provider_auth_source:
+            return
+        provider = str(
+            self._provider_setting_values_mapping().get("provider") or ""
+        ).strip()
+        if provider_config_key(provider) != "anthropic":
+            return
+        value = self._select_value_text(event.value)
+        if value not in _anthropic_auth_sources():
+            return
+        self._stage_provider_auth_source(provider, value)
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
     @on(Select.Changed, "#settings-provider-api-mode")
     def handle_provider_api_mode_changed(self, event: Select.Changed) -> None:
         """Stage QwenCloud's selected API wire mode in its provider namespace."""
@@ -30256,6 +31493,47 @@ class SettingsScreen(BaseAppScreen):
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Button.Pressed, "#settings-provider-edit-custom-endpoint")
+    async def handle_provider_edit_custom_endpoint(self, event: Button.Pressed) -> None:
+        """Open the registry default's entry in the Custom endpoints editor.
+
+        Qodo #2876: Providers & Models cannot save a registry id, so its
+        Connect fields are locked and this is the way to edit it.
+
+        Args:
+            event: The press on the "Edit this endpoint" button.
+        """
+        event.stop()
+        entry = self._provider_registry_entry(self._provider_widget_value())
+        if entry is None:
+            return
+        self._custom_endpoint_edit_slug = entry.slug
+        self._custom_endpoint_rename_slug = None
+        try:
+            region = self.query_one("#settings-custom-endpoints")
+        except QueryError:
+            return
+        await region.recompose()
+        target = region  # The editor lists the on-disk registry.
+        try:
+            target = self.query_one("#settings-cep-edit-url", Input)
+        except QueryError:
+            pass
+        else:
+            target.focus(scroll_visible=False)
+
+        def reveal() -> None:
+            # Focus alone left the editor below the fold: the fresh region's
+            # scroll bounds settle only after this refresh (see
+            # _focus_provider_return_continuation for the same pattern).
+            try:
+                body = self.query_one("#settings-detail-pane-body", VerticalScroll)
+            except QueryError:
+                return
+            body.scroll_to_widget(target, animate=False, force=True, top=True)
+
+        self.call_after_refresh(reveal)
 
     @on(Button.Pressed, "#settings-provider-api-key-clear")
     def handle_provider_api_key_clear_pressed(self, event: Button.Pressed) -> None:
@@ -30619,12 +31897,8 @@ class SettingsScreen(BaseAppScreen):
         if not self.is_attached:
             return
         try:
-            status = self.query_one(
-                "#settings-briefing-schedules-status", Static
-            )
-            button = self.query_one(
-                "#settings-briefing-schedules-toggle", Button
-            )
+            status = self.query_one("#settings-briefing-schedules-status", Static)
+            button = self.query_one("#settings-briefing-schedules-toggle", Button)
         except QueryError:
             return
         live_enabled = not enabled
@@ -31923,7 +33197,9 @@ class SettingsScreen(BaseAppScreen):
                 )
             candidate = None
 
-        logger.warning("Canvas runtime config generation did not stabilize; failing closed")
+        logger.warning(
+            "Canvas runtime config generation did not stabilize; failing closed"
+        )
         policy = build_canvas_config_policy(
             {"canvas": {"enabled": False, "auto_open_on_create": False}},
             environ={},
@@ -32098,8 +33374,7 @@ class SettingsScreen(BaseAppScreen):
         draft = self._settings_drafts.get(category)
         dirty_keys = set() if draft is None else draft.dirty_keys
         canvas_dirty = bool(
-            dirty_keys
-            & {CANVAS_ENABLED_DRAFT_KEY, CANVAS_AUTO_OPEN_DRAFT_KEY}
+            dirty_keys & {CANVAS_ENABLED_DRAFT_KEY, CANVAS_AUTO_OPEN_DRAFT_KEY}
         )
         raw_cli_dirty = RAW_CLI_PERMITTED_DRAFT_KEY in dirty_keys
         if not raw_cli_dirty and not canvas_dirty:
@@ -32155,6 +33430,9 @@ class SettingsScreen(BaseAppScreen):
         if not allow_text_entry_focus and self._settings_text_entry_has_focus():
             return
         category = self._active_category_id()
+        if category is SettingsCategoryId.HOOKS:
+            self._start_hooks_save()
+            return
         # Network sits ABOVE the GUIDED_SETTINGS_MUTATION_CATEGORIES guard on
         # purpose: the category deliberately bypasses the SettingsDraft
         # staging machinery (plain `self._network_pending` dict) with this
@@ -32240,6 +33518,7 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_setting_values_mapping().get("provider") or ""
             ).strip()
             self._snapshot_provider_api_mode_widget(current_provider)
+            self._snapshot_provider_auth_source_widget(current_provider)
             try:
                 values = self._provider_form_values_from_widgets()
             except ValueError as exc:
@@ -32357,6 +33636,14 @@ class SettingsScreen(BaseAppScreen):
                 and api_mode_draft_key in dirty_keys
                 and normalized_api_mode != self._provider_saved_api_mode_value(provider)
             )
+            auth_source = str(values.get("auth_source") or _anthropic_auth_sources()[0])
+            auth_source_dirty = bool(
+                provider_key == "anthropic"
+                and draft is not None
+                and self._provider_auth_source_draft_key(provider) in dirty_keys
+                and auth_source in _anthropic_auth_sources()
+                and auth_source != self._provider_saved_auth_source(provider)
+            )
             selected_profile = self._provider_model_profile(provider, model)
             model_profile_dirty = any(
                 key in dirty_keys
@@ -32398,6 +33685,7 @@ class SettingsScreen(BaseAppScreen):
                 and not dirty_values
                 and not endpoint_dirty
                 and not api_mode_dirty
+                and not auth_source_dirty
                 and not model_profile_dirty
                 and not context_window_dirty
             )
@@ -32482,6 +33770,7 @@ class SettingsScreen(BaseAppScreen):
                 and not credential_dirty
                 and not api_key_dirty
                 and not api_mode_dirty
+                and not auth_source_dirty
                 and not model_profile_dirty
                 and not context_window_dirty
             ):
@@ -32549,8 +33838,13 @@ class SettingsScreen(BaseAppScreen):
                             model=model,
                             endpoint=endpoint,
                             credential_source=credential_source,
-                            credential_revision=getattr(
-                                self, "_provider_credential_revision", 0
+                            credential_revision=self._provider_draft_credential_revision(
+                                provider,
+                                credential_source,
+                                {
+                                    "api_key": api_key,
+                                    "credential_env_var": credential_env_var,
+                                },
                             ),
                             draft_generation=getattr(
                                 self, "_provider_draft_generation", 0
@@ -32608,6 +33902,12 @@ class SettingsScreen(BaseAppScreen):
                         delete_keys.setdefault(
                             f"api_settings.{alias_section}", []
                         ).append("api_mode")
+            if auth_source_dirty:
+                # TASK-34201: Anthropic's sign-in choice; the setup mutation
+                # admits it as a routing key of [api_settings.anthropic].
+                section_values.setdefault(provider_section, {})["auth_source"] = (
+                    auth_source
+                )
             if next_model_defaults is not None:
                 section_values.setdefault(provider_section, {})["model_defaults"] = (
                     next_model_defaults
@@ -32650,9 +33950,22 @@ class SettingsScreen(BaseAppScreen):
                 and save_lease is not None
                 and tested_identity is not None
             ):
+                saved_identity = setup_mutation.semantic_identity
+                if saved_identity is None and not endpoint:
+                    # TASK-33005.4 (AC#12): no endpoint is saved, so the send
+                    # uses the built-in one the tested identity already keys
+                    # (TASK-33005.1); a typed key is now the stored key.
+                    saved_identity = replace(
+                        tested_identity,
+                        credential_source=(
+                            "stored"
+                            if tested_identity.credential_source == "draft"
+                            else tested_identity.credential_source
+                        ),
+                    )
                 evidence_preserved = evidence_store.rebase_after_save(
                     tested_identity,
-                    setup_mutation.semantic_identity,
+                    saved_identity,
                     mutation_result,
                     lease=save_lease,
                 )
@@ -32670,7 +33983,9 @@ class SettingsScreen(BaseAppScreen):
                     reload_capabilities()
                 self._settings_drafts.pop(category, None)
                 self._restore_provider_api_mode_draft_snapshot(retained_api_mode_draft)
-                self._provider_save_result = "Provider settings saved."
+                self._provider_save_result = (
+                    f"Provider settings saved: {PROVIDER_SAVE_SCOPE_COPY}"
+                )
                 self._set_static_text(
                     "#settings-provider-save-result", self._provider_save_result
                 )
@@ -32699,7 +34014,8 @@ class SettingsScreen(BaseAppScreen):
                 if self._provider_return_outcome is not None:
                     self.call_after_refresh(self._focus_provider_return_continuation)
                 self.app.notify(
-                    "Provider and model settings saved.", severity="information"
+                    f"Provider and model settings saved: {PROVIDER_SAVE_SCOPE_COPY}",
+                    severity="information",
                 )
             else:
                 if mutation_result.file_replaced:
@@ -33119,6 +34435,16 @@ class SettingsScreen(BaseAppScreen):
 
     def _revert_category(self, category: SettingsCategoryId) -> None:
         """Discard a dirty category's staged edits (post-confirmation)."""
+        if category is SettingsCategoryId.HOOKS:
+            if not self._hooks_saving:
+
+                async def reload_hooks() -> None:
+                    await self._load_hooks_settings(reset=True)
+
+                self.run_worker(
+                    reload_hooks, group="settings-hooks-load", exclusive=True
+                )
+            return
         if category is SettingsCategoryId.WEB_SEARCH:
             try:
                 panel = self.query_one(WebSearchSettingsPanel)
@@ -33129,7 +34455,7 @@ class SettingsScreen(BaseAppScreen):
                     panel.revert(), group="web-search-revert", exclusive=False
                 )
             return
-        self._settings_drafts.pop(category, None)
+        discarded = self._settings_drafts.pop(category, None)
         if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             self._console_behavior_result = (
                 "Console behavior settings reverted to last loaded values. "
@@ -33220,11 +34546,14 @@ class SettingsScreen(BaseAppScreen):
                         if draft_key == "model_profile_streaming":
                             select.value = self._streaming_select_value(profile_value)
                         else:
+                            options = self._model_profile_enum_options(
+                                provider, values["model"], draft_key, profile_value
+                            )
+                            if draft_key == "model_profile_reasoning_effort":
+                                select.set_options(options)
                             select.value = self._select_option_value(
                                 profile_value,
-                                CLOSED_ENUM_SELECT_OPTIONS[
-                                    PROVIDER_MODEL_PROFILE_FIELD_KEYS[draft_key]
-                                ],
+                                tuple(option for _label, option in options),
                             )
                     else:
                         self.query_one(
@@ -33242,6 +34571,12 @@ class SettingsScreen(BaseAppScreen):
             self._set_static_text(
                 "#settings-provider-save-result", self._provider_save_result
             )
+            # Only a discarded tested field voids the Test rows, and its
+            # in-flight probe must not settle onto the saved identity.
+            tested = {"provider", "model", "endpoint", "api_key", "credential_env_var"}
+            if discarded is not None and discarded.dirty_keys & tested:
+                self._provider_evidence_store().invalidate()
+                self._mark_provider_test_result_stale()
             self._update_provider_dynamic_widgets()
             self._update_draft_status_widgets(category)
         else:
@@ -33257,17 +34592,42 @@ class SettingsScreen(BaseAppScreen):
             return
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             live_probe_url = self._provider_live_probe_base_url()
-            detail, summary, passed = self._provider_readiness_test_report(
-                probes_when_passing=bool(live_probe_url)
+            detail, summary, passed = self._provider_readiness_test_report()
+            provider = self._provider_widget_value()
+            readiness = get_provider_readiness(
+                provider,
+                self._provider_test_staged_config(provider),
+                background_credentials=True,
             )
-            probe_base_url = live_probe_url if passed else ""
-            if probe_base_url:
-                # task-191: readiness passed for a URL-based provider; run a
-                # short live probe in a worker and fold it into the toast.
-                self._provider_test_result = (
-                    f"{detail} | model listing checking | generation not tested"
+            key_check = not live_probe_url and self._provider_key_check_applies(
+                provider
+            )
+            unavailable = (
+                self._provider_key_check_unavailable(provider, readiness)
+                if key_check and readiness.ready
+                else None
+            )
+            if unavailable is not None:
+                self._show_provider_key_check_unavailable(unavailable)
+                return
+            if key_check:
+                # TASK-33005.4 (ADR-012 amendment 2026-09-26): the endpoint a
+                # send would use for this draft ("" lets the provider's own
+                # resolver name it, e.g. an engine preset's default).
+                live_probe_url = (
+                    effective_provider_endpoint(
+                        provider_config_key(provider),
+                        str(
+                            self._provider_current_draft_values().get("endpoint") or ""
+                        ).strip(),
+                        self._provider_config(provider),
+                    )
+                    or ""
                 )
-                self._update_provider_test_result()
+            # task-191 / TASK-33005.4 (AC#11): a configured provider is
+            # listed even before a model is chosen -- that is how a first
+            # run finds one.
+            if readiness.ready and (live_probe_url or key_check):
                 identity = self._provider_current_draft_identity()
                 token = None
                 if identity is not None:
@@ -33275,13 +34635,17 @@ class SettingsScreen(BaseAppScreen):
                         token = self._provider_evidence_store().begin(identity)
                     except ValueError:
                         identity = None
+                self._provider_test_result = self._provider_readiness_test_report(
+                    checking=True
+                )[0]
+                self._update_provider_test_result()
                 self._provider_endpoint_probe_worker(
-                    probe_base_url,
+                    live_probe_url,
                     provider_config_key(self._provider_widget_value()),
-                    detail,
-                    summary,
                     identity,
                     token,
+                    getattr(self, "_provider_test_draft_generation", 0),
+                    key_check=key_check,
                 )
                 return
             self._provider_test_result = detail
@@ -33398,9 +34762,7 @@ class SettingsScreen(BaseAppScreen):
             return
         panel_class = _personal_context_settings_panel_class()
         try:
-            panel = self.query_one(
-                "#personal-context-settings-panel", panel_class
-            )
+            panel = self.query_one("#personal-context-settings-panel", panel_class)
         except QueryError:
             return
         action = getattr(panel, f"action_{action_name}", None)

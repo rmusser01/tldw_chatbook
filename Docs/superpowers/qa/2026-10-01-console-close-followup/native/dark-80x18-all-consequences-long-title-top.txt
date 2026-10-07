@@ -1,0 +1,18 @@
+         ╭█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█
+ ⌃1 Home │█                                                          █  More ▾
+──────────█                        Close tab                         █──────────
+ Console —█  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA   █ Blocked
+   New tab█                       AAAAAAAA"?                         █  Help
+──────────█                                                          █──────────
+ Conversat█             Saved history stays in Library.              █
+    ◆ View█             Closing will discard or cancel:              █
+ Each tab █            Temporary or unsaved messages: 1              █ >     ✕
+  ────────█                    Unsent draft: yes                     █───────▂
+   Tool   █                 Pending attachments: 1                   █
+   ? Quest█                   Live agent turns: 1                 ▁  █       ▂
+     Priva█                   Delegated agents: 1                    █
+  ────────█                Unsent queued prompts: 1                  █───────
+──────────█         Tool approvals: denied; runs cancelled.          █──────────
+ Status ▾ █                    Stay        Close                     █  Model:
+█  Compose█                                                          █e
+  Ctrl+Shi█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█

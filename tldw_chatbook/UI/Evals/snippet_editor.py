@@ -139,7 +139,9 @@ def snippet_whitespace_flag_label(text: str) -> Optional[str]:
     if not kinds:
         return None
     return ", ".join(
-        _WHITESPACE_KIND_LABELS[kind] for kind in _WHITESPACE_KIND_ORDER if kind in kinds
+        _WHITESPACE_KIND_LABELS[kind]
+        for kind in _WHITESPACE_KIND_ORDER
+        if kind in kinds
     )
 
 
@@ -230,7 +232,9 @@ def count_warnings(snippets: Sequence[Mapping[str, Any]]) -> int:
     duplicate (a row carrying both counts twice, matching the design
     mockup's additive footer)."""
     whitespace_count = sum(
-        1 for snippet in snippets if whitespace_warning_kinds(str(snippet.get("text") or ""))
+        1
+        for snippet in snippets
+        if whitespace_warning_kinds(str(snippet.get("text") or ""))
     )
     duplicate_count = len(find_exact_duplicate_labels(snippets))
     return whitespace_count + duplicate_count
@@ -511,7 +515,9 @@ class SnippetEditor(NotifyMixin, Vertical):
     table (character count, whitespace flag, exact-duplicate flag) and an
     import control (``#evals-import-snippets``)."""
 
-    def __init__(self, view_model: EvalsViewModel, dataset_id: str, **kwargs: Any) -> None:
+    def __init__(
+        self, view_model: EvalsViewModel, dataset_id: str, **kwargs: Any
+    ) -> None:
         super().__init__(**kwargs)
         self._view_model = view_model
         self._dataset_id = dataset_id
@@ -578,9 +584,7 @@ class SnippetEditor(NotifyMixin, Vertical):
             total_warnings = count_warnings(snippets)
             warning_word = "warning" if total_warnings == 1 else "warnings"
             yield Static(
-                f"{total_warnings} {warning_word}"
-                if total_warnings
-                else "No warnings",
+                f"{total_warnings} {warning_word}" if total_warnings else "No warnings",
                 id="evals-snippet-warnings-summary",
             )
 
@@ -611,9 +615,7 @@ class SnippetEditor(NotifyMixin, Vertical):
         dup_label = duplicate_labels.get(snippet_id)
         flags = ", ".join(label for label in (ws_label, dup_label) if label) or "—"
 
-        with Horizontal(
-            id=f"evals-snippet-row-{index}", classes="evals-snippet-row"
-        ):
+        with Horizontal(id=f"evals-snippet-row-{index}", classes="evals-snippet-row"):
             yield Static(f"{index + 1}.", classes="evals-snippet-index", markup=False)
             yield Static(
                 render_snippet_cell(text),
@@ -717,7 +719,9 @@ class SnippetEditor(NotifyMixin, Vertical):
 
     def _apply_import_content(self, file_path: Path, content: str) -> None:
         """UI-thread half: parse, write, report. Runs after the read."""
-        parser = _IMPORT_PARSERS.get(file_path.suffix.lower(), parse_plain_text_snippets)
+        parser = _IMPORT_PARSERS.get(
+            file_path.suffix.lower(), parse_plain_text_snippets
+        )
         try:
             new_snippets, skipped_count = parser(content)
         except ValueError as exc:

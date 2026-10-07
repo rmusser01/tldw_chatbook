@@ -1,0 +1,761 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="15" skipped="0" tests="21" time="26.881" timestamp="2026-10-03T21:33:51.291348-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_captured_context_reaches_raw_child_and_tool_threads" time="0.726"><failure message="AssertionError: assert 'error' == 'done'&#10;  &#10;  - done&#10;  + error">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10c9ff260&gt;
+
+    def test_captured_context_reaches_raw_child_and_tool_threads(db):
+        context = accepted_context(db)
+        seen = []
+        tool = ContextProbe()
+    
+        def child():
+            seen.append(current_automatic_work())
+            return fence("whoami", {})
+    
+        service, _ = make_service(
+            db,
+            context,
+            [fence("spawn_subagent", {"task": "child"}), fence("wait_agents", {}), "done"],
+            {"child": [child, "child done"]},
+            provider=tool,
+        )
+        assert current_automatic_work() is None
+        try:
+&gt;           assert run(service)[1].status == "done"
+E           AssertionError: assert 'error' == 'done'
+E             
+E             - done
+E             + error
+
+Tests/Agents/test_automatic_child_scope.py:181: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_prepared_context_cannot_start_service_or_tool_worker" time="0.269" /><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_three_generations_share_six_actual_launches_and_manual_is_uncharged" time="0.945"><failure message="assert 0 == 6">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cd24aa0&gt;
+
+    def test_three_generations_share_six_actual_launches_and_manual_is_uncharged(db):
+        context = accepted_context(db)
+        chain_id = context.chain_id
+        for generation in range(3):
+            if generation:
+                context = accepted_context(
+                    db, chain_id=chain_id, attempt=f"attempt-{generation}"
+                )
+            names = [f"child-{generation}-{i}" for i in range(2)]
+            replies = []
+            for name in names:
+                replies += [
+                    fence("spawn_subagent", {"task": name}),
+                    fence("wait_agents", {}),
+                ]
+            if generation == 2:
+                replies += [fence("spawn_subagent", {"task": "seventh"})]
+            replies += ["done"]
+            scripts = {name: ["child done"] for name in names}
+            if generation == 2:
+                scripts["seventh"] = ["must be refused"]
+            service, _ = make_service(db, context, replies, scripts)
+            try:
+                run(service)
+                join_fleet_children(service)
+            finally:
+                join_fleet_children(service)
+            assert db.automatic_work.complete_wake(context.attempt_id, owner_id="owner")
+        snapshot = db.automatic_work.snapshot(chain_id)
+&gt;       assert snapshot.used["child_launch"] == 6
+E       assert 0 == 6
+
+Tests/Agents/test_automatic_child_scope.py:237: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_proven_prelaunch_failure_refunds_shared_reservation[construct]" time="0.379"><failure message="assert [] == [True]&#10;  &#10;  Right contains one more item: True&#10;  Use -v to get more diff">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10ccc3ef0&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10cd74d10&gt;
+failure_site = 'construct'
+
+    @pytest.mark.parametrize("failure_site", ["construct", "start", "review"])
+    def test_proven_prelaunch_failure_refunds_shared_reservation(
+        db, monkeypatch, failure_site
+    ):
+        context = accepted_context(db, child_launches=1)
+        failed = []
+        extra = {}
+        if failure_site == "review":
+            pin_agent_settings(monkeypatch, max_live_subagents=1)
+    
+            @contextmanager
+            def review_scope(run_id):
+                if not failed:
+                    failed.append(True)
+                    raise RuntimeError("review scope unavailable")
+                yield
+    
+            extra["review_state_scope"] = review_scope
+        else:
+            original_thread, original_start = threading.Thread, threading.Thread.start
+    
+            def construct(*args, **kwargs):
+                if kwargs.get("name", "").startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_thread(*args, **kwargs)
+    
+            def start(thread):
+                if thread.name.startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_start(thread)
+    
+            if failure_site == "construct":
+                monkeypatch.setattr(threading, "Thread", construct)
+            else:
+                monkeypatch.setattr(threading.Thread, "start", start)
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "failed"}),
+                fence("spawn_subagent", {"task": "retry"}),
+                fence("wait_agents", {}),
+                "done",
+            ],
+            {"retry": ["child done"]},
+            **extra,
+        )
+        try:
+            run(service, max_subagents=1)
+            join_fleet_children(service)
+&gt;           assert failed == [True]
+E           assert [] == [True]
+E             
+E             Right contains one more item: True
+E             Use -v to get more diff
+
+Tests/Agents/test_automatic_child_scope.py:309: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_proven_prelaunch_failure_refunds_shared_reservation[start]" time="0.348"><failure message="assert [] == [True]&#10;  &#10;  Right contains one more item: True&#10;  Use -v to get more diff">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10ccc34a0&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10cd74ef0&gt;
+failure_site = 'start'
+
+    @pytest.mark.parametrize("failure_site", ["construct", "start", "review"])
+    def test_proven_prelaunch_failure_refunds_shared_reservation(
+        db, monkeypatch, failure_site
+    ):
+        context = accepted_context(db, child_launches=1)
+        failed = []
+        extra = {}
+        if failure_site == "review":
+            pin_agent_settings(monkeypatch, max_live_subagents=1)
+    
+            @contextmanager
+            def review_scope(run_id):
+                if not failed:
+                    failed.append(True)
+                    raise RuntimeError("review scope unavailable")
+                yield
+    
+            extra["review_state_scope"] = review_scope
+        else:
+            original_thread, original_start = threading.Thread, threading.Thread.start
+    
+            def construct(*args, **kwargs):
+                if kwargs.get("name", "").startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_thread(*args, **kwargs)
+    
+            def start(thread):
+                if thread.name.startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_start(thread)
+    
+            if failure_site == "construct":
+                monkeypatch.setattr(threading, "Thread", construct)
+            else:
+                monkeypatch.setattr(threading.Thread, "start", start)
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "failed"}),
+                fence("spawn_subagent", {"task": "retry"}),
+                fence("wait_agents", {}),
+                "done",
+            ],
+            {"retry": ["child done"]},
+            **extra,
+        )
+        try:
+            run(service, max_subagents=1)
+            join_fleet_children(service)
+&gt;           assert failed == [True]
+E           assert [] == [True]
+E             
+E             Right contains one more item: True
+E             Use -v to get more diff
+
+Tests/Agents/test_automatic_child_scope.py:309: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_proven_prelaunch_failure_refunds_shared_reservation[review]" time="0.403"><failure message="assert [] == [True]&#10;  &#10;  Right contains one more item: True&#10;  Use -v to get more diff">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb7d460&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b295280&gt;
+failure_site = 'review'
+
+    @pytest.mark.parametrize("failure_site", ["construct", "start", "review"])
+    def test_proven_prelaunch_failure_refunds_shared_reservation(
+        db, monkeypatch, failure_site
+    ):
+        context = accepted_context(db, child_launches=1)
+        failed = []
+        extra = {}
+        if failure_site == "review":
+            pin_agent_settings(monkeypatch, max_live_subagents=1)
+    
+            @contextmanager
+            def review_scope(run_id):
+                if not failed:
+                    failed.append(True)
+                    raise RuntimeError("review scope unavailable")
+                yield
+    
+            extra["review_state_scope"] = review_scope
+        else:
+            original_thread, original_start = threading.Thread, threading.Thread.start
+    
+            def construct(*args, **kwargs):
+                if kwargs.get("name", "").startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_thread(*args, **kwargs)
+    
+            def start(thread):
+                if thread.name.startswith("fleet-") and not failed:
+                    failed.append(True)
+                    raise RuntimeError("thread unavailable")
+                return original_start(thread)
+    
+            if failure_site == "construct":
+                monkeypatch.setattr(threading, "Thread", construct)
+            else:
+                monkeypatch.setattr(threading.Thread, "start", start)
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "failed"}),
+                fence("spawn_subagent", {"task": "retry"}),
+                fence("wait_agents", {}),
+                "done",
+            ],
+            {"retry": ["child done"]},
+            **extra,
+        )
+        try:
+            run(service, max_subagents=1)
+            join_fleet_children(service)
+&gt;           assert failed == [True]
+E           assert [] == [True]
+E             
+E             Right contains one more item: True
+E             Use -v to get more diff
+
+Tests/Agents/test_automatic_child_scope.py:309: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_inline_model_setup_failure_keeps_accepted_launch_charge" time="0.359"><failure message="assert 0 == 1">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10be33e00&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10be31ca0&gt;
+
+    def test_inline_model_setup_failure_keeps_accepted_launch_charge(db, monkeypatch):
+        pin_agent_settings(monkeypatch, max_live_subagents=1)
+        context = accepted_context(db, child_launches=1)
+    
+        @contextmanager
+        def model_scope():
+            raise RuntimeError("driver partially started")
+            yield  # pragma: no cover
+    
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "failed"}),
+                fence("spawn_subagent", {"task": "retry"}),
+                "done",
+            ],
+            inline_child_model_scope=model_scope,
+        )
+        run(service, max_subagents=1)
+        assert child_rows(db) == []
+        snapshot = db.automatic_work.snapshot(context.chain_id)
+&gt;       assert snapshot.used["child_launch"] == 1
+E       assert 0 == 1
+
+Tests/Agents/test_automatic_child_scope.py:345: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_finished_child_continuation_cannot_bypass_shared_launch_limit" time="0.401"><failure message="assert 0 == 1&#10; +  where 0 = len([])&#10; +    where [] = child_rows(&lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10bd88410&gt;)">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10bd88410&gt;
+
+    def test_finished_child_continuation_cannot_bypass_shared_launch_limit(db):
+        context = accepted_context(db, child_launches=1)
+        fleet = FleetCoordinator(max_live=3, clock=time.monotonic)
+    
+        def resume():
+            handle = fleet.snapshot()[0]
+            return fence("send_to_agent", {"id": handle.handle_id, "message": "continue"})
+    
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "child"}),
+                fence("wait_agents", {}),
+                resume,
+                "done",
+            ],
+            {"child": ["child done", "should not resume"]},
+            fleet_coordinator=fleet,
+        )
+        try:
+            run(service)
+            join_fleet_children(service)
+&gt;           assert len(child_rows(db)) == 1
+E           assert 0 == 1
+E            +  where 0 = len([])
+E            +    where [] = child_rows(&lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10bd88410&gt;)
+
+Tests/Agents/test_automatic_child_scope.py:373: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_survivor_still_honors_its_chain_deadline_after_parent_returns" time="0.421"><failure message="AssertionError: assert 'error' == 'done'&#10;  &#10;  - done&#10;  + error">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10caab3b0&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10bcf4cb0&gt;
+
+    def test_survivor_still_honors_its_chain_deadline_after_parent_returns(db, monkeypatch):
+        wall, monotonic = [1000.0], [10.0]
+        monkeypatch.setattr(db.automatic_work, "_wall_clock", lambda: wall[0])
+        monkeypatch.setattr(db.automatic_work, "_monotonic_clock", lambda: monotonic[0])
+        context = accepted_context(db, wall_seconds=2)
+        entered, release = threading.Event(), threading.Event()
+        tool = ContextProbe()
+    
+        def child():
+            entered.set()
+            assert release.wait(5)
+            return fence("whoami", {})
+    
+        def parent_done():
+            assert entered.wait(5)
+            return "done"
+    
+        service, _ = make_service(
+            db,
+            context,
+            [fence("spawn_subagent", {"task": "survivor"}), parent_done],
+            {"survivor": [child, "should not continue"]},
+            provider=tool,
+        )
+        try:
+&gt;           assert run(service)[1].status == "done"
+E           AssertionError: assert 'error' == 'done'
+E             
+E             - done
+E             + error
+
+Tests/Agents/test_automatic_child_scope.py:409: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_real_paused_capped_child_releases_logically_before_physical_worker[elapsed_deadline]" time="5.264"><failure message="assert False&#10; +  where False = wait(5)&#10; +    where wait = &lt;threading.Event at 0x10caab6b0: unset&gt;.wait&#10; +      where &lt;threading.Event at 0x10caab6b0: unset&gt; = &lt;Tests.Agents.test_automatic_child_scope.PausedChildToolProvider object at 0x10bcf5fa0&gt;.entered">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb7f830&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10bcf46e0&gt;
+stop_mode = 'elapsed_deadline'
+
+    @pytest.mark.parametrize("stop_mode", ["elapsed_deadline", "explicit_cancel"])
+    def test_real_paused_capped_child_releases_logically_before_physical_worker(
+        db, monkeypatch, stop_mode
+    ):
+        import tldw_chatbook.Agents.agent_service as service_module
+    
+        monkeypatch.setattr(service_module, "_CANCEL_POLL_SECONDS", 0.01)
+        wall, monotonic = [1000.0], [10.0]
+        monkeypatch.setattr(db.automatic_work, "_wall_clock", lambda: wall[0])
+        monkeypatch.setattr(db.automatic_work, "_monotonic_clock", lambda: monotonic[0])
+        context = accepted_context(db, wall_seconds=2)
+        provider = PausedChildToolProvider()
+        capacity = RuntimeCapacity()
+        fleet = FleetCoordinator(max_live=1, clock=time.monotonic)
+        db.create_agent_definition(
+            AgentDefinition(
+                name="bounded",
+                description="Bounded child.",
+                instructions="Call the paused tool.",
+                tool_allowlist=("paused_tool",),
+                max_wall_seconds=0.2,
+            )
+        )
+        service, _chat = make_service(
+            db,
+            context,
+            [fence("spawn_subagent", {"task": "paused", "agent": "bounded"}), "done"],
+            {"paused": [fence("paused_tool", {}), "must not continue"]},
+            provider=provider,
+            runtime_capacity=capacity,
+            fleet_coordinator=fleet,
+        )
+        result = []
+    
+        def run_parent():
+            result.append(
+                service.run_turn(
+                    conversation_id="conversation",
+                    messages=[{"role": "user", "content": "go"}],
+                    config=AgentConfig(
+                        model="test",
+                        system_prompt="Test",
+                        allowed_tools=("spawn_subagent", "paused_tool"),
+                        budget=RunBudget(
+                            max_subagents=1,
+                            max_steps=60,
+                            max_model_turns=30,
+                            max_tool_call_seconds=5,
+                        ),
+                    ),
+                    api_endpoint="llama_cpp",
+                )
+            )
+    
+        parent = threading.Thread(target=run_parent)
+        parent.start()
+        try:
+&gt;           assert provider.entered.wait(5)
+E           assert False
+E            +  where False = wait(5)
+E            +    where wait = &lt;threading.Event at 0x10caab6b0: unset&gt;.wait
+E            +      where &lt;threading.Event at 0x10caab6b0: unset&gt; = &lt;Tests.Agents.test_automatic_child_scope.PausedChildToolProvider object at 0x10bcf5fa0&gt;.entered
+
+Tests/Agents/test_automatic_child_scope.py:481: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_real_paused_capped_child_releases_logically_before_physical_worker[explicit_cancel]" time="5.265"><failure message="assert False&#10; +  where False = wait(5)&#10; +    where wait = &lt;threading.Event at 0x10be309b0: unset&gt;.wait&#10; +      where &lt;threading.Event at 0x10be309b0: unset&gt; = &lt;Tests.Agents.test_automatic_child_scope.PausedChildToolProvider object at 0x10cb7dd30&gt;.entered">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb40950&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10cb422d0&gt;
+stop_mode = 'explicit_cancel'
+
+    @pytest.mark.parametrize("stop_mode", ["elapsed_deadline", "explicit_cancel"])
+    def test_real_paused_capped_child_releases_logically_before_physical_worker(
+        db, monkeypatch, stop_mode
+    ):
+        import tldw_chatbook.Agents.agent_service as service_module
+    
+        monkeypatch.setattr(service_module, "_CANCEL_POLL_SECONDS", 0.01)
+        wall, monotonic = [1000.0], [10.0]
+        monkeypatch.setattr(db.automatic_work, "_wall_clock", lambda: wall[0])
+        monkeypatch.setattr(db.automatic_work, "_monotonic_clock", lambda: monotonic[0])
+        context = accepted_context(db, wall_seconds=2)
+        provider = PausedChildToolProvider()
+        capacity = RuntimeCapacity()
+        fleet = FleetCoordinator(max_live=1, clock=time.monotonic)
+        db.create_agent_definition(
+            AgentDefinition(
+                name="bounded",
+                description="Bounded child.",
+                instructions="Call the paused tool.",
+                tool_allowlist=("paused_tool",),
+                max_wall_seconds=0.2,
+            )
+        )
+        service, _chat = make_service(
+            db,
+            context,
+            [fence("spawn_subagent", {"task": "paused", "agent": "bounded"}), "done"],
+            {"paused": [fence("paused_tool", {}), "must not continue"]},
+            provider=provider,
+            runtime_capacity=capacity,
+            fleet_coordinator=fleet,
+        )
+        result = []
+    
+        def run_parent():
+            result.append(
+                service.run_turn(
+                    conversation_id="conversation",
+                    messages=[{"role": "user", "content": "go"}],
+                    config=AgentConfig(
+                        model="test",
+                        system_prompt="Test",
+                        allowed_tools=("spawn_subagent", "paused_tool"),
+                        budget=RunBudget(
+                            max_subagents=1,
+                            max_steps=60,
+                            max_model_turns=30,
+                            max_tool_call_seconds=5,
+                        ),
+                    ),
+                    api_endpoint="llama_cpp",
+                )
+            )
+    
+        parent = threading.Thread(target=run_parent)
+        parent.start()
+        try:
+&gt;           assert provider.entered.wait(5)
+E           assert False
+E            +  where False = wait(5)
+E            +    where wait = &lt;threading.Event at 0x10be309b0: unset&gt;.wait
+E            +      where &lt;threading.Event at 0x10be309b0: unset&gt; = &lt;Tests.Agents.test_automatic_child_scope.PausedChildToolProvider object at 0x10cb7dd30&gt;.entered
+
+Tests/Agents/test_automatic_child_scope.py:481: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_real_human_wait_pauses_only_capped_child_then_wall_boundary_stops_it" time="5.165"><failure message="assert False&#10; +  where False = wait(5)&#10; +    where wait = &lt;threading.Event at 0x10ccc2f30: unset&gt;.wait&#10; +      where &lt;threading.Event at 0x10ccc2f30: unset&gt; = &lt;Tests.Agents.test_automatic_child_scope.PausedChildToolProvider object at 0x10ccc23c0&gt;.entered">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb40ad0&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10cb43c80&gt;
+
+    def test_real_human_wait_pauses_only_capped_child_then_wall_boundary_stops_it(
+        db, monkeypatch
+    ):
+        import tldw_chatbook.Agents.agent_service as service_module
+    
+        monkeypatch.setattr(service_module, "_CANCEL_POLL_SECONDS", 0.01)
+        provider = PausedChildToolProvider()
+        capacity = RuntimeCapacity(max_tool_workers=2, reserved_manual_tool_workers=0)
+        fleet = FleetCoordinator(max_live=2, clock=time.monotonic)
+        db.create_agent_definition(
+            AgentDefinition(
+                name="bounded",
+                description="Bounded child.",
+                instructions="Call the paused tool.",
+                tool_allowlist=("paused_tool",),
+                max_wall_seconds=0.15,
+            )
+        )
+        service, _chat = make_service(
+            db,
+            None,
+            [
+                fence("spawn_subagent", {"task": "paused", "agent": "bounded"}),
+                fence("spawn_subagent", {"task": "sibling"}),
+                "done",
+            ],
+            {
+                "paused": [fence("paused_tool", {}), "must not continue"],
+                "sibling": [fence("sibling_tool", {}), "sibling done"],
+            },
+            provider=provider,
+            runtime_capacity=capacity,
+            fleet_coordinator=fleet,
+        )
+        result = []
+    
+        def run_parent():
+            result.append(
+                service.run_turn(
+                    conversation_id="conversation",
+                    messages=[{"role": "user", "content": "go"}],
+                    config=AgentConfig(
+                        model="test",
+                        system_prompt="Test",
+                        allowed_tools=(
+                            "spawn_subagent",
+                            "paused_tool",
+                            "sibling_tool",
+                        ),
+                        budget=RunBudget(
+                            max_subagents=2,
+                            max_steps=60,
+                            max_model_turns=30,
+                            max_tool_call_seconds=0.08,
+                        ),
+                    ),
+                    api_endpoint="llama_cpp",
+                )
+            )
+    
+        parent = threading.Thread(target=run_parent)
+        parent.start()
+        try:
+&gt;           assert provider.entered.wait(5)
+E           assert False
+E            +  where False = wait(5)
+E            +    where wait = &lt;threading.Event at 0x10ccc2f30: unset&gt;.wait
+E            +      where &lt;threading.Event at 0x10ccc2f30: unset&gt; = &lt;Tests.Agents.test_automatic_child_scope.PausedChildToolProvider object at 0x10ccc23c0&gt;.entered
+
+Tests/Agents/test_automatic_child_scope.py:578: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_deep_search_is_refused_in_automatic_tool_thread_but_manual_is_unchanged" time="0.373" /><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_automatic_origin_without_accepted_context_cannot_dispatch" time="0.204" /><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_tool_wait_keeps_automatic_deadline_while_human_clock_is_paused" time="0.419" /><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_local_tool_rechecks_chain_after_human_approval" time="0.259" /><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_captured_automatic_authority_keeps_automatic_capacity_origin" time="0.363"><failure message="AssertionError: assert 'error' == 'done'&#10;  &#10;  - done&#10;  + error">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10ccf0ad0&gt;
+
+    def test_captured_automatic_authority_keeps_automatic_capacity_origin(db):
+        context = accepted_context(db)
+        capacity = RuntimeCapacity()
+        seen = []
+        chat = FleetChat([lambda: (seen.extend(capacity.snapshot().executions), "done")[1]])
+        with context.scope():
+            service = AgentService(
+                db, ToolCatalogRegistry(), chat_call=chat, runtime_capacity=capacity
+            )
+&gt;       assert run(service)[1].status == "done"
+E       AssertionError: assert 'error' == 'done'
+E         
+E         - done
+E         + error
+
+Tests/Agents/test_automatic_child_scope.py:742: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_captured_automatic_authority_keeps_automatic_capacity_origin" time="3.014"><error message="failed on teardown with &quot;AssertionError: FleetChat scripting fault(s): parent has 1 unused turn(s)&#10;assert not ['parent has 1 unused turn(s)']&quot;">@pytest.fixture(autouse=True)
+    def _fleet_chat_scripts_fully_consumed():
+        """Fail any test that mis-scripted a `FleetChat` (PR2a Task 6.5 review).
+    
+        `Tests/Agents/test_agent_service.FleetChat` addresses provider replies
+        per agent, and is the load-bearing harness for every suite that spawns
+        a sub-agent. Two of its failure modes are otherwise SILENT:
+    
+        * a fault raised on a CHILD's thread is swallowed by `AgentService`'s
+          `run_child` (BaseException by design) into `status=error`, so a test
+          that does not assert the child's own result still passes;
+        * a scripted turn nobody ever asks for -- e.g. after a task-text
+          rename leaves the key stale -- simply goes unused, and the test
+          passes while exercising nothing it claims to.
+    
+        Autouse and repo-wide on purpose: this must not be something a future
+        test can forget to opt into. It is a no-op (one empty list check) for
+        the thousands of tests that never touch `FleetChat`, and it never
+        imports it -- the class registers its own instances.
+        """
+        # Looked up through sys.modules rather than imported: a test that
+        # never pulled the harness in must not pay to import the whole agent
+        # stack, nor gain its import side effects. No module -&gt; nothing to check.
+        module = sys.modules.get("Tests.Agents.test_agent_service")
+        fleet_chat = getattr(module, "FleetChat", None) if module else None
+        if fleet_chat is None:
+            yield
+            return
+    
+        fleet_chat._live_instances.clear()
+        yield
+        instances = list(fleet_chat._live_instances)
+        fleet_chat._live_instances.clear()
+        # PR3a-1 Task 2: a sub-agent now outlives the turn that spawned it by
+        # default, so a child can still be on its way to its FIRST scripted
+        # reply when the test body ends -- "unused turn" and "not used YET"
+        # look identical at this instant. Wait for the difference rather than
+        # guessing at it: a script that is merely late is consumed within
+        # milliseconds, while a genuinely mis-keyed one costs this bounded
+        # wait once, on a test that is failing anyway.
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() &lt; deadline and any(
+            chat.unconsumed() for chat in instances
+        ):
+            time.sleep(0.02)
+        problems = []
+        for chat in instances:
+            problems.extend(chat.harness_errors)
+            problems.extend(chat.unconsumed())
+&gt;       assert not problems, "FleetChat scripting fault(s): " + "; ".join(problems)
+E       AssertionError: FleetChat scripting fault(s): parent has 1 unused turn(s)
+E       assert not ['parent has 1 unused turn(s)']
+
+Tests/conftest.py:1635: AssertionError</error></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_refused_automatic_run_releases_injected_execution_owner" time="0.203" /><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_occupied_child_capacity_refunds_chain_before_retry[runtime]" time="0.361"><failure message="AssertionError: assert 'error' == 'done'&#10;  &#10;  - done&#10;  + error">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10bd8b440&gt;
+capacity_kind = 'runtime'
+
+    @pytest.mark.parametrize("capacity_kind", ["runtime", "fleet"])
+    def test_occupied_child_capacity_refunds_chain_before_retry(db, capacity_kind):
+        context = accepted_context(db, child_launches=1)
+        capacity = RuntimeCapacity(max_child_executions=1, reserved_manual_children=0)
+        fleet = FleetCoordinator(max_live=1, clock=time.monotonic)
+        blocker = (
+            capacity.begin_execution(
+                origin=WorkOrigin.MANUAL, conversation_id="other", child=True
+            )
+            if capacity_kind == "runtime"
+            else fleet.reserve(task="other", agent=None)
+        )
+    
+        def release():
+            if capacity_kind == "runtime":
+                blocker.finish_root()
+            else:
+                fleet.finish(blocker.handle_id, "done", result="done")
+    
+        def retry():
+            assert child_rows(db) == []
+            assert (
+                db.automatic_work.snapshot(context.chain_id).available["child_launch"] == 1
+            )
+            release()
+            return fence("spawn_subagent", {"task": "retry"})
+    
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "refused"}),
+                retry,
+                fence("wait_agents", {}),
+                "done",
+            ],
+            {"retry": ["child done"]},
+            runtime_capacity=capacity,
+            fleet_coordinator=fleet,
+        )
+        try:
+&gt;           assert run(service, max_subagents=1)[1].status == "done"
+E           AssertionError: assert 'error' == 'done'
+E             
+E             - done
+E             + error
+
+Tests/Agents/test_automatic_child_scope.py:814: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_occupied_child_capacity_refunds_chain_before_retry[fleet]" time="0.394"><failure message="AssertionError: assert 'error' == 'done'&#10;  &#10;  - done&#10;  + error">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb7e1b0&gt;
+capacity_kind = 'fleet'
+
+    @pytest.mark.parametrize("capacity_kind", ["runtime", "fleet"])
+    def test_occupied_child_capacity_refunds_chain_before_retry(db, capacity_kind):
+        context = accepted_context(db, child_launches=1)
+        capacity = RuntimeCapacity(max_child_executions=1, reserved_manual_children=0)
+        fleet = FleetCoordinator(max_live=1, clock=time.monotonic)
+        blocker = (
+            capacity.begin_execution(
+                origin=WorkOrigin.MANUAL, conversation_id="other", child=True
+            )
+            if capacity_kind == "runtime"
+            else fleet.reserve(task="other", agent=None)
+        )
+    
+        def release():
+            if capacity_kind == "runtime":
+                blocker.finish_root()
+            else:
+                fleet.finish(blocker.handle_id, "done", result="done")
+    
+        def retry():
+            assert child_rows(db) == []
+            assert (
+                db.automatic_work.snapshot(context.chain_id).available["child_launch"] == 1
+            )
+            release()
+            return fence("spawn_subagent", {"task": "retry"})
+    
+        service, _ = make_service(
+            db,
+            context,
+            [
+                fence("spawn_subagent", {"task": "refused"}),
+                retry,
+                fence("wait_agents", {}),
+                "done",
+            ],
+            {"retry": ["child done"]},
+            runtime_capacity=capacity,
+            fleet_coordinator=fleet,
+        )
+        try:
+&gt;           assert run(service, max_subagents=1)[1].status == "done"
+E           AssertionError: assert 'error' == 'done'
+E             
+E             - done
+E             + error
+
+Tests/Agents/test_automatic_child_scope.py:814: AssertionError</failure></testcase><testcase classname="Tests.Agents.test_automatic_child_scope" name="test_concurrent_service_launches_cannot_double_spend_chain_remainder" time="0.631"><failure message="AssertionError: assert None == 'child_launch_budget'&#10; +  where None = AutomaticWorkSnapshot(chain_id='0e2dfcd0ea4e44aba7d70687f71c0cda', conversation_id='conversation', limits=AutomaticWor...0}), available=mappingproxy({'generation': 2, 'child_launch': 1, 'model_call': 32, 'tokens': 500000}), uncertain=False).pause_reason">db = &lt;tldw_chatbook.DB.AgentRuns_DB.AgentRunsDB object at 0x10cb7ed20&gt;
+
+    def test_concurrent_service_launches_cannot_double_spend_chain_remainder(db):
+        context = accepted_context(db, child_launches=1)
+        ready = threading.Barrier(2)
+        errors = []
+        children = []
+    
+        def spawn():
+            ready.wait(5)
+            return fence("spawn_subagent", {"task": "child"})
+    
+        def child():
+            children.append(threading.current_thread())
+            return "child done"
+    
+        services = [
+            make_service(db, context, [spawn, "done"], {"child": [child]})[0]
+            for _ in range(2)
+        ]
+    
+        def parent(service):
+            try:
+                run(service)
+            except BaseException as exc:  # noqa: BLE001 -- propagate worker failures to the test
+                errors.append(exc)
+    
+        parents = [threading.Thread(target=parent, args=(service,)) for service in services]
+        try:
+            for parent_thread in parents:
+                parent_thread.start()
+            for parent_thread in parents:
+                parent_thread.join(5)
+                assert not parent_thread.is_alive()
+            for service in services:
+                join_fleet_children(service)
+            assert errors == []
+            assert len(children) &lt;= 1
+            assert len(child_rows(db)) &lt;= 1
+            snapshot = db.automatic_work.snapshot(context.chain_id)
+            assert snapshot.used["child_launch"] &lt;= 1
+            assert snapshot.reserved["child_launch"] == 0
+&gt;           assert snapshot.pause_reason == "child_launch_budget"
+E           AssertionError: assert None == 'child_launch_budget'
+E            +  where None = AutomaticWorkSnapshot(chain_id='0e2dfcd0ea4e44aba7d70687f71c0cda', conversation_id='conversation', limits=AutomaticWor...0}), available=mappingproxy({'generation': 2, 'child_launch': 1, 'model_call': 32, 'tokens': 500000}), uncertain=False).pause_reason
+
+Tests/Agents/test_automatic_child_scope.py:866: AssertionError</failure></testcase></testsuite></testsuites>

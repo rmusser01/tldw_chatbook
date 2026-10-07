@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.app_module_patches import set_app_global
 from tldw_chatbook.Character_Chat import visual_identity
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.VisualIdentity_DB import VisualIdentityRepository
@@ -455,8 +456,8 @@ def test_app_injected_notes_database_uses_shared_seed_helper_once(
         return candidate
 
     monkeypatch.setattr(app_module, "seed_builtin_content", record_seed)
-    monkeypatch.setattr(
-        app_module,
+    set_app_global(
+        monkeypatch,
         "get_chachanotes_db_lazy",
         lambda: pytest.fail("injected DB should not use lazy construction"),
     )

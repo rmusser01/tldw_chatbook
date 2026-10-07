@@ -2,6 +2,7 @@
 
 Date: 2026-07-26
 Status: accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Relates to: spec `2026-07-26-settings-workspaces-category-design.md`; supersedes the Stage-5 read-only boundary in `Docs/superpowers/plans/2026-05-29-settings-configuration-hub.md`
 
 ## Context

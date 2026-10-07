@@ -31,7 +31,6 @@ from textual.css.query import QueryError
 from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence,
     load_settings,
-    set_encryption_password,
 )
 from tldw_chatbook.css import build_css, widget_css
 from tldw_chatbook.Logging_Config import configure_application_logging
@@ -40,6 +39,10 @@ from tldw_chatbook.Metrics.Otel_Metrics import init_metrics as init_otel_metrics
 from tldw_chatbook.Utils.app_shutdown import (
     arm_exit_watchdog,
     install_termination_handlers,
+)
+from tldw_chatbook.Utils.launch_options import (
+    apply_launch_options,
+    build_launch_parser,
 )
 from tldw_chatbook.Utils.Emoji_Handling import (
     EMOJI_TITLE_BRAIN,
@@ -347,28 +350,12 @@ def _generated_css_is_stale(package_root: Path) -> tuple[bool, str]:
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    """Build the tldw-cli argument parser (extracted from main_cli_runner() for testability)."""
-    parser = argparse.ArgumentParser(
-        description="tldw chatbook - A Textual TUI for chatting with LLMs",
-        prog="tldw-cli",
-    )
-    parser.add_argument(
-        "--serve", action="store_true", help="Run the application as a web server"
-    )
-    parser.add_argument(
-        "--host", type=str, help="Host address for web server (default: localhost)"
-    )
-    parser.add_argument("--port", type=int, help="Port for web server (default: 8000)")
-    parser.add_argument("--web-title", type=str, help="Title for the web page")
-    parser.add_argument(
-        "--debug", action="store_true", help="Enable debug mode for web server"
-    )
-    parser.add_argument(
-        "--focus",
-        action="store_true",
-        help="Start chrome-free in the Console (hides nav bar and workbench header)",
-    )
-    return parser
+    """Build the tldw-cli argument parser (extracted from main_cli_runner() for testability).
+
+    TASK-34100.16: the definition lives in ``Utils.launch_options`` so the
+    pre-fence ``--config`` adoption parses argv with exactly this parser.
+    """
+    return build_launch_parser()
 
 
 # --- Main execution block ---
@@ -382,6 +369,14 @@ def _run_module_main() -> None:
     )
 
     _set_launch_cwd()
+
+    # TASK-34100.4: the master-password unlock is NOT here. app.py's
+    # `__main__` guard runs Backup_Recovery.launcher.startup_unlock (strict
+    # decrypt, retry, forgotten-password reset) right after storage
+    # admission, before app.py imports config -- the same function and the
+    # same point as `tldw-cli`. This body used to run a private Textual
+    # PasswordPromptApp that crashed with NoActiveWorker, printed config frame
+    # locals (including the password verifier) and exited 1.
 
     # Initialize logging first
     early_logging_app = initialize_early_logging()  # noqa: F841 -- verbatim
@@ -476,83 +471,6 @@ def _run_module_main() -> None:
         except Exception as e_css_main:
             logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
 
-    # --- Check for encrypted config (config will be created if it doesn't exist) ---
-    try:
-        config_data = load_cli_config_and_ensure_existence()
-        encryption_config = config_data.get("encryption", {})
-
-        if encryption_config.get("enabled", False):
-            loguru_logger.info("Config file encryption is enabled. Password required.")
-
-            # Import password dialog dependencies here to avoid circular imports
-            import asyncio  # noqa: F401 -- verbatim; was a module-scope rebind
-            from textual.app import App
-            from tldw_chatbook.Widgets.password_dialog import PasswordDialog
-
-            class PasswordPromptApp(App):
-                """Minimal app to prompt for password."""
-
-                def __init__(self):
-                    super().__init__()
-                    self.password = None
-
-                async def on_mount(self) -> None:
-                    """Show password dialog immediately on mount."""
-                    password = await self.push_screen(
-                        PasswordDialog(
-                            mode="unlock",
-                            title="Unlock Configuration",
-                            message="Enter your master password to decrypt the configuration file.",
-                            on_submit=lambda p: None,
-                            on_cancel=lambda: None,
-                        ),
-                        wait_for_dismiss=True,
-                    )
-
-                    if password:
-                        # Verify password
-                        from tldw_chatbook.Utils.config_encryption import (
-                            config_encryption,
-                        )
-
-                        password_verifier = encryption_config.get(
-                            "password_verifier", ""
-                        )
-                        if password_verifier and config_encryption.verify_password(
-                            password, password_verifier
-                        ):
-                            self.password = password
-                            self.exit()
-                        else:
-                            self.notify(
-                                "Invalid password. Please try again.", severity="error"
-                            )
-                            # Re-show the dialog
-                            await self.on_mount()
-                    else:
-                        # User cancelled
-                        loguru_logger.error(
-                            "Password required but not provided. Exiting."
-                        )
-                        self.exit()
-
-            # Run the password prompt app
-            password_app = PasswordPromptApp()
-            password_app.run()
-
-            if password_app.password:
-                # Set the password for the session
-                set_encryption_password(password_app.password)
-                loguru_logger.info("Configuration decrypted successfully.")
-            else:
-                # Exit if no password provided
-                loguru_logger.error("Cannot proceed without decryption password.")
-                sys.exit(1)
-
-    except Exception as e:
-        loguru_logger.error(f"Error checking config encryption: {e}")
-        # Continue without encryption if there's an error
-
     # task-1650: resolve textual_image's rendering protocol NOW, while the
     # terminal still answers escape queries. Textual takes raw mode in
     # run() below, after which the query silently fails and every image
@@ -604,7 +522,7 @@ def _run_module_main() -> None:
 
     # Create instance with early logging flag
     app_instance = TldwCli()
-    app_instance._cli_focus_override = bool(_main_args.focus)
+    apply_launch_options(app_instance, _main_args)  # --focus, --no-splash
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True
     try:
@@ -817,7 +735,7 @@ def main_cli_runner() -> object:
 
     # Create instance with early logging flag
     app_instance = TldwCli()
-    app_instance._cli_focus_override = bool(args.focus)
+    apply_launch_options(app_instance, args)  # --focus, --no-splash
     app_instance._recovery_restart_available = True
     # Set the early logging flag so _setup_logging knows logging was already initialized
     app_instance._early_logging_initialized = True

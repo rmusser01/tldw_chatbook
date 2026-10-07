@@ -10,6 +10,7 @@ import pytest
 from textual.widgets import Button, Input, Select, Static
 from textual.widgets._select import SelectCurrent, SelectOverlay
 
+from Tests.app_module_patches import set_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.app import TldwCli
@@ -78,7 +79,7 @@ def _deterministic_models_mount(monkeypatch: pytest.MonkeyPatch) -> None:
         return _real_get_cli_setting(section, key, default)
 
     monkeypatch.setattr(llm_screen_module, "_probe_local_server", probe_down)
-    monkeypatch.setattr("tldw_chatbook.app.get_cli_setting", no_splash)
+    set_app_global(monkeypatch, "get_cli_setting", no_splash)
 
 
 def _rendered_text(root: Any) -> str:
@@ -536,6 +537,15 @@ async def test_inventory_during_lazy_selector_mount_is_replayed_after_leaving_pa
 
     monkeypatch.setattr(SelectCurrent, "mount_composed_widgets", hold_label_mount)
     try:
+        # Settle the actual initial empty read before injecting this test's
+        # inventory; a late startup result would otherwise overwrite it.
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in app.workers
+                if worker.node is app and worker.group == "managed_gguf_inventory"
+            )
+        )
         window.active_view = "llamafile"
         await asyncio.wait_for(started.wait(), timeout=10)
         managed = window.query_one("#llamafile-gguf-managed-select", Select)

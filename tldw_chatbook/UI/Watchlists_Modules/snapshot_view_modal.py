@@ -128,9 +128,7 @@ class SnapshotViewModal(ModalScreen[None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="svm-dialog"):
-            yield Static(
-                _snapshot_header(self._url, self._created_at), id="svm-header"
-            )
+            yield Static(_snapshot_header(self._url, self._created_at), id="svm-header")
             with VerticalScroll(id="svm-body-scroll"):
                 yield Static(_snapshot_body(self._content), id="svm-body")
             with Horizontal(id="svm-actions"):

@@ -1,8 +1,10 @@
+Tests/UI/test_adaptive_pane_shell.py
 Tests/UI/test_app_instance_warning.py
 Tests/UI/test_app_query_one_fallback.py
 Tests/UI/test_approval_action_ownership.py
 Tests/UI/test_approval_argument_budget.py
 Tests/UI/test_approval_context_lines.py
+Tests/UI/test_base_app_screen_tab_region.py
 Tests/UI/test_buddy_entry_points.py
 Tests/UI/test_buddy_workspace_modal.py
 Tests/UI/test_bulk_selection_tooltips.py
@@ -13,6 +15,8 @@ Tests/UI/test_chat_screen_ui_state_path.py
 Tests/UI/test_chat_search_enhanced.py
 Tests/UI/test_chatbook_wizard_open_folder.py
 Tests/UI/test_checkbox_height_render.py
+Tests/UI/test_console_approval_compact_layout.py
+Tests/UI/test_close_under_quit_question.py
 Tests/UI/test_console_archive_publication.py
 Tests/UI/test_console_archive_resume_errors.py
 Tests/UI/test_console_archive_switcher_controls.py
@@ -25,12 +29,15 @@ Tests/UI/test_console_dictionaries_inspector.py
 Tests/UI/test_console_edit_modal_keystroke_guard.py
 Tests/UI/test_console_feedback_comment_modal.py
 Tests/UI/test_console_fewer_permission_prompts_command.py
+Tests/UI/test_console_first_chat_first_mount.py
 Tests/UI/test_console_frame_states.py
 Tests/UI/test_console_image_viewer.py
 Tests/UI/test_console_library_policy_controller.py
 Tests/UI/test_console_library_search_modal.py
 Tests/UI/test_console_model_popover_no_provider.py
 Tests/UI/test_console_model_popover_registry_options.py
+Tests/UI/test_console_model_switcher.py
+Tests/UI/test_console_pending_interrupt_projection.py
 Tests/UI/test_console_popover_context_window.py
 Tests/UI/test_console_progress_navigation_owners.py
 Tests/UI/test_console_rail_progress_timer.py
@@ -38,14 +45,24 @@ Tests/UI/test_console_rail_section_layout.py
 Tests/UI/test_console_retrieval_controller.py
 Tests/UI/test_console_run_inspector_worldbooks.py
 Tests/UI/test_console_selection_core.py
+Tests/UI/test_console_session_tab_close.py
+Tests/UI/test_console_settings_core_first.py
+Tests/UI/test_console_settings_disclosures.py
+Tests/UI/test_console_settings_hidden_fields.py
+Tests/UI/test_console_settings_model_change.py
+Tests/UI/test_console_settings_saved_defaults.py
 Tests/UI/test_console_system_prompt_chip.py
 Tests/UI/test_console_temporary_capture_admission.py
+Tests/UI/test_console_toast_clears_header.py
 Tests/UI/test_console_trace_call_recovery.py
 Tests/UI/test_console_trace_maintenance_status.py
+Tests/UI/test_console_turn_resend_ui.py
+Tests/UI/test_console_visible_turn_attention.py
 Tests/UI/test_console_voice_accessibility.py
 Tests/UI/test_console_workspace_details_tray.py
 Tests/UI/test_css_generated_comments.py
 Tests/UI/test_design_style_utilities.py
+Tests/UI/test_destination_rail_row.py
 Tests/UI/test_dictation_export_path.py
 Tests/UI/test_disabled_action_recovery_tooltips.py
 Tests/UI/test_enhanced_file_dialog_bundle_css.py
@@ -64,19 +81,26 @@ Tests/UI/test_lab_rail_store.py
 Tests/UI/test_lab_server_status.py
 Tests/UI/test_lab_ux_fixes.py
 Tests/UI/test_library_collections_reader_geometry.py
+Tests/UI/test_library_conversation_reader_freshness.py
 Tests/UI/test_library_export_cancel.py
 Tests/UI/test_library_export_destination_validation.py
 Tests/UI/test_library_export_progress_apply.py
+Tests/UI/test_library_export_replace_confirm.py
 Tests/UI/test_library_footer_focus.py
 Tests/UI/test_library_grip_capture.py
+Tests/UI/test_library_notes_sync_attention.py
+Tests/UI/test_library_notes_sync_delete_restore.py
 Tests/UI/test_library_notes_work_session.py
 Tests/UI/test_library_prompt_history_controller.py
+Tests/UI/test_library_quit_guard.py
 Tests/UI/test_library_rag_legacy_chunk_report.py
+Tests/UI/test_library_reader_console_delete_refresh.py
 Tests/UI/test_library_url_ingest_submit.py
 Tests/UI/test_llm_screen_ollama_probe_nonblocking.py
 Tests/UI/test_markdown_hygiene_1995.py
 Tests/UI/test_media_runtime_state.py
 Tests/UI/test_media_viewer_prompt_search_15477.py
+Tests/UI/test_modal_quit_in_flight_hooks.py
 Tests/UI/test_notes_scope_models.py
 Tests/UI/test_personas_avatar_render.py
 Tests/UI/test_personas_character_editor_sync.py
@@ -92,6 +116,7 @@ Tests/UI/test_product_maturity_phase39_library_collections.py
 Tests/UI/test_product_maturity_phase6_release_closeout.py
 Tests/UI/test_profile_owned_settings_paths.py
 Tests/UI/test_prompt_review_docstrings.py
+Tests/UI/test_quit_prompt_vanish.py
 Tests/UI/test_research_mode_strip.py
 Tests/UI/test_research_source_inspector.py
 Tests/UI/test_research_source_receipt.py
@@ -102,6 +127,7 @@ Tests/UI/test_screen_reuse_helpers.py
 Tests/UI/test_select_directory_typed_path.py
 Tests/UI/test_selection_dialogs.py
 Tests/UI/test_server_chatbook_service_lease.py
+Tests/UI/test_settings_anthropic_auth_source.py
 Tests/UI/test_settings_discovered_model_toggle.py
 Tests/UI/test_settings_network_defaults.py
 Tests/UI/test_settings_provider_view_model.py
@@ -116,3 +142,27 @@ Tests/UI/test_speech_result_delivery.py
 Tests/UI/test_speech_settings_completeness.py
 Tests/UI/test_speech_settings_model.py
 Tests/UI/test_speech_settings_save_equivalence.py
+
+# TASK-33003.20: production batch geometry, isolated profile and shipping CSS.
+Tests/UI/test_approval_batch_geometry.py
+
+# TASK-34000 wave 1a final review (C1): autosave after its burst's max wait ran
+# out. Appended, so no other file changes shard.
+Tests/UI/test_library_note_autosave_recovers.py
+
+# TASK-33620.9: durable rename publication through the mounted rail menu.
+Tests/UI/test_console_rename_consistency.py
+
+# TASK-31245: constructor hydration and finite workspace handle ownership.
+Tests/UI/test_console_fixture_ownership.py
+Tests/UI/test_console_finite_read_ownership.py
+
+# TASK-31966: stable recovery-bar refresh and real recovery-height transitions.
+Tests/UI/test_console_control_bar_recovery_height.py
+
+# TASK-31966: Send-reason size idempotence, resize and override repair.
+Tests/UI/test_console_composer_reason_restyles.py
+
+# TASK-34100.16: setup's Restore entry (Inspect mode, title, format hint), the
+# settings-file / folder pre-checks, and the reason line above a disabled Create.
+Tests/UI/test_backup_restore_setup_entry.py

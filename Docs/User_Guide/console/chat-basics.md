@@ -30,16 +30,20 @@ task...".
   it, plus a one-line guide that names the row's icon buttons in words —
   e.g. for an assistant reply: "Guide: j/k select · c Copy · 🔊 Speak ·
   e Edit · f Fork · r ♻ Regenerate · ---> Continue · Esc clear". The guide
-  follows the row: a message without the 🔊 button does not list "Speak".
-  Lower-frequency actions are in the labelled **More…** menu, and image or
-  video controls stay on their media card.
+  follows the row: a message without the 🔊 button does not list "Speak",
+  and a message that cannot be forked drops "f Fork" and ends with
+  "Fork unavailable — <reason>" instead. Lower-frequency actions are in the
+  labelled **More…** menu, and image or video controls stay on their media
+  card.
 - **Composer** — the slim input bar near the bottom, floating one blank
   line clear of the status row above and the footer below. Its one-column
   left edge shows its state (muted at rest, green with a draft, thick blue
   focused), and the bar is exactly as tall as your draft. Left to right:
   the "Composer ▾" collapse button, the **Menu** button (Improve, Save draft,
   Prompts, Attach, Save as Chatbook, Generate Image/Caption, Impersonate), the draft area,
-  and the Send / Mic buttons.
+  and the Send / Dictate buttons. While a run is active, Send reads **Queue**
+  and **Stop** appears at the right end of the row; at widths that leave the
+  draft room (about 150 columns and up) **Redirect** sits just before it.
   Mic and Attach have their own page:
   [attachments, images & voice](attachments-images-voice.md).
 
@@ -76,11 +80,53 @@ decision; it does not mean a model is still running. The composer says **Send
 blocked — resolve response recovery first**.
 
 Use the recovery controls above the composer. **Retry anyway** may send a
-duplicate request because the previous delivery cannot be confirmed. **Discard**
-keeps your user message and settles the interrupted response without replaying
-the request. A failed recovery leaves the available controls usable so you can
-address the reported problem and try again or discard. Once recovery settles,
-the composer clears this blocker.
+duplicate request because the previous delivery cannot be confirmed. (If the
+request was accepted but never sent, the card reads **Response accepted;
+waiting for dispatch.** and offers **Retry response** instead.) A retry streams
+the reply into the same pending response. **Discard** keeps your user message
+and settles the interrupted response without replaying the request. A failed
+recovery leaves the available controls usable so you can address the reported
+problem and try again or discard. Once recovery settles, the composer clears
+this blocker. After **Discard**, your user message offers **Resend** to ask
+again without forking, including after you reopen the conversation — see
+[Resend a broken turn](#resend-a-broken-turn).
+
+### When a message doesn't fit the model
+
+If compacting older turns cannot make a message fit the selected model,
+Console refuses it before anything is sent or saved, and the message stays in
+the composer. One system line names the model, what fills its window and the
+setting that changes it, for example "Your message was not sent:
+brand-new-model-x's 4,096-token context window (an estimate) is used up by the
+response reservation, Max tokens (4,096), and the safety margin, so compacting
+older turns cannot make room. Lower Max tokens in Conversation settings >
+Model and generation. This model's context window is an estimate; if it is
+larger, set the real value in F4 Settings > Providers & Models." It mentions
+an estimate only when the window really is one. Switching to a model with a
+larger window (Alt+M) also works. [When a chat reaches its context
+limit](context-and-rag.md#when-a-chat-reaches-its-context-limit) lists each
+cause and its fix.
+
+A message that was already accepted when it was refused (a queued prompt, for
+example) gets a recovery card above the composer instead: "Not sent — this
+message doesn't fit the selected model. Change a setting above, then Discard
+and Resend the message." **Retry response** stays disabled: it would replay
+the message exactly as it was accepted, with the same model and reply limit,
+so it could only be refused again. Change the model (Alt+M) or the limit,
+press **Discard**, then select your message and press **r** (Resend), which
+sends it with the current settings.
+
+### When a reply fails
+
+A failed reply quotes the provider's own reason, prefixed with its name, and
+says what to do: for example "Provider error from OpenRouter: authentication
+failed. Status: 401. OpenRouter says: “API key expired.” Update the API key in Settings ▸ Providers & Models,
+or run Ctrl+P ▸ Setup: Run setup wizard." A model the provider no longer
+serves (a 404) names **Alt+M: Switch model**. Only the provider's one-line
+message is shown, capped at 200 characters and with anything shaped like a
+key hidden. A provider that stops sending mid-reply reads "no reply for 90 s
+— the provider stopped sending. Retry, or wait longer by raising
+chat_defaults.stream_stall_timeout_seconds in config.toml."
 
 ### Collapsed rail labels
 
@@ -96,7 +142,11 @@ You can also open and close the rails with the keyboard — **Alt+C** for the
 Context rail, **Alt+I** for the Inspector — which works at every width,
 including the single-pane sizes where the handles hide. The handle badges
 abbreviate ("N appr" = N approvals pending, "art" = artifact ready); hover a
-badge for its full text.
+badge for its full text. While a turn is in flight the Inspect handle reads
+**running** unless something more urgent outranks it (a failed turn, a real
+setup or blocked problem, or approvals waiting on you, e.g. "1 appr");
+**setup** appears only when the provider or model genuinely needs
+configuring, never merely because a run is active.
 
 Console Behavior uses category-wide drafts: **Save** writes every pending edit
 in that category, and **Revert** discards every pending edit there, not just the
@@ -187,6 +237,21 @@ tool, code, and link styling keeps priority over immersive coloring.
   **Ctrl+W** deletes the word left of the caret.
 - **PageUp / PageDown** scroll the transcript — the composer never uses
   paging keys.
+- **Tab** moves from the draft onto the composer's buttons (Composer ▾, Menu,
+  Send or Queue, Dictate, Redirect, Stop). A focused button owns its keys:
+  **Enter** or **Space** presses it — Enter on **Menu** opens the Composer
+  actions menu with its first item focused. Any other character you type
+  moves focus back to the draft and lands there, as does a paste; editing
+  keys such as Backspace leave the draft alone until it has focus again
+  (type, press **Esc**, or click the draft). Only the draft shows a caret,
+  so a focused button is the one focus mark on screen.
+  Pressing **Send**, **Queue**, **Redirect**, **Stop** or **✕** puts focus
+  back in the draft, ready for your next message, and clicking any composer
+  button with the mouse presses it without taking focus from the draft.
+- The Composer menu and its menu-only actions are also in the command palette
+  (**Ctrl+P**): **Console: Open composer menu**, **Attach file…**, **Save as
+  Chatbook**, **Impersonate**, and **Improve current draft…**. An entry the
+  menu would disable says why instead of running.
 - **"Composer ▾"** collapses the composer to a one-row strip for more
   transcript space. The strip reads "Composer hidden", joined with " · " to
   whichever of "Generating", "Draft retained", "Attachment retained",
@@ -322,10 +387,18 @@ statistics tools.
 - Enter sends the draft. The reply row appears immediately with a dim
   "Generating…" placeholder, then streams in with a "[streaming]" suffix
   until it completes.
-- While a run is active a **Stop** button appears between Send and Mic
-  ("Stop this tab's run."); the collapsed composer strip gets its own Stop.
-  Stopping keeps the partial reply, tagged "[stopped]", and adds a System
-  row: "Response stopped by user."
+- While a run is active a **Stop** button (warning-tinted, "Stop this tab's
+  run.") appears at the right end of the composer row, after Dictate and
+  Redirect; the collapsed composer strip gets its own Stop. The keyboard
+  routes stop the same run: **Ctrl+G** (advertised in the footer only while a
+  run is active), **Tab** to Stop then **Enter** or **Space**, `/stop`, or
+  **Ctrl+P → Console: Stop this tab's run**. Stopping keeps the partial
+  reply, tagged "[stopped]", and adds a System row: "Response stopped by
+  user."
+- **Redirect** shows beside Stop only where the row has room for it whole;
+  at narrower widths use `/redirect <correction>` or **Ctrl+P → Console:
+  Redirect this tab's run** (both take the correction from the composer the
+  same way the button does).
 - A reply that errors out is tagged "[failed]", and its action row is a
   single **Try** button that retries it.
 - If you scroll up during or after a run, a pill docks at the bottom of the
@@ -372,8 +445,8 @@ conversation's **Auto** replay policy. **Automatic** is the default: reviewed
 server templates select either the current exchange (including its tool calls)
 or all available compatible thinking. An unrecognized or unavailable template
 uses the server default. You can choose **Current exchange**, **All available**,
-or **Off**, globally or for the active endpoint and model. A target override can
-be cleared with **Use default**. These choices never erase saved thinking. **All available** includes compatible
+or **Off**, globally or for the active endpoint and model (under **Reasoning
+replay override**). A target override can be cleared with **Use default**. These choices never erase saved thinking. **All available** includes compatible
 fields in the request; the server template can still omit older reasoning. For
 example, Gemma 4 can preserve older tool-call thinking while omitting older final
 answer thinking.
@@ -399,21 +472,56 @@ After the current turn is accepted, **Send** changes to **Queue**. Each Console
 tab can hold up to 10 text-only follow-up prompts. The one-row shelf at the
 top of the control deck (above the status row) shows `Queue N/10`, whether it is draining or paused, a safe preview
 of the next prompt, and **Manage** plus a state-specific action such as
-**Pause**, **Retry**, **Resume next**, **Review**, or **Try again**.
+**Pause**, **Resume**, **Retry**, **Resume next**, **Review**, or **Try again**.
 
 - **Preparing...** means the turn has not crossed the accepted boundary yet;
-  the draft stays in the composer.
-- **Queue full** preserves the draft and asks you to manage the existing 10.
+  the draft stays in the composer and the strip beside the button reads
+  "Queue opens once this turn is accepted". Once the turn is accepted, an
+  empty draft reads "Type to queue". A regenerate or continue never opens the
+  queue, so from the moment one starts (provider validation included) the
+  strip reads "Wait for the current run to finish" instead.
+- **Queue full** preserves the draft and asks you to manage the existing 10;
+  the strip reads "Queue full — manage it to make room".
+- Neither is a provider problem: these queue messages never say "finish
+  provider setup" and never open the setup wizard. That wording, and its link
+  to setup, appear only when the provider or model genuinely needs
+  configuring.
 - Attachments and staged evidence are never captured by a queued text turn.
   Remove them or wait and send the complete message normally.
 - Recognized slash commands still run immediately and are never queued.
-- **Manage** opens a modal pinned to this tab. You can edit, move, remove, or
-  clear waiting prompts; a prompt marked **Starting...** is already locked.
-  Remove and Clear ask for confirmation. Only the prompt actively opened for
-  editing has its full body loaded.
-- A failed or stopped turn pauses the queue. Use **Retry failed**, **Retry
-  stopped**, or **Resume next**. Context changes require **Review** followed by
-  **Use current** before draining resumes.
+- Queued prompts are sent one after another, in order, for as long as each
+  turn succeeds. **Pause** takes effect once the turn in progress finishes;
+  it never cuts that turn short. Until then the shelf reads `Pausing` and the
+  button reads **Keep draining**, which cancels the pause.
+- **Manage** opens a modal pinned to this tab. Prompts are numbered from 1
+  and the queue's state is written at the top, for example
+  `Queue 2/10 · Draining`. You can edit, move, remove, or clear waiting prompts; a prompt
+  marked **Starting...** is already locked. Remove and Clear ask for
+  confirmation. Only the prompt actively opened for editing has its full body
+  loaded. Actions that do not apply to the current state are hidden, and a
+  disabled action explains why when you hover it.
+- A failed turn pauses the queue and the shelf names it, for example
+  `Turn failed: "Summarize the draft"`. **Retry** (or **Retry failed** in
+  Manage) runs that turn again and then keeps draining; **Resume next** in
+  Manage leaves it as it is and sends the next prompt. A stopped turn shows
+  `Turn stopped` with **Resume next**; Manage also offers **Retry stopped**
+  when the stopped reply is the latest one. A queue you paused, or one
+  paused without a failed turn behind it, shows `Paused` with **Resume**. A
+  prompt that could not start shows `Start refused` with **Try again**.
+  Context changes require **Review** followed by **Use current** before
+  draining resumes. An edit, a delete, a compaction, or a failed **Retry
+  stopped** all change the conversation. After such a change, **Resume**,
+  **Resume next**, **Try again**, and **Retry** (or **Retry failed** and
+  **Retry stopped** in Manage) send nothing: a notice says the conversation
+  has changed, and the shelf switches to `Context changed` with **Review**.
+  A pending response's **Retry response**, **Retry anyway**, and **Discard**
+  sit on its recovery card above the composer, never on the shelf. Any of
+  them still settles that response, but the prompts waiting behind it stop
+  at the same review. **Use current** then sends the next waiting prompt; it
+  does not re-run the failed or stopped turn.
+- A message Console refused to send stays on the shelf with the reason, for
+  example `Not sent: Last send is blocked; resolve it first`. **Restore**
+  puts it back in the composer; **Discard** drops it.
 
 Queue text is process-memory-only until its turn is accepted. It is not saved
 to conversation history, prompt history, screen snapshots, or the database.
@@ -425,13 +533,14 @@ selection through the transcript. **Enter** shows the selected message's
 actions; **Tab**/**Shift+Tab** cycle through the row, **Enter** activates
 the focused action, and **Esc** clears the selection. Four shortcuts act
 on the selected message directly: **c** Copy, **e** Edit, **f** Fork, and
-**r** Regenerate.
+**r** Regenerate — or, on a row that shows **Retry** or **Resend** in that
+slot, that action.
 While a reply is still generating, every action is disabled with the
 tooltip "Wait for response to finish before using message actions."
 
 The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
 text-response **< / >** controls when applicable, **Fork**,
-**Regenerate/Retry** when applicable, **Continue** when applicable, and
+**Regenerate/Retry/Resend** when applicable, **Continue** when applicable, and
 **More…**. The menu contains **Save as…**, **Helpful**, **Not helpful**,
 **Delete**, and — on a finished assistant reply — the three note actions
 **Capture as note**, **Summarize up to** (here as note) and **Save
@@ -450,7 +559,8 @@ fifteen characters, which is why the last two read short.
 | ♻ | Regenerate — fork another assistant variant for this turn; the old answer is kept, not overwritten — see [branching & rewind](branching-and-rewind.md). | Assistant replies |
 | ---> | Continue — extend the selected message with more generated text. | All messages |
 | Retry | Retry a failed reply. | Failed assistant replies |
-| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, **Delete** and note actions. Delete still requires confirmation and removes the message plus everything under it. | User and Assistant messages with an available overflow action |
+| Resend | Re-runs a broken turn in place — see [Resend a broken turn](#resend-a-broken-turn). It takes the ♻ slot, and Continue is not offered on that row. | Your last message, only when its turn is broken |
+| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, **Delete** and note actions. Delete removes the message plus every later message under it, so it first asks on the message's own row and offers **Undo** afterwards — see [Delete a message and its follow-ups](#delete-a-message-and-its-follow-ups). | User and Assistant messages with an available overflow action |
 | Capture as note | Saves this one reply into Library ▸ Notes: the note is titled with the reply's first line of text (a leading code fence or heading mark is dropped), holds the reply verbatim, and is tagged `console`, `conversation:<id>` and `message:<id>` so it records where it came from. Nothing is sent to a model. | Finished assistant replies (disabled in a temporary chat) |
 | View / Save Image | Cycle how an inline image renders / save the message's images to disk. These controls live on the image card — see [attachments, images & voice](attachments-images-voice.md). | Messages with images |
 | Play / Save copy | Play a generated video or save its ephemeral bytes. These controls live on the video card. | Generated videos while their bytes remain available |
@@ -464,10 +574,12 @@ fifteen characters, which is why the last two read short.
    the text of your first message.
 
 ### Stop a reply mid-stream
-1. While the reply shows "[streaming]", click **Stop** (between Send and
-   Mic).
+1. While the reply shows "[streaming]", click **Stop** (the right end of the
+   composer row) or press **Ctrl+G**.
 2. The partial reply stays, tagged "[stopped]", and a System row reads
    "Response stopped by user." Send again to keep the conversation going.
+   If you stopped it before any text arrived, select your message and use
+   **Resend** to ask again.
 
 ### Copy a reply
 1. Click the reply, or move to it with j/k.
@@ -475,13 +587,101 @@ fifteen characters, which is why the last two read short.
 
 ### Retry a failed reply
 1. Select the reply tagged "[failed]".
-2. Click **Try** — the reply is retried in place.
+2. Click **Retry** or press **r** — the reply is retried in place.
+
+### Resend a broken turn
+When a send fails or gets stuck, select your own message and click
+**Resend** (or press **r**). Resend appears only on your **last** message,
+and only when its turn is broken:
+
+- the send was refused before it was accepted (for example, the provider was
+  not ready);
+- it has no reply;
+- its reply failed during this session; or
+- its reply is empty and was stopped, discarded, or restored as
+  "Response failed." after a restart.
+
+A turn that already holds work is not broken, because Resend would throw that
+work away:
+
+- a reply with text that you stopped (use **Continue**);
+- a reply with text that was restored as failed after a restart (use
+  **Continue**);
+- text from an earlier reply, for example after **Continue**;
+- any tool output, even when the reply failed (a failed reply keeps its own
+  **Retry**).
+
+Use **Retry** on a failed reply, or **Edit**, instead.
+Resend is not offered while a run is live in the tab (use **Stop** first)
+or while a response-recovery card is unresolved (the card's own **Retry
+anyway** / **Discard** decide that case).
+
+Resend re-runs the same turn in place. It never forks, creates a sibling, or
+copies your message: the failed or empty reply and the failure or stop rows
+after it are cleared, and the new reply appears directly under the same
+message. A failed reply is retried on the same row. A message that was
+refused before it was accepted is sent again with its own text and
+attachments as exactly one message; if your composer still holds that same
+text, it is cleared, and the shelf's "Unsent turn" copy is used up, so
+nothing is left to send twice. If your composer holds different text, or
+files you attached after the refusal, Resend asks you to send or clear them
+first instead of overwriting them or sending them along.
+
+Every gate a normal send applies still applies — provider readiness, the
+image (vision) check for attached images, and skill checks. A backup pause
+refuses Resend before anything is cleared. A refused Resend shows the same
+message a refused send would, and the turn keeps offering **Resend**.
 
 ### Delete a message and its follow-ups
-1. Select the message, click **More…**, then choose **Delete** — "Press Delete
-   again to remove this message."
-2. Open **More…** and choose **Delete** again. The message and everything
-   beneath it are removed.
+Delete removes the selected message **and every later message under it**,
+including later turns on other branches. It always asks first, on the message
+itself, and offers Undo afterwards.
+
+1. Select the message, click **More…**, then choose **Delete**. Nothing is
+   removed yet: the message's own action row turns into **Delete N messages**
+   and **Cancel**, and the line beneath it states the scope — for example
+   "Delete this message and 7 later messages?", with "(2 on other branches)"
+   added when some of them sit on branches you can't see. Focus moves to
+   **Cancel**. The Inspector's Selected Message section repeats the question,
+   but you never need it open.
+2. Click **Delete N messages** to confirm. **Cancel**, **Esc**, or selecting
+   another message clears the confirmation and removes nothing. If the
+   messages under it change before you confirm (a new turn arrives under it,
+   say), Delete asks again with the new count rather than removing more than
+   you saw.
+3. A **Deleted N messages** receipt opens. **Undo** (focused) puts exactly
+   those messages back where they were and returns the conversation to the
+   branch you were on; they stay restored after you close and reopen the
+   chat. **Done** or **Esc** keeps the delete, and from then on it can't be
+   undone in the app. If Undo can't finish (the database is busy, say), the
+   messages stay deleted and the receipt opens again so you can retry; if
+   something changed them after the delete, Undo is refused and the delete
+   stands.
+
+**Conversations saved before branching.** Older versions of Chatbook saved
+each message on its own, without a link to the message before it. Console
+reads such a conversation as one chain in saved order, so "later messages"
+means every message saved after the one you delete. Rows the transcript never
+shows, such as a tool result or an empty message saved between them, are
+deleted with them, so they leave search and exports too. They are not part of
+the count, and Undo puts them back with the rest.
+
+A new first message in such a conversation stays its own branch beside the
+old one: an **Edit & resend** of the first message, or a prompt sent after
+rewinding to before it, typed or spoken in a voice exchange. Console marks it
+when it is saved. Two cases carry no mark, and Console reads them as more
+later messages of the old chain:
+
+- a first-message edit or before-first prompt saved by an older version of
+  Chatbook, which had no mark to write;
+- a copy that arrived without the mark: the mark is kept only in this
+  device's saved copy, so sync from another device, export and import, or a
+  rewrite by an older version drops it.
+
+Such a branch shows after the older messages, and Delete on one of those
+older messages counts it and removes it too. Undo puts it back. Nothing in
+the saved conversation tells it apart from an older message whose reply came
+later through **Resend**, so Console does not guess.
 
 ### Capture a reply into a note
 1. Select the assistant reply, click **More…**, then choose
@@ -540,7 +740,7 @@ Transcript:
 | j / k (or down / up) | Select the next / previous message |
 | Enter | Show the selected message's actions; activate a focused action |
 | Tab / Shift+Tab | Cycle through the action row |
-| c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message |
+| c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message (r runs Retry or Resend when the row shows it instead) |
 | Esc | Clear the selection |
 
 ## Related settings & docs
@@ -592,6 +792,11 @@ prior exports, or backups. See [Context, RAG, and exchange capture](context-and-
   detail text names the HTTP status the provider actually returned — it no
   longer pairs that with a mismatched generic status elsewhere in the same
   message.
+- **A request Chatbook stops before sending says so.** If a turn has nothing
+  the provider can accept (for example, an Anthropic or Cohere request with no
+  user message), the failure says the app could not build the request, that
+  it was not sent, and which field failed the check (`messages`). It does not
+  report a provider HTTP error, because the provider never saw the request.
 
 —
 

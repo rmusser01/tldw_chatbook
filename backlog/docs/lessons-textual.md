@@ -229,6 +229,25 @@ delay, branch on `> 0` rather than trusting whoever edits it next, and keep a te
 the zero case still schedules. And when a perf arm comes back looking free, check that
 the thing you were measuring actually ran before you believe it.
 
+**It recurred: TASK-34000.1, found by the whole-branch review on 2026-10-04.** The
+Library note autosave got a maximum wait, and its delay was computed as
+`max(0.0, min(debounce, burst_start + max_wait - now))`. No constant was zero, so nothing
+looked like this entry; the zero appeared only once a burst outlived its max wait (a quit
+prompt held open, a rail switch away and back, or a key landing between the deadline and
+the callback). The timer callback was also the only thing that ended a burst, so every
+later keystroke armed another dead timer: autosave stopped for good under a header that
+still said "changes save automatically", and stopping the app raised
+`ZeroDivisionError`. The unit test asserted `delays[9] == 0.0`, with the comment "saves
+at once", against a fake `set_timer` that recorded the delay and never ran a timer, and
+it passed the task's own reviews.
+
+**What to do, in addition.** A *computed* delay is the same trap as a zero constant:
+clamp it to a small positive floor where it is computed (`AUTOSAVE_MIN_DELAY_SECONDS`,
+0.05 s), not at the call. A fake `set_timer` cannot tell a delay that fires from one that
+never will, so at least one test must arm the worst-case delay on a real message pump
+(`App().run_test()`, a dozen lines) and assert that the callback ran and that leaving
+`run_test()` did not raise.
+
 ---
 
 ## Monkeypatching an `@on`-decorated handler on the class does not patch it
@@ -683,6 +702,19 @@ a test written with it is green by construction. Post the keys yourself with no 
 one `pause()`. A task that says "1 s gaps behave" is telling you the drained-loop
 harness cannot see it.
 
+## A terminal's Alt+letter carries the letter, so a focused field types it — `pilot.press` sends none
+
+**TASK-33006.4, 2026-10-02.** Chat settings bound `Binding("alt+m", "change_model")` on
+the modal and a pilot test pressed `alt+m` with Temperature focused: green. Live in tmux
+(`send-keys M-m`), Alt+M typed an "m" into Temperature and nothing opened. Textual's
+xterm parser names the key `alt+m` but passes the letter through as `character="m"`, so
+the focused `Input` handles it as text before a non-priority screen binding is reached;
+`pilot.press("alt+m")` builds the `Key` with no character, so the test cannot see it (the
+composer met the same trap as TASK-1800, `console_composer_bar._is_modified_chord`). A
+screen-level Alt chord that must work from a text field needs `priority=True`, and its
+test should post the event the driver posts: `app.post_message(events.Key("alt+m",
+"m"))`, which failed before the fix and passes after (`test_alt_m_opens_pick_mode_from_a_focused_field`).
+
 ## `run_worker(exclusive=True)` CANCELS the group — it never queues behind it
 
 **schedules-redesign PR-3 Qodo round, 2026-09-03.** The Automations pane's in-place
@@ -806,6 +838,88 @@ the sibling trap from the paint-over hunt: widget-tier CSS (`BUNDLED_CSS`/`DEFAU
 loses to app-tier rules regardless of specificity.
 
 ---
+
+**The reverse trap: a new widget sized only by an app-tier class breaks bare harnesses.**
+TASK-33003.5 added an Esc hint to the Chat settings footer as
+`Static(..., classes="... w-auto")`. `.w-auto` lives in the app bundle
+(`css/utilities/_helpers.tcss`). Most modal tests (`ModalHarness`, `_SettingsCloseHarness`)
+mount without the bundle, so there the Static fell back to full width. It pushed the whole
+button row past the right edge (`Cancel` at x=211 on a 211-column screen), and
+`pilot.click("#console-settings-cancel")` raised `OutOfBounds` in tests that never mention
+the hint. The fix was a `Label`: its own `DEFAULT_CSS` is `width: auto`, which every harness
+loads. **What to do:** give a widget added to a shared row geometry that holds without the
+bundle: the widget type's own `DEFAULT_CSS`, or the owning class's `DEFAULT_CSS`. Then
+probe `region` once under a bare harness as well as under `TldwCli.CSS_PATH`.
+
+## A one-edge `margin-bottom` rule replaces the whole margin, not just its edge
+
+**TASK-33003.1, Chat settings disclosures, 2026-09-28.** A collapsed Chat
+settings section measured `margin (0, 0, 1, 0)` even though its own class,
+`.console-settings-modal-section { margin: 1 0 0 0; }`, asks for a top
+margin. The winner was the leaked `Collapsible.-collapsed { margin-bottom: 1; }`
+from the retired evals sheet: at (0,1,1) it outranks the (0,1,0) class, and
+Textual stores `margin-bottom` as a full `margin` spacing whose other edges
+are 0. It does not merge per edge the way browser CSS does. A toy app
+confirmed it: `.sec { margin: 1 0 0 0 }` plus `Static.x { margin-bottom: 2 }`
+gives `(0, 0, 2, 0)`. Expanding the section switched the section's spacing
+from below to above, because only then did the class rule win.
+
+**What to do.** Read a one-edge `margin-*`/`padding-*` declaration as
+"margin: 0 ... <edge> ...". A higher-specificity rule that means to adjust
+one edge silently zeroes the other three that a lower rule set. Restate every
+edge you need in the winning rule, and measure `styles.margin` rather than
+reading the sheets. The same effect makes a `margin-bottom: 0` that sits next
+to `margin-left: 1` in the same rule redundant (`#remote-variant-sort`).
+
+## An empty Static still takes its row: hide it, don't just clear it
+
+**TASK-33003.8, Chat settings choice rows, 2026-09-30.** Each provider-choice
+row (Reasoning effort, Reasoning summary, Verbosity, Thinking) ends with a
+recovery-copy `Static` that is empty unless a restored value is obsolete. The
+modal only ever called `update("")` on it, so it stayed displayed. With no
+width it took the whole row, the `1fr` Select beside it resolved to 0
+columns, and all that painted was the Static's thick error edge, `█`, plus
+its margin row. Reasoning and thinking levels could not be chosen in Chat
+settings, and origin/dev 89dd84943a shows the same row (with the old label
+"Reasoning"). The tests stayed green because they set and read
+`Select.value` and never looked at painted text.
+
+**What to do.** An optional line must set `display = bool(copy)` wherever its
+copy changes, including at compose. A note that shares a row with a control
+should be a `Label` (its own `DEFAULT_CSS` is `width: auto`), not a `Static`.
+Prove a row paints with `screen._compositor.render_strips()` text at the
+control's region, after real key presses, not by reading `.value`
+(`test_console_settings_choice_rows_paint_their_select`). Live-driver trap:
+a mouse click opens a **blank** Select's list with **nothing** highlighted, so
+the first Down lands on the blank prompt and a second Down reaches the first
+choice. Opening it with Enter highlights the blank prompt row, so a single
+Down is enough, as the pilot tests do. A Select that already holds a value
+highlights that value whichever way it opens. (Textual 8.2.8: a click only
+toggles `expanded`, whose watcher calls `overlay.select(None)` for a blank
+value; only `action_show_overlay`, bound to Enter/Down/Space/Up, then calls
+`action_first()`. Reproduced in a pilot probe on the modal's own Select
+construction; see the task-33003.8 Implementation Notes and the live captures
+in qa/model-config-p3-2026-09-28/task-8/.)
+
+## A Collapsible's background paints only its title row: the body is `Contents`
+
+**TASK-33003.3 follow-up, Chat settings Advanced generation, 2026-09-30.**
+TASK-33003.1 set `ConsoleSettingsModal Collapsible { background:
+$ds-surface-panel }` to drop the global $surface band. The expanded body still
+painted $surface, because the app-wide `Collapsible > Contents { background:
+$surface }` (components/_widgets.tcss) styles the `Contents` child, and the
+child's own background covers the parent's. $surface is also the Chat settings
+field fill, so TASK-33003.3's 12-column number fields read as full-row fields
+behind a one-column edge (painted field and body both (30,30,30),
+1.00:1). The width test stayed green: it measured `region.width`, which was 12.
+The shipped captures showed the defect, and nobody measured their colours.
+
+**What to do.** To restyle a disclosure's body, style `<scope> Collapsible >
+Contents` as well as the Collapsible. Prove that a sized field reads as sized
+by painted colour, not by region width: compare the compositor cell just past
+the field's right end with the field's own fill
+(`test_console_settings_disclosure_fields_read_as_sized`, red on three themes
+before the fix).
 
 ## Target CSS by CLASS on the subject — never an ancestor-scoped bare type
 
@@ -1147,6 +1261,33 @@ calling `str(Select.value)` erases that distinction and breaks control dispatch.
 Real-service regressions
 and four native cells verified exact saved IDs, labels and memory confirmation.
 
+## Narrowing a Select's options orphans the value already saved (TASK-33002 final review C1, 2026-09-27)
+
+TASK-33002.1 removed "minimal" from Settings' Reasoning effort Select for
+llama.cpp, because the request drops it. Compose and sync used the narrowed list,
+so a profile that had already saved "minimal" was mapped to `Select.NULL` and
+showed "Inherit default". Two failures followed, and both passed the task review
+and its tests:
+- **Revert** still mapped against the full list and assigned `select.value =
+  "minimal"` to a Select that lacked the option. Textual raises
+  `InvalidSelectValueError`. The `try` caught only `QueryError`, so the error
+  escaped a button handler and the app exited.
+- **An unrelated Save** rebuilt the profile from the widget. NULL became "",
+  and the saved value was deleted. Save had touched only Temperature.
+
+Both reproduced only with a value saved *before* the list shrank, and no test
+seeded one.
+
+**What to do.** When a Select's option list narrows by provider, model or family:
+- Route every writer (compose, sync on identity change, Revert) through ONE
+  options helper.
+- Have that helper keep a saved, still-legal value as a labelled option, as
+  `_model_profile_enum_options` in settings_screen.py does with "minimal (not
+  supported here)". Silently mapping it to NULL is the bug.
+- Test the three paths that change the option list under a saved value: open
+  with it saved, switch identity and then Revert, and Save an unrelated field.
+  Assert the value that is written.
+
 ## `is_mounted` never goes False, and `push_screen_wait` needs a worker (Qodo review of PR #2799, 2026-09-23)
 
 Two Textual facts that turned three "crash guard" fixes into no-ops. Both were
@@ -1252,3 +1393,168 @@ for keyword-only APIs, and give test doubles the real keyword-only
 signatures. Any awaited off-loop work inserted into a swap/compose chain
 also needs helpers to WAIT for the swap's settle flag rather than assume a
 single pause covers it.
+
+
+## `Screen.dismiss()` pops the TOP screen, and the popped screen's waiter is never resolved (TASK-33622.10, 2026-09-30)
+
+**Incident.** Making Ctrl+Q a priority binding let the quit flow push its
+prompt over any open modal. A real-`TldwCli` Pilot test that then had the
+COVERED modal call a bare `self.dismiss()` from its own timer -- what an
+async poll or a worker callback does -- left the quit worker waiting forever:
+`_quit_in_progress` stayed `True` and every later Ctrl+Q was a no-op for the
+session. The same red reproduced for the Console quit prompt, a dirty form's
+discard prompt and Settings' theme-leave prompt.
+
+**Why (Textual 8.2.8).** `Screen.dismiss()` resolves ITS OWN result callback
+and then calls `app.pop_screen()` unconditionally, which pops whatever is on
+top -- not the caller. `App.pop_screen` calls the popped screen's
+`_pop_result_callback()`, which discards the waiter without resolving it, so
+`push_screen_wait` on that prompt never returns. The caller is left on top as
+a zombie whose callback already fired: measured with a two-modal probe, its
+SECOND `dismiss()` raises `asyncio.InvalidStateError` (the waiter's future is
+already done) -- inside a timer that is an app-level exception.
+
+**Review follow-up: the zombie is the real crash.** Two reviewer probes drove
+the REAL `VideoPlayerScreen` under the quit prompt: both of its own closes ran
+a bare `self.dismiss(None)` -- `_notify_and_dismiss` (reached from activation,
+pump and seek failures) and the stream time box in `_refresh_status` (a
+0.25 s interval). Each popped the prompt; the quit flow correctly ended as
+Stay; then the player's next close -- the user's `q`, or with no user action
+at all the time box's next tick -- raised `InvalidStateError` and the app
+exited with code 1, skipping the approved quit cleanup. Treating the vanish
+as Stay had fixed the hang and left the crash.
+
+**What to do.** Async self-closing (timers, polls, worker completions) must
+dismiss only when `self.app.screen is self` (ADR-031). That is now enforced at
+the shared primitive: `SafeModalDismissMixin.dismiss` refuses (logs at debug,
+returns a completed awaitable, delivers nothing) while the modal is covered or
+already popped, which covers the switcher, the video player and the other
+mixin modals without per-site guards. Before trusting a refusal in a primitive
+121 modal classes inherit, it was measured: a temporarily instrumented refusal
+branch, run over every test file naming a mixin class (and again with the
+bootstrap profile forced for the files the per-test sandbox fails closed on),
+recorded refusals in only the four tests written to cause them. A periodic
+caller needs one more line so it does not act on a refused close every tick:
+the time box returns early while covered and closes on its first tick back on
+top. Plain `ModalScreen`s are not covered by that (about two in five of the
+app's modal classes); for those, `await_quit_prompt` finishes the zombie's
+interrupted close once its prompt vanished -- a top screen whose newest
+`ResultCallback.future` is resolved (not cancelled) yet still stacked can only
+be one whose pop went astray. Every prompt the quit flow owns goes through
+`await_quit_prompt`, and
+`Tests/Architecture/test_quit_flow_prompt_choke_point.py` fails on a
+`push_screen_wait` / `wait_for_dismiss=True` in any `confirm_quit` /
+`prepare_for_quit` path. Do not "fix" the hang by cancelling the orphaned
+future: a late `dismiss` would then raise inside the prompt. Still open: a
+plain modal that self-closes under some OTHER covering screen -- one that
+background code pushed, since Ctrl+Q is the only priority app binding, so the
+only key that opens a screen over a modal -- is repaired by nothing. A static
+scan for plain modals that dismiss from a timer or worker found one:
+`LibraryCharacterRepairDialog._apply_owned`, which dismisses when its repair
+worker finishes (the quit prompt over it is handled; nothing else is).
+
+## A name shaped like markup exits the whole app, and one escaper fits only one parser (TASK-34400, 2026-10-04)
+
+**Incident.** A Roleplay character named `[/]` (an imported card can carry it) made the
+app exit as soon as the Inspector showed it: `Static.update(f"Selected: {name}")` on a
+markup-on `Static` raised `MarkupError` while the screen was drawn. TASK-32533's
+keep-alive (`app_lifecycle._handle_exception`) only covers exceptions inside a widget's
+message handler; render, compositor and tooltip-timer errors still go to Textual's
+default, which exits. A sweep of the Roleplay code then found about 30 more sinks of
+the same kind, and `[@click=app.quit]x` turned names into live click actions.
+
+**What parses a `str` as markup on Textual 8.2.8** (all measured): `Static`/`Label`
+(construct and `.update`), `Button` labels, `Select` option prompts (the current label
+and the dropdown), `OptionList`/`Option` and `SelectionList` prompts, `RadioButton` and
+`Checkbox` labels, `DataTable` string cells (at render), `border_title`, tooltips (the
+tooltip is a `Static`), `Collapsible` titles, and `notify()` unless `markup=False`.
+Literal forms: `markup=False` on an owned `Static`, `textual.content.Content(text)` or
+`rich.text.Text(text)` for prompts, labels, cells and tooltips.
+
+**The escaper trap.** `Utils.input_validation.escape_markup` is correct for Textual's
+parser (`Content.from_markup`), including backslashes. It is **wrong** for Rich's
+`Text.from_markup`: Rich reads `\\[` as an escaped backslash plus a live tag, so
+`a\[/]b` (or an ordinary LaTeX reply `\[x^2\]`) crashed the preview transcript, which
+escaped with `escape_markup` and then parsed with Rich. `textual.markup.escape` is
+wrong on Textual 8.2.8 for `[/` and `[TODO] y`. Prefer building literal `Text` or
+`Content` over escaping; escape only into a shared markup-on widget you do not own.
+
+**The test trap.** A markup sink crashes only when it is drawn. A hidden widget, a
+clipped dropdown label or an unopened dropdown never parses, so a test that only
+"sets the value" passes on the broken code. Paint the surface (open the dropdown,
+render the tooltip text through `Static.update` the way the tooltip timer does), or
+assert the literal type (`Text`/`Content`) when the surface cannot be painted in the
+test, and prove the test red on the unfixed code. Tests:
+`Tests/UI/test_roleplay_hostile_names.py`, `Tests/UI/test_roleplay_hostile_text_surfaces.py`.
+
+## A coroutine handed to `app.call_later` is awaited on the app pump: Enter froze every key, a click did not (TASK-33622.16, 2026-10-03)
+
+**Incident.** Found live during TASK-33622.15: after **Enter** sent
+`/generate-video` to MiniMax, the "Generate video?" confirm ignored Escape, F1
+and Ctrl+Q, and so did the storage choice after it, until the paid generation
+resolved; a click on **Send** did not freeze. An await-chain probe of each
+pump's task in a mounted test on dev (`01a2020981`) showed the APP pump parked in
+`MessagePump.on_callback` → `_send_console_message_from_visible_action` →
+`_dispatch_console_command` → `_console_command_generate_video` →
+`Worker.wait()` (the confirm's `push_screen_wait` worker). On the Send route
+the app pump was idle and the Console's own pump was parked in
+`on_button_pressed`, so the composer's Stop button was dead for the whole paid
+run. TASK-33621.28 had fixed this exact freeze for the send's hook review
+only. The same send also awaited every slash command inline, so the freeze came
+back through `/generate-video`.
+
+**Why (Textual 8.2.8).** Enter schedules the send with
+`app.call_later(coroutine_function)`, and `MessagePump.on_callback` AWAITS a
+coroutine callback on the pump it was posted to. That is the app pump, which
+dispatches every key. A `Button.Pressed` handler is awaited on the screen's
+pump instead. So "click works, Enter freezes" means the send awaited
+something user-paced.
+
+**What to do.** A send path reached from a key must not await anything with a
+user-paced lifetime (a modal, a remote job). Hand it to a worker, as
+`UI/Console_Modules/command_handoff.py` does for every slash command. When you
+fix "pump parked by awaiting X", list everything else that path awaits. Second
+trap, found live on the fix build: Ctrl+Q under the confirm quit the app, and
+shutdown cancelled the confirm's waiting worker. `Worker.wait()` then raised
+`WorkerCancelled` through the command's own worker, and that showed up as an
+`unhandled_exception` on the way out. A worker that waits on a modal must
+treat `WorkerCancelled` as "over", not "broken". Test it with keys delivered
+the way the driver does (`_key`), and use a bounded `_pump_runs` poll on BOTH
+pumps (`Tests/UI/test_console_video_send_freeze.py`). Do not use Pilot here:
+its idle wait never returns while a pump is parked.
+
+**Third trap: unfreezing a flow makes its "nobody can act now" code
+reachable (checkpoint review of the same fix).** Once the hand-off kept the
+Console live during a generation, the user could type, switch chats or press
+Stop -- and `/generate-video`'s failure path, written when none of that was
+possible, ran `composer.clear_draft()` then pasted the saved command back. A
+review repro on the fix build (Enter the command → Generate → type "what about
+a sailboat?" → Stop) wiped the typed text with no undo, and after a chat switch
+it wiped the OTHER chat's draft, because every Console chat shares one
+composer. The pasted-back command was also unusable: a draft holding a paste is
+never parsed as a command, so Enter sent it to the model as chat. Five mounted
+tests went red on exactly that. `/generate-image` had the same code. The fix
+(`UI/Console_Modules/command_draft.py`): take only the revision the send
+captured (`commit_captured_draft`), and put it back only into the same draft
+scope while that is still empty. A chat switch, a load or another send always
+advances the composer's draft generation; typing does not. Restore with
+`restore_stashed_draft`, which brings back the original segments, so the draft
+is not marked as a paste. **When a fix lets the user act during something that
+used to block them, grep that flow for every save/clear/restore of shared UI
+state and ask what happens if they typed in between.**
+
+**Fourth trap: the same holds for "the active chat", in every handler, not
+just the one you fixed (PR #3006 review).** Handing every slash command to a
+worker made all of them run with the Console live, and most handlers resolve
+"the active session" or clear "the composer" after an await -- written when
+the send parked the pump, so nothing could change in between. A mounted repro:
+`/system Terse`, prompt search parked, switch to a new chat, release -- the
+prompt applied to the NEW chat and wiped its typed draft. An audit of all 17
+handlers found four more that answered after an await (`/doctor`, `/skills`,
+`/fewer-permission-prompts`, `/stream-video`), and live, `/stream-video`
+against a loopback server holding the request posted its error into the chat
+switched to. The fix binds the command to its origin in the worker
+(`command_handoff.COMMAND_ORIGIN`): refuse at start and after an await when
+that chat no longer shows, and post awaited answers with an explicit
+`session_id`. **Making a call asynchronous changes the contract of everything
+it calls: list each handler's awaits and what it re-reads after them.**

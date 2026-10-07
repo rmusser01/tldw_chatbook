@@ -14,7 +14,7 @@ import stat
 import unicodedata
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import StrEnum
 from ipaddress import ip_address
@@ -2246,6 +2246,79 @@ def required_openai_plaintext_confirmation_fingerprint(
     return openai_destination_fingerprint("openai", endpoint)
 
 
+def count_global_speech_tts_unsaved_fields(
+    original: GlobalSpeechTTSState,
+    draft: GlobalSpeechTTSState,
+) -> int:
+    """Count the defaults and provider fields that differ from saved.
+
+    The field-level twin of the panel's ``has_unsaved_changes``
+    (TASK-33002.4): values compare validated where they validate and raw
+    where they do not, so Input text that parses to the saved value is clean.
+
+    Args:
+        original: The saved global speech/TTS state.
+        draft: The edited global speech/TTS state.
+
+    Returns:
+        The number of defaults and provider fields whose draft value
+        differs from the saved one.
+    """
+
+    def differing(left: Mapping[str, object], right: Mapping[str, object]) -> int:
+        return sum(left.get(key) != right.get(key) for key in left.keys() | right.keys())
+
+    try:
+        count = differing(
+            asdict(draft.defaults.snapshot()), asdict(original.defaults.snapshot())
+        ) + (draft.defaults.default_profile_id != original.defaults.default_profile_id)
+    except GlobalSpeechTTSValidationError:
+        count = differing(asdict(draft.defaults), asdict(original.defaults))
+    for provider_id in BUILT_IN_TTS_PROVIDER_ORDER:
+        pair = (draft.providers[provider_id], original.providers[provider_id])
+        try:
+            pair = tuple(_validated_provider_values(provider_id, v) for v in pair)
+        except GlobalSpeechTTSValidationError:
+            pass
+        count += differing(*pair)
+    return count
+
+
+def _require_wav_for_pocket_tts(
+    draft: GlobalSpeechTTSState, preferences: TTSPreferencesSnapshot
+) -> None:
+    """Refuse a non-WAV default format while pocket-tts reads replies.
+
+    TASK-34100.8 review round 2 (G8-R2-F3). An OpenAI Base URL whose path is
+    ``/tts`` speaks pocket-tts's native API, which returns WAV only; the
+    OpenAI backend refuses any other format at speak time. Settings used to
+    save that pair, so every reply failed and the first-run Voice step (which
+    refuses it) disagreed with Settings about the same slot. The format is
+    the shared default, so it binds only while the OpenAI slot reads replies,
+    whichever provider's pane the save comes from.
+
+    Raises:
+        GlobalSpeechTTSValidationError: On the default output format.
+    """
+    if preferences.provider_id != "openai" or preferences.response_format == "wav":
+        return
+    try:
+        endpoint = normalize_openai_compatible_endpoint(
+            str(draft.providers["openai"].get("base_url") or "")
+        )
+    except ValueError:
+        return  # the OpenAI pane's own validation names a bad Base URL
+    # Deferred: this screen is resident at the UI-ready mark, and the pocket-tts
+    # dialect is needed only on Save (UI-ready module census, TASK-34100.8).
+    from tldw_chatbook.TTS.pocket_tts_native import (
+        POCKET_TTS_WAV_ONLY_COPY,
+        is_pocket_tts_native_url,
+    )
+
+    if is_pocket_tts_native_url(endpoint.speech_url):
+        _validation_error("defaults", "response_format", POCKET_TTS_WAV_ONLY_COPY)
+
+
 def build_global_speech_tts_save_proposal(
     original: GlobalSpeechTTSState,
     draft: GlobalSpeechTTSState,
@@ -2268,6 +2341,7 @@ def build_global_speech_tts_save_proposal(
     preferences = draft.defaults.snapshot(
         max_identifier_characters=identifier_limit,
     )
+    _require_wav_for_pocket_tts(draft, preferences)
     validated = _validated_provider_values(
         configure_provider,
         draft.providers[configure_provider],

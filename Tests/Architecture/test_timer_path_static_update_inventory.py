@@ -175,10 +175,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/UI/Research_Window.py",
         "ResearchWindow._update_detail",
         "self.query_one('#research-run-detail', Static)",
-    ): (
-        "NEEDS-LAYOUT: run detail is a height:auto block that grows with "
-        "events."
-    ),
+    ): ("NEEDS-LAYOUT: run detail is a height:auto block that grows with events."),
     # -- tldw_chatbook/UI/Screens/chat_screen.py
     #    (dict/set receivers formerly carried NOT-A-WIDGET rows here; they are
     #    now auto-classified by _receiver_is_provably_collection, TASK-23028)
@@ -186,10 +183,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "ChatScreen._sync_console_agent_section",
         "fleet_summary",
-    ): (
-        "NEEDS-LAYOUT: height:auto summary whose line count tracks the "
-        "fleet size."
-    ),
+    ): ("NEEDS-LAYOUT: height:auto summary whose line count tracks the fleet size."),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "ChatScreen._sync_console_agent_section",
@@ -205,8 +199,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "ChatScreen._sync_console_mode_bar",
         "mode_bar",
     ): (
-        "NEEDS-LAYOUT: the mode bar's chip row wraps, so its height is "
-        "content-driven."
+        "NEEDS-LAYOUT: the mode bar's chip row wraps, so its height is content-driven."
     ),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
@@ -220,10 +213,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "ChatScreen._sync_console_settings_summary",
         "recovery",
-    ): (
-        "NEEDS-LAYOUT: the readiness row is display-toggled on the same "
-        "path."
-    ),
+    ): ("NEEDS-LAYOUT: the readiness row is display-toggled on the same path."),
     (
         "tldw_chatbook/UI/Screens/chat_screen.py",
         "ChatScreen._sync_console_settings_summary",
@@ -305,10 +295,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/Console/console_composer_bar.py",
         "ConsoleComposerBar.set_pending_attachment_label",
         "indicator",
-    ): (
-        "NEEDS-LAYOUT: attachment indicator is width:auto and display- "
-        "toggled."
-    ),
+    ): ("NEEDS-LAYOUT: attachment indicator is width:auto and display- toggled."),
     (
         "tldw_chatbook/Widgets/Console/console_composer_bar.py",
         "ConsoleComposerBar.set_voice_status",
@@ -329,18 +316,12 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/Console/console_session_surface.py",
         "ConsoleSessionSurface.set_session_title",
         "header",
-    ): (
-        "NEEDS-LAYOUT: session title width is auto and tracks the title "
-        "text."
-    ),
+    ): ("NEEDS-LAYOUT: session title width is auto and tracks the title text."),
     (
         "tldw_chatbook/Widgets/Console/console_session_surface.py",
         "ConsoleSessionSurface.show_fleet_coachmark",
         "content",
-    ): (
-        "NEEDS-LAYOUT: the fleet coachmark is a display-toggled auto-sized "
-        "callout."
-    ),
+    ): ("NEEDS-LAYOUT: the fleet coachmark is a display-toggled auto-sized callout."),
     (
         "tldw_chatbook/Widgets/Console/console_session_surface.py",
         "ConsoleSessionSurface.sync_inline_guidance",
@@ -351,18 +332,12 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/Console/console_status_chips.py",
         "ConsoleStatusChips.sync_cost_state",
         "chip",
-    ): (
-        "NEEDS-LAYOUT: chips are width:auto -- the label length IS the "
-        "width."
-    ),
+    ): ("NEEDS-LAYOUT: chips are width:auto -- the label length IS the width."),
     (
         "tldw_chatbook/Widgets/Console/console_status_chips.py",
         "ConsoleStatusChips.sync_run_chip",
         "chip",
-    ): (
-        "NEEDS-LAYOUT: chips are width:auto -- the label length IS the "
-        "width."
-    ),
+    ): ("NEEDS-LAYOUT: chips are width:auto -- the label length IS the width."),
     # -- tldw_chatbook/Widgets/Console/console_transcript.py
     (
         "tldw_chatbook/Widgets/Console/console_transcript.py",
@@ -398,10 +373,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._dismiss_reload_confirmation",
         "self.query_one('#file-notes-reload-confirm-copy', Static)",
-    ): (
-        "NEEDS-LAYOUT: the reload-confirm callout is display-toggled and "
-        "auto-sized."
-    ),
+    ): ("NEEDS-LAYOUT: the reload-confirm callout is display-toggled and auto-sized."),
     (
         "tldw_chatbook/Widgets/Library/library_file_notes_workspace.py",
         "LibraryFileNotesWorkspace._set_action_status",
@@ -444,10 +416,7 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/audio_troubleshooting_dialog.py",
         "AudioTroubleshootingDialog._update_level_meter",
         "meter",
-    ): (
-        "NOT-A-WIDGET: ProgressBar.update(progress=...) has no layout "
-        "kwarg."
-    ),
+    ): ("NOT-A-WIDGET: ProgressBar.update(progress=...) has no layout kwarg."),
     # -- tldw_chatbook/Widgets/detailed_progress.py and
     # -- tldw_chatbook/Widgets/loading_states.py: their CLASSIFIED_SITES rows
     # (formerly "UNREACHABLE: no importer (prod or tests)") and
@@ -468,19 +437,13 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "tldw_chatbook/Widgets/splash_screen.py",
         "SplashScreen._update_animation",
         "self.effect_handler",
-    ): (
-        "NOT-A-WIDGET: the effect handler's own frame producer, not a "
-        "Static."
-    ),
+    ): ("NOT-A-WIDGET: the effect handler's own frame producer, not a Static."),
     # -- tldw_chatbook/Widgets/status_dashboard.py
     (
         "tldw_chatbook/Widgets/status_dashboard.py",
         "StatusDashboard._update_time_display",
         "time_display",
-    ): (
-        "UNREACHABLE: Widgets/status_dashboard.py has no importer (prod or "
-        "tests)."
-    ),
+    ): ("UNREACHABLE: Widgets/status_dashboard.py has no importer (prod or tests)."),
 }
 
 
@@ -520,6 +483,15 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
             "tldw_chatbook/UI/Console_Modules/realtime.py",
             "ConsoleRealtimeController",
             "_tick_console_realtime",
+        ),
+        # TASK-33621.12: focus recovery re-arms a 20 ms timer (at most 100
+        # times) while the lost control's own container is mid-recompose.
+        # Checked with census(): no `.update(` is reachable from it.
+        (
+            "rearming-set_timer",
+            "tldw_chatbook/UI/Console_Modules/left_rail.py",
+            "ConsoleLeftRail",
+            "_recover_pending_focus",
         ),
         (
             "rearming-set_timer",
@@ -714,8 +686,8 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
         ),
         (
             "set_interval",
-            "tldw_chatbook/app.py",
-            "TldwCli",
+            "tldw_chatbook/app_lifecycle.py",
+            "LifecycleMixin",
             "_perform_change_review_retention",
         ),
         (
@@ -732,8 +704,8 @@ EXPECTED_CLOCK_ROOTS: frozenset[tuple[str, str, str | None, str]] = frozenset(
         ),
         (
             "set_interval",
-            "tldw_chatbook/app.py",
-            "TldwCli",
+            "tldw_chatbook/app_lifecycle.py",
+            "LifecycleMixin",
             "perform_media_cleanup",
         ),
     }
@@ -879,9 +851,21 @@ _COLLECTION_CONSTRUCTORS = frozenset(
 )
 _COLLECTION_ANNOTATION_ROOTS = frozenset(
     {
-        "dict", "Dict", "defaultdict", "DefaultDict", "OrderedDict", "Counter",
-        "MutableMapping", "Mapping", "ChainMap",
-        "set", "Set", "frozenset", "FrozenSet", "MutableSet", "AbstractSet",
+        "dict",
+        "Dict",
+        "defaultdict",
+        "DefaultDict",
+        "OrderedDict",
+        "Counter",
+        "MutableMapping",
+        "Mapping",
+        "ChainMap",
+        "set",
+        "Set",
+        "frozenset",
+        "FrozenSet",
+        "MutableSet",
+        "AbstractSet",
     }
 )
 
@@ -918,9 +902,7 @@ def _name_bound_in(target: ast.AST, name: str) -> bool:
     inference reject every dict a function ever writes a key into.
     """
     return any(
-        isinstance(sub, ast.Name)
-        and sub.id == name
-        and isinstance(sub.ctx, ast.Store)
+        isinstance(sub, ast.Name) and sub.id == name and isinstance(sub.ctx, ast.Store)
         for sub in ast.walk(target)
     )
 
@@ -949,9 +931,7 @@ def _local_receiver_is_collection(func_node: ast.AST, name: str) -> bool:
                         provable += 1
                     else:
                         return False
-                elif not isinstance(target, ast.Name) and _name_bound_in(
-                    target, name
-                ):
+                elif not isinstance(target, ast.Name) and _name_bound_in(target, name):
                     return False  # tuple/star unpack: type unknowable
         elif isinstance(node, ast.AnnAssign):
             if isinstance(node.target, ast.Name) and node.target.id == name:
@@ -1023,9 +1003,7 @@ def _self_attr_is_collection(class_node: ast.ClassDef | None, attr: str) -> bool
                         provable += 1
                     else:
                         return False
-                elif any(
-                    _is_self_attr_store(sub, attr) for sub in ast.walk(target)
-                ):
+                elif any(_is_self_attr_store(sub, attr) for sub in ast.walk(target)):
                     return False  # tuple/star unpack: type unknowable
         elif isinstance(node, ast.AnnAssign):
             target = node.target
@@ -1223,8 +1201,7 @@ def _collect_clock_roots(
             resolved = [
                 name
                 for name in names
-                if name not in shadowed
-                and graph.resolve_anywhere(dotted, cls, name)
+                if name not in shadowed and graph.resolve_anywhere(dotted, cls, name)
             ]
             if resolved:
                 for name in resolved:
@@ -1350,7 +1327,9 @@ def census(
                 )
                 record["lines"].add(call.lineno)
                 record["explicit"] = record["explicit"] and explicit
-                record["roots"].add(f"[{kind}] {dotted.split('.')[-1]}:{cls}.{callback}")
+                record["roots"].add(
+                    f"[{kind}] {dotted.split('.')[-1]}:{cls}.{callback}"
+                )
     return found
 
 
@@ -1386,7 +1365,9 @@ def test_census_actually_finds_the_known_clock_roots() -> None:
     roots, _problems = _package_clock_roots()
     assert len(roots) >= 30, f"census collapsed to {len(roots)} clock roots"
 
-    flattened = {(dotted.split(".")[-1], cls, name) for _kind, dotted, cls, name in roots}
+    flattened = {
+        (dotted.split(".")[-1], cls, name) for _kind, dotted, cls, name in roots
+    }
     assert ("splash_screen", "SplashScreen", "_update_animation") in flattened
     assert (
         "console_composer_bar",
@@ -1450,8 +1431,7 @@ def test_no_timer_path_update_defaults_to_layout_true(timer_path_census) -> None
         "see Tests/UI/test_timer_path_layout_cost.py), or by adding an entry to "
         "CLASSIFIED_SITES saying why it does not need to.\n\n"
         + "\n".join(
-            f"  {path}:{lines} in {qualname} recv={receiver!r}\n"
-            f"      via {roots[:2]}"
+            f"  {path}:{lines} in {qualname} recv={receiver!r}\n      via {roots[:2]}"
             for path, qualname, receiver, lines, roots in unclassified
         )
     )
@@ -1504,8 +1484,8 @@ def test_every_classification_states_a_kind() -> None:
         for (rel, qualname, receiver), reason in sorted(CLASSIFIED_SITES.items())
         if not reason.startswith(kinds)
     ]
-    assert not bad, (
-        f"Classifications must start with one of {kinds}:\n" + "\n".join(bad)
+    assert not bad, f"Classifications must start with one of {kinds}:\n" + "\n".join(
+        bad
     )
 
 
@@ -1565,8 +1545,7 @@ def test_clock_root_set_is_pinned() -> None:
             "NEW repeating-clock roots. Before adding each to "
             "EXPECTED_CLOCK_ROOTS, check what its callback repaints: every "
             "`.update(` it reaches must pass layout= or carry a "
-            "CLASSIFIED_SITES row.\n"
-            + "\n".join(f"  + {root}" for root in sorted(new))
+            "CLASSIFIED_SITES row.\n" + "\n".join(f"  + {root}" for root in sorted(new))
         )
     if gone:
         message.append(

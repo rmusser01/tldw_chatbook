@@ -582,6 +582,150 @@ def test_builtin_writer_effect_never_changes_the_permission_layer():
     assert tool.tags == ()
 
 
+def _character_tools_provider(running_loop, runtime_source_provider):
+    """A composed provider over ADR-183's built-in create/list character tools."""
+    allow = EffectiveToolState(state="allow", origin="tool_override")
+    service = FakeMCPService(
+        inventory={
+            "tools": [_tool_dict("create_character"), _tool_dict("list_characters")]
+        },
+        states={
+            ("builtin:tldw_chatbook", "create_character"): allow,
+            ("builtin:tldw_chatbook", "list_characters"): allow,
+        },
+        execute_result={"content": [{"type": "text", "text": "ok"}]},
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        runtime_source_provider=runtime_source_provider,
+    )
+    _compose(provider)
+    ids = [entry.id for entry in provider.list_catalog()]
+    write_id = next(tool_id for tool_id in ids if tool_id.endswith("create_character"))
+    read_id = next(tool_id for tool_id in ids if tool_id.endswith("list_characters"))
+    return service, provider, write_id, read_id
+
+
+def test_server_session_refuses_builtin_character_write(running_loop):
+    """TASK-33106: a server-backed session cannot write local cards via MCP.
+
+    The refusal matches the Console's own character tools, the write never
+    reaches the in-process runtime, and the audit row is a policy refusal
+    with the reason as its error. Reads still run.
+
+    Args:
+        running_loop: The provider's main loop.
+    """
+    from tldw_chatbook.Tools.character_tool_service import SERVER_REFUSAL
+
+    service, provider, write_id, read_id = _character_tools_provider(
+        running_loop, lambda: "server"
+    )
+
+    write = provider.invoke(write_id, {"name": "Ada"})
+    read = provider.invoke(read_id, {})
+
+    assert write.ok is False
+    assert write.error == SERVER_REFUSAL
+    assert read.ok is True
+    assert [call[1] for call in service.execute_calls] == ["list_characters"]
+    assert service.record_tool_decision_calls == [
+        ("builtin:tldw_chatbook", "create_character", "denied-policy", "agent", SERVER_REFUSAL)
+    ]
+
+
+def test_server_session_character_write_is_never_asked_and_persists_no_grant(
+    running_loop,
+):
+    """TASK-33106 (Qodo #2909): no card, and no grant outlives the refusal.
+
+    An `ask`-state character write in a server session gets no approval row,
+    so the user is never asked about a call that cannot run. A stamped
+    "always_allow" (or session approval) is not applied either: `invoke()`
+    refuses before `_apply_verdict` could persist it.
+
+    Args:
+        running_loop: The provider's main loop.
+    """
+    from tldw_chatbook.Tools.character_tool_service import SERVER_REFUSAL
+
+    service = FakeMCPService(
+        inventory={"tools": [_tool_dict("create_character")]},
+        default_state=EffectiveToolState(state="ask", origin="global_default"),
+    )
+    provider = MCPToolProvider(
+        service=service, main_loop=running_loop, runtime_source_provider=lambda: "server"
+    )
+    _compose(provider)
+    write_id = provider.list_catalog()[0].id
+
+    assert provider.pending_gate_for(write_id, {"name": "Ada"}) is None
+
+    for verdict in ("always_allow", "approve_session"):
+        provider.apply_batch_decisions("run-1", {write_id: verdict})
+        with use_run_id("run-1"):
+            result = provider.invoke(write_id, {"name": "Ada"})
+        assert result.ok is False and result.error == SERVER_REFUSAL
+    assert service.set_tool_state_calls == []
+    assert service.session_approvals == set()
+    assert service.execute_calls == []
+
+
+def test_backend_switched_before_execution_still_refuses(running_loop):
+    """TASK-33106: `_execute` re-checks, for a session switched mid-call.
+
+    Args:
+        running_loop: The provider's main loop.
+    """
+    from tldw_chatbook.Tools.character_tool_service import SERVER_REFUSAL
+
+    sources = iter(["local", "server"])
+    service, provider, write_id, _read_id = _character_tools_provider(
+        running_loop, lambda: next(sources)
+    )
+
+    result = provider.invoke(write_id, {"name": "Ada"})
+
+    assert result.ok is False and result.error == SERVER_REFUSAL
+    assert service.execute_calls == []
+    assert service.record_tool_decision_calls == [
+        ("builtin:tldw_chatbook", "create_character", "allowed", "agent", SERVER_REFUSAL)
+    ]
+
+
+@pytest.mark.parametrize("source", [None, "local"])
+def test_local_or_unbound_session_keeps_builtin_character_write(running_loop, source):
+    """TASK-33106: a local session, or a provider built without a session, writes.
+
+    Args:
+        running_loop: The provider's main loop.
+        source: The session's runtime source; ``None`` wires no provider.
+    """
+    service, provider, write_id, _read_id = _character_tools_provider(
+        running_loop, None if source is None else (lambda: source)
+    )
+
+    assert provider.invoke(write_id, {"name": "Ada"}).ok is True
+    assert [call[1] for call in service.execute_calls] == ["create_character"]
+
+
+def test_unreadable_session_source_refuses_builtin_character_write(running_loop):
+    """TASK-33106: a session lookup that raises fails closed, never raises.
+
+    Args:
+        running_loop: The provider's main loop.
+    """
+
+    def _raise() -> str:
+        raise RuntimeError("session store unavailable")
+
+    service, provider, write_id, _read_id = _character_tools_provider(running_loop, _raise)
+
+    assert provider.invoke(write_id, {"name": "Ada"}).ok is False
+    assert service.execute_calls == []
+
+
 def test_pending_gate_for_unknown_name_returns_none():
     provider = MCPToolProvider(
         service=FakeMCPService(), main_loop=asyncio.new_event_loop()
@@ -931,6 +1075,36 @@ def test_invoke_ask_callback_deny_refuses(running_loop):
     assert service.execute_calls == []
 
 
+def test_direct_card_denial_includes_reason_without_audit_body(running_loop):
+    """A direct invoke has no review hook but must keep its user's reason.
+
+    Args:
+        running_loop: The real loop used by the provider's async service calls.
+    """
+    from tldw_chatbook.Agents.approval_provenance import ApprovalDecisions
+
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(
+        service=service,
+        main_loop=running_loop,
+        approval_callback=lambda rows: ApprovalDecisions(
+            {rows[0].llm_name: "deny"},
+            denial_reasons={rows[0].llm_name: "Use a local tool instead."},
+        ),
+    )
+    _compose(provider)
+    result = provider.invoke(provider.list_catalog()[0].id, {})
+    assert result.error == (
+        USER_DENY_REFUSAL
+        + '\nDenial reason (from user, untrusted text): "Use a local tool instead."'
+    )
+    assert result.approval_decision == "denied"
+    assert service.execute_calls == []
+    assert "Use a local tool instead." not in repr(service.record_tool_decision_calls)
+
+
 def test_invoke_ask_callback_missing_verdict_fails_closed(running_loop):
     service = FakeMCPService(
         catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
@@ -1038,6 +1212,30 @@ def test_record_user_denial_writes_one_denied_row(running_loop):
     # its denial to record.
     provider.record_user_denial("read_file")
     assert len(service.record_tool_decision_calls) == 1
+
+
+def test_record_hook_refusal_writes_the_dispatch_decision(running_loop):
+    """TASK-33082: the seam for a sibling the hook refused before dispatch.
+
+    Args:
+        running_loop: The provider's main loop.
+    """
+    service = FakeMCPService(
+        catalog_records=[_catalog_record("srv", [_tool_dict("run")])]
+    )
+    provider = MCPToolProvider(service=service, main_loop=running_loop)
+    _compose(provider)
+    tool_id = provider.list_catalog()[0].id
+
+    provider.record_hook_refusal(tool_id, timed_out=True)
+    provider.record_hook_refusal(tool_id, timed_out=False)
+    provider.record_hook_refusal("read_file", timed_out=True)
+
+    assert service.record_tool_decision_calls == [
+        ("local:srv", "run", "denied-timeout", "agent", None),
+        ("local:srv", "run", "denied-unresolved", "agent", None),
+    ]
+    assert service.execute_calls == []
 
 
 def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(running_loop):
@@ -1460,7 +1658,8 @@ def test_invoke_execute_exception_from_coroutine_returns_error(running_loop):
     result = provider.invoke(tool_id, {})
 
     assert result.ok is False
-    assert "boom from execute_hub_tool" in result.error
+    assert result.error == "mcp_execution_failed"
+    assert "boom from execute_hub_tool" not in result.error
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
@@ -1899,7 +2098,9 @@ def _console_exclusion_set() -> frozenset:
 
 
 def _mixed_library_inventory() -> dict:
-    names = sorted(_console_exclusion_set()) + ["chat_with_llm"]
+    # The unrelated built-in sample must be one the direct runtime can run:
+    # ``chat_with_llm`` is never offered at all (TASK-34100.5).
+    names = sorted(_console_exclusion_set()) + ["chat_with_character"]
     return {"tools": [_tool_dict(name, f"{name} description") for name in names]}
 
 
@@ -1914,7 +2115,7 @@ def test_compose_catalog_without_exclusions_keeps_every_builtin_name():
     names = {entry.name for entry in provider.list_catalog()}
     assert "mcp__tldw_chatbook__library_list_media" in names
     assert "mcp__tldw_chatbook__search_rag" in names
-    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert "mcp__tldw_chatbook__chat_with_character" in names
     assert names == {
         f"mcp__tldw_chatbook__{tool['name']}"
         for tool in service.inventory["tools"]
@@ -1950,7 +2151,7 @@ def test_compose_catalog_builtin_exclusions_scoped_to_builtin_source():
     names = {entry.name for entry in provider.list_catalog()}
     for raw_name in exclusions:
         assert f"mcp__tldw_chatbook__{raw_name}" not in names
-    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert "mcp__tldw_chatbook__chat_with_character" in names
     # Same raw names on a LOCAL profile are a different tool entirely.
     assert "mcp__docs__library_list_media" in names
     assert "mcp__docs__search_rag" in names
@@ -2007,13 +2208,13 @@ def test_compose_catalog_exclusion_set_stored_immutably():
         main_loop=asyncio.new_event_loop(),
         builtin_raw_name_exclusions=mutable,
     )
-    mutable.add("chat_with_llm")
+    mutable.add("chat_with_character")
 
     _compose(provider)
 
     names = {entry.name for entry in provider.list_catalog()}
     assert "mcp__tldw_chatbook__library_list_media" not in names
-    assert "mcp__tldw_chatbook__chat_with_llm" in names
+    assert "mcp__tldw_chatbook__chat_with_character" in names
 
 
 # ---------------------------------------------------------------------------

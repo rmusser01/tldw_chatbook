@@ -1,7 +1,9 @@
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
+import tldw_chatbook.tldw_api.client as client_module
 from tldw_chatbook.tldw_api import (
     AudioJobResponse,
     AudioSpeechJobArtifactsResponse,
@@ -34,6 +36,7 @@ from tldw_chatbook.tldw_api import (
     VoiceEncodeRequest,
     VoiceEncodeResponse,
 )
+from tldw_chatbook.tldw_api.exceptions import AuthenticationError
 
 
 def _job() -> dict:
@@ -532,3 +535,46 @@ async def test_audio_tokenizer_and_custom_voice_routes(monkeypatch, tmp_path):
     assert voice.voice_id == "voice-1"
     assert preview.filename == "preview_voice-1.mp3"
     assert isinstance(deleted, CustomVoiceDeleteResponse)
+
+
+@pytest.mark.asyncio
+async def test_tokenless_client_audio_probes_send_no_credentials_and_raise_auth_error(
+    monkeypatch,
+):
+    """tldw_server#3058 made both probes require an authenticated user.
+
+    A Chatbook install may run without an API token; its client then sends no
+    credential header, and the server answers 401. The client must surface that
+    as ``AuthenticationError`` so the audio service can report it as
+    ``auth_required`` rather than a generic failure.
+    """
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, {k.lower() for k in request.headers}))
+        return httpx.Response(401, json={"detail": "Not authenticated"})
+
+    real_async_client = httpx.AsyncClient
+
+    def _with_mock_transport(*args, **kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real_async_client(*args, **kwargs)
+
+    monkeypatch.setattr(client_module.httpx, "AsyncClient", _with_mock_transport)
+    client = TLDWAPIClient("http://api.test")
+
+    try:
+        with pytest.raises(AuthenticationError, match="Not authenticated"):
+            await client.get_stt_health()
+        with pytest.raises(AuthenticationError, match="Not authenticated"):
+            await client.get_audio_streaming_status()
+    finally:
+        await client.close()
+
+    assert [path for path, _ in seen] == [
+        "/api/v1/audio/transcriptions/health",
+        "/api/v1/audio/stream/status",
+    ]
+    for _, header_names in seen:
+        assert "x-api-key" not in header_names
+        assert "authorization" not in header_names

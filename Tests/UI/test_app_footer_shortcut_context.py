@@ -72,6 +72,7 @@ async def test_footer_renders_workbench_shortcuts():
     ``_remaining_global_text``), so "F1" appears exactly once even though
     both the context AND the (undeduped) global constant would otherwise
     spell it "F1 help"."""
+
     class TestApp(ConsolidatedCSSApp):
         def compose(self):
             yield AppFooterStatus(id="footer")
@@ -84,7 +85,11 @@ async def test_footer_renders_workbench_shortcuts():
 
         footer.set_workbench_shortcuts(
             source="console",
-            shortcuts=(("F6", "next pane"), ("F1", "help"), ("Ctrl+K", "switch session")),
+            shortcuts=(
+                ("F6", "next pane"),
+                ("F1", "help"),
+                ("Ctrl+K", "switch session"),
+            ),
         )
         await pilot.pause()
 

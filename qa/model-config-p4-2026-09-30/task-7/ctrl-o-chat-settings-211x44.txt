@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│   Model and generation · Selected  Context and memory                                                                                                                           │────────────────
+                │  Use: this conversation only. Defaults: future provider conversations.                                                                                                          │     │
+                │                                                                                                                                                                                 │     │
+   Terminal     │  Connection                                                                                                                                                                     │     │
+ ───────────────│  Provider               █ Anthropic                                                                                                                                             │     │
+ Workspaces     │                         Selected: Anthropic · 40 providers available.                                                                                                           │     │
+ ───────────────│                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                                                        │     │
+ Conversations  │                         ▊ Cloud                                        ▎                                                                                                        │     │
+        Archive │                         ▊ Anthropic                                    ▎                                                                                                        │     │
+          Archiv│                         ▊ Arcee AI                                  ▄▄ ▎                                                                                                        │     │
+        Search a│                         ▊ Azure OpenAI                                 ▎                                                                                                        │     │
+   Chat 1       │                         ▊ Baidu Qianfan                                ▎                                                                                                        │     │
+                │                         ▊ Baseten                                      ▎                                                                                                        │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│                         ▊ ByteDance Seed (BytePlus)                    ▎                                                                                                        │     │
+  ▊  Filter visi│                         ▊ Cerebras                                     ▎                                                                                                        │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│                         ▊ Cloudflare Workers AI                        ▎                                                                                                        │     │
+                │                         ▊ Cohere                                       ▎                                                                                                        │     │◂ Inspect
+   New conversat│                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                        │     │
+  Chats         │  Endpoint                                                                                                                                                                       │     │
+   Chat 1       │  Model                  │ claude-sonnet-5                                                                                                                                       │     │
+                │                         Live catalog unavailable. Showing 15 configured                                                                                                         │     │
+ ───────────────│                         models.                                                                                                                                                 │     │
+ Character · No │                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                                                        │     │
+ ───────────────│                         ▊ Saved fallback                               ▎                                                                                                     ▇  │     │
+ Model          │                         ▊ claude-sonnet-5  ● CURRENT                   ▎                                                                                                        │     │
+  Temperature 0.│                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                        │     │
+  Max tokens  40│  Saved fallback                                                                                                                                                                 │     │
+  Streaming   Of│                            Custom model                                                                                                                                         │     │
+  System: none ▸│  No non-billable live connection check is available for this provider.                                                                                                          │     │
+   Change  Alt+M│  Ready to send — credential not verified                                                                                                                                        │     │
+ ───────────────│  A send attempt is permitted with these settings.                                                                                                                               │     │
+ ▼ Details      │  ▼ more — scroll for the rest                                                                                                                                                   │     │
+                │                                                                                                                                    Used by future conversations for Anthropic.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                        Esc close   Cancel    Save as provider defaults  Make default for new chats  Use for this conversation   │ 0% · Current $
+                │                                                                                                                                                                                 │
+█  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

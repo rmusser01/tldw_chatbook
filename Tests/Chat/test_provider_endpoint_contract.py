@@ -202,9 +202,7 @@ def test_whitespace_trailing_slashes_and_local_schemeless_input_are_normalized()
 
 
 def test_explicit_remote_http_is_accepted_with_one_bounded_safe_warning() -> None:
-    result = contract.resolve_provider_endpoint(
-        "custom", "http://example.test/v1"
-    )
+    result = contract.resolve_provider_endpoint("custom", "http://example.test/v1")
 
     assert result.persisted_endpoint == "http://example.test/v1/chat/completions"
     assert len(result.warnings) == 1
@@ -379,9 +377,7 @@ def test_percent_encoded_unreserved_path_has_same_canonical_identity() -> None:
 
 
 def test_raw_unicode_path_is_serialized_as_uppercase_utf8_percent_escapes() -> None:
-    raw = contract.resolve_provider_endpoint(
-        "custom", "https://example.test/café/v1"
-    )
+    raw = contract.resolve_provider_endpoint("custom", "https://example.test/café/v1")
     encoded = contract.resolve_provider_endpoint(
         "custom", "https://example.test/caf%C3%A9/v1"
     )
@@ -436,8 +432,7 @@ def test_unsafe_or_ambiguous_inputs_are_rejected_without_echoing_secrets(
     assert result.errors
     assert all(len(message) <= 100 for message in result.errors)
     combined_display = (
-        f"{result.persisted_display} {result.chat_display} "
-        f"{result.models_display}"
+        f"{result.persisted_display} {result.chat_display} {result.models_display}"
     )
     assert "user" not in combined_display
     assert "secret" not in combined_display
@@ -607,9 +602,7 @@ def test_llama_equivalent_forms_have_one_canonical_identity(value: str) -> None:
 
 
 def test_proxy_prefixes_remain_distinct_canonical_identities() -> None:
-    direct = contract.canonical_connection_identity(
-        "custom", "https://example.test/v1"
-    )
+    direct = contract.canonical_connection_identity("custom", "https://example.test/v1")
     proxied = contract.canonical_connection_identity(
         "custom", "https://example.test/proxy/v1"
     )
@@ -682,29 +675,31 @@ def test_provider_and_endpoint_length_bounds_are_checked_before_parsing() -> Non
     endpoint_at_limit = endpoint_prefix + "a" * (4096 - len(endpoint_prefix))
     oversized_endpoint = endpoint_at_limit + "a"
 
-    assert contract.resolve_provider_endpoint(
-        valid_provider, "http://localhost:9000"
-    ).provider_key == valid_provider
+    assert (
+        contract.resolve_provider_endpoint(
+            valid_provider, "http://localhost:9000"
+        ).provider_key
+        == valid_provider
+    )
 
     provider_result = contract.resolve_provider_endpoint(
         oversized_provider, "http://localhost:9000"
     )
-    endpoint_result = contract.resolve_provider_endpoint(
-        "custom", oversized_endpoint
-    )
+    endpoint_result = contract.resolve_provider_endpoint("custom", oversized_endpoint)
 
     assert provider_result.persisted_endpoint is None
     assert endpoint_result.persisted_endpoint is None
     assert all(len(message) <= 100 for message in provider_result.errors)
     assert all(len(message) <= 100 for message in endpoint_result.errors)
-    assert contract.resolve_provider_endpoint(
-        "custom", endpoint_at_limit
-    ).persisted_endpoint is not None
+    assert (
+        contract.resolve_provider_endpoint(
+            "custom", endpoint_at_limit
+        ).persisted_endpoint
+        is not None
+    )
 
 
-def test_public_resolution_type_is_frozen_slotted_and_form_type_is_complete() -> (
-    None
-):
+def test_public_resolution_type_is_frozen_slotted_and_form_type_is_complete() -> None:
     result = contract.resolve_provider_endpoint("custom", "localhost:9000")
 
     assert get_args(contract.EndpointForm) == (
@@ -714,7 +709,9 @@ def test_public_resolution_type_is_frozen_slotted_and_form_type_is_complete() ->
         "models_url",
         "legacy_local",
     )
-    assert tuple(field.name for field in fields(contract.ProviderEndpointResolution)) == (
+    assert tuple(
+        field.name for field in fields(contract.ProviderEndpointResolution)
+    ) == (
         "provider_key",
         "normalized_input",
         "persisted_endpoint",
@@ -740,10 +737,13 @@ def test_connection_probe_availability_accepts_valid_url_provider_models_routes(
     provider: str,
 ) -> None:
     """Removing URL-provider eligibility must hide a useful bounded probe."""
-    assert contract.connection_probe_availability(
-        provider,
-        "http://127.0.0.1:9099/v1",
-    ) is contract.ConnectionProbeAvailability.MODELS_ROUTE
+    assert (
+        contract.connection_probe_availability(
+            provider,
+            "http://127.0.0.1:9099/v1",
+        )
+        is contract.ConnectionProbeAvailability.MODELS_ROUTE
+    )
 
 
 @pytest.mark.parametrize("provider", ("openai", "anthropic", "google"))
@@ -751,10 +751,13 @@ def test_connection_probe_availability_rejects_cloud_providers_without_a_declare
     provider: str,
 ) -> None:
     """A derived URL alone must not invent a live-check contract for cloud APIs."""
-    assert contract.connection_probe_availability(
-        provider,
-        "https://api.example.test/v1",
-    ) is contract.ConnectionProbeAvailability.UNAVAILABLE
+    assert (
+        contract.connection_probe_availability(
+            provider,
+            "https://api.example.test/v1",
+        )
+        is contract.ConnectionProbeAvailability.UNAVAILABLE
+    )
 
 
 @pytest.mark.parametrize("endpoint", (None, "", "not a url", "ftp://localhost/v1"))
@@ -762,7 +765,10 @@ def test_connection_probe_availability_rejects_missing_or_invalid_routes(
     endpoint: str | None,
 ) -> None:
     """Invalid drafts must not expose an action that cannot issue a safe request."""
-    assert contract.connection_probe_availability(
-        "custom",
-        endpoint,
-    ) is contract.ConnectionProbeAvailability.UNAVAILABLE
+    assert (
+        contract.connection_probe_availability(
+            "custom",
+            endpoint,
+        )
+        is contract.ConnectionProbeAvailability.UNAVAILABLE
+    )

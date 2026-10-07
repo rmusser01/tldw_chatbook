@@ -10,7 +10,7 @@
 $ds-surface-panel: $panel;
 $ds-surface-raised: $surface;
 $ds-surface-inspector: $surface;
-$ds-grid-line: $surface-lighten-1;
+$ds-grid-line: $tldw-boundary;
 $ds-column-line: $surface-lighten-2;
 $ds-text-primary: $text;
 $ds-text-muted: $text-muted;
@@ -22,7 +22,7 @@ $ds-focus-accent: $primary;
 $ds-input-focus-border: $primary;
 $ds-input-focus-bg: $ds-focus-bg;
 $ds-input-focus-accent: $primary;
-$ds-control-edge: $surface-lighten-2;
+$ds-control-edge: $tldw-boundary;
 $ds-status-ready: $success;
 $ds-status-running: $primary;
 $ds-status-info: $accent;
@@ -95,6 +95,7 @@ $ds-space-inset: $ds-space-1;
 $ds-control-height: 3;
 $ds-control-height-compact: 1;
 $ds-textarea-min-height: 5;
+$ds-model-switcher-width: 140;
 $ds-width-full: 100%;
 $ds-width-fill: 1fr;
 $ds-width-auto: auto;
@@ -269,8 +270,6 @@ $ds-theme-preset-dark-4: #656565;
 $ds-theme-preview-dark-ink: #000000;
 $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
-
-$ds-console-settings-wide-max-width: 196;
 
 $ds-inspector-modal-width: 120;
 $ds-inspector-modal-height: 42;

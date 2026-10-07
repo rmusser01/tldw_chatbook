@@ -13,6 +13,7 @@ Usage:
     ../../.venv/bin/python uat_console.py all
     ../../.venv/bin/python uat_console.py f1_first_run p1_ready
 """
+
 from __future__ import annotations
 
 import asyncio

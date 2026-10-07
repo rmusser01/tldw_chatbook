@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
 from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
 from tldw_chatbook.Agents.agent_models import ToolResult
 from tldw_chatbook.Agents.local_tool_provider import (
@@ -424,6 +426,15 @@ async def test_agent_bridge_outer_timeout_has_one_bridge_owned_audit_row(
 ):
     service, fake, _client, store = _service(tmp_path)
     started = asyncio.Event()
+    audit_threads = []
+    start_thread = threading.Thread.start
+
+    def capture_audit_thread(thread):
+        if thread.name == "mcp-bridge-audit":
+            audit_threads.append(thread)
+        start_thread(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", capture_audit_thread)
 
     async def _blocked_builtin(tool_name, arguments=None):
         fake.execute_tool_calls.append((tool_name, dict(arguments or {})))
@@ -453,15 +464,21 @@ async def test_agent_bridge_outer_timeout_has_one_bridge_owned_audit_row(
     )
     await started.wait()
 
-    result = await pending
-    await asyncio.sleep(0)
+    try:
+        result = await pending
+    finally:
+        for audit_thread in audit_threads:
+            await asyncio.to_thread(audit_thread.join, 1)
+            assert not audit_thread.is_alive()
 
+    assert len(audit_threads) == 1
     assert result.ok is False
+    assert result.dispatch_state == "uncertain"
     records = _log_records(store)
     assert len(records) == 1
     assert records[0]["initiator"] == "agent"
-    assert records[0]["status"] == "blocked"
-    assert records[0]["error_category"] == "execution_bridge_failed"
+    assert records[0]["status"] == "error"
+    assert records[0]["error_category"] == "completion_uncertain"
     assert records[0]["decision"] == "allowed"
 
 

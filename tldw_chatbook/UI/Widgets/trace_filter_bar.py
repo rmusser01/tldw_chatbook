@@ -166,11 +166,7 @@ class TraceFiltersDialog(ModalScreen[TraceFilterState | None]):
             id=widget_id,
             compact=True,
         )
-        # Inline geometry wins over the later app stylesheet's global
-        # ``Select { width: 100%; margin-bottom: 1; }`` rule.
-        select.add_class("w-fill")
         select.styles.min_width = 0
-        select.add_class("m-0")
         return select
 
     def compose(self) -> ComposeResult:

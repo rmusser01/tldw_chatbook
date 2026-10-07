@@ -7,6 +7,8 @@ on:
     paths:
       - .github/workflows/task-19642-smoke-clock-matrix.yml
       - Tests/STT/test_task602_platform_smoke.py
+  # Merge queue re-runs this on the rebased head (spec 2026-10-03, section 5.4).
+  workflow_dispatch:
 
 permissions:
   contents: read

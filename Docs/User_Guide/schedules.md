@@ -339,7 +339,9 @@ kind of task you want — **Scheduled task…** or **Recurring question…** —
 since a recurring question is a different kind of definition, not just
 another schedule shape. The form scrolls when the terminal is short; the
 live "Runs: …" preview, validation, and Save/Cancel stay pinned at the
-bottom while you edit.
+bottom while you edit. Closing a form that has unsaved edits asks first
+(**Discard changes?** — **Keep editing** returns to the form), and so
+does **Ctrl+Q** while the form is open (**Discard changes and quit?**).
 
 *Copy synced with code — task-31710, 2026-09-05: the chooser's other
 button was **Reminder…**, and the page title/intro sentence said "When

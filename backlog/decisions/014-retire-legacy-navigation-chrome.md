@@ -1,6 +1,7 @@
 # ADR-014: Retire the legacy navigation chrome and re-platform status writes
 
 Status: Accepted (amended 2026-07-17 on rebase onto origin/dev)
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-07-16
 Related Task: N/A (UX remediation plan, step 1 — see Links)
 Supersedes: N/A

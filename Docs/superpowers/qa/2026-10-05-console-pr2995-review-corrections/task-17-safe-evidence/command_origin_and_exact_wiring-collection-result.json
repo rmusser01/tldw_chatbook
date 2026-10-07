@@ -1,0 +1,42 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pr2995-task17-collection-vr2s8f9s/pytest",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[enter]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[send-button]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[appended]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[replaced]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[doctor]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[skills]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[fewer-permission-prompts]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_never_starts_in_a_chat_it_was_not_sent_from",
+    "--collect-only"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 6.517443167,
+  "stdout": "command_origin_and_exact_wiring-collection.stdout",
+  "stderr": "command_origin_and_exact_wiring-collection.stderr",
+  "log": "command_origin_and_exact_wiring-collection.log",
+  "complete_outputs": true,
+  "pid": 45782,
+  "closed_process": true,
+  "head_after": "54a18180211ed2ecbf450db78202d28d97a7b995",
+  "source_after_unchanged": true,
+  "collected_nodes": [
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[enter]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[send-button]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[appended]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[replaced]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[doctor]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[skills]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[fewer-permission-prompts]",
+    "Tests/UI/test_console_command_origin_chat.py::test_a_command_never_starts_in_a_chat_it_was_not_sent_from"
+  ],
+  "exact_selection_equal": true,
+  "collected_count": 8
+}

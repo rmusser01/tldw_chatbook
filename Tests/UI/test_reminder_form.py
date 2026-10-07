@@ -216,7 +216,9 @@ async def test_reminder_form_submits_when_valid_one_time():
         assert app.submitted is not None
         assert app.submitted["title"] == "Water plants"
         assert app.submitted["schedule_kind"] == "one_time"
-        assert app.submitted["run_at"] == datetime(2030, 7, 20, 14, 0, tzinfo=timezone.utc)
+        assert app.submitted["run_at"] == datetime(
+            2030, 7, 20, 14, 0, tzinfo=timezone.utc
+        )
         assert app.submitted["cron"] is None
         # task-31711 AC#2: a one-time reminder captures the machine's
         # detected zone (matching the recurring form's own Select
@@ -287,10 +289,7 @@ async def test_reminder_form_rejects_invalid_run_at():
         await pilot.pause()
 
         error_widget = pilot.app.screen.query_one("#reminder-errors")
-        assert (
-            "run at must be a date and time"
-            in error_widget.visual.plain.lower()
-        )
+        assert "run at must be a date and time" in error_widget.visual.plain.lower()
 
 
 @pytest.mark.asyncio
@@ -308,9 +307,7 @@ async def test_reminder_form_accepts_forgiving_local_datetime():
         # The live preview confirms the local interpretation before save.
         from textual.widgets import Static
 
-        preview = str(
-            form.query_one("#reminder-run-at-preview", Static).render()
-        )
+        preview = str(form.query_one("#reminder-run-at-preview", Static).render())
         assert "Runs:" in preview
         assert "local" in preview.lower()
 
@@ -432,9 +429,7 @@ async def test_timezone_is_a_select_defaulting_to_system_zone():
     defaults to the system zone with known task zones included."""
     app = FormTestApp()
     async with app.run_test() as pilot:
-        await app.push_screen(
-            ReminderForm(known_timezones=["Pacific/Auckland"])
-        )
+        await app.push_screen(ReminderForm(known_timezones=["Pacific/Auckland"]))
         await pilot.pause()
         form = pilot.app.screen
         tz_select = form.query_one("#reminder-timezone", Select)
@@ -501,8 +496,7 @@ async def test_unrecognized_stored_zone_round_trips_on_unrelated_edit():
         assert tz_select.value == "Mars/Phobos"
         labels = {str(prompt) for prompt, _value in tz_select._options}
         assert any(
-            "Mars/Phobos" in label and "not recognized" in label
-            for label in labels
+            "Mars/Phobos" in label and "not recognized" in label for label in labels
         ), labels
 
         # An unrelated edit (title) round-trips the zone untouched.

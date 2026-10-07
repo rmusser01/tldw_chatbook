@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│   Model and generation  Context and memory · Selected                                                                                                                           │────────────────
+                │  Use: this conversation only. Defaults: F4 Settings > Console Behavior.                                                                                                         │     │
+                │                                                                                                                                                                                 │     │
+   Terminal     │  Model capacity                                                                                                                                                                 │     │
+ ───────────────│  Model window (est.) 32,000 tokens (application fallback)                                                                                                                       │     │
+ Workspaces     │  Max tokens          4,096 tokens                                                                                                                                               │     │
+ ───────────────│  Safety margin       640 tokens                                                                                                                                                 │     │
+ Conversations  │  Safe input ceiling  27,264 tokens                                                                                                                                              │     │
+        Archive │  Estimated fallback only; model capacity is unverified. Set the actual context window in F4 Settings > Providers & Models.                                                      │     │
+          Archiv│                                                                                                                                                                                 │     │
+        Search a│  Conversation budget                                                                                                                                                            │     │
+   Chat 1       │  Budget strategy        █ Automatic ▼                                                                                                                                           │     │
+                │  Conversation max tokens│ if Custom                                                                                                                                             │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│  Effective           27,264 tokens                                                                                                                                              │     │
+  ▊  Filter visi│  Next request        0 tokens                                                                                                                                                   │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│  Request overhead    unknown tokens                                                                                                                                             │     │
+                │                                                                                                                                                                                 │     │◂ Inspect
+   New conversat│  Compaction                                                                                                                                                                     │     │
+  Chats         │  When limit nears       │ Ask       ▼                                                                                                                                           │     │
+   Chat 1       │  Representation         │ Text summary      ▼                                                                                                                                   │     │
+                │  Visual transcript and Hybrid require a vision-capable model.                                                                                                                   │     │
+ ───────────────│  Compact at (%)         │ 80                                                                                                                                                    │     │
+ Character · No │  Reduce context to (%)  │ 55                                                                                                                                                    │     │
+ ───────────────│  Summary response max   │ 1024                                                                                                                                                  │     │
+ Model          │  Summary response max applies only to Text summary and Hybrid.                                                                                                               ▆  │     │
+ ───────────────│  If compaction fails    │ Stop and ask       ▼                                                                                                                                  │     │
+ Agent          │  Keep after compaction  │ Memory with recent turns    ▼                                                                                                                         │     │
+ ───────────────│  Inherited from Console Behavior defaults.                                                                                                                                      │     │
+ Details        │                                                                                                                                                                                 │     │
+                │  Thinking history replay                                                                                                                                                        │     │
+                │  History policy         │ Auto    ▼                                                                                                                                             │     │
+                │  ▼ more — scroll for the rest                                                                                                                                                   │     │
+                │                                                                                                                                    Used by future conversations for llama.cpp.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                                                                               Esc close   Cancel    Use for this conversation   │rrent $0.00 · O
+                │                                                                                                                                                                                 │
+│  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

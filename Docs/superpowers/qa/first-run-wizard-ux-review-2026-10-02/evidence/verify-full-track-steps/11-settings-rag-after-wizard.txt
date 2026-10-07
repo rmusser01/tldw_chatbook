@@ -1,0 +1,47 @@
+ppearance, storage, and app behavior | Local
+
+ │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  
+ │  │                                                                                                                    │  │  
+ │  │  State: Draft — save with s | Defaults affect future Library/RAG retrieval and display.                            │  │  
+ │  │ │ │  Privacy: Retrieved titles, metadata, content, and RAG excerpts are included in model requests. If you    │ │  │  │  
+ │  │ │ │  use a cloud model, this Library data leaves your device and is handled by that provider. Use a local     │ │  │  │  
+ │  │ │ │  model if the data must remain on-device.                                                                 │ │  │  │  
+ │  │ │ │  Scope: This setting affects Console agents only. MCP Library access is controlled separately.            │ │  │  │  
+ │  │ │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  
+ │  │ │                                                                                                               │  │  │  
+ │  │ │ ┌─ Profiles ────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  
+ │  │ │ │  Active: Hybrid Basic (built-in)                                                                          │ │  │  │  
+ │  │ │ │  Combined keyword and semantic search without enhancements                                                │ │  │  │  
+ │  │ │ │                     ┌───────────────────────────────────────────────────────────────────────────────────┐ │ │▅ │  │  
+ │  │ │ │ Profile             │ Hybrid Basic (built-in)                                                         ▼ │ │ │  │  │  
+ │  │ │ │                     └───────────────────────────────────────────────────────────────────────────────────┘ │ │  │  │  
+ │  │ │ │  Editing: Hybrid Basic. Pick a profile and press 'Set active' to edit a different one.                    │ │  │  │  
+ │  │ │ │    Set active         Clone…          Rename…       Delete — built-in                                     │ │  │  │  
+ │  │ │ │  Built-in profile — read-only. Clone it, then press Set active to edit the clone.                         │ │  │  │  
+ │  │ │ │  No RAG profile action taken this session.                                                                │ │  │  │  
+ │  │ │ │  Semantic index not built — Hybrid search is keyword-only until you Backfill.                             │ │  │  │  
+ │  │ │ │     Backfill                                                                                              │ │  │  │  
+ │  │ │ │  Review recovery   Reconcile / rebuild                                                                    │ │  │  │  
+ │  │ │ │  Review local model                                                                                       │ │  │  │  
+ │  │ │ └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  
+ │  │ │                                                                                                               │  │  │  
+ │  │ │ █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█ │  │  │  
+ │  │ │ █  Search already works on Hybrid Basic. Clone it to tune retrieval, or run Backfill to enable semantic     █ │  │  │  
+ │  │ │ █  results.                                                                                                 █ │▅ │  │  
+ │  │ │ █  Clone to tune…    Backfill now                                                                           █ │  │  │  
+ │  │ │ █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█ │  │  │  
+ │  │ │                                                                                                               │  │  │  
+ │  │ │ ┌─ Editing: Hybrid Basic ───────────────────────────────────────────────────────────────────────────────────┐ │  │  │  
+ │  │ │ │  ⚠ = changing this field rebuilds the index — run Backfill after saving.                                  │ │  │  │  
+ │  │ │ │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ │  │  │  
+ │  │ │ │ │  ▶ Search                                                                                             │ │ │  │  │  
+ │  │ │ │ │                                                                                                       │ │ │  │  │  
+ │  │ │ │ │                                                                                                       │ │ │  │  │  
+ │  │ │ │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │  │  │  
+ │  │ │ │                                                                                                           │ │  │  │  
+ │  │ │ │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ │  │  │  
+ │  │ │ │ │  ▶ Embedding                                                                                          │ │ │  │  │  
+ │  │                                                                                                                    │  │  
+ │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  
+
+gory | t check index | a set active | c clone | b backfill | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Saved in Notes · ⚠ Sync needs attention · Next:  │
+│   a  │ Library notes · ⚠ A sync folder needs attention        │  o  Open Manage sync folders.                        │
+│   v  │ Notes (132)                                            │  t      ‹ Notes      quotes                          │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │      In a synced folder · ⚠ Sync needs attention · … │
+│      │ from files.                                            │     S                                                │
+│      │                                                        │              Edit           Preview            Info  │
+│      │ Filter                                                 │                                                      │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     Title                                            │
+│      │ ▊ Filter notes… (Enter)                              ▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊ quotes                                       ▎ │
+│      │                                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    New     Sort: Newest     Select                     │<---                                                  │
+│      │    Add from files…     Export     Manage sync folders  │     Keywords                                         │
+│      │ Folders & placement                                    │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    New folder     Add to folder     ○ Move note        │     ▊ Comma-separated keywords                     ▎ │
+│      │    ○ Remove placement                                  │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ ---> │                                                        │                                                      │
+│      │                                                        │     Body                                             │
+│      │  ▸ Agent_Lessons                                       │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │  ▸ Journal                                             │     ┃ > The best time to plant a tree was 20       ┃ │
+│      │  ▸ Meetings                                            │     ┃ was 20 years ago.                            ┃ │
+│      │  ▸ Projects                                            │     ┃                                              ┃ │
+│      │  ▸ Recipes                                             │     ┃ > Writing is thinking.                    ▆▆ ┃ │
+│      │  ▸ Research                                            │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      │  ▸ Study                                               │                                                      │
+│      └────────────────────────────────────────────────────────┘                                      21 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

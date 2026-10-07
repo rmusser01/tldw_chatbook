@@ -46,7 +46,7 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
     assert state.provider_label == "Provider: OpenAI"
     assert state.model_label == "Model: gpt-5.5"
     assert state.assistant_label == "Assistant: General"
-    assert state.rag_label == "Library · Auto on · Agent blocked"
+    assert state.rag_label == "Library · Auto on · Agent access off"
     assert state.sources_label == "Sources: 3"
     assert state.tools_label == "Tools: 4 ready"
     assert state.approvals_label == "Approvals: 1 pending"
@@ -58,22 +58,22 @@ def test_console_control_state_exposes_provider_model_and_context_labels():
         (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.BLOCKED,
-            "Library · Auto off · Agent blocked",
+            "Library · Auto off · Agent access off",
         ),
         (
             ConsoleAutoRetrieve.AUTOMATIC,
             ConsoleAssistantLibraryAccess.BLOCKED,
-            "Library · Auto on · Agent blocked",
+            "Library · Auto on · Agent access off",
         ),
         (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.ALLOWED,
-            "Library · Auto off · Agent allowed",
+            "Library · Auto off · Agent access on",
         ),
         (
             ConsoleAutoRetrieve.AUTOMATIC,
             ConsoleAssistantLibraryAccess.ALLOWED,
-            "Library · Auto on · Agent allowed",
+            "Library · Auto on · Agent access on",
         ),
     ),
 )
@@ -441,6 +441,40 @@ def test_console_inspector_save_chatbook_action_is_blocked_when_ephemeral():
     )
     normal_actions = {action.widget_id: action for action in normal.actions}
     assert normal_actions[CONSOLE_INSPECTOR_SAVE_CHATBOOK_ID].enabled is True
+
+
+@pytest.mark.parametrize(
+    ("provider", "label"),
+    [
+        ("llama_cpp", "Provider: llama.cpp"),
+        # The saved [chat_defaults] spelling reaches the chip as-is.
+        ("Llama_cpp", "Provider: llama.cpp"),
+        ("local_llamacpp", "Provider: llama.cpp (legacy alias)"),
+        ("openai", "Provider: OpenAI"),
+        (None, "Provider: not selected"),
+    ],
+)
+def test_provider_chip_names_the_catalog_display_name(provider, label):
+    """TASK-33002.5: the chip shows the name, never the config key."""
+    assert ConsoleControlState.from_values(provider=provider).provider_label == label
+
+
+def test_provider_chip_names_a_custom_endpoint_by_its_entry():
+    app_config = {
+        "custom_endpoints": {
+            "gpu-box": {
+                "display_name": "GPU Box",
+                "family": "openai_compatible",
+                "base_url": "http://127.0.0.1:9000/v1",
+            }
+        }
+    }
+
+    state = ConsoleControlState.from_values(
+        provider="custom-ep:gpu-box", app_config=app_config
+    )
+
+    assert state.provider_label == "Provider: GPU Box"
 
 
 def test_assistant_label_names_the_active_character():

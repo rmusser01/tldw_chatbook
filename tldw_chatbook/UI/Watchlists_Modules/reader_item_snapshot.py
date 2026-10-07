@@ -34,6 +34,7 @@ class ReaderItemQuery:
         Raises:
             TypeError: If context or arguments contain unsupported mutable values.
         """
+
         def scalar(value: Any) -> Any:
             if type(value) not in (str, int, bool) and value is not None:
                 raise TypeError("reader query values must be scalar")
@@ -63,7 +64,9 @@ class ReaderItemQuery:
             A detached dictionary, including a fresh statuses list when present.
         """
         return {
-            key: list(value) if key == "statuses" and isinstance(value, tuple) else value
+            key: list(value)
+            if key == "statuses" and isinstance(value, tuple)
+            else value
             for key, value in self.kwargs
         }
 
@@ -95,7 +98,9 @@ class ReaderItemSnapshot:
     pending_arrivals: int = 0
 
     @classmethod
-    def start(cls, query: ReaderItemQuery, page: WatchlistItemPage) -> "ReaderItemSnapshot":
+    def start(
+        cls, query: ReaderItemQuery, page: WatchlistItemPage
+    ) -> "ReaderItemSnapshot":
         """Create a snapshot from its required first page.
 
         Args:
@@ -125,9 +130,7 @@ class ReaderItemSnapshot:
         self, items: tuple[dict[str, Any], ...]
     ) -> "ReaderItemSnapshot":
         """Stage displaced backend rows for the next service continuation."""
-        pending, _ = self._unique_items(
-            (*self.pending_items, *items), self.seen_ids
-        )
+        pending, _ = self._unique_items((*self.pending_items, *items), self.seen_ids)
         return ReaderItemSnapshot(
             query=self.query,
             watermark=self.watermark,
@@ -156,9 +159,7 @@ class ReaderItemSnapshot:
         """
         if page.snapshot_max_item_id != self.watermark:
             raise ValueError("continuation watermark differs from snapshot")
-        items, _ = self._unique_items(
-            (*self.pending_items, *page.items), self.seen_ids
-        )
+        items, _ = self._unique_items((*self.pending_items, *page.items), self.seen_ids)
         visible = items if page_size is None else items[:page_size]
         pending = () if page_size is None else items[page_size:]
         visible, seen = self._unique_items(visible, self.seen_ids)
@@ -178,9 +179,7 @@ class ReaderItemSnapshot:
         )
         return candidate, bool(visible)
 
-    def with_pending_page(
-        self, page_size: int
-    ) -> tuple["ReaderItemSnapshot", bool]:
+    def with_pending_page(self, page_size: int) -> tuple["ReaderItemSnapshot", bool]:
         """Publish one final page from staged rows after service exhaustion."""
         visible = self.pending_items[:page_size]
         if not visible:
@@ -220,7 +219,9 @@ class ReaderItemSnapshot:
     def _item_id(item: dict[str, Any]) -> Hashable | None:
         """Normalize an item's explicit or fallback identity."""
         value = item.get("item_id")
-        explicit = value is not None and not (isinstance(value, str) and not value.strip())
+        explicit = value is not None and not (
+            isinstance(value, str) and not value.strip()
+        )
         if not explicit:
             value = item.get("id")
         if value is None or (isinstance(value, str) and not value.strip()):

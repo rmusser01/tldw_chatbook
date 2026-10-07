@@ -52,6 +52,21 @@ from Tests.Agents.test_mcp_tool_provider import (
 from Tests.console_provider_doubles import provider_resolution, with_destination
 from Tests.console_provider_doubles import persisted_console_store
 
+# Real controller sends use the configuration admitted at collection time.
+# Every test here drives ConsoleChatController.submit_draft (or its queue /
+# regenerate / continue siblings) through _controller /
+# _persistence_free_controller, and since aed1b13501 send admission reads the
+# hooks config via the guarded config loader. Under the per-test sandbox
+# redirect that read fails closed with
+# RecoveryRequired("raw_source_selection_changed"), which
+# _hook_admission_reason's fail-closed except turns into
+# "Hooks unavailable; review or disable hooks before sending." -- refusing
+# every send before the agent-swap behavior under test is reached (39 of 46
+# nodes were red at dev e92b01515f). Same signature and remedy as
+# test_console_first_send_atomicity (72a80e0b64) and the suites enrolled in
+# Tests/conftest.py (TASK-32873, ADR-179).
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _assert_durable_row(store, message_id: str) -> None:
     """Assert ``message_id`` addresses a live row in ChaChaNotes.

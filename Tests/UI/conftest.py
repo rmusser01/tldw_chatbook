@@ -7,11 +7,30 @@ This file provides shared fixtures and configuration for all UI tests.
 import os
 import shutil
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TypeVar
+
+import pytest
+import pytest_asyncio
+
+from Tests import real_profile_guard as _real_profile_guard
+
+# TASK-33665: the guard goes in before any app import, and the environment
+# bootstrap below runs before any tldw or Textual import.
+_real_profile_guard.install()
 
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
 _TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
 _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
+# TASK-33665: a root that is the real home, or holds it, is no sandbox; take a
+# fresh one instead.
+_REAL_HOME = _real_profile_guard._real_home()
+if _existing_test_config_root and _REAL_HOME is not None:
+    _supplied_root = Path(_existing_test_config_root).resolve()
+    _real_home_path = _REAL_HOME.resolve()
+    if _supplied_root == _real_home_path or _supplied_root in _real_home_path.parents:
+        _existing_test_config_root = None
 # Per-xdist-worker sandbox subtree; see Tests/conftest.py for the rationale
 # (task-1453). Needed here too for runs rooted at Tests/UI, where the root
 # conftest is not loaded.
@@ -33,23 +52,21 @@ else:
 _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
 _BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
-
-import pytest  # noqa: E402
-import pytest_asyncio  # noqa: E402
-from typing import TypeVar  # noqa: E402
-from contextlib import asynccontextmanager  # noqa: E402
+# TASK-33665: config.py freezes its default path from HOME at first import, so
+# HOME must be this sandbox's own home before tldw imports. Compare resolved
+# paths: a prefix match took a sibling such as "<root>_other" for this home.
+_BOOTSTRAP_HOME = _BOOTSTRAP_CONFIG_ROOT / "home"
+_BOOTSTRAP_HOME.mkdir(parents=True, exist_ok=True)
+if Path(os.environ.get("HOME", "")).resolve() != _BOOTSTRAP_HOME.resolve():
+    os.environ["HOME"] = os.environ["USERPROFILE"] = str(_BOOTSTRAP_HOME)
 
 from textual.app import App  # noqa: E402
 from textual.widget import Widget  # noqa: E402
 
 # Import test utilities (fixture re-exports for this nested pytest root).
-from Tests.textual_test_utils import app_pilot, widget_pilot  # noqa: F401,E402
-from Tests.conftest import isolate_test_environment  # noqa: F401,E402
-from Tests.textual_test_harness import (  # noqa: F401,E402
-    IsolatedWidgetTestApp,
-    TestApp,
-    enhanced_app_pilot,
-    isolated_widget_pilot,
+from Tests.conftest import (  # noqa: F401,E402
+    isolate_test_environment,
+    refuse_real_profile_writes,
 )
 
 # Re-export the canonical scratch_config fixture from Tests/Internal_Prompts.conftest.
@@ -57,6 +74,13 @@ from Tests.textual_test_harness import (  # noqa: F401,E402
 # pytest_plugins, sidesteps a duplicate-plugin-registration error when both
 # test directories are collected in the same session).
 from Tests.Internal_Prompts.conftest import scratch_config  # noqa: F401,E402
+from Tests.textual_test_harness import (  # noqa: F401,E402
+    IsolatedWidgetTestApp,
+    TestApp,
+    enhanced_app_pilot,
+    isolated_widget_pilot,
+)
+from Tests.textual_test_utils import app_pilot, widget_pilot  # noqa: F401,E402
 
 # Type variables
 W = TypeVar("W", bound=Widget)
@@ -64,15 +88,25 @@ A = TypeVar("A", bound=App)
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Remove the module-load config sandbox created by this conftest."""
-    if not _OWNS_BOOTSTRAP_CONFIG_ROOT:
-        return
-    if os.environ.get("TLDW_CONFIG_PATH") == str(_BOOTSTRAP_CONFIG_PATH):
-        os.environ.pop("TLDW_CONFIG_PATH", None)
-    if os.environ.get(_TEST_CONFIG_ROOT_ENV) == str(_BOOTSTRAP_CONFIG_ROOT):
-        os.environ.pop(_TEST_CONFIG_ROOT_ENV, None)
-        os.environ.pop(_TEST_CONFIG_OWNER_ENV, None)
-    shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
+    """Fail the run on unclaimed real-profile refusals; remove an owned sandbox.
+
+    The sandbox variables stay set, so late writers land in the dead sandbox
+    rather than the real profile; see the root conftest's
+    ``pytest_sessionfinish`` (TASK-33665).
+    """
+    _real_profile_guard.session_end_check(session)
+    if _OWNS_BOOTSTRAP_CONFIG_ROOT:
+        shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    """Collect an xdist worker's session-end refusals on the controller.
+
+    Needed for runs rooted here (``--confcutdir=Tests/UI``); collection is
+    idempotent, so a run that also loads the root conftest reports once.
+    """
+    _real_profile_guard.collect_worker_refusals(node)
 
 
 @pytest.fixture(scope="session")

@@ -197,7 +197,7 @@ def test_staged_source_count_is_the_bundle_reference_count() -> None:
 
 
 def test_prompted_source_count_applies_the_captures_own_filter() -> None:
-    """"How much is staged" and "how much reaches the model" are different."""
+    """ "How much is staged" and "how much reaches the model" are different."""
     launch = _mixed_launch()
     # Four staged...
     assert console_staged_source_count(launch) == 4
@@ -210,8 +210,7 @@ def test_prompted_evidence_uses_canonical_headers_and_separators() -> None:
     launch = _mixed_launch()
 
     assert console_prompted_evidence_text(launch) == (
-        "[S1] MEDIA — Source 1\nBody 1\n---\n"
-        "[S2] MEDIA — Source 3\nBody 3"
+        "[S1] MEDIA — Source 1\nBody 1\n---\n[S2] MEDIA — Source 3\nBody 3"
     )
     assert console_prompted_source_count(launch) == 2
     assert console_prompted_evidence_text(None) == ""
@@ -243,8 +242,7 @@ def test_prompted_evidence_excludes_noncanonical_local_references() -> None:
     )
 
     assert console_prompted_evidence_text(launch) == (
-        "[S1] MEDIA — Source 1\nBody 1\n---\n"
-        "[S2] MEDIA — Source 3\nBody 3"
+        "[S1] MEDIA — Source 1\nBody 1\n---\n[S2] MEDIA — Source 3\nBody 3"
     )
     assert console_prompted_source_count(launch) == 2
 
@@ -475,7 +473,9 @@ async def test_console_unstage_clears_context_strip_chip_and_tray() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_unstage_click_heals_a_stale_strip_when_context_already_none() -> None:
+async def test_console_unstage_click_heals_a_stale_strip_when_context_already_none() -> (
+    None
+):
     """M4 (final review): the handler's early return (`if
     self._pending_console_launch_context is None: return`) fires with no
     self-heal when the field was already cleared out from under a strip
@@ -684,9 +684,7 @@ async def test_console_surface_refresh_failure_never_costs_the_send_its_evidence
         def _explode() -> bool:
             raise RuntimeError("rail body vanished mid-send")
 
-        monkeypatch.setattr(
-            screen, "_sync_console_pending_launch_surfaces", _explode
-        )
+        monkeypatch.setattr(screen, "_sync_console_pending_launch_surfaces", _explode)
 
         controller = screen._ensure_console_chat_controller()
         # The send still receives the captured context...
@@ -775,8 +773,10 @@ def test_workspace_context_falls_back_to_one_row_for_a_bundleless_launch() -> No
         _pending_console_launch_context=launch,
         app_instance=SimpleNamespace(),
     )
-    context = workspace_module.ConsoleWorkspaceController._current_console_workspace_context(
-        screen
+    context = (
+        workspace_module.ConsoleWorkspaceController._current_console_workspace_context(
+            screen
+        )
     )
     assert len(context.staged_sources) == 1
     assert context.staged_sources[0].label == "Daily papers"

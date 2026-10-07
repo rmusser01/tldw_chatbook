@@ -11,6 +11,7 @@ from dataclasses import replace
 
 import pytest
 from textual.css.query import NoMatches
+from textual.events import MouseScrollDown, MouseScrollUp
 from textual.widgets import Button, Static, Tooltip
 
 from Tests.UI.app_factory import _build_test_app
@@ -26,6 +27,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
+    readiness_words,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
@@ -141,7 +143,12 @@ def _resize_full_settings(
     focus_context: bool = False,
     transfer: ConsoleSettingsTransfer | None = None,
 ) -> ConsoleSettingsModal:
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    # A Temperature the saved chain lacks, so the footer offers every action:
+    # Save as model default shows only while a save would change the
+    # defaults (Phase 6 final review I5).
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", temperature=0.9
+    )
     return ConsoleSettingsModal(
         settings=settings,
         transfer=transfer,
@@ -271,73 +278,48 @@ def _context_allocation_idle(rail: ConsoleLeftRail) -> bool:
 async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
     width: int,
 ) -> None:
+    """Rewritten for TASK-33004.4: the 2x2 grids and Defaults… subview are
+    gone. Below 211 columns (outside spec §6's sizes) the one-row key strips
+    may clip on the right, so the pin is keyboard reach: every action is a
+    focusable Tab stop in order, and Apply stays painted and clickable."""
     app = ConsolidatedCSSApp()
     modal = _resize_popover()
 
     async with app.run_test(size=(width, 24)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         panel = modal.query_one("#console-model-popover")
-        main = list(modal.query("#console-popover-main-actions Button"))
-        assert [str(button.label) for button in main] == [
-            "Cancel",
-            "Full settings…",
-            "Defaults…",
-            "Apply to this chat",
-        ]
         assert panel.region.x >= 0
         assert panel.region.right <= width
         assert panel.region.bottom <= 24
-        assert all(panel.region.contains_region(button.region) for button in main)
-        assert all(button.can_focus and not button.disabled for button in main)
-        _assert_non_overlapping_regions(main)
-        main[0].focus()
-        await pilot.pause()
-        main_focus_order: list[str] = []
-        for _ in main:
-            focused = app.focused
-            main_focus_order.append(getattr(focused, "id", "") or "")
-            assert focused is not None
-            assert panel.region.contains_region(focused.region)
-            await pilot.press("tab")
-            await pilot.pause()
-        assert main_focus_order == [
-            "console-popover-cancel",
-            "console-popover-full-settings",
-            "console-popover-defaults",
-            "console-popover-apply",
-        ]
+        apply = modal.query_one("#console-popover-apply", Button)
+        assert panel.region.contains_region(apply.region)
+        _assert_real_mouse_target(modal, apply)
 
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
-        await pilot.pause()
-        defaults = list(modal.query("#console-popover-default-actions Button"))
-        assert [str(button.label) for button in defaults] == [
-            "Save as model default",
-            "Make default for new chats",
-            "Back",
-        ]
-        assert all(panel.region.contains_region(button.region) for button in defaults)
-        assert all(button.can_focus and not button.disabled for button in defaults)
-        _assert_non_overlapping_regions(defaults)
-        defaults_focus_order: list[str] = []
-        for _ in defaults:
+        # TASK-33004.5: Max tokens and the Streaming Select are values; the
+        # key row ends with Ctrl+O chat settings, Save comes last, and one
+        # more Tab wraps back to Find.
+        focus_order: list[str] = []
+        for _ in range(9):
             focused = app.focused
-            defaults_focus_order.append(getattr(focused, "id", "") or "")
-            assert focused is not None
-            assert panel.region.contains_region(focused.region)
+            assert focused is not None and focused.can_focus and not focused.disabled
+            focus_order.append(getattr(focused, "id", "") or "")
             await pilot.press("tab")
             await pilot.pause()
-        assert defaults_focus_order == [
-            "console-popover-save-model-default",
+        assert focus_order == [
+            "console-popover-find",
+            "console-popover-temperature",
+            "console-popover-max-tokens",
+            "console-popover-streaming",
+            "console-popover-apply",
             "console-popover-make-new-chat-default",
-            "console-popover-defaults-back",
+            "console-popover-full-settings",
+            "console-popover-save-model-default",
+            "console-popover-find",
         ]
-        defaults[0].focus()
-        await pilot.pause()
-        assert app.focused is defaults[0]
 
 
 @pytest.mark.parametrize("width", (60, 72))
@@ -357,18 +339,25 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         await pilot.pause()
 
         panel = modal.query_one("#console-settings-modal")
-        actions = list(modal.query("#console-settings-actions Button"))
+        # Rewritten on purpose by TASK-33006.5: Cancel is the Context view's,
+        # and Use saved defaults leads (dimmed here: this harness passes no
+        # draft rebaser, which it needs).
+        actions = [
+            button
+            for button in modal.query("#console-settings-actions Button")
+            if button.display
+        ]
         assert [str(button.label) for button in actions] == [
-            "Cancel",
-            "Save as provider defaults",
-            "Default for new chats",
-            "Use for this conversation",
+            "Use saved defaults",
+            "Save as model default",
+            "Default for new chats (Ctrl+N)",
+            "Apply to this chat (Ctrl+Enter)",
         ]
         assert panel.region.x >= 0
         assert panel.region.right <= width
         assert panel.region.bottom <= 24
-        assert all(button.display for button in actions)
-        assert all(button.can_focus and not button.disabled for button in actions)
+        assert actions[0].disabled
+        assert all(button.can_focus and not button.disabled for button in actions[1:])
         assert all(
             panel.content_region.contains_region(button.region) for button in actions
         ), (
@@ -380,7 +369,7 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         actions[1].focus()
         await pilot.pause()
         focus_order: list[str] = []
-        for _ in actions:
+        for _ in actions[1:]:
             focused = app.focused
             focus_order.append(getattr(focused, "id", "") or "")
             assert focused is not None
@@ -391,7 +380,6 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
             "console-settings-save-default",
             "console-settings-make-default",
             "console-settings-save",
-            "console-settings-cancel",
         ]
         apply_button = actions[-1]
         top_hit = modal.get_widget_at(
@@ -497,6 +485,97 @@ async def test_full_settings_recovery_actions_are_mouse_reachable_at_narrow_widt
     assert requests == [ConsoleDefaultRecoveryRequest(expected_action, 7)]
 
 
+@pytest.mark.parametrize("recovery", (False, True), ids=("model-view", "recovery"))
+@pytest.mark.asyncio
+async def test_fold_hint_follows_the_body_scroll_position(recovery: bool) -> None:
+    """TASK-33003.4 (C5(c)): the hint promises more only while more is below.
+
+    Wheel events alone drive it: shown while content remains below, hidden
+    at the bottom, shown again one wheel step back up. A 24-row terminal
+    forces the overflow whatever has focus.
+    """
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_full_settings()
+    if recovery:
+        modal._default_durability_state = _long_failed_default_state(
+            ConsoleDefaultSavePhase.CACHE_PUBLICATION
+        )
+    async with app.run_test(size=(72, 24)) as pilot:
+        await app.push_screen(modal)
+        await pilot.pause()
+        await pilot.pause()
+
+        body = modal.query_one("#console-settings-body")
+        fold = modal.query_one("#console-settings-fold-hint", Static)
+        assert body.max_scroll_y > 0
+        assert ("recovery summary" in str(fold.renderable)) is recovery
+        for _ in range(100):
+            if body.scroll_y >= body.max_scroll_y:
+                break
+            assert fold.display, (body.scroll_y, body.max_scroll_y)
+            body.post_message(MouseScrollDown(body, 0, 0, 0, 1, 0, False, False, False))
+            await pilot.pause()
+        await pilot.pause()
+        assert body.max_scroll_y > 0
+        assert body.scroll_y == body.max_scroll_y
+        assert not fold.display
+
+        body.post_message(MouseScrollUp(body, 0, 0, 0, -1, 0, False, False, False))
+        await pilot.pause()
+        await pilot.pause()
+        assert body.scroll_y < body.max_scroll_y
+        assert fold.display
+        assert ("recovery summary" in str(fold.renderable)) is recovery
+
+
+@pytest.mark.asyncio
+async def test_fold_hint_follows_content_that_grows_without_a_scroll() -> None:
+    """TASK-33003.4: content that grows without a scroll still moves the hint.
+
+    Nothing but the body's own size tells the hint. Rewritten on purpose by
+    TASK-33006.1: the grower was the provider picker's open results, focused
+    on open; now focus opens on Temperature with the whole Model view
+    fitting at 211x44, and Enter on the Sampling title grows the body by six
+    rows in place (the title stays focused and nothing scrolls), then
+    collapses it again.
+    """
+
+    app = _ProductionResizeModalHarness()
+    modal = _resize_full_settings()
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal)
+        body = modal.query_one("#console-settings-body")
+        fold = modal.query_one("#console-settings-fold-hint", Static)
+
+        async def settle() -> None:
+            for _ in range(4):
+                await pilot.pause()
+            await pilot.pause(0.5)
+
+        await settle()
+        assert app.focused is not None
+        assert app.focused.id == "console-settings-temperature"
+        assert body.max_scroll_y == 0 and not fold.display
+
+        modal.query_one("#console-settings-sampling CollapsibleTitle").focus()
+        await pilot.press("enter")
+        await settle()
+        precondition = (body.scroll_y, body.max_scroll_y)
+        assert body.scroll_y < body.max_scroll_y, precondition
+        assert fold.display
+
+        await pilot.press("enter")
+        await settle()
+        assert body.max_scroll_y == 0, body.max_scroll_y
+        assert not fold.display
+
+        await pilot.press("enter")
+        await settle()
+        assert body.scroll_y < body.max_scroll_y
+        assert fold.display
+
+
 @pytest.mark.parametrize("width", (60, 72))
 @pytest.mark.parametrize(
     ("phase", "first_button_id", "second_button_id"),
@@ -586,7 +665,7 @@ async def test_full_settings_recovery_keyboard_scrolls_and_stays_in_phase_action
 @pytest.mark.parametrize(
     ("focus_model", "focus_context", "restored_focus_id"),
     (
-        (True, False, "model-search-picker-input"),
+        (True, False, "console-settings-model-change"),
         (False, True, "console-context-budget-mode"),
     ),
 )
@@ -765,7 +844,6 @@ async def test_full_settings_successful_recovery_clears_prior_error_banner(
 @pytest.mark.parametrize(
     "button_id",
     (
-        "console-settings-cancel",
         "console-settings-save-default",
         "console-settings-save",
     ),
@@ -795,7 +873,13 @@ async def test_blocked_full_settings_keeps_enabled_actions_mouse_reachable(
 
         panel = modal.query_one("#console-settings-modal")
         blocked = modal.query_one("#console-settings-new-chat-default-block")
-        actions = list(modal.query("#console-settings-actions Button"))
+        # TASK-33006.5: Cancel is the Context view's, so the Model view's
+        # shown actions are measured (its Cancel case is gone).
+        actions = [
+            button
+            for button in modal.query("#console-settings-actions Button")
+            if button.display
+        ]
         assert blocked.display
         assert "not configured" in str(blocked.renderable)
         assert modal.query_one("#console-settings-make-default", Button).disabled
@@ -846,7 +930,8 @@ async def test_blocked_quick_transfer_keeps_initial_model_focus_visible(
         fold = modal.query_one("#console-settings-fold-hint", Static)
         focused = app.focused
         assert focused is not None
-        assert focused.id == "model-search-picker-input"
+        # TASK-33006.4: Change (the MODEL row) is the model's control now.
+        assert focused.id == "console-settings-model-change"
         assert body.content_region.contains_region(focused.region)
         assert blocked.display
         assert "not configured" in str(blocked.renderable)
@@ -869,7 +954,9 @@ async def test_quick_defaults_reveals_intent_before_narrow_commit(
     blocked: bool,
     commit_button_id: str,
 ) -> None:
-    """Defaults intent and any block reason are visible above pinned actions."""
+    """Rewritten for TASK-33004.4 (no Defaults… subview): the saved fields
+    are printed beside [Save as model default], a blocked new-chat default
+    names its reason instead of committing, and an allowed one commits."""
 
     app = _ProductionResizeModalHarness()
     modal = _resize_popover()
@@ -884,36 +971,21 @@ async def test_quick_defaults_reveals_intent_before_narrow_commit(
     async with app.run_test(size=(120, 24)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.resize_terminal(width, 24)
         await pilot.pause()
-        assert await pilot.click("#console-popover-defaults") is True
-        await pilot.pause()
-        await pilot.pause()
 
-        body = modal.query_one("#console-model-popover-body")
-        panel = modal.query_one("#console-popover-defaults-panel")
-        assert body.content_region.contains_region(panel.region)
-        assert "Defaults target: llama_cpp/model-a" in str(
-            modal.query_one("#console-popover-defaults-target", Static).renderable
+        assert "saves Temperature, Max tokens, Streaming" in str(
+            modal.query_one("#console-popover-save-model-default-copy", Static).render()
         )
-        assert "Compaction stays with this chat" in str(
-            modal.query_one(
-                "#console-popover-defaults-compaction-scope", Static
-            ).renderable
-        )
-        block = modal.query_one("#console-popover-new-chat-default-block", Static)
-        assert block.display is blocked
         if blocked:
-            assert "not configured" in str(block.renderable)
-
-        actions = [
-            button
-            for button in modal.query("#console-popover-default-actions Button")
-            if button.display
-        ]
-        for button in actions:
-            _assert_real_mouse_target(modal, button)
-        assert await pilot.click(f"#{commit_button_id}") is True
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            assert modal in app.screen_stack
+            error = modal.query_one("#console-popover-error", Static)
+            assert error.display and "not configured" in str(error.render())
+        modal.query_one(f"#{commit_button_id}", Button).focus()
+        await pilot.press("enter")
         await pilot.pause()
         assert modal not in app.screen_stack
 
@@ -1110,18 +1182,23 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
                 context_row="Context: 0",
                 sampling_row="T 0.7 · max_tokens 100",
                 identity_row="Identity: character",
-                readiness_label=readiness["value"].label,
+                readiness_label=readiness_words(readiness["value"]),
                 readiness=readiness["value"],
             ),
         )
         console._sync_console_settings_summary()
         rail.apply_section_open("model", True)
         rail.activate_section("model")
+        # TASK-33005.3 (rewritten on purpose): the line now always shows the
+        # readiness word, so the mutation is Ready -> blocked (and red), not
+        # hidden -> shown.
         await _wait_for_context_condition(
             pilot,
             lambda: (
                 rail._active_section_id == "model"
-                and not rail.query_one("#console-model-section-recovery").display
+                and not rail.query_one("#console-model-section-recovery").has_class(
+                    "conversation-attention-error"
+                )
                 and _context_allocation_idle(rail)
             ),
         )
@@ -1145,10 +1222,12 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
         console._sync_console_settings_summary()
         await _wait_for_context_condition(
             pilot,
-            lambda: recovery.display and _context_allocation_idle(rail),
+            lambda: recovery.has_class("conversation-attention-error")
+            and _context_allocation_idle(rail),
         )
 
         assert recovery.display is True
+        assert recovery.content == "Not ready · check settings"
         assert model.desired_content_lines >= before_demand
         assert model.allocation == before_allocation
         assert reconcile_runs >= 1

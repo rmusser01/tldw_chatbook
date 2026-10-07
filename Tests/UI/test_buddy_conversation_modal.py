@@ -14,10 +14,13 @@ from Tests.Chat.test_console_runtime_lifetime import (
     _pending_call,
     _StalledGateway,
 )
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def pending_image():
@@ -945,8 +948,9 @@ async def test_late_voice_completion_after_close_cannot_change_the_draft(late_ph
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("saved", (False, True))
+@private_profile_test
 async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
-    monkeypatch, tmp_path, saved
+    request: pytest.FixtureRequest, monkeypatch, tmp_path, saved
 ):
     from Tests.UI.test_console_native_chat_flow import (
         _configure_native_ready_console,
@@ -956,13 +960,22 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
     from Tests.UI.test_console_screen_reuse import (
         _boot_settled,
         _press_until_screen,
-        _scratch_env,
     )
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.config import save_settings_to_cli_config
     from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
     from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
-    _scratch_env(monkeypatch, tmp_path)
+    # The stalled stream_chat gateway observes draft ownership on the native
+    # streaming path; the default agent bridge has a separate execution seam.
+    assert save_settings_to_cli_config(
+        {
+            "first_run": {"setup_completed": True},
+            "splash_screen": {"enabled": False},
+            "model_catalog": {"auto_refresh_enabled": False},
+            "console": {"agent_runtime": False},
+        }
+    )
 
     class Gateway(_ReadyResolutionGateway):
         started = threading.Event()
@@ -1041,6 +1054,9 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
                     controller.store.workspace_context.active_workspace_id
                     == prior_workspace
                 )
+            # Restore completion publishes the owner before the next visible
+            # projection enables Send. Wait for the action a user can perform.
+            await until(lambda: not modal.query_one("#buddy-send", Button).disabled)
             modal.query_one("#buddy-reply", TextArea).load_text(reply)
             modal.query_one("#buddy-send", Button).press()
             await until(gateway.started.is_set)
@@ -1075,14 +1091,15 @@ async def test_real_console_buddy_send_preserves_both_durable_console_drafts(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
-    monkeypatch, tmp_path
+    request: pytest.FixtureRequest, monkeypatch, tmp_path
 ):
     from Tests.UI.test_console_native_chat_flow import (
         _configure_native_ready_console,
         _ReadyResolutionGateway,
     )
-    from Tests.UI.test_console_screen_reuse import _boot_settled, _scratch_env
+    from Tests.UI.test_console_screen_reuse import _boot_settled
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
     from tldw_chatbook.Chat.console_library_policy import (
@@ -1090,12 +1107,16 @@ async def test_cold_home_saved_buddy_bootstraps_only_after_explicit_open(
         ConsoleAutoRetrieve,
         ConsoleLibraryPolicyCandidate,
     )
+    from tldw_chatbook.config import save_settings_to_cli_config
     from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
 
-    _scratch_env(monkeypatch, tmp_path)
-    config_path = tmp_path / "config" / "tldw_cli" / "config.toml"
-    config_path.write_text(
-        config_path.read_text() + '\n[general]\ndefault_tab = "home"\n'
+    assert save_settings_to_cli_config(
+        {
+            "first_run": {"setup_completed": True},
+            "splash_screen": {"enabled": False},
+            "model_catalog": {"auto_refresh_enabled": False},
+            "general": {"default_tab": "home"},
+        }
     )
 
     class Gateway(_ReadyResolutionGateway):
@@ -1358,3 +1379,34 @@ async def test_saved_buddy_bulk_reads_allow_loop_progress_and_recheck_owner(
     finally:
         release.set()
         db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_deferred_transcript_scroll_after_close_keeps_draft(monkeypatch):
+    from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
+
+    app = Harness()
+    async with app.run_test(size=(100, 36)) as pilot:
+        binding = BuddyBinding.for_session(app.target)
+        modal = open_buddy_conversation(app, binding, allow_voice=False)
+        await pilot.pause()
+        modal.query_one("#buddy-reply", TextArea).load_text("Retain after close")
+        await pilot.pause()
+        callbacks = []
+        original_after_refresh = modal.call_after_refresh
+        monkeypatch.setattr(modal, "call_after_refresh", callbacks.append)
+        modal._last_transcript = None
+        modal.refresh_projection()
+        assert callbacks == [modal._scroll_latest]
+        monkeypatch.setattr(modal, "call_after_refresh", original_after_refresh)
+        modal.query_one("#buddy-close", Button).press()
+        await until(lambda: app.screen is not modal)
+        await pilot.pause()
+        assert not modal._visible
+        assert not list(modal.query("#buddy-conversation-body"))
+        callbacks[0]()
+        await pilot.pause()
+        assert modal.coordinator.drafts[binding] == "Retain after close"
+        assert app.store.active_session_id == app.other.id
+        assert app.other.draft == "Unrelated Console draft"
+        assert not app.gateway.started.is_set()

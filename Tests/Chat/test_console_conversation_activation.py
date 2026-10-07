@@ -592,8 +592,11 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     screen = SimpleNamespace(is_mounted=True, focused=composer)
     screen.app = SimpleNamespace(screen=screen)
     screen._last_native_transcript_refresh_key = ("stale-session", 1)
+    screen._sync_native_console_transcript = AsyncMock(return_value=None)
+    presentation_steps = []
 
     def query(selector):
+        presentation_steps.append(selector)
         if selector == "#console-native-composer":
             if focus_failure == "missing_composer":
                 from textual.css.query import NoMatches
@@ -603,6 +606,7 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
         return transcript
 
     def focus(widget):
+        presentation_steps.append("focus")
         if focus_failure == "broken_focus":
             raise RuntimeError("focus presentation failed")
         screen.focused = widget
@@ -635,12 +639,94 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
 
     result = await controller.activate_character_conversation_after_commit(request)
 
+    screen._sync_native_console_transcript.assert_awaited_once()
+    assert "#console-native-composer" in presentation_steps
+    assert ("focus" in presentation_steps) == (focus_failure != "missing_composer")
     assert result.kind is ConsoleActivationResultKind.FAILED
     assert store.active_session_id == prior.id
     assert all(
         session.persisted_conversation_id != "conversation-X"
         for session in store.sessions()
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("warm", [False, True])
+async def test_cancelled_transcript_publication_removes_only_owned_cold_runtime(
+    warm: bool,
+) -> None:
+    """Cancellation before receipt must not strand a hydrated session.
+
+    Args:
+        warm: Whether the target runtime predates this activation attempt.
+    """
+    store = ConsoleChatStore()
+    prior = store.create_session(title="Prior")
+    unrelated = store.create_session(title="Unrelated")
+    target_runtime = None
+    if warm:
+        target_runtime = store.restore_persisted_session(
+            title="Target",
+            workspace_id=None,
+            persisted_conversation_id="conversation-X",
+            all_nodes=[],
+        )
+    store.switch_session(prior.id)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def suspend_transcript():
+        entered.set()
+        await release.wait()
+
+    controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
+    controller._screen = SimpleNamespace(
+        _sync_native_console_transcript=suspend_transcript,
+    )
+    controller._chat_store_accessor = lambda: store
+
+    async def hydrate(conversation_id):
+        nonlocal target_runtime
+        assert conversation_id == "conversation-X"
+        if target_runtime is None:
+            target_runtime = store.restore_persisted_session(
+                title="Target",
+                workspace_id=None,
+                persisted_conversation_id=conversation_id,
+                all_nodes=[],
+            )
+        else:
+            store.switch_session(target_runtime.id)
+        return True
+
+    async def restore(prior_session_id):
+        store.switch_session(prior_session_id)
+
+    controller.open_console_workspace_conversation = hydrate
+    controller._restore_character_conversation_prior_session = restore
+    request = CharacterConversationActivationRequest(TARGET, "authority-A", 1)
+    task = asyncio.create_task(
+        controller.activate_character_conversation_after_commit(request)
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert store.active_session_id == prior.id
+        remaining = {session.id: session for session in store.sessions()}
+        assert remaining[prior.id] is prior
+        assert remaining[unrelated.id] is unrelated
+        assert target_runtime is not None
+        if warm:
+            assert remaining[target_runtime.id] is target_runtime
+        else:
+            assert target_runtime.id not in remaining
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

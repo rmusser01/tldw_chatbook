@@ -12,7 +12,9 @@ import pytest
 from textual import on
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static
 
-import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+# TASK-33921: the step moved to its own module; patch where it looks names up.
+# TASK-34100.8: the OmniVoice half moved again, into first_run_voice_omnivoice.
+import tldw_chatbook.UI.Wizards.first_run_voice_omnivoice as voice_step_module
 from Tests.Wizards.test_first_run_setup_wizard import _StepHost
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
@@ -49,7 +51,7 @@ async def _select_omnivoice(step: VoiceSetupStep, pilot) -> None:
 def _state(monkeypatch: pytest.MonkeyPatch, value: str) -> list:
     calls: list = []
     monkeypatch.setattr(
-        wizard_module, "omnivoice_setup_state",
+        voice_step_module, "omnivoice_setup_state",
         lambda model_root, **_: calls.append(model_root) or value,
     )
     return calls
@@ -149,7 +151,7 @@ async def test_each_state_renders_copy_and_buttons(
 
 async def test_install_runs_consent_then_provision_then_rereads(monkeypatch) -> None:
     states = iter(["model_missing", "ready"])
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", lambda *_a, **_k: next(states))
+    monkeypatch.setattr(voice_step_module, "omnivoice_setup_state", lambda *_a, **_k: next(states))
     order: list = []
 
     async def preflight(**_):
@@ -160,8 +162,8 @@ async def test_install_runs_consent_then_provision_then_rereads(monkeypatch) -> 
         order.append(("provision", report))
         return None
 
-    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", preflight)
-    monkeypatch.setattr(wizard_module, "run_omnivoice_provision", provision)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_provision", provision)
     step = _step()
     host = _Host(step)
     monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(True))
@@ -190,8 +192,8 @@ async def test_declining_consent_leaves_model_missing_and_reenables_install(
         provision_calls.append(report)
         return None
 
-    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", preflight)
-    monkeypatch.setattr(wizard_module, "run_omnivoice_provision", provision)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_provision", provision)
     step = _step()
     host = _Host(step)
     monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(False))
@@ -221,8 +223,8 @@ async def test_provision_failure_shows_message_and_reenables_install(
     async def failing_provision(report, *, progress=None, **_):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", preflight)
-    monkeypatch.setattr(wizard_module, "run_omnivoice_provision", failing_provision)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_provision", failing_provision)
     step = _step()
     host = _Host(step)
     monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(True))
@@ -247,7 +249,7 @@ async def test_install_double_press_runs_one_preflight(monkeypatch) -> None:
         await asyncio.sleep(0.3)
         raise RuntimeError("offline")
 
-    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", slow_preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", slow_preflight)
     step = _step()
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -268,7 +270,7 @@ async def test_preflight_failure_shows_message_and_allows_retry(monkeypatch) -> 
     async def failing(**_):
         raise RuntimeError("network down")
 
-    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", failing)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", failing)
     step = _step()
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -294,6 +296,82 @@ async def test_reshow_rereads_state_without_cancelling_install(monkeypatch) -> N
         await pilot.pause(0.2)
         assert len(calls) == before + 1
         assert step._omnivoice_installing is True
+
+
+def _default_box(step) -> tuple[bool, bool, str]:
+    box = step.query_one("#setup-voice-default", Checkbox)
+    help_line = str(step.query_one("#setup-voice-default-help", Static).render())
+    return box.value, box.disabled, help_line
+
+
+_OMNIVOICE_READS_REPLIES = {
+    "COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"default_provider": "omnivoice"}}
+}
+
+
+async def test_a_saved_omnivoice_reply_voice_cannot_be_unticked_away(
+    monkeypatch,
+) -> None:
+    """Review round 2 (R2-F2): the prefill preselected a saved OmniVoice voice
+    with the box ticked but free. Unticked, Next posted nothing, so OmniVoice
+    kept reading replies while the box said it would not."""
+    _state(monkeypatch, "ready")
+    step = _step(_OMNIVOICE_READS_REPLIES)
+    host = _Host(step)
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        assert step._preset == vs.VOICE_PRESET_OMNIVOICE
+
+        ticked, locked, help_line = _default_box(step)
+        assert (ticked, locked) == (True, True)
+        assert help_line.startswith(
+            "Replies use OmniVoice now — pick another service to change that."
+        )
+        step.query_one("#setup-voice-default", Checkbox).value = False
+        await pilot.pause()
+        assert _default_box(step)[:2] == (True, True)
+        assert await step.commit() == (True, "")
+        assert host.saved is None
+
+
+async def test_another_service_over_a_saved_omnivoice_names_it(monkeypatch) -> None:
+    """Review round 2 (R2-F1): over a saved OmniVoice reply voice, an
+    OpenAI-slot pick read "Replies will use this voice instead of ." -- the
+    provider name was empty. Like kokoro, the box starts unticked."""
+    _state(monkeypatch, "ready")
+    step = _step(_OMNIVOICE_READS_REPLIES)
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause()
+
+        ticked, locked, help_line = _default_box(step)
+        assert (ticked, locked) == (False, False)
+        assert help_line.startswith("Saved for later; replies keep using OmniVoice.")
+        step.query_one("#setup-voice-default", Checkbox).value = True
+        await pilot.pause()
+        assert _default_box(step)[2].startswith(
+            "Replies will use this voice instead of OmniVoice."
+        )
+
+
+async def test_a_blank_sample_says_why_test_is_off(monkeypatch) -> None:
+    """Review round 2 (G8-R2-F5): OmniVoice shares the status line, so a
+    blank sample says why Test and Hear is off there too."""
+    from tldw_chatbook.UI.Wizards import first_run_voice_status as voice_status
+
+    _state(monkeypatch, "ready")
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step.query_one("#setup-voice-sample", Input).value = ""
+        await pilot.pause()
+
+        assert step.query_one("#setup-voice-test", Button).disabled
+        assert str(step.query_one("#setup-voice-status", Static).render()) == (
+            voice_status.BLANK_SAMPLE_COPY
+        )
 
 
 async def test_commit_without_default_saves_nothing(monkeypatch) -> None:
@@ -346,7 +424,7 @@ async def test_state_read_import_error_means_engine_missing(monkeypatch) -> None
     def broken(*_a, **_k):
         raise ImportError("onnxruntime is broken")
 
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", broken)
+    monkeypatch.setattr(voice_step_module, "omnivoice_setup_state", broken)
     step = _step()
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -384,7 +462,7 @@ async def test_a_superseded_state_check_cannot_overwrite_the_current_one(
             return "ready"
         return "model_missing"
 
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", state)
+    monkeypatch.setattr(voice_step_module, "omnivoice_setup_state", state)
     step = _step()
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -409,7 +487,7 @@ async def test_a_stale_state_check_leaves_other_services_alone(monkeypatch) -> N
         release.wait(5)
         return "ready"
 
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", state)
+    monkeypatch.setattr(voice_step_module, "omnivoice_setup_state", state)
     step = _step()
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -503,19 +581,34 @@ async def test_step_data_records_the_preset(monkeypatch) -> None:
         assert step.get_step_data()["preset"] == "omnivoice"
 
 
-async def test_service_row_fits_at_80_columns(monkeypatch) -> None:
-    import html
-    import re
+@pytest.mark.parametrize("size", [(100, 30), (80, 24), (72, 24)])
+async def test_service_row_fits_at_every_supported_width(monkeypatch, size) -> None:
+    """Every service label paints whole -- measured with the real stylesheet
+    (TASK-34100.8 review round 1, F8). This test used to run at 80 columns
+    without the stylesheet, where the radio is a vertical list of full-width
+    rows, so it passed whatever the CSS said. The five labels need 71 cells:
+    round 1 fitted them from 100 columns and conceded 80; review round 2
+    (R2-F3) wraps the radio to two rows wherever one row is narrower, so
+    they fit at 80 and below too."""
+    from pathlib import Path
+
+    from textual.widgets import RadioButton
+
+    class _StyledHost(_Host):
+        CSS_PATH = str(
+            Path(__file__).resolve().parents[2]
+            / "tldw_chatbook/css/tldw_cli_modular.tcss"
+        )
 
     _state(monkeypatch, "ready")
     step = _step()
-    host = _Host(step)
-    async with host.run_test(size=(80, 24)) as pilot:
+    host = _StyledHost(step)
+    async with host.run_test(size=size) as pilot:
+        step.add_class("active")  # what the wizard's show_step does
         await pilot.pause()
-        painted = html.unescape(
-            "".join(re.findall(r">([^<>]*)</text>", host.export_screenshot()))
-        ).replace("\xa0", " ")
-        # Every service label paints whole — clipping would end it in "…".
-        for label in ("PocketTTS", "OpenAI", "Custom", "OmniVoice"):
-            assert label in painted
-            assert f"{label[:6]}…" not in painted
+        buttons = list(step.query_one("#setup-voice-preset").query(RadioButton))
+        assert len({button.region.y for button in buttons}) <= 2
+        for button in buttons:
+            assert button.content_size.width >= button.get_content_width(
+                button.size, host.size
+            ), str(button.label)

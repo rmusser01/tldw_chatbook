@@ -68,7 +68,9 @@ MINIMAX_MIN_DURATION_SECONDS = 4
 MINIMAX_MAX_DURATION_SECONDS = 15
 MINIMAX_DEFAULT_DURATION_SECONDS = 5
 
-_PENDING_STATUSES = frozenset({"preparing", "queueing", "queued", "processing", "running"})
+_PENDING_STATUSES = frozenset(
+    {"preparing", "queueing", "queued", "processing", "running"}
+)
 _SUCCESS_STATUSES = frozenset({"succeeded", "success"})
 _FAILURE_STATUSES = frozenset({"failed", "fail", "cancelled", "canceled"})
 
@@ -130,7 +132,11 @@ class MiniMaxVideoAdapter:
 
         api_key = self._resolve_api_key()
         base_url = self._resolve_base_url()
-        model = request.model or self._config.minimax_video_default_model or DEFAULT_MINIMAX_VIDEO_MODEL
+        model = (
+            request.model
+            or self._config.minimax_video_default_model
+            or DEFAULT_MINIMAX_VIDEO_MODEL
+        )
 
         task_id = self._submit(base_url, api_key, model, request)
         task = self._poll_until_terminal(base_url, api_key, task_id, cancel_event)
@@ -179,7 +185,10 @@ class MiniMaxVideoAdapter:
     # -- configuration ----------------------------------------------------
 
     def _timeout(self) -> int:
-        return self._config.minimax_video_timeout_seconds or DEFAULT_MINIMAX_VIDEO_TIMEOUT_SECONDS
+        return (
+            self._config.minimax_video_timeout_seconds
+            or DEFAULT_MINIMAX_VIDEO_TIMEOUT_SECONDS
+        )
 
     def _poll_interval(self) -> float:
         return max(
@@ -208,7 +217,9 @@ class MiniMaxVideoAdapter:
         raw = self._config.minimax_video_base_url or DEFAULT_MINIMAX_VIDEO_BASE_URL
         cleaned = str(raw).strip()
         if not cleaned:
-            raise VideoBackendUnavailableError("MiniMax video base URL is not configured")
+            raise VideoBackendUnavailableError(
+                "MiniMax video base URL is not configured"
+            )
         if not cleaned.startswith("http://") and not cleaned.startswith("https://"):
             cleaned = f"https://{cleaned}"
         return cleaned.rstrip("/")
@@ -242,7 +253,9 @@ class MiniMaxVideoAdapter:
         height = request.height or 0
         return "2K" if max(width, height) > 1366 else "768P"
 
-    def _build_submit_payload(self, request: VideoGenRequest, model: str) -> dict[str, Any]:
+    def _build_submit_payload(
+        self, request: VideoGenRequest, model: str
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
             "content": [{"type": "text", "text": request.prompt.strip()}],
@@ -274,7 +287,9 @@ class MiniMaxVideoAdapter:
             raise VideoGenerationError(f"MiniMax submit failed: {exc}") from exc
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code if exc.response is not None else "unknown"
-            raise VideoGenerationError(f"MiniMax submit failed (HTTP {status})") from exc
+            raise VideoGenerationError(
+                f"MiniMax submit failed (HTTP {status})"
+            ) from exc
         except Exception as exc:
             raise VideoGenerationError(f"MiniMax submit failed: {exc}") from exc
 
@@ -283,10 +298,14 @@ class MiniMaxVideoAdapter:
             raise VideoGenerationError("MiniMax submit response was not JSON")
         task_id = data.get("task_id")
         if not isinstance(task_id, str) or not task_id.strip():
-            raise VideoGenerationError("MiniMax submit response did not include a task_id")
+            raise VideoGenerationError(
+                "MiniMax submit response did not include a task_id"
+            )
         task_id = task_id.strip()
         if not _TASK_ID_RE.match(task_id):
-            raise VideoGenerationError("MiniMax submit response returned an invalid task_id")
+            raise VideoGenerationError(
+                "MiniMax submit response returned an invalid task_id"
+            )
         return task_id
 
     def _poll_until_terminal(
@@ -316,9 +335,13 @@ class MiniMaxVideoAdapter:
                     trusted_origins=trusted,
                 )
             except (ImageGenerationError, httpx.HTTPStatusError) as exc:
-                raise VideoGenerationError(f"MiniMax status polling failed: {exc}") from exc
+                raise VideoGenerationError(
+                    f"MiniMax status polling failed: {exc}"
+                ) from exc
             except Exception as exc:
-                raise VideoGenerationError(f"MiniMax status polling failed: {exc}") from exc
+                raise VideoGenerationError(
+                    f"MiniMax status polling failed: {exc}"
+                ) from exc
 
             self._raise_on_base_resp_error(data, stage="query")
             task = self._extract_task(data)

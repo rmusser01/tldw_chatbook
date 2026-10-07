@@ -44,9 +44,7 @@ def _contract_arms() -> list[tuple[str, str]]:
     return [
         (
             " + ".join(p.name for p in CONSOLE_SOURCES),
-            _detok(
-                "\n".join(p.read_text(encoding="utf-8") for p in CONSOLE_SOURCES)
-            ),
+            _detok("\n".join(p.read_text(encoding="utf-8") for p in CONSOLE_SOURCES)),
         ),
         (BUNDLE.name, _detok(BUNDLE.read_text(encoding="utf-8"))),
     ]
@@ -54,9 +52,7 @@ def _contract_arms() -> list[tuple[str, str]]:
 
 def _chip_focus_body(css_text: str) -> str:
     uncommented = re.sub(r"/\*.*?\*/", "", css_text, flags=re.DOTALL)
-    match = re.search(
-        r"\.console-control-chip:focus\s*\{([^}]*)\}", uncommented
-    )
+    match = re.search(r"\.console-control-chip:focus\s*\{([^}]*)\}", uncommented)
     return match.group(1) if match else ""
 
 

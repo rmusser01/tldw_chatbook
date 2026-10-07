@@ -23,9 +23,7 @@ from scripts import check_persistent_diagnostic_inventory as diagnostic_inventor
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SECURITY_LOGGER_PATH = (
-    REPO_ROOT / "tldw_chatbook/Chunking/engine/security_logger.py"
-)
+SECURITY_LOGGER_PATH = REPO_ROOT / "tldw_chatbook/Chunking/engine/security_logger.py"
 
 # Call names (the final attribute segment) that can create or write a file.
 # The module's one declared sink is loguru's ``add`` -- deliberately not in
@@ -81,7 +79,9 @@ def test_security_logger_has_no_file_write_calls() -> None:
     )
 
 
-def test_security_logger_declared_sink_surface_is_exactly_the_init_loguru_sink() -> None:
+def test_security_logger_declared_sink_surface_is_exactly_the_init_loguru_sink() -> (
+    None
+):
     """Cross-check against the checker's own census: one sink, in __init__."""
     _diagnostics, sinks = diagnostic_inventory.scan_source(
         _module_source(), filename=str(SECURITY_LOGGER_PATH)

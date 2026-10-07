@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│                                                                                                                                                                                 │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│                                                                                                                                                                                 │────────────────
+                │                                                                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+   Terminal     │                                                                                                                                                                                 │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Workspaces     │                                                                                                                                                                                 │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Conversations  │                                                                                                                                                                                 │     │
+        Archive │                                                                                                                                                                                 │     │
+          Archiv│                                                                                                                                                                                 │     │
+        Search a│                                                                                                                                                                                 │     │
+   Chat 1       │                                                                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│                                                                                                                                                                                 │     │
+  ▊  Filter visi│                                                                                                                                                                                 │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│    1 unsaved edit to this chat: Temperature.                                                                                                                                    │     │
+                │    Enter apply · d discard · Esc keep editing                                                                                                                                   │     │◂ Inspect
+   New conversat│                                                               Apply to this chat     Discard       Keep editing                                                                 │     │
+  Chats         │                                                                                                                                                                                 │     │
+   Chat 1       │                                                                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Character · No │                                                                                                                                                                                 │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Model          │                                                                                                                                                                                 │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Agent          │                                                                                                                                                                                 │     │
+ ───────────────│                                                                                                                                                                                 │     │
+ Details        │                                                                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+                │                                                                                                                                                                                 │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                                                                                                                                 │rrent $0.00 · O
+                │                                                                                                                                                                                 │
+│  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

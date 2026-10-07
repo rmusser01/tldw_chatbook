@@ -24,6 +24,7 @@ class SettingsCategoryId(StrEnum):
     NETWORK = "network"
     PERSONAL_CONTEXT = "personal-context"
     CONSOLE_BEHAVIOR = "console-behavior"
+    HOOKS = "hooks"
     LIBRARY_RAG = "library-rag"
     ARTIFACTS = "artifacts"
     PERSONAS = "personas"

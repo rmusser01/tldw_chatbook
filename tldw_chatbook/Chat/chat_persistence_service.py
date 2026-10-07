@@ -1,6 +1,9 @@
 import base64
 import json
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from uuid import UUID
@@ -106,6 +109,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.rag_scope import serialize_scope
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     ConflictError,
@@ -137,6 +141,9 @@ _VOICE_PROMOTION_FORBIDDEN_MESSAGE_LOCATORS = frozenset(
         ("canvas_revisions", "origin_message_id"),
         ("console_dispatch_checkpoints", "assistant_message_id"),
         ("console_dispatch_checkpoints", "user_message_id"),
+        ("console_hook_continuation_receipts", "assistant_message_id"),
+        ("console_hook_continuation_receipts", "parent_assistant_message_id"),
+        ("fleet_progress_messages", "message_id"),
         ("message_attachments", "message_id"),
         ("message_exchanges", "message_id"),
         ("message_generation_metadata", "message_id"),
@@ -174,6 +181,37 @@ _VOICE_PROMOTION_LOCATOR_EXEMPTIONS = frozenset(
         ("messages", "variant_of"),
     }
 )
+
+
+#: PERF-10 (TASK-33269): bumped after exchange rows are appended, so parked
+#: legacy trace maintenance wakes on new work instead of polling the database
+#: once a second. ``append_message_exchanges`` is the only exchange writer.
+#: A counter, not a cleared event: every runtime compares it with the value it
+#: last saw, so no runtime can consume another's wake.
+_TRACE_MAINTENANCE_WORK_LOCK = threading.Lock()
+_trace_maintenance_work_generation = 0
+
+
+def signal_trace_maintenance_work() -> None:
+    """Tell parked legacy trace maintenance that new exchange rows exist."""
+
+    global _trace_maintenance_work_generation
+    with _TRACE_MAINTENANCE_WORK_LOCK:
+        _trace_maintenance_work_generation += 1
+
+
+def trace_maintenance_work_generation() -> int:
+    """Return the exchange-write generation; it changes on every signal.
+
+    A maintenance loop reads it before each pass and wakes when it differs.
+    A signal raised after the read wakes the loop again; one raised before it
+    had its rows committed first, so the pass about to run reads them.
+
+    Returns:
+        The number of exchange-write signals raised in this process.
+    """
+
+    return _trace_maintenance_work_generation
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +262,9 @@ class ChatPersistenceService:
         self.context_repository = ConsoleContextRepository(db)
         self.recovered_media_cleanup_pending = False
         self._recovered_messages = None
+        # Per-thread: a hold diverts only its own thread's releases, so a
+        # worker thread's unrelated delete during the hold is released as usual.
+        self._held_recovered_releases = threading.local()
         try:
             from tldw_chatbook.Backup_Recovery.recovered_media_messages import (
                 RecoveredMessageReferences,
@@ -250,17 +291,65 @@ class ChatPersistenceService:
 
         return CLEANUP_PENDING if self.recovered_media_cleanup_pending else None
 
-    def _release_recovered_messages(self, message_ids) -> None:
+    def _release_recovered_messages(self, message_ids) -> bool:
+        """Release references for committed tombstones; True if left pending."""
         if not message_ids:
-            return
+            return False
+        held = getattr(self._held_recovered_releases, "ids", None)
+        if held is not None:
+            # An undoable delete: keep references until it becomes final.
+            held.extend(message_ids)
+            return False
         try:
             if self._recovered_messages is None:
                 raise ValueError("recovered_message_source_unavailable")
             self._recovered_messages.release(message_ids)
         except Exception:  # noqa: BLE001 - preserve the already committed chat result
+            from tldw_chatbook.Backup_Recovery.recovered_media_messages import (
+                references_absent,
+            )
+
+            if references_absent(self._recovered_messages, tuple(message_ids)):
+                # TASK-33628.2: positive evidence that no reference names
+                # these messages -- nothing is left to clean up, so a
+                # media-free delete must not report pending cleanup.
+                return False
             # Chat committed already. Retain refs for a positive-tombstone retry.
             self.recovered_media_cleanup_pending = True
             logger.warning("Recovered-media reference cleanup is pending.")
+            return True
+        return False
+
+    @contextmanager
+    def hold_recovered_media_release(self) -> Iterator[list[str]]:
+        """Hold reference releases for deletes that can still be undone.
+
+        Yields the list the held message ids accumulate in: exactly the
+        messages the CALLING thread tombstoned while the hold was open (other
+        threads' releases proceed normally). Releasing them is the caller's
+        job once the delete is final
+        (:meth:`release_recovered_media_references`); a crash before that is
+        safe, because startup's positive-tombstone retry releases them.
+        """
+        local = self._held_recovered_releases
+        previous = getattr(local, "ids", None)
+        held: list[str] = []
+        local.ids = held
+        try:
+            yield held
+        finally:
+            local.ids = previous
+
+    def release_recovered_media_references(self, message_ids: Sequence[str]) -> bool:
+        """Release held references for a now-final delete.
+
+        Args:
+            message_ids: The ids :meth:`hold_recovered_media_release` held.
+
+        Returns:
+            True when this release left recovered-media cleanup pending.
+        """
+        return self._release_recovered_messages(list(message_ids))
 
     def retry_recovered_media_references(self) -> bool:
         try:
@@ -549,8 +638,14 @@ class ChatPersistenceService:
         context: "VoicePromotionContext",
         identities: "VoicePromotionIdentitySet",
         assistant_metadata_json: str,
+        user_metadata_json: str | None,
     ) -> "CompletedVoicePairCommit | None":
-        """Adopt one complete exact-ID commit or fail closed on any residue."""
+        """Adopt one complete exact-ID commit or fail closed on any residue.
+
+        ``user_metadata_json`` is the user row's exact expected record: the
+        ``root_fork`` marker when the destination is a root fork, otherwise
+        ``None`` (TASK-33628.12).
+        """
         from tldw_chatbook.Chat.console_voice_promotion import (
             CompletedVoicePairCommit,
         )
@@ -635,7 +730,7 @@ class ChatPersistenceService:
             and user["is_selected_variant"] == 1
             and user["total_variants"] == 1
             and user["usage_json"] is None
-            and user["metadata_json"] is None
+            and user["metadata_json"] == user_metadata_json
             and user["provider_continuation_json"] is None
             and user["thinking_blocks_json"] is None
             and user["assistant_generation_state"] is None
@@ -793,6 +888,12 @@ class ChatPersistenceService:
         assistant_metadata_json = MessageMetadata(
             terminal_receipt_id=identities.terminal_receipt_id
         ).to_json()
+        # A prompt sent beside an existing root is a root fork (TASK-33628.12).
+        user_metadata_json = (
+            MessageMetadata(root_fork=True).to_json()
+            if destination.user_root_fork
+            else None
+        )
         with self.db.transaction(immediate=True) as cursor:
             reconciled = self._reconcile_completed_voice_pair(
                 cursor,
@@ -801,6 +902,7 @@ class ChatPersistenceService:
                 context=context,
                 identities=identities,
                 assistant_metadata_json=assistant_metadata_json,
+                user_metadata_json=user_metadata_json,
             )
             if reconciled is not None:
                 result = reconciled
@@ -841,6 +943,7 @@ class ChatPersistenceService:
                         "sender": "user",
                         "role": "user",
                         "content": context.user_text,
+                        "metadata_json": user_metadata_json,
                     }
                 )
                 if user_message_id != identities.user_message_id:
@@ -1451,6 +1554,98 @@ class ChatPersistenceService:
                 )
         return result.snapshot
 
+    def update_agent_handoff_launch(self, conversation_id: str, launch: Any) -> None:
+        """Merge bounded display facts without changing draft custody or authority."""
+        from dataclasses import asdict
+        from .message_metadata import AgentHandoffLaunchMetadata
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        if not isinstance(launch, AgentHandoffLaunchMetadata):
+            raise ValueError("invalid handoff launch metadata")
+        with (
+            operation_owned_connection(self.db),
+            self.db.transaction(immediate=True) as cursor,
+        ):
+            row = cursor.execute(
+                "SELECT metadata, version FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("handoff conversation unavailable")
+            metadata = json.loads(row["metadata"] or "{}")
+            handoff = metadata.get("console_agent_handoff")
+            if not isinstance(handoff, dict) or handoff.get("version") != 2:
+                raise ValueError("versioned handoff unavailable")
+            handoff["launch"] = asdict(launch)
+            cursor.execute(
+                "UPDATE conversations SET metadata = ?, version = version + 1, last_modified = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0",
+                (
+                    json.dumps(metadata),
+                    self.db._get_current_utc_timestamp_iso(),
+                    self.db.client_id,
+                    conversation_id,
+                    row["version"],
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("handoff launch publication conflict")
+
+    def update_agent_handoff_draft(
+        self,
+        conversation_id: str,
+        *,
+        expected_revision: int,
+        draft_revision: int,
+        draft: str,
+    ) -> bool:
+        """Merge one pending handoff revision under the conversation version fence."""
+        if (
+            type(expected_revision) is not int
+            or expected_revision < 1
+            or type(draft_revision) is not int
+            or draft_revision <= expected_revision
+            or not isinstance(draft, str)
+        ):
+            raise ValueError("invalid handoff revision")
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with (
+            operation_owned_connection(self.db),
+            self.db.transaction(immediate=True) as cursor,
+        ):
+            row = cursor.execute(
+                "SELECT metadata, version FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            metadata = json.loads(row["metadata"] or "{}")
+            handoff = metadata.get("console_agent_handoff")
+            if (
+                not isinstance(handoff, dict)
+                or handoff.get("version") != 2
+                or handoff.get("state") != "pending"
+                or handoff.get("draft_revision") != expected_revision
+            ):
+                return False
+            metadata["console_agent_handoff"] = {
+                **handoff,
+                "draft": draft,
+                "draft_revision": draft_revision,
+            }
+            updated = cursor.execute(
+                "UPDATE conversations SET metadata = ?, version = version + 1, "
+                "last_modified = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0",
+                (
+                    json.dumps(metadata),
+                    self.db._get_current_utc_timestamp_iso(),
+                    self.db.client_id,
+                    conversation_id,
+                    row["version"],
+                ),
+            )
+            return updated.rowcount == 1
+
     def commit_durable_turn(
         self,
         *,
@@ -1458,12 +1653,18 @@ class ChatPersistenceService:
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
+        project_context_json: str | None = None,
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn.
 
         The service owns the sole outer ``BEGIN IMMEDIATE``.  It intentionally
         returns only durable values and never mutates the live Console session;
         publication is a postcommit store/controller responsibility.
+
+        ``project_context_json`` is the new chat's local project-instruction
+        controls, stored with the conversation it creates -- the same
+        transaction, like promotion and fork bundles (TASK-33621.13). It is
+        ignored for a conversation that already exists.
         """
 
         self.validate_workspace_target(**conversation_kwargs)
@@ -1502,6 +1703,10 @@ class ChatPersistenceService:
                         raise RuntimeError(
                             "Console context settings could not be committed with turn."
                         )
+                if project_context_json is not None:
+                    self.db.set_conversation_console_project_context(
+                        acceptance.conversation_id, project_context_json
+                    )
             else:
                 if conversation["deleted"]:
                     raise RuntimeError("Durable conversation is unavailable.")
@@ -1524,6 +1729,58 @@ class ChatPersistenceService:
                     raise RuntimeError(
                         "Durable Console Library policy no longer matches acceptance."
                     )
+            # The request pair and the exact handoff receipt share this transaction.
+            if acceptance.handoff_draft_revision is not None:
+                row = cursor.execute(
+                    "SELECT metadata, version FROM conversations WHERE id=? AND deleted=0",
+                    (acceptance.conversation_id,),
+                ).fetchone()
+                metadata = json.loads(row["metadata"] or "{}") if row else {}
+                handoff = metadata.get("console_agent_handoff")
+                receipt = (
+                    acceptance.agent_chat_start_attempt_id or acceptance.attempt_id
+                )
+                revision = acceptance.handoff_draft_revision
+                if not isinstance(handoff, dict) or handoff.get("version") != 2:
+                    raise ValueError("handoff custody unavailable")
+                if handoff.get("state") == "consumed":
+                    if (
+                        handoff.get("accepted_attempt_id") != receipt
+                        or handoff.get("draft_revision") != revision + 1
+                    ):
+                        raise ValueError("handoff receipt mismatch")
+                else:
+                    if (
+                        handoff.get("state") != "pending"
+                        or handoff.get("draft_revision") != revision
+                        or (
+                            acceptance.origin == "agent_chat_start"
+                            and handoff.get("draft") != acceptance.user_content
+                        )
+                    ):
+                        raise ValueError("handoff revision changed")
+                    metadata["console_agent_handoff"] = {
+                        **handoff,
+                        "state": "consumed",
+                        "draft": "",
+                        "draft_revision": revision + 1,
+                        "accepted_attempt_id": receipt,
+                    }
+                    updated = cursor.execute(
+                        "UPDATE conversations SET metadata=?, version=version+1, last_modified=?, client_id=? "
+                        "WHERE id=? AND version=? AND deleted=0",
+                        (
+                            json.dumps(metadata),
+                            self.db._get_current_utc_timestamp_iso(),
+                            self.db.client_id,
+                            acceptance.conversation_id,
+                            row["version"],
+                        ),
+                    )
+                    if updated.rowcount != 1:
+                        raise ValueError("handoff conversation changed")
+            elif acceptance.origin == "agent_chat_start":
+                raise ValueError("handoff revision required")
             return self.console_dispatch_repository.insert_with_messages(
                 cursor,
                 acceptance,
@@ -1907,7 +2164,10 @@ class ChatPersistenceService:
             if (
                 row is None
                 or row["conversation_id"] != source_id
-                or row["parent_message_id"] != previous_source_id
+                or self._fork_source_parent(
+                    cursor, source_id, row["parent_message_id"], previous_source_id
+                )
+                != previous_source_id
                 or row["version"] != message.source_persisted_revision
                 or row["deleted"]
                 or row["content"] != message.source_persisted_content
@@ -1941,6 +2201,39 @@ class ChatPersistenceService:
         else:
             raise RuntimeError("Console fork source changed.")
         return source["root_id"], source_id, previous_source_id
+
+    @staticmethod
+    def _fork_source_parent(
+        cursor: Any,
+        source_id: str,
+        parent_id: str | None,
+        previous_id: str | None,
+    ) -> str | None:
+        """Walk a copied row's saved parent up past saved System notes.
+
+        A fork copies only the USER/ASSISTANT chain (ADR-092 §2), so a saved
+        SYSTEM row -- a promoted ``/help`` note, image-edit failure guidance --
+        may sit between two copied rows. Only live ``system`` rows of the
+        source conversation are skipped (TASK-33621.10); anything else stops
+        the walk and the caller's exact-parent check decides.
+        """
+        for _ in range(CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH):
+            if parent_id is None or parent_id == previous_id:
+                return parent_id
+            row = cursor.execute(
+                "SELECT conversation_id, parent_message_id, sender, deleted "
+                "FROM messages WHERE id = ?",
+                (parent_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["deleted"]
+                or row["conversation_id"] != source_id
+                or row["sender"] != "system"
+            ):
+                return parent_id
+            parent_id = row["parent_message_id"]
+        return parent_id
 
     def _link_console_fork_citations(
         self,
@@ -2271,7 +2564,8 @@ class ChatPersistenceService:
             raise ValueError(
                 "Workspace registry is required for workspace conversations"
             )
-        workspace = self.workspace_registry.get_workspace(safe_workspace_id)
+        with operation_owned_connection(getattr(self.workspace_registry, "db", None)):
+            workspace = self.workspace_registry.get_workspace(safe_workspace_id)
         if workspace is None:
             raise ValueError(f"Unknown workspace: {safe_workspace_id}")
         return safe_workspace_id
@@ -2285,7 +2579,13 @@ class ChatPersistenceService:
 
     def project_workspace_membership(self, conversation_id: str) -> Any | None:
         """Project durable workspace authority into the registry idempotently."""
-        conversation = self.db.get_conversation_by_id(conversation_id)
+        database = self.db
+        with (
+            operation_owned_connection(database)
+            if type(database) is CharactersRAGDB and not database.is_memory_db
+            else nullcontext()
+        ):
+            conversation = database.get_conversation_by_id(conversation_id)
         if conversation is None:
             raise ValueError(f"Conversation {conversation_id} not found")
         safe_workspace_id = self._require_workspace_scope(
@@ -2307,13 +2607,14 @@ class ChatPersistenceService:
         conversation_id: str,
         title: str,
     ) -> Any:
-        return self.workspace_registry.link_membership(
-            workspace_id,
-            item_type="conversation",
-            item_id=conversation_id,
-            role="workspace-thread",
-            title=title,
-        )
+        with operation_owned_connection(getattr(self.workspace_registry, "db", None)):
+            return self.workspace_registry.link_membership(
+                workspace_id,
+                item_type="conversation",
+                item_id=conversation_id,
+                role="workspace-thread",
+                title=title,
+            )
 
     def update_conversation_system_prompt(
         self,
@@ -3137,12 +3438,13 @@ class ChatPersistenceService:
         """
         try:
             self.db.append_message_exchanges_local(message_id, rows)
-            return True
         except Exception as exc:  # noqa: BLE001 -- best-effort capture flush
             logger.bind(message_id=message_id, error_type=type(exc).__name__).warning(
                 "exchange_append_failed"
             )
             return False
+        signal_trace_maintenance_work()
+        return True
 
     def list_full_exchange_keys_for_conversation(
         self, conversation_id: str
@@ -3162,16 +3464,64 @@ class ChatPersistenceService:
             expected_count=expected_count,
         )
 
-    def delete_message_subtree(self, *, message_id: str) -> list[dict[str, Any]]:
-        """Atomically tombstone one persisted branch and return its versions."""
+    def delete_message_subtree(
+        self, *, message_id: str, subtree_message_ids: Sequence[str | None] = ()
+    ) -> list[dict[str, Any]]:
+        """Atomically tombstone one persisted branch and return its versions.
+
+        Args:
+            message_id: Persisted id of the branch's root message.
+            subtree_message_ids: Persisted ids the caller shows in the
+                branch (``None`` for unsaved nodes is ignored), including those
+                with no ``parent_message_id`` link (a legacy flat conversation
+                the Console chains in memory, TASK-33628.6); see
+                :meth:`CharactersRAGDB.soft_delete_message_subtree`.
+
+        Returns:
+            The committed tombstones with their new versions.
+
+        Raises:
+            ValueError: The message does not exist.
+        """
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
         rows = self.db.soft_delete_message_subtree(
             message_id,
             expected_version=current_message["version"],
+            subtree_message_ids=subtree_message_ids,
         )
         self._release_recovered_messages([row["message_id"] for row in rows])
+        return rows
+
+    def restore_message_subtree(
+        self,
+        *,
+        tombstones: Sequence[tuple[str, int]],
+        conversation_id: str | None = None,
+        active_cursor: tuple[str | None, str | None] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Undo one subtree delete: undelete its exact tombstones atomically.
+
+        Args:
+            tombstones: ``(message_id, tombstone_version)`` pairs the delete
+                committed; any drift refuses the whole restore.
+            conversation_id: Conversation whose cursor to put back.
+            active_cursor: ``(active_leaf_message_id, before_message_id)``
+                from before the delete, or ``None`` to leave the cursor.
+
+        Returns:
+            The restored rows with their new versions.
+        """
+        with self.db.transaction(immediate=True):
+            rows = self.db.restore_message_subtree(tombstones)
+            if conversation_id is not None and active_cursor is not None:
+                leaf, before = active_cursor
+                self.db.set_conversation_active_cursor(
+                    conversation_id,
+                    active_leaf_message_id=leaf,
+                    before_message_id=before,
+                )
         return rows
 
     def write_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> bool:

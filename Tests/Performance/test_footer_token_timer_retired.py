@@ -95,13 +95,20 @@ def test_footer_status_scheduling_arms_only_the_db_size_timer():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_booted_app_arms_no_token_timer_and_shows_no_token_chip():
     """A real boot: no token timer, and the footer chip stays hidden."""
     app = _build_test_app("chat")
 
     async with app.run_test(size=(160, 44)) as pilot:
         footer = None
-        for _ in range(60):
+        # Condition wait, up to 60 s. The old 3 s cap was never exercised on
+        # dev: before the bootstrap_profile mark, config admission under the
+        # per-test env redirect raised RecoveryRequired first (TASK-33260).
+        # Unmasked, a loaded machine's boot needs longer than 3 s to mount
+        # the Console footer; what this test pins is the retired timer, not
+        # boot speed.
+        for _ in range(1200):
             await pilot.pause(0.05)
             footer = app._active_footer_status()
             if footer is not None:

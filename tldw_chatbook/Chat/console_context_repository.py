@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import hashlib
 import json
+import re
 from typing import Any, Mapping
 
 from tldw_chatbook.Chat.console_context_policy import (
@@ -56,6 +57,9 @@ TERMINAL_AUXILIARY_ATTEMPT_STATUSES = frozenset(
 DEFAULT_ACTIVE_MEMORY_PAGE_SIZE = 100
 DEFAULT_MEMORY_SELECTION_PAGE_SIZE = 100
 DEFAULT_AUXILIARY_ATTEMPT_PAGE_SIZE = 50
+#: TASK-33621.3: the content-free reason codes a compaction attempt records.
+#: Mirrors the v74 CHECK constraint on ``console_auxiliary_attempts``.
+_FAILURE_REASON_RE = re.compile(r"[a-z][a-z_]{0,63}")
 MAX_REPOSITORY_PAGE_SIZE = 500
 
 
@@ -1160,14 +1164,43 @@ class ConsoleContextRepository:
         elapsed_ms: int | None = None,
         usage: ProviderUsage | None = None,
         pricing: AuxiliaryPricingProvenance | None = None,
+        failure_reason: str | None = None,
     ) -> bool:
-        """Record one terminal outcome using only bounded content-free fields."""
+        """Record one terminal outcome using only bounded content-free fields.
+
+        Args:
+            operation_id: The attempt started by ``start_auxiliary_attempt``.
+            status: Terminal status to record.
+            finished_at: ISO timestamp of the terminal outcome.
+            elapsed_ms: Wall-clock duration, when measured.
+            usage: Provider-reported token usage, when any was reported.
+            pricing: Read-time pricing identity for ``usage``.
+            failure_reason: TASK-33621.3 -- the content-free reason code a
+                non-successful attempt ended with (``invalid_summary_output``,
+                ``memory_commit_failed``, ...). Never set on a success.
+
+        Returns:
+            True when the still-started attempt row was finished.
+
+        Raises:
+            ValueError: If a field is out of bounds, or a reason accompanies a
+                successful attempt.
+        """
         _validate_bounded_text("operation_id", operation_id, 200)
         _validate_bounded_text("finished_at", finished_at, 80)
         if status not in TERMINAL_AUXILIARY_ATTEMPT_STATUSES:
             raise ValueError("status must be a terminal auxiliary-attempt status")
         if elapsed_ms is not None and (type(elapsed_ms) is not int or elapsed_ms < 0):
             raise ValueError("elapsed_ms must be a non-negative integer")
+        if failure_reason is not None and (
+            status is AuxiliaryAttemptStatus.SUCCEEDED
+            or not isinstance(failure_reason, str)
+            or _FAILURE_REASON_RE.fullmatch(failure_reason) is None
+        ):
+            raise ValueError(
+                "failure_reason must be a lowercase reason code on a "
+                "non-successful attempt"
+            )
         usage_json = usage.to_json() if usage is not None else None
         pricing_json = pricing.to_json() if pricing is not None else None
         with self.db.transaction() as cursor:
@@ -1175,7 +1208,8 @@ class ConsoleContextRepository:
                 """
                 UPDATE console_auxiliary_attempts
                    SET status = ?, finished_at = ?, elapsed_ms = ?,
-                       provider_usage_json = ?, pricing_provenance_json = ?
+                       provider_usage_json = ?, pricing_provenance_json = ?,
+                       failure_reason = ?
                  WHERE operation_id = ? AND status = 'started'
                 """,
                 (
@@ -1184,6 +1218,7 @@ class ConsoleContextRepository:
                     elapsed_ms,
                     usage_json,
                     pricing_json,
+                    failure_reason,
                     operation_id,
                 ),
             )
@@ -1227,7 +1262,7 @@ class ConsoleContextRepository:
                 SELECT operation_id, conversation_id, purpose, provider, model,
                        requested_output_cap, estimated_input_tokens, status,
                        started_at, finished_at, elapsed_ms, provider_usage_json,
-                       pricing_provenance_json
+                       pricing_provenance_json, failure_reason
                   FROM console_auxiliary_attempts
                  WHERE conversation_id = ?
                  ORDER BY started_at DESC, operation_id DESC
@@ -1236,6 +1271,22 @@ class ConsoleContextRepository:
                 (conversation_id, limit, offset),
             ).fetchall()
         return tuple(dict(row) for row in rows)
+
+
+def validate_branch_memory_commit(commit: BranchMemoryCommit) -> None:
+    """Run the commit fence's structural checks without reading the database.
+
+    TASK-33621.3: none of these checks read the summary, so automatic
+    compaction runs them BEFORE its billed call. A commit that can never land
+    (the live-session parent-chain fault) then fails at no cost.
+
+    Args:
+        commit: The branch memory commit the summary would be saved with.
+
+    Raises:
+        ValueError: If the memory, scope, selection or lineage disagree.
+    """
+    _validate_branch_memory_commit_ownership(commit)
 
 
 def _validate_branch_memory_commit_ownership(commit: BranchMemoryCommit) -> None:

@@ -14,6 +14,7 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
+    readiness_words,
 )
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
@@ -47,7 +48,7 @@ _BLOCKER_COPY = {
     "provider_unsupported": "provider is not supported",
     "provider_configuration_invalid": "review provider settings",
     "endpoint_invalid": "invalid base URL",
-    "endpoint_not_saved": "save the endpoint in Conversation settings",
+    "endpoint_not_saved": "save the endpoint in Chat settings",
     "credential_missing": "missing API key",
     "credential_rejected": "credential was rejected",
     "model_missing": "choose a model",
@@ -79,7 +80,7 @@ _RECOVERY_COPY = {
     "save_endpoint": (
         "Configure endpoint",
         "console",
-        "Save the provider endpoint in Conversation settings",
+        "Save the provider endpoint in Chat settings",
     ),
     "configure_credential": (
         "Configure API key",
@@ -93,8 +94,8 @@ _RECOVERY_COPY = {
     ),
     "retry_connection": (
         "Retry connection",
-        "console",
-        "Retry the provider connection",
+        "retry",
+        "Test the provider connection again",
     ),
     "wait_for_active_run": (
         "Run active",
@@ -151,10 +152,9 @@ def build_console_readiness_presentation(
         "expired": "Claude subscription credential expired — log in with Claude Code",
         "missing": "Claude subscription credential missing — log in with Claude Code",
     }.get(readiness.subscription_status)
+    # TASK-33005.3 (spec §5): the one readiness word, as on every surface.
+    primary = readiness_words(readiness)
     if readiness.operability == "ready_to_send":
-        primary = "Ready to send"
-        if readiness.credential == "present_unverified":
-            primary += " — credential not verified"
         detail = "A send attempt is permitted with these settings."
         action = ("Configure", "hidden", "Configure Console settings")
     else:
@@ -163,8 +163,13 @@ def build_console_readiness_presentation(
             blocker_copy = subscription_copy or f"API key missing for {provider}"
         elif readiness.blocker == "credential_rejected":
             blocker_copy = f"{provider} {blocker_copy}"
-        primary = f"Not ready — {blocker_copy}"
-        detail = f"Provider setup needed: {blocker_copy}"
+        # TASK-33620.4: an active run (the settings modal's mutation gate) is
+        # a run-state fact, never "Provider setup needed".
+        detail = (
+            "Settings changes wait for the current run to finish."
+            if readiness.blocker == "active_run"
+            else f"Provider setup needed: {blocker_copy}"
+        )
         action = _RECOVERY_COPY.get(
             readiness.recovery_action,
             ("Review settings", "console", "Review this Console session's settings"),
@@ -192,13 +197,15 @@ def build_console_readiness_presentation(
             action = (
                 "Configure endpoint",
                 "console",
-                f"Save the {provider} endpoint in Conversation settings",
+                f"Save the {provider} endpoint in Chat settings",
             )
 
     credential_value = {
         "missing": "Missing",
         "not_required": "Not required",
         "authenticated": "Authenticated",
+        # The listing accepted the key; generation is its own row.
+        "listing_accepted": "Accepted by model listing",
         "present_unverified": "Present — not verified",
     }[readiness.credential]
     if readiness.subscription_status == "pending":
@@ -451,7 +458,7 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         header.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
         with header:
             title = Static(
-                "Conversation settings",
+                "Chat settings",
                 id="console-settings-title",
                 classes="destination-section console-settings-title",
             )

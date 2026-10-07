@@ -1,0 +1,434 @@
+{
+  "base": "c0b251a71422536a3da2be421dd60f79e2cb230a",
+  "file": "Tests/UI/test_console_runtime_ownership.py",
+  "final_sha256": "91c7698d342e412bf8796575c7a72b4a2fe42985bc8ff1169a98018694619521",
+  "original_function_count": 70,
+  "new_functions": [
+    "_build_manually_mounted_console_app",
+    "test_manual_console_fixture_owns_startup_before_any_mount",
+    "test_public_startup_console_keeps_its_claim_across_navigation"
+  ],
+  "assertions": {
+    "test_console_runtime_owns_one_screen_free_persona_buddy_sink": {
+      "original_assertions": 3,
+      "final_assertions": 3,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_console_runtime_reuses_one_scratch_manager_across_console_visits": {
+      "original_assertions": 1,
+      "final_assertions": 1,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_runtime_owned_custody_tracks_only_lifetime_handles": {
+      "original_assertions": 4,
+      "final_assertions": 4,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_runtime_staged_evidence_release_is_exactly_revision_fenced": {
+      "original_assertions": 4,
+      "final_assertions": 4,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_runtime_restore_staged_evidence_never_overwrites_a_newer_launch": {
+      "original_assertions": 2,
+      "final_assertions": 2,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_successful_viewless_manual_turn_records_first_send": {
+      "original_assertions": 6,
+      "final_assertions": 6,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_runtime_injects_its_scratch_manager_into_chat_controller": {
+      "original_assertions": 2,
+      "final_assertions": 2,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_runtime_owns_one_receipt_service_and_coalesces_hydration": {
+      "original_assertions": 10,
+      "final_assertions": 10,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_future_session_defaults_read_fresh_app_owned_provider_and_model": {
+      "original_assertions": 1,
+      "final_assertions": 1,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_runtime_disposal_invalidates_inflight_receipt_hydration": {
+      "original_assertions": 4,
+      "final_assertions": 4,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_leaving_console_preserves_live_session_scratch": {
+      "original_assertions": 4,
+      "final_assertions": 4,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_raw_cli_refusal_bank_survives_leave_and_clears_on_dispose": {
+      "original_assertions": 7,
+      "final_assertions": 7,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_runtime_tombstones_before_shutdown_and_disposes_via_to_thread": {
+      "original_assertions": 5,
+      "final_assertions": 5,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_persona_buddy_release_follows_controller_wake_disposal": {
+      "original_assertions": 1,
+      "final_assertions": 1,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "_construction_sites": {
+      "original_assertions": 0,
+      "final_assertions": 0,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_console_runtime_is_the_single_construction_site": {
+      "original_assertions": 2,
+      "final_assertions": 2,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_attach_and_detach_cover_exactly_the_same_slot_set": {
+      "original_assertions": 2,
+      "final_assertions": 2,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_view_hook_inventory_contains_only_disposable_projections": {
+      "original_assertions": 2,
+      "final_assertions": 2,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_runtime_first_send_completion_has_no_direct_view_reachback": {
+      "original_assertions": 2,
+      "final_assertions": 2,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_unmount_detaches_before_later_view_cleanup_can_fail": {
+      "original_assertions": 4,
+      "final_assertions": 4,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_detach_requires_the_exact_monotonic_attachment_generation": {
+      "original_assertions": 4,
+      "final_assertions": 4,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_late_outgoing_ensure_cannot_reclaim_a_successor_attachment": {
+      "original_assertions": 14,
+      "final_assertions": 14,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_unmount_releases_settings_claim_before_blocked_sidebar_flush": {
+      "original_assertions": 1,
+      "final_assertions": 1,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "_project_selection": {
+      "original_assertions": 0,
+      "final_assertions": 0,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_project_binding_selection_waits_runtime_owned_until_console_attaches": {
+      "original_assertions": 6,
+      "final_assertions": 6,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_project_binding_selection_remounts_after_detach_without_retaining_view": {
+      "original_assertions": 7,
+      "final_assertions": 7,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_project_binding_selection_closes_when_owning_session_closes": {
+      "original_assertions": 1,
+      "final_assertions": 1,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_project_binding_selection_fails_closed_on_app_dispose": {
+      "original_assertions": 1,
+      "final_assertions": 1,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "_project_notice_runtime": {
+      "original_assertions": 0,
+      "final_assertions": 0,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_project_dispatch_confirmation_waits_app_owned_when_detached_before_request": {
+      "original_assertions": 6,
+      "final_assertions": 6,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_project_dispatch_confirmation_does_not_retain_view_detached_during_wait": {
+      "original_assertions": 10,
+      "final_assertions": 10,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_project_dispatch_timeout_counts_only_successfully_projected_time": {
+      "original_assertions": 10,
+      "final_assertions": 10,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_project_decisions_project_one_ordered_head_for_the_active_session": {
+      "original_assertions": 17,
+      "final_assertions": 17,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_new_session_activation_dismisses_the_previous_project_decision": {
+      "original_assertions": 6,
+      "final_assertions": 6,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_direct_workspace_session_activation_rederives_the_ordered_head": {
+      "original_assertions": 9,
+      "final_assertions": 9,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_failed_modal_mount_retries_same_decision_after_consecutive_failures": {
+      "original_assertions": 12,
+      "final_assertions": 12,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_persistent_modal_mount_failure_exhausts_until_session_rederivation": {
+      "original_assertions": 12,
+      "final_assertions": 12,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "_attach_reconciliation_screen": {
+      "original_assertions": 0,
+      "final_assertions": 0,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_persistent_attach_sync_failure_has_bounded_backoff_and_resume_retry": {
+      "original_assertions": 7,
+      "final_assertions": 7,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_attach_view_start_failure_retries_without_repeating_core_reconciliation": {
+      "original_assertions": 4,
+      "final_assertions": 4,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_attach_deferred_resume_failure_retries_after_view_start_once": {
+      "original_assertions": 6,
+      "final_assertions": 6,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "_post_reconciliation_admission_screen": {
+      "original_assertions": 0,
+      "final_assertions": 0,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_idle_reconciled_view_does_not_admit_transcript_poll": {
+      "original_assertions": 1,
+      "final_assertions": 1,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_reconciled_view_keeps_each_live_poll_reason_and_one_timer": {
+      "original_assertions": 2,
+      "final_assertions": 2,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_captured_attach_timer_overlap_rearms_real_sync_worker": {
+      "original_assertions": 3,
+      "final_assertions": 3,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_legacy_alias_skips_queryable_but_detached_tray": {
+      "original_assertions": 1,
+      "final_assertions": 1,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_legacy_alias_allocation_requires_current_live_tray": {
+      "original_assertions": 4,
+      "final_assertions": 4,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_runtime_project_decision_owner_never_constructs_textual_widgets": {
+      "original_assertions": 2,
+      "final_assertions": 2,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_detach_releases_the_old_chat_screen_from_every_runtime_hook": {
+      "original_assertions": 3,
+      "final_assertions": 3,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_active_runtime_custody_does_not_retain_the_detached_chat_screen": {
+      "original_assertions": 4,
+      "final_assertions": 4,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_second_console_visit_reuses_the_runtime": {
+      "original_assertions": 31,
+      "final_assertions": 31,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_post_unmount_raw_refusal_restores_on_second_console_visit": {
+      "original_assertions": 16,
+      "final_assertions": 16,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen": {
+      "original_assertions": 4,
+      "final_assertions": 4,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_a_superseded_screen_never_detaches_the_successors_runtime": {
+      "original_assertions": 6,
+      "final_assertions": 6,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_opening_console_during_a_headless_delivery_arms_the_poll": {
+      "original_assertions": 5,
+      "final_assertions": 5,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_the_runtime_is_disposed_by_the_apps_shutdown_lifecycles": {
+      "original_assertions": 2,
+      "final_assertions": 2,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle": {
+      "original_assertions": 13,
+      "final_assertions": 13,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements": {
+      "original_assertions": 7,
+      "final_assertions": 7,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_terminal_manager_is_app_owned_unarmed_and_reads_config_replacements": {
+      "original_assertions": 9,
+      "final_assertions": 9,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_raw_cli_runtime_shutdown_is_once_and_precedes_console_shutdown": {
+      "original_assertions": 2,
+      "final_assertions": 2,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_terminal_manager_shutdown_is_shared_and_shielded_from_waiter_cancel": {
+      "original_assertions": 3,
+      "final_assertions": 3,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_app_shutdown_drains_and_finalizes_a_real_terminal_manager": {
+      "original_assertions": 5,
+      "final_assertions": 5,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_persona_buddy_is_app_owned_and_shutdown_after_console_producers": {
+      "original_assertions": 11,
+      "final_assertions": 11,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_lazy_persona_buddy_property_defers_and_ensure_constructs": {
+      "original_assertions": 7,
+      "final_assertions": 7,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_actor_pack_recovery_precedes_character_persona_surfaces": {
+      "original_assertions": 9,
+      "final_assertions": 9,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_app_fences_console_then_drains_buddy_before_profile_teardown": {
+      "original_assertions": 12,
+      "final_assertions": 12,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_clearing_agent_handoff_in_mounted_composer_persists_before_exit": {
+      "original_assertions": 6,
+      "final_assertions": 6,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_accepted_agent_chat_start_has_visible_stop_in_mounted_target": {
+      "original_assertions": 18,
+      "final_assertions": 18,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_prepared_native_start_allows_mounted_manual_send": {
+      "original_assertions": 14,
+      "final_assertions": 14,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    },
+    "test_native_acceptance_consumes_only_open_target_revision": {
+      "original_assertions": 38,
+      "final_assertions": 40,
+      "all_original_assertions_preserved": true,
+      "decorators_identical": true
+    }
+  },
+  "production_diff_empty": true
+}

@@ -3,6 +3,9 @@
 
 from datetime import UTC, datetime, timedelta
 
+# Admit import-time config before the per-test environment redirect.
+import tldw_chatbook.app  # noqa: F401
+
 import tldw_chatbook.Workspaces.environment_status as env_mod
 from tldw_chatbook.Chat.console_environment_state import (
     EnvironmentSnapshot,

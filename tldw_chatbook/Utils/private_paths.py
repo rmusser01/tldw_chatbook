@@ -756,7 +756,21 @@ def _admitted_file(function):
                 if function.__name__ == "atomic_private_write_bytes":
                     raw.mcp_sources.published(state, path)
                 return result
-            if config is not None and state.source is config:
+            if state.route == "hook_permissions":
+                selected = lexical_path(path)
+                allowed = (
+                    function.__name__ == "secure_private_directory"
+                    and selected == state.selected.parent
+                    or function.__name__ == "create_private_text"
+                    and selected
+                    == state.selected.with_name(state.selected.name + ".lock")
+                    or function.__name__ == "atomic_private_write_bytes"
+                    and selected == state.selected
+                    and state.temporary is not None
+                )
+                if not allowed:
+                    raise RuntimeError("raw_source_helper_not_supported")
+            elif config is not None and state.source is config:
                 selected = lexical_path(path)
                 allowed = (
                     function.__name__ == "secure_private_directory"
@@ -893,9 +907,9 @@ def _admitted_stream(function):
                     raise RuntimeError("raw_source_helper_not_supported")
                 raw.mcp_sources.check_destination(state, path)
                 return _MCPAppendStream(function(path, *args, **kwargs), operation)
-            if state.source is not config or lexical_path(
-                path
-            ) != (
+            if (
+                state.route != "hook_permissions" and state.source is not config
+            ) or lexical_path(path) != (
                 state.selected
                 if state.route == "config_data_lock"
                 else state.selected.with_name(state.selected.name + ".lock")
@@ -1318,7 +1332,8 @@ def atomic_private_write_bytes(
             state = raw._check(operation)
             if state.route == "config" and state.selected == selected:
                 state.config_publication = (
-                    selected, (temporary_stat.st_dev, temporary_stat.st_ino)
+                    selected,
+                    (temporary_stat.st_dev, temporary_stat.st_ino),
                 )
         if existing_stat is None:
             status = PrivatePathStatus.CREATED_PRIVATE
@@ -1433,13 +1448,20 @@ def open_private_text_append_stream(
             selected.parent.mkdir(parents=True, exist_ok=True)
             operation = _runtime_operation(selected)
             if operation is None:
-                return selected.open("a", encoding=encoding, errors=errors, newline="\n")
+                return selected.open(
+                    "a", encoding=encoding, errors=errors, newline="\n"
+                )
             fd = _native_open(
                 selected, os.O_WRONLY | os.O_APPEND | os.O_CREAT, _PRIVATE_FILE_MODE
             )
             try:
                 stream = os.fdopen(
-                    fd, "a", encoding=encoding, errors=errors, newline="\n", closefd=False
+                    fd,
+                    "a",
+                    encoding=encoding,
+                    errors=errors,
+                    newline="\n",
+                    closefd=False,
                 )
             except BaseException:
                 _native_close(fd)
@@ -1838,7 +1860,9 @@ def secure_private_directory(
                     # open. Reopen without following links and apply the same
                     # owner/type/mode checks below; existence is not trust.
                     pass
-                next_fd = _open_directory_component(current_fd, component, **open_options)
+                next_fd = _open_directory_component(
+                    current_fd, component, **open_options
+                )
             except OSError as exc:
                 current_fd, symlink_hops = _follow_trusted_symlink(
                     current_fd=current_fd,

@@ -13,7 +13,9 @@ from typing import Any, Dict
 import pytest
 
 from tldw_chatbook.Local_Ingestion import local_file_ingestion
-from tldw_chatbook.Local_Ingestion.local_file_ingestion import parse_local_file_for_ingest
+from tldw_chatbook.Local_Ingestion.local_file_ingestion import (
+    parse_local_file_for_ingest,
+)
 
 
 def _make_pdf_result(**kwargs) -> Dict[str, Any]:
@@ -123,7 +125,9 @@ def test_pdf_unimplemented_options_record_warnings(tmp_path: Path, monkeypatch) 
     source = tmp_path / "doc.pdf"
     source.write_bytes(b"%PDF-1.4 stub")
 
-    def fake_process_pdf(engine=None, page_range=None, ocr=None, extract_images=False, **kwargs):
+    def fake_process_pdf(
+        engine=None, page_range=None, ocr=None, extract_images=False, **kwargs
+    ):
         warnings = []
         if page_range is not None:
             warnings.append(f"page_range={page_range}")
@@ -369,7 +373,9 @@ def test_measured_transcription_percent_ignores_hostile_mapping() -> None:
         def __contains__(self, _key: object) -> bool:
             raise RuntimeError("hostile provider metadata")
 
-    assert local_file_ingestion._measured_transcription_percent(_HostileMapping()) is None
+    assert (
+        local_file_ingestion._measured_transcription_percent(_HostileMapping()) is None
+    )
 
 
 def test_ebook_options_are_routed_to_process_ebook(tmp_path: Path, monkeypatch) -> None:
@@ -403,11 +409,15 @@ def test_ebook_options_are_routed_to_process_ebook(tmp_path: Path, monkeypatch) 
     assert call["split_chapters"] is True
 
 
-def test_ebook_split_chapters_false_records_warning(tmp_path: Path, monkeypatch) -> None:
+def test_ebook_split_chapters_false_records_warning(
+    tmp_path: Path, monkeypatch
+) -> None:
     source = tmp_path / "book.epub"
     source.write_bytes(b"PK\x03\x04" + b"\x00" * 64)
 
-    def fake_process_ebook(method=None, split_chapters=True, include_toc=True, **kwargs):
+    def fake_process_ebook(
+        method=None, split_chapters=True, include_toc=True, **kwargs
+    ):
         warnings = []
         if not split_chapters:
             warnings.append("split_chapters=False")

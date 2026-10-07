@@ -6,12 +6,13 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from rich.text import Text
 from textual.widgets import Button, Static
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_destination_shells import (
     StaticLibraryConversationScopeService,
@@ -86,8 +87,8 @@ async def _run_library_app(app: TldwCli):
         return real_get_cli_setting(section, key, default)
 
     try:
-        with patch(
-            "tldw_chatbook.app.get_cli_setting",
+        with patch_app_global(
+            "get_cli_setting",
             side_effect=get_cli_setting_without_splash,
         ):
             async with app.run_test(size=(180, 50)) as pilot:
@@ -423,8 +424,8 @@ async def test_study_displays_library_material_context_without_changing_service_
         return real_get_cli_setting(section, key, default)
 
     try:
-        with patch(
-            "tldw_chatbook.app.get_cli_setting",
+        with patch_app_global(
+            "get_cli_setting",
             side_effect=get_cli_setting_without_splash,
         ):
             async with app.run_test() as pilot:

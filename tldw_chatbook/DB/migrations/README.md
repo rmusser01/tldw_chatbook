@@ -15,6 +15,11 @@ agent runs, prompts, and library ingest jobs — keep each step as a module-leve
 SQL constant and run it from their own migration method. No `media_*.sql` has
 ever existed here.
 
+Evals (`Evals_DB.py`, versioned by `PRAGMA user_version`) is outside those
+eight and follows the second group: its steps run from `_migrate_schema`. Its
+v5-to-v6 step drops a column from five tables only where `table_info` still
+shows it, which a static script cannot express.
+
 That is a scope statement, not a backlog item, and it is written down because
 reviewers keep reading "add `<db>_v<n>_to_v<n+1>.sql`" as repo-wide and filing
 the media DB's inline steps as a violation (twice on TASK-21126 and
@@ -55,6 +60,20 @@ packaging derivation in step 3 with it.
 5. **If it contains `CREATE INDEX`, add the index to
    `EXPECTED_CHACHANOTES_INDEXES` in `Tests/ChaChaNotesDB/test_index_census.py`.**
 6. Run `./scripts/preflight.sh`. It checks 4 and reports exactly what to paste.
+7. **Requalify the backup/restore policy for the new version.** The recovery
+   layer pins each store's current version and an exact copy of its schema, and
+   refuses to back up or restore a database that does not match
+   (`unsupported_schema_version`). For ChaChaNotes that is three places:
+   the version and catalog in `DB/recovery_core_schema.py` (capture the catalog
+   from a fresh constructor; do not edit it by hand), the stamp check in
+   `DB/recovery_operations.py`, and the one in
+   `Backup_Recovery/sqlite_validation.py`. Preflight does not check this:
+   run `Tests/Backup_Recovery/test_core_owners.py`, where
+   `test_schema_policy_matches_installed_store` fails until they agree. A store
+   that declares a restore-time migration (Evals, Prompts, agent runs) also
+   needs that step permitted by the restore sandbox's authorizer and a test
+   that migrates a real older database; the v76 step shipped without any of
+   this and Qodo, not a test run, caught it (PR #3002).
 
 ## Editing a migration that has already shipped (TASK-22225)
 

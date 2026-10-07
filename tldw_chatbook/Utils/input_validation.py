@@ -9,6 +9,7 @@ import re
 import time
 import unicodedata
 from collections.abc import Mapping
+from functools import cache
 from itertools import islice
 from typing import Annotated, Any, Literal, NoReturn, Optional, TypeVar, Union
 from urllib.parse import urlparse
@@ -21,6 +22,7 @@ from pydantic import (
     TypeAdapter,
     ValidationInfo,
     field_validator,
+    model_validator,
 )
 from pydantic import (
     ValidationError as PydanticValidationError,
@@ -28,6 +30,183 @@ from pydantic import (
 
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .reasoning_config import REASONING_HISTORY_MODES
+
+ConsoleHookEvent = Literal[
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "ApprovalRequested",
+    "Stop",
+    "SubagentStop",
+]
+CONSOLE_HOOK_TOOL_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
+CONSOLE_HOOK_DEFAULT_TIMEOUT_S = 10.0
+CONSOLE_HOOK_SWITCH_INPUT = TypeAdapter(bool, config=ConfigDict(strict=True))
+CONSOLE_HOOK_ID_INPUT = TypeAdapter(
+    Annotated[str, Field(min_length=1)], config=ConfigDict(strict=True)
+)
+CONSOLE_HOOK_ROWS_INPUT = TypeAdapter(list[object], config=ConfigDict(strict=True))
+CONSOLE_HOOK_CONTAINER_INPUT = TypeAdapter(
+    dict[str, object], config=ConfigDict(strict=True)
+)
+
+
+class ConsoleHookInput(BaseModel):
+    """Strict execution fields; unknown saved fields remain outside this projection."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True, strict=True)
+
+    event: ConsoleHookEvent
+    command: list[str] = Field(min_length=1)
+    matcher: str | None = None
+    timeout_s: float = Field(
+        default=CONSOLE_HOOK_DEFAULT_TIMEOUT_S, gt=0, allow_inf_nan=False
+    )
+
+    @field_validator("command")
+    @classmethod
+    def valid_command(cls, value: list[str]) -> list[str]:
+        """Reject empty executable names and NUL bytes.
+
+        Args:
+            value: Strictly typed nonempty argv list.
+
+        Returns:
+            The unchanged argv list.
+
+        Raises:
+            ValueError: The executable is empty or an argument contains NUL.
+        """
+        if not value[0] or any("\x00" in arg for arg in value):
+            raise ValueError(
+                "Command must be a nonempty argv list of NUL-free strings."
+            )
+        return value
+
+    @field_validator("matcher")
+    @classmethod
+    def valid_matcher(cls, value: str | None, info: ValidationInfo) -> str | None:
+        """Restrict nonempty matchers to tool events.
+
+        Args:
+            value: Optional tool-name glob.
+            info: Validated fields, including the selected event.
+
+        Returns:
+            The unchanged matcher.
+
+        Raises:
+            ValueError: The matcher is empty or belongs to a non-tool event.
+        """
+        if value is not None:
+            if info.data.get("event") not in CONSOLE_HOOK_TOOL_EVENTS:
+                raise ValueError("Matcher is only valid for PreToolUse or PostToolUse.")
+            if not value:
+                raise ValueError("Matcher must be a nonempty glob string.")
+        return value
+
+
+@cache
+def _console_new_chat_input_model() -> type[BaseModel]:
+    """Build the creation-only schema lazily, outside application startup."""
+    from pydantic_core import PydanticCustomError
+
+    from ..Agents.agent_models import CHAT_CREATE_PAYLOAD_MAX, CHAT_CREATE_TITLE_MAX
+
+    class ConsoleNewChatInput(BaseModel):
+        """Strict public fields; authority remains outside this projection."""
+
+        model_config = ConfigDict(
+            extra="ignore", frozen=True, strict=True, hide_input_in_errors=True
+        )
+
+        title: str = Field(default="", max_length=CHAT_CREATE_TITLE_MAX)
+        opening_prompt: str = Field(
+            default="", max_length=CHAT_CREATE_PAYLOAD_MAX, repr=False
+        )
+        instructions: str = Field(
+            default="", max_length=CHAT_CREATE_PAYLOAD_MAX, repr=False
+        )
+        destination: Literal["same_workspace", "casual"] = "same_workspace"
+        mode: Literal["draft", "start"] = "draft"
+        provider: str = ""
+        model: str = ""
+        preset: str = ""
+
+        @field_validator("destination", "mode", mode="before")
+        @classmethod
+        def _strict_choice_string(cls, value: object) -> str:
+            if not isinstance(value, str):
+                raise PydanticCustomError(
+                    "string_type", "Input should be a valid string"
+                )
+            return value
+
+        @field_validator("title")
+        @classmethod
+        def _trim_title(cls, value: str) -> str:
+            # Field length validation has already checked the untrimmed input.
+            return value.strip()
+
+        @model_validator(mode="after")
+        def _require_start_prompt(self) -> "ConsoleNewChatInput":
+            if self.mode == "start" and not self.opening_prompt.strip():
+                raise ValueError("start requires a nonblank opening_prompt")
+            return self
+
+    return ConsoleNewChatInput
+
+
+def validate_console_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
+    """Validate public chat creation fields without retaining supplied authority.
+
+    Args:
+        arguments: Candidate title, opening_prompt, instructions, destination,
+            mode, provider, model, and preset. Strings are required without
+            coercion. Omitted fields default to empty strings, same_workspace,
+            and draft; unknown fields are discarded.
+
+    Returns:
+        The eight validated fields. Title is trimmed after its length check;
+        prompts, instructions, and routing strings retain their literal bytes.
+
+    Raises:
+        ValueError: With an input-free invalid_args or payload_too_large category
+            for invalid types, limits, choices, or a blank start prompt.
+    """
+    from ..Agents.agent_models import CHAT_CREATE_PAYLOAD_MAX, CHAT_CREATE_TITLE_MAX
+
+    try:
+        return _console_new_chat_input_model().model_validate(arguments).model_dump()
+    except PydanticValidationError as exc:
+        errors = exc.errors(
+            include_input=False, include_context=False, include_url=False
+        )
+        # Preserve the original type-first contract even when an earlier field
+        # also exceeds a limit. Only known schema locations and error types
+        # participate; raw inputs, messages, and exception context never do.
+        for error in errors:
+            if error["type"] == "string_type":
+                raise ValueError(
+                    f"invalid_args: {error['loc'][0]} must be a string"
+                ) from None
+        for error in errors:
+            if error["type"] == "string_too_long":
+                if error["loc"] == ("title",):
+                    raise ValueError(
+                        f"payload_too_large: title exceeds {CHAT_CREATE_TITLE_MAX} characters"
+                    ) from None
+                raise ValueError(
+                    "payload_too_large: prompt/instructions exceed "
+                    f"{CHAT_CREATE_PAYLOAD_MAX} characters"
+                ) from None
+        for field in ("destination", "mode"):
+            if any(error["loc"] == (field,) for error in errors):
+                raise ValueError(f"invalid_args: {field}") from None
+        raise ValueError(
+            "invalid_args: start requires a nonblank opening_prompt"
+        ) from None
+
 
 _BATCH_TRANSCRIPTION_PROVIDER = TypeAdapter(
     Literal["default", "faster-whisper", "parakeet-onnx", "transcribe-cpp"]
@@ -386,6 +565,31 @@ class MCPToolResultInput(BaseModel):
 
     is_error: bool = Field(default=False, alias="isError")
     content: Any = Field(default_factory=list)
+
+
+class MCPProgressInput(BaseModel):
+    """Strict optional progress metadata; integer counters retain precision."""
+
+    model_config = ConfigDict(
+        extra="ignore", frozen=True, strict=True, allow_inf_nan=False
+    )
+
+    progress_token: str = Field(alias="progressToken")
+    progress: int | float
+    total: int | float | None = None
+    message: str = ""
+
+    @field_validator("progress", "total")
+    @classmethod
+    def _finite_number(cls, value: float | None) -> float | None:
+        if value is not None:
+            try:
+                finite = math.isfinite(value)
+            except OverflowError:
+                raise ValueError("MCP progress must be finite") from None
+            if not finite:
+                raise ValueError("MCP progress must be finite")
+        return value
 
 
 class ToolArgumentsInput(BaseModel):
@@ -1952,3 +2156,35 @@ def escape_markup(value: object) -> str:
         The same text with every ``[`` backslash-escaped.
     """
     return str(value).replace("[", "\\[")
+
+
+MAX_APPROVAL_DENIAL_REASON_CHARS = 1000
+_DENIAL_REASON_TRUNCATION = " [reason truncated]"
+
+
+def normalize_approval_denial_reason(value: object) -> str:
+    """Bound untrusted denial text and remove terminal and directional controls.
+
+    Args:
+        value: Optional user text; other input shapes carry no reason.
+
+    Returns:
+        At most 1,000 characters, with an explicit note when text was truncated.
+    """
+    if not isinstance(value, str):
+        return ""
+    # Bound work before inspecting individual characters of an external payload.
+    truncated = len(value) > MAX_APPROVAL_DENIAL_REASON_CHARS
+    text = sanitize_string(value, MAX_APPROVAL_DENIAL_REASON_CHARS)
+    text = "".join(
+        character
+        for character in text
+        if character in "\n\t"
+        or unicodedata.category(character) not in {"Cc", "Cf", "Cs"}
+    ).strip()
+    if truncated and text:
+        text = (
+            text[: MAX_APPROVAL_DENIAL_REASON_CHARS - len(_DENIAL_REASON_TRUNCATION)]
+            + _DENIAL_REASON_TRUNCATION
+        )
+    return text

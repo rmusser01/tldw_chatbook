@@ -203,8 +203,14 @@ track is the real answer for shell execution.
 
 from __future__ import annotations
 
+import os
+import threading
 from pathlib import Path
 from typing import Iterable, Literal, NamedTuple
+
+#: Resolution failures seen on this thread; ``_raw_inputs`` never memoizes a
+#: snapshot built while one occurred (it would keep a gap in the deny list).
+_failures = threading.local()
 
 
 def _debug(message: str) -> None:
@@ -222,11 +228,13 @@ def _debug(message: str) -> None:
     raising would turn one unresolvable directory entry into a failed
     ``fs_list`` instead of a skipped entry.
     """
+    _failures.count = getattr(_failures, "count", 0) + 1
     try:
         from loguru import logger
     except ImportError:
         return
     logger.debug(message)
+
 
 #: Directory prefixes that are refused along with everything beneath them.
 #: The LOCATION rule (see the module docstring): used where the directory
@@ -570,7 +578,9 @@ def _db_sidecar_paths(db_path: Path) -> tuple[Path, ...]:
         equality: appending is not the same as matching anything that
         merely starts with the DB's name.
     """
-    return tuple(db_path.with_name(db_path.name + suffix) for suffix in _DB_SIDECAR_SUFFIXES)
+    return tuple(
+        db_path.with_name(db_path.name + suffix) for suffix in _DB_SIDECAR_SUFFIXES
+    )
 
 
 class SensitivePathContext(NamedTuple):
@@ -586,7 +596,7 @@ class SensitivePathContext(NamedTuple):
     call re-resolve the set from scratch.
 
     Deliberately not cached at module or process scope -- see
-    ``resolve_sensitive_context``.
+    ``resolve_sensitive_context`` (only its raw inputs are memoized).
     """
 
     files: tuple[Path, ...]
@@ -607,17 +617,118 @@ class SensitivePathContext(NamedTuple):
     direct_child_denied_dirs: tuple[Path, ...]
 
 
+#: PERF-07 (TASK-33266; ADR-126 amendment D2): the raw, config-derived inputs
+#: of ``resolve_sensitive_context`` -- ``(key, inputs)`` or None, guarded by the
+#: lock. Every path in them is still resolved on each call.
+_RAW_INPUTS_MEMO: tuple | None = None
+_RAW_INPUTS_LOCK = threading.Lock()
+
+
+def _raw_inputs() -> tuple:
+    """Return the unresolved sensitive paths, memoized on the config and data dir.
+
+    The key is the config cache object (by identity) and its generation, the
+    effective config path, the user data directory -- itself re-verified on
+    every call by ``config.get_user_data_dir`` -- the whole environment,
+    since accessors read overrides such as ``RAG_PERSIST_DIR`` that outrank
+    config, and the working directory a relative custom database path is
+    resolved against. So a config reload or write, any environment change, a
+    moved data directory or a directory change is observed on the very next
+    call. A snapshot built while
+    any accessor failed is never kept: it would carry a gap in the deny list.
+
+    Returns:
+        ``(user_data_dir, single_files, skill_trust_dir, db_paths,
+        container_dirs)``, unresolved.
+    """
+    global _RAW_INPUTS_MEMO
+    user_data_dir, config_path, key = _raw_inputs_key()
+    with _RAW_INPUTS_LOCK:
+        memo = _RAW_INPUTS_MEMO
+    if memo is not None and _same_key(memo[0], key):
+        return memo[1]
+    failures = getattr(_failures, "count", 0)
+    inputs = (
+        user_data_dir,
+        _sensitive_single_file_paths(),
+        _sensitive_skill_trust_dir(),
+        _sensitive_db_paths(),
+        _direct_child_rule_container_dirs(),
+    )
+    # The accessors read the live config and environment, so inputs built
+    # while either moved describe some other key; keeping them could serve a
+    # deny list with a gap once the override returns to this key's value.
+    if (
+        user_data_dir is not None
+        and config_path is not None
+        and getattr(_failures, "count", 0) == failures
+        and _same_key(key, _raw_inputs_key()[2])
+    ):
+        with _RAW_INPUTS_LOCK:
+            _RAW_INPUTS_MEMO = (key, inputs)
+    return inputs
+
+
+def _raw_inputs_key() -> tuple:
+    """Read what the raw inputs depend on, as ``_raw_inputs``' memo key.
+
+    Returns:
+        ``(user_data_dir, config_path, key)``; either of the first two is
+        ``None`` when it could not be resolved, and such a key is not memoized.
+    """
+    from .. import config as _config
+
+    try:
+        user_data_dir = _config.get_user_data_dir()
+    except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
+        _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
+        user_data_dir = None
+    try:
+        config_path = str(_config._get_effective_config_path())
+        # A relative custom database path is made absolute against it.
+        cwd = os.getcwd()
+    except Exception:  # noqa: BLE001 - an unkeyable call is simply not memoized
+        config_path = cwd = None
+    key = (
+        _config._CONFIG_CACHE,
+        _config._CONFIG_GENERATION,
+        _config._CONFIG_CACHE_SOURCE,
+        config_path,
+        str(user_data_dir),
+        os.environ.copy(),
+        cwd,
+    )
+    return user_data_dir, config_path, key
+
+
+def _same_key(left: tuple, right: tuple) -> bool:
+    """Compare two memo keys: the config cache by identity, the rest by value.
+
+    Args:
+        left: A key from ``_raw_inputs_key``.
+        right: Another key from ``_raw_inputs_key``.
+
+    Returns:
+        True when both describe the same config object, generation, source,
+        paths and environment.
+    """
+    return left[0] is right[0] and left[1:] == right[1:]
+
+
 def resolve_sensitive_context() -> SensitivePathContext:
     """Resolve the full sensitive-path set once, for reuse across many checks.
 
     Call this ONCE per tool invocation and thread the result through to
     every ``is_sensitive_path``/``is_within`` call that invocation makes.
-    Do NOT cache the return value at module or process scope: the whole
-    point of the per-call ``_sensitive_db_paths()`` resolution it wraps is
-    to observe a config change (e.g. the test suite swapping
-    ``TLDW_CONFIG_PATH`` between cases) on the very next call rather than
-    serving a stale answer. A single invocation resolving this once is
-    "per call"; a global cache would not be.
+    Do NOT cache the returned context at module or process scope. Its paths
+    are resolved (symlinks followed) on every call, so a filesystem change
+    is seen at once. PERF-07 memoizes only the raw, config-derived inputs
+    (``_raw_inputs``), keyed on the config cache identity, generation and
+    source, the effective config path, the re-verified user data directory,
+    the whole environment and the working directory, so a config change (e.g.
+    the test suite swapping ``TLDW_CONFIG_PATH`` between cases), an override
+    such as ``RAG_PERSIST_DIR`` or a directory change is observed on the very
+    next call rather than serving a stale answer.
 
     Returns:
         A ``SensitivePathContext`` snapshotting the currently configured
@@ -625,22 +736,13 @@ def resolve_sensitive_context() -> SensitivePathContext:
         directory (entries that failed to resolve are dropped; the user
         data directory is ``None`` if it could not be resolved).
     """
-    from .. import config as _config
-
-    try:
-        user_data_dir = _resolved(str(_config.get_user_data_dir()))
-    except Exception as exc:  # noqa: BLE001 - defensive, additive coverage only
-        _debug(f"sensitive_paths: could not resolve user data dir: {exc}")
-        user_data_dir = None
-
-    skill_trust_dir = _sensitive_skill_trust_dir()
+    raw_user_dir, single_files, skill_trust_dir, db_paths, containers = _raw_inputs()
+    user_data_dir = _resolved(str(raw_user_dir)) if raw_user_dir is not None else None
     dynamic_dirs = (skill_trust_dir,) if skill_trust_dir is not None else ()
 
     return SensitivePathContext(
         files=tuple(
-            p
-            for p in (_resolved(str(raw)) for raw in _sensitive_single_file_paths())
-            if p is not None
+            p for p in (_resolved(str(raw)) for raw in single_files) if p is not None
         ),
         dirs=tuple(
             p
@@ -648,17 +750,11 @@ def resolve_sensitive_context() -> SensitivePathContext:
             if p is not None
         ),
         db_paths=tuple(
-            p
-            for p in (_resolved(str(raw)) for raw in _sensitive_db_paths())
-            if p is not None
+            p for p in (_resolved(str(raw)) for raw in db_paths) if p is not None
         ),
         user_data_dir=user_data_dir,
         direct_child_denied_dirs=tuple(
-            p
-            for p in (
-                _resolved(str(raw)) for raw in _direct_child_rule_container_dirs()
-            )
-            if p is not None
+            p for p in (_resolved(str(raw)) for raw in containers) if p is not None
         ),
     )
 

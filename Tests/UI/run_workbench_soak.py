@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from Tests.app_module_patches import patch_app_global
 from Tests.UI.app_factory import _build_test_app  # noqa: E402
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen  # noqa: E402
 from tldw_chatbook.Utils.ui_responsiveness import (  # noqa: E402
@@ -98,7 +99,7 @@ async def _run_soak(
         return default
 
     with (
-        patch("tldw_chatbook.app.get_cli_setting", side_effect=fake_cli_setting),
+        patch_app_global("get_cli_setting", side_effect=fake_cli_setting),
         patch(
             "tldw_chatbook.UI.Screens.chat_screen.save_setting_to_cli_config",
             return_value=True,

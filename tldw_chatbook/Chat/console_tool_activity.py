@@ -31,6 +31,7 @@ class ConsoleToolActivity:
         self.store = store
         self.session_id = session_id
         self._rows: dict[str, tuple[str, ConsoleActivityPresentation]] = {}
+        self._proposal_indices: dict[str, int] = {}
         self._lock = threading.RLock()
         self._closed = False
 
@@ -71,6 +72,19 @@ class ConsoleToolActivity:
                 except KeyError:
                     return
                 self._rows[step.call_id] = (marker.id, presentation)
+                self._proposal_indices[step.call_id] = step.index
+            elif step.kind == "tool_output" and (
+                prior is not None
+                and prior[1].status == "running"
+                and step.source_step_index == self._proposal_indices.get(step.call_id)
+            ):
+                from tldw_chatbook.Agents.tool_output import MAX_TOOL_OUTPUT_CHARS
+
+                self._update(
+                    step.call_id,
+                    "running",
+                    result_preview=step.result[:MAX_TOOL_OUTPUT_CHARS],
+                )
             elif step.kind == "tool_execution_started":
                 self._update(
                     step.call_id, "running", started_at_monotonic=time.monotonic()
@@ -103,6 +117,7 @@ class ConsoleToolActivity:
     def take(self, call_id: str) -> tuple[str, ConsoleActivityPresentation] | None:
         """Transfer a shell marker to its existing process-lifecycle owner."""
         with self._lock:
+            self._proposal_indices.pop(call_id, None)
             return self._rows.pop(call_id, None)
 
     def complete(
@@ -152,6 +167,15 @@ class ConsoleToolActivity:
                     activity_presentation=final,
                     record_trajectory=record_trajectory,
                 )
+                if status in {"timed_out", "stopped"} and old.result_preview:
+                    # Capture above uses only the final result. Retained partial
+                    # text is a second, explicitly session-only display update.
+                    self.store.update_tool_marker(
+                        self.session_id,
+                        marker_id,
+                        tool_output_full=f"{result}\n\nPartial output:\n{old.result_preview}",
+                        record_trajectory=False,
+                    )
             except KeyError:
                 pass
             self._rows[step.call_id] = (marker_id, final)
@@ -165,7 +189,14 @@ class ConsoleToolActivity:
                     self._update(
                         call_id,
                         "stopped" if cancelled else "failed",
-                        result_preview="Run ended before a result was received.",
+                        result_preview=(
+                            "Run ended before a result was received."
+                            + (
+                                "\nPartial output:\n" + old.result_preview
+                                if old.result_preview
+                                else ""
+                            )
+                        ),
                         elapsed_seconds=(
                             max(0.0, time.monotonic() - old.started_at_monotonic)
                             if old.started_at_monotonic is not None
@@ -175,3 +206,4 @@ class ConsoleToolActivity:
                     )
             self._closed = True
             self._rows.clear()
+            self._proposal_indices.clear()

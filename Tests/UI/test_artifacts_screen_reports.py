@@ -32,8 +32,10 @@ def _seed_report(app, *, status: str = "complete") -> int:
     watchlist_id = int(WatchlistBundleService(db).create("Daily Brief")["id"])
     briefing_id = db.insert_briefing(watchlist_id)
     db.update_briefing(
-        briefing_id, status=status,
-        body_markdown=_SEED_BODY, item_count=1,
+        briefing_id,
+        status=status,
+        body_markdown=_SEED_BODY,
+        item_count=1,
     )
     return briefing_id
 
@@ -127,7 +129,9 @@ async def test_audio_row_shows_play_button():
     briefing_id = _seed_report(app)
     db: SubscriptionsDB = app.subscriptions_db
     script_id = db.insert_briefing_script(
-        briefing_id, preset_id=None, preset_name="Daily Brief",
+        briefing_id,
+        preset_id=None,
+        preset_name="Daily Brief",
         roster_snapshot_json="[]",
     )
     db.update_briefing_script(script_id, status="complete", turns_json="[]")
@@ -135,10 +139,15 @@ async def test_audio_row_shows_play_button():
     # A lexically-safe path: under the real briefing_audio_dir the guard passes
     # without touching disk (the play handler itself checks existence).
     from tldw_chatbook.Subscriptions.briefing_audio import briefing_audio_dir
+
     db.update_briefing_audio(
-        audio_id, status="complete",
-        file_path=str(briefing_audio_dir() / f"script-{script_id}-audio-{audio_id}.wav"),
-        duration_seconds=1.0, turn_count=1,
+        audio_id,
+        status="complete",
+        file_path=str(
+            briefing_audio_dir() / f"script-{script_id}-audio-{audio_id}.wav"
+        ),
+        duration_seconds=1.0,
+        turn_count=1,
     )
     async with _open_artifacts(app) as (screen, pilot):
         screen._start_daily_reports_refresh()
@@ -162,6 +171,7 @@ async def test_demo_cta_starts_the_detached_demo_task():
 
         def run_demo_detached(self):
             self.started += 1
+
             # Match the real contract: run_demo_detached returns an
             # asyncio.Task (or None), which the screen attaches a completion
             # callback to (Qodo #5). A bare object() would not have one.
@@ -249,8 +259,10 @@ async def test_successful_retry_refreshes_rows_and_drops_cta():
         def run_demo_detached(self):
             async def _run():
                 db.update_briefing(
-                    fail_id, status="complete",
-                    body_markdown=_SEED_BODY, item_count=1,
+                    fail_id,
+                    status="complete",
+                    body_markdown=_SEED_BODY,
+                    item_count=1,
                 )
                 return {"status": "ok"}
 
@@ -303,8 +315,12 @@ async def test_report_preview_header_uses_formatted_timestamp():
     async with _open_artifacts(app) as (screen, pilot):
         raw = "2026-09-05T23:10:20.123456+00:00"
         screen._previewed_report = {
-            "id": 1, "watchlist_name": "Daily Brief", "watchlist_id": 1,
-            "status": "complete", "created_at": raw, "item_count": 1,
+            "id": 1,
+            "watchlist_name": "Daily Brief",
+            "watchlist_id": 1,
+            "status": "complete",
+            "created_at": raw,
+            "item_count": 1,
             "body_markdown": "## Brief\n\nbody",
         }
         console = Console(width=200)
@@ -484,18 +500,20 @@ def _seed_audio_report(app, *, file_exists: bool) -> tuple[int, Path]:
     briefing_id = _seed_report(app)
     db: SubscriptionsDB = app.subscriptions_db
     script_id = db.insert_briefing_script(
-        briefing_id, preset_id=None, preset_name="Daily Brief",
+        briefing_id,
+        preset_id=None,
+        preset_name="Daily Brief",
         roster_snapshot_json="[]",
     )
     db.update_briefing_script(script_id, status="complete", turns_json="[]")
     audio_id = db.create_briefing_audio(script_id, voice_snapshot_json="[]")
-    audio_path = (
-        briefing_audio_dir() / f"script-{script_id}-audio-{audio_id}.wav"
-    )
+    audio_path = briefing_audio_dir() / f"script-{script_id}-audio-{audio_id}.wav"
     db.update_briefing_audio(
-        audio_id, status="complete",
+        audio_id,
+        status="complete",
         file_path=str(audio_path),
-        duration_seconds=1.0, turn_count=1,
+        duration_seconds=1.0,
+        turn_count=1,
     )
     if file_exists:
         audio_path.parent.mkdir(parents=True, exist_ok=True)
@@ -570,8 +588,7 @@ async def test_kept_badge_is_exact_per_row_not_page_bound(tmp_path):
         screen._start_daily_reports_refresh()
         await _wait_for_rows(screen, pilot)
         assert "· kept" in _row_label(screen, kept_id), (
-            "the kept row must show the badge however many newer "
-            "briefings sit above it"
+            "the kept row must show the badge however many newer briefings sit above it"
         )
 
 

@@ -1150,6 +1150,7 @@ async def test_control_plane_service_routes_local_governance_section_and_actions
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_control_plane_service_routes_local_inventory_runtime_actions(tmp_path):
     from tldw_chatbook.MCP.unified_control_plane_service import (
         UnifiedMCPControlPlaneService,

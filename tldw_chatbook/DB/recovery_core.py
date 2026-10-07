@@ -44,7 +44,11 @@ class _CoreAdapter:
                 status = "unavailable"
                 dependent_owners = ()
             else:
-                with closing(connect_private_sqlite("recovery.core.chachanotes", path, read_only=True)) as connection:
+                with closing(
+                    connect_private_sqlite(
+                        "recovery.core.chachanotes", path, read_only=True
+                    )
+                ) as connection:
                     optional_groups = {
                         "notes.file_notes": "SELECT 1 FROM notes WHERE file_path_on_disk IS NOT NULL OR sync_root_folder IS NOT NULL LIMIT 1",
                         "persona.assets": "SELECT 1 FROM persona_visual_assets LIMIT 1",
@@ -52,8 +56,14 @@ class _CoreAdapter:
                         "persona.visual_identity_builtin": "SELECT 1 FROM visual_identity_assets a JOIN visual_identity_pack_versions v ON a.pack_version_id=v.id JOIN visual_identity_packs p ON v.pack_id=p.id WHERE p.source_kind = 'builtin' LIMIT 1",
                         "chat.dictionaries": "SELECT 1 FROM chat_dictionaries WHERE file_path IS NOT NULL LIMIT 1",
                     }
-                    absent = {owner for owner, query in optional_groups.items() if connection.execute(query).fetchone() is None}
-                    dependent_owners = tuple(owner for owner in dependent_owners if owner not in absent)
+                    absent = {
+                        owner
+                        for owner, query in optional_groups.items()
+                        if connection.execute(query).fetchone() is None
+                    }
+                    dependent_owners = tuple(
+                        owner for owner in dependent_owners if owner not in absent
+                    )
         elif self.owner_id == "db.library_collections" and status == "included":
             from .private_sqlite import connect_private_sqlite
 
@@ -104,7 +114,17 @@ class _CoreAdapter:
                         owner,
                         ""
                         if owner
-                        in ("config", "notes.file_notes", "notes.sync_bindings", "chat.attachments", "chat.dictionaries", "persona.assets", "persona.visual_identity", "persona.visual_identity_builtin", "skills")
+                        in (
+                            "config",
+                            "notes.file_notes",
+                            "notes.sync_bindings",
+                            "chat.attachments",
+                            "chat.dictionaries",
+                            "persona.assets",
+                            "persona.visual_identity",
+                            "persona.visual_identity_builtin",
+                            "skills",
+                        )
                         or owner.startswith("db.")
                         else "unresolved",
                     )
@@ -189,8 +209,12 @@ class _CoreAdapter:
                 metadata = VideoGenerationMetadata.from_json(encoded)
                 if metadata is None:
                     raise ValueError("temporary_reference_invalid")
-                relative = video_relative_path(message, metadata.name, metadata.container)
-                references.append((message, metadata.name, "video/" + relative.suffix[1:]))
+                relative = video_relative_path(
+                    message, metadata.name, metadata.container
+                )
+                references.append(
+                    (message, metadata.name, "video/" + relative.suffix[1:])
+                )
         return tuple(references)
 
     def capture(self, item: StorageItem, destination: Path, cancel: Event) -> None:
@@ -244,7 +268,10 @@ class _CoreAdapter:
                     )
                 )
                 policy = self.schema_policy()
-                if not any(actual == sql for _, sql in policy.schema_sql):
+                matched_versions = tuple(
+                    version for version, sql in policy.schema_sql if actual == sql
+                )
+                if not matched_versions:
                     return ("unsupported_schema",)
                 version_sql = (
                     "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
@@ -253,9 +280,11 @@ class _CoreAdapter:
                     # owner reads the latest stamp after validating the schema.
                     else "SELECT MAX(version) FROM schema_version"
                 )
+                versions = tuple(row[0] for row in connection.execute(version_sql))
                 if (
-                    tuple(row[0] for row in connection.execute(version_sql))
-                    != policy.versions
+                    len(versions) != 1
+                    or versions[0] not in policy.versions
+                    or versions[0] not in matched_versions
                 ):
                     return ("unsupported_schema_version",)
                 with _canvas_schema_access(connection, actual, restrictions):
@@ -432,14 +461,46 @@ class _CoreAdapter:
     def schema_policy(self) -> SchemaPolicy | None:
         from .recovery_core_schema import (
             CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+            CHACHANOTES_V75_SCHEMA,
+            CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
+            CHACHANOTES_V76_SHIPPED_SCHEMAS,
+            CHACHANOTES_V76_NATIVE_SCHEMAS,
+            CHACHANOTES_NATIVE_V76_TO_V77_SQL,
+            CHACHANOTES_V77_SCHEMAS,
+            CHACHANOTES_V78_SCHEMAS,
+            CHACHANOTES_FLEET_V77_TO_V78_SQL,
             CORE_SCHEMAS,
+            PROMPTS_V4_SCHEMA,
+            PROMPTS_V4_TO_V5_SQL,
         )
 
         _, version, sql = next(row for row in CORE_SCHEMAS if row[0] == self.owner_id)
         schemas = ((version, sql),)
+        versions = (version,)
+        migrations = ()
         if self.owner_id == "db.chachanotes.primary":
-            schemas += ((version, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA),)
-        return SchemaPolicy(self.owner_id, (version,), schemas, ())
+            schemas += (
+                (version, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA),
+                (75, CHACHANOTES_V75_SCHEMA),
+                (75, CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA),
+            )
+            schemas += tuple(
+                (76, schema)
+                for schema in CHACHANOTES_V76_SHIPPED_SCHEMAS
+                + CHACHANOTES_V76_NATIVE_SCHEMAS
+            )
+            schemas += tuple((77, schema) for schema in CHACHANOTES_V77_SCHEMAS)
+            schemas += tuple((78, schema) for schema in CHACHANOTES_V78_SCHEMAS[2:])
+            versions += (77, 76, 75)
+            migrations = (
+                (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
+                (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
+            )
+        elif self.owner_id == "db.prompts.primary":
+            schemas += ((4, PROMPTS_V4_SCHEMA),)
+            versions += (4,)
+            migrations = ((4, 5, PROMPTS_V4_TO_V5_SQL),)
+        return SchemaPolicy(self.owner_id, versions, schemas, migrations)
 
 
 def core_adapters() -> tuple[OwnerAdapter, ...]:

@@ -84,6 +84,12 @@ blocked with: "Console send blocked: <model> can't accept images. Remove
 the attachment, switch to a vision model, or mark this model as
 vision-capable under [model_capabilities.models] in config.toml."
 
+An image already in the conversation is re-sent with every later turn. If the
+provider rejects it, the failure row suggests switching to a vision-capable
+model, or typing `/rewind` and restoring to the prompt that added the image —
+the later turns stay available as a branch. It never suggests Delete, which
+would remove every turn after that message.
+
 ### Images in replies and messages
 
 Select a message that carries an image (click it, or `j`/`k`) and use its
@@ -106,6 +112,11 @@ browsed variant the message's canonical image. If nothing is set up you
 get: "No image generation backend configured. Set
 [image_generation].default_backend, or use /generate-image :backend
 <prompt>."
+
+If a batch fails, the command comes back into the composer so **Enter**
+runs it again. Anything you typed after sending it stays in the composer;
+if the composer has changed since (new text, another chat), your text is
+left alone and the failure message shows the command to send again.
 
 ### Voice dictation — the Mic button
 

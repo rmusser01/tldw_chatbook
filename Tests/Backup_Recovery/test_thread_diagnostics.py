@@ -11,6 +11,62 @@ import pytest
 from Tests.Backup_Recovery.thread_diagnostics import _frames, observe_threads
 
 
+@pytest.mark.parametrize("writer", ["threads", "receipt"])
+def test_interrupted_json_write_preserves_last_complete_record(
+    tmp_path, monkeypatch, writer
+):
+    import os
+    from pathlib import Path
+
+    from Tests.Backup_Recovery import run_platform_product, thread_diagnostics
+
+    path = tmp_path / "capture--default--1.json"
+    previous = "[[]]"
+    path.write_text(previous)
+    before = set(tmp_path.iterdir())
+    path_open, fdopen = Path.open, os.fdopen
+    observed = []
+
+    class InterruptedOutput:
+        def __init__(self, output):
+            self.output = output
+
+        def __enter__(self):
+            self.output.__enter__()
+            return self
+
+        def __exit__(self, *arguments):
+            return self.output.__exit__(*arguments)
+
+        def write(self, value):
+            self.output.write(value[:1])
+            self.output.flush()
+            observed.append(path.read_text())
+            raise OSError("interrupted_diagnostic_write")
+
+    def open_path(selected, mode="r", *arguments, **options):
+        output = path_open(selected, mode, *arguments, **options)
+        return InterruptedOutput(output) if "w" in mode else output
+
+    monkeypatch.setattr(Path, "open", open_path)
+    monkeypatch.setattr(
+        os,
+        "fdopen",
+        lambda descriptor, *args, **kwargs: InterruptedOutput(
+            fdopen(descriptor, *args, **kwargs)
+        ),
+    )
+    write = (
+        thread_diagnostics._write
+        if writer == "threads"
+        else run_platform_product._write_json
+    )
+    with pytest.raises(OSError, match="interrupted_diagnostic_write"):
+        write(path, [[{"frames": []}]])
+    assert observed == [previous] and path.read_text() == previous
+    assert set(tmp_path.iterdir()) == before
+
+
 @pytest.mark.parametrize("via_stack", [False, True])
 @pytest.mark.parametrize("cancelled", [False, True])
 def test_observer_cleanup_preserves_active_failure(via_stack, cancelled):

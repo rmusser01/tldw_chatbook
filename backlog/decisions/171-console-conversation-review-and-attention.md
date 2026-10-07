@@ -3,6 +3,7 @@
 Date: 2026-09-18
 
 Status: Accepted — written design approved; pre-implementation review corrections recorded 2026-09-18.
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Status: Proposed — design approved in conversation; written specification awaiting user review.
 
 Related tasks:

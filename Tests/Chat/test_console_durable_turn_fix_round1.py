@@ -16,6 +16,7 @@ from Tests.Chat.test_console_automatic_library_preparation import (
     _StreamingFence,
     _capture_staged_evidence,
     _real_retrieval_controller_for_launch,
+    _retrieval_evidence_owner,
     _staged_evidence_launch,
 )
 from Tests.Chat.test_console_durable_turn_acceptance import (
@@ -53,6 +54,39 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
+
+@pytest.fixture(autouse=True)
+def owned_durable_controllers(request, monkeypatch, owned_console_databases):
+    """Retire only this module's captured test owners after their work settles.
+
+    Args:
+        request: Supplies this importing module's helper bindings.
+        monkeypatch: Restores the local wrappers after teardown.
+        owned_console_databases: Retires only explicitly registered owners.
+
+    Yields:
+        Registration for a directly constructed test database and controller.
+    """
+    register = owned_console_databases
+    build_controller = _controller
+    build_store = _ready_store
+
+    def controller_owner(*args, **kwargs):
+        result = build_controller(*args, **kwargs)
+        register(result[0], result[2])
+        return result
+
+    def store_owner(*args, **kwargs):
+        result = build_store(*args, **kwargs)
+        register(result[0])
+        return result
+
+    monkeypatch.setattr(request.module, "_controller", controller_owner)
+    monkeypatch.setattr(request.module, "_ready_store", store_owner)
+    yield register
+
 
 class _DbNoneWrapper:
     """Delegate a real adapter while reporting no raw DB handle."""
@@ -73,6 +107,56 @@ class _DbNoneAtomicWrapper(_DbNoneWrapper):
 
     def commit_durable_turn(self, **kwargs: Any):
         return self._delegate.commit_durable_turn(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_owner_retirement_keeps_failed_and_foreign_databases_open(
+    tmp_path, monkeypatch
+) -> None:
+    """A failed drain stays loud and cannot close its file or foreign owners."""
+    from Tests.Chat.conftest import owned_console_databases
+
+    healthy = CharactersRAGDB(tmp_path / "healthy.sqlite", client_id="retirement")
+    failed = CharactersRAGDB(tmp_path / "failed.sqlite", client_id="retirement")
+    foreign = CharactersRAGDB(tmp_path / "foreign.sqlite", client_id="retirement")
+    healthy_controller = ConsoleChatController(
+        store=ConsoleChatStore(persistence=ChatPersistenceService(healthy)),
+        provider_gateway=object(),
+    )
+    failed_controller = ConsoleChatController(
+        store=ConsoleChatStore(persistence=ChatPersistenceService(failed)),
+        provider_gateway=object(),
+    )
+    original_shutdown = failed_controller.shutdown
+    retirement = owned_console_databases.__wrapped__()
+
+    async def refuse_shutdown():
+        raise RuntimeError("drain failed")
+
+    try:
+        register = await anext(retirement)
+        register(healthy, healthy_controller)
+        register(failed, failed_controller)
+        monkeypatch.setattr(failed_controller, "shutdown", refuse_shutdown)
+
+        with pytest.raises(BaseExceptionGroup) as captured:
+            await retirement.aclose()
+
+        assert len(captured.value.exceptions) == 1
+        assert isinstance(captured.value.exceptions[0], RuntimeError)
+        assert str(captured.value.exceptions[0]) == "drain failed"
+        assert healthy.registered_connection_count() == 0
+        assert failed.registered_connection_count() > 0
+        assert foreign.registered_connection_count() > 0
+        assert failed.get_connection().execute("SELECT 1").fetchone()[0] == 1
+        assert foreign.get_connection().execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        await retirement.aclose()
+        await original_shutdown()
+        await healthy_controller.shutdown()
+        for database in (healthy, failed, foreign):
+            with database.quiesce_connections(timeout_seconds=5):
+                pass
 
 
 @pytest.mark.asyncio
@@ -312,6 +396,7 @@ def test_durable_queue_ack_cannot_settle_a_different_claim() -> None:
 async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    owned_durable_controllers,
 ) -> None:
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("private staged title"),
@@ -346,9 +431,12 @@ async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        rag_capture_provider=retrieval._capture_console_staged_rag,
-        staged_evidence_provider=lambda _session_id: state["launch"] is not None,
+        **_retrieval_evidence_owner(
+            retrieval,
+            staged_evidence_provider=lambda _session_id: state["launch"] is not None,
+        ),
     )
+    owned_durable_controllers(db, controller)
 
     result = await controller.submit_draft("explicit evidence", session_id=session.id)
 
@@ -368,6 +456,7 @@ async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(1800)
 async def test_success_cleanup_drops_content_and_bounds_minimal_tombstones(
     tmp_path,
 ) -> None:
@@ -448,6 +537,7 @@ async def test_postcommit_settlement_rollback_uses_issued_generation_token(
     issued: dict[str, int | str | None] = {}
 
     async def fail_after_token(*_args: Any, **kwargs: Any):
+        await kwargs["before_provider_dispatch"]()
         assistant_id = str(kwargs["assistant_message_id"])
         issued["assistant_id"] = assistant_id
         issued["replacement"] = store.begin_generation_attempt(assistant_id)
@@ -598,6 +688,7 @@ def _install_real_effect_failure(
 
         async def stream(*args: Any, **kwargs: Any):
             if should_fail():
+                await kwargs["before_provider_dispatch"]()
                 raise RuntimeError("injected provider_entry")
             result = await original_stream(*args, **kwargs)
             counts["successes"] += 1

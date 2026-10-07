@@ -661,8 +661,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
         # A disabled action with NO reason still earns nothing -- that is a
         # silent dead control, which the original rule was right about.
         explains_itself = any(
-            not action.enabled and action.disabled_reason
-            for action in group_actions
+            not action.enabled and action.disabled_reason for action in group_actions
         )
         if (
             not group_rows
@@ -683,8 +682,7 @@ class ConsoleRunInspector(RecomposeCaptureGuard, Vertical):
                     entry.row.text,
                     id=entry.widget_id,
                     classes=(
-                        "console-inspector-row "
-                        f"{_row_status_class(entry.row.status)}"
+                        f"console-inspector-row {_row_status_class(entry.row.status)}"
                     ),
                     markup=False,
                 )

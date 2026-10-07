@@ -146,9 +146,7 @@ async def _open_skill_editor(
     screen, pilot, skill_name: str, *, mode: str = "edit"
 ) -> None:
     """Open a skill, then select the requested permanent work-pane mode."""
-    skills_row = await _wait_for_selector(
-        screen, pilot, "#library-row-browse-skills"
-    )
+    skills_row = await _wait_for_selector(screen, pilot, "#library-row-browse-skills")
     assert isinstance(skills_row, Button)
     skills_row.press()
     # Same-route presses can replace the already-visible canvas. Resolve the
@@ -160,9 +158,7 @@ async def _open_skill_editor(
     )
     assert isinstance(skill_row, Button)
     skill_row.press()
-    mode_button = await _wait_for_selector(
-        screen, pilot, f"#library-skill-mode-{mode}"
-    )
+    mode_button = await _wait_for_selector(screen, pilot, f"#library-skill-mode-{mode}")
     assert isinstance(mode_button, Button)
     mode_button.press()
     target = {
@@ -357,9 +353,9 @@ async def test_saving_a_trusted_skill_warns_and_requeues_needs_review(tmp_path):
             "panel after saving."
         )
 
-        screen.query_one("#library-skill-description", Input).value = (
-            "Reviews a diff after saving"
-        )
+        screen.query_one(
+            "#library-skill-description", Input
+        ).value = "Reviews a diff after saving"
         save = await _wait_for_display(screen, pilot, "#library-skill-save")
         assert isinstance(save, Button)
         assert screen._skills_state.dirty is True
@@ -659,9 +655,7 @@ async def test_already_bootstrapped_store_never_shows_setup_state(tmp_path):
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
-        await _open_skill_editor(
-            screen, pilot, "already-bootstrapped", mode="trust"
-        )
+        await _open_skill_editor(screen, pilot, "already-bootstrapped", mode="trust")
 
         assert screen._skills_state.editor_state.trust_status != "trust_uninitialized"
         assert len(screen.query("#library-skill-trust-setup")) == 0
@@ -1265,7 +1259,8 @@ async def test_orphaned_manifest_is_one_click_resetup(tmp_path):
     trust = _real_uninitialized_trust_service(tmp_path)
     local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
     await local_service.create_skill(
-        name="demo", content=_skill_content(title="D", description="d"),
+        name="demo",
+        content=_skill_content(title="D", description="d"),
     )
     # Bootstrap, then simulate the upgrade: clear ONLY the marker, leaving the manifest.
     trust.bootstrap_trust("pw", salt=b"7" * 32)
@@ -1322,7 +1317,8 @@ async def test_trust_reset_cancel_backs_out_without_touching_trust_state(tmp_pat
     trust = _real_uninitialized_trust_service(tmp_path)
     local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
     await local_service.create_skill(
-        name="demo", content=_skill_content(title="D", description="d"),
+        name="demo",
+        content=_skill_content(title="D", description="d"),
     )
     trust.bootstrap_trust("pw", salt=b"7" * 32)
     trust.trust_store.marker_store.clear()
@@ -1367,7 +1363,8 @@ async def test_trust_reset_confirm_wipes_trust_state(tmp_path):
     trust = _real_uninitialized_trust_service(tmp_path)
     local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
     await local_service.create_skill(
-        name="demo", content=_skill_content(title="D", description="d"),
+        name="demo",
+        content=_skill_content(title="D", description="d"),
     )
     trust.bootstrap_trust("pw", salt=b"7" * 32)
     trust.trust_store.marker_store.clear()
@@ -1412,7 +1409,8 @@ async def test_list_mode_unlock_refreshes_snapshot_not_just_posture(tmp_path):
     trust = _real_uninitialized_trust_service(tmp_path)
     local_service, service = _real_skills_scope_service(tmp_path, trust_service=trust)
     await local_service.create_skill(
-        name="demo", content=_skill_content(title="D", description="d"),
+        name="demo",
+        content=_skill_content(title="D", description="d"),
     )
     trust.bootstrap_trust("pw", salt=b"7" * 32)
     trust._keys = None  # fresh session -> locked posture, offers Unlock

@@ -337,8 +337,7 @@ def test_collection_pages_use_stable_id_after_equal_time_and_casefolded_name(
     assert len(ordered_selects) == 4
     assert all(
         "order by collection.created_at asc, "
-        "collection.name collate nocase asc, collection.collection_id asc"
-        in statement
+        "collection.name collate nocase asc, collection.collection_id asc" in statement
         for statement in ordered_selects
     )
 
@@ -389,9 +388,7 @@ def test_locate_library_collection_page_returns_none_for_missing_or_deleted_id(
 
 
 @pytest.mark.parametrize("limit", [True, "20", 0, -1, 501])
-def test_collection_page_reads_reject_invalid_limits(
-    tmp_path: Path, limit
-) -> None:
+def test_collection_page_reads_reject_invalid_limits(tmp_path: Path, limit) -> None:
     service = _service(tmp_path)
 
     with pytest.raises(LibraryCollectionsServiceError, match="limit"):
@@ -401,9 +398,7 @@ def test_collection_page_reads_reject_invalid_limits(
 
 
 @pytest.mark.parametrize("offset", [True, "20", -1, 2**63])
-def test_collection_page_reads_reject_invalid_offsets(
-    tmp_path: Path, offset
-) -> None:
+def test_collection_page_reads_reject_invalid_offsets(tmp_path: Path, offset) -> None:
     service = _service(tmp_path)
 
     with pytest.raises(LibraryCollectionsServiceError, match="offset"):

@@ -13,14 +13,17 @@ import tldw_chatbook.Chat.console_session_settings as session_settings
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
+from tldw_chatbook.Chat.console_provider_endpoints import SAVE_ENDPOINT_ACTION_LABEL
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    CONSOLE_VALUE_SOURCE_WORDS,
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
     ConsoleSettingsSummaryState,
+    ConsoleValueLayer,
     _estimate_tokens_locally,
     build_console_context_estimate,
     build_console_model_options,
@@ -402,6 +405,7 @@ def test_new_chats_resolve_the_chat_defaults_pair() -> None:
                 ChatScreen._effective_console_provider_model(screen)
             ),
             _provider_readiness_app_config=lambda: config,
+            _console_default_settings_memo=None,
         )
         settings = ConsoleSessionController._default_console_session_settings(session)
         return settings.provider, settings.model
@@ -947,7 +951,7 @@ def test_validation_rejects_bool_and_non_integral_float_numeric_fields() -> None
     errors = validate_console_session_settings(settings, app_config={})
 
     assert "Top K must be 0 or greater." in errors
-    assert "Response max tokens must be 1 or greater." in errors
+    assert "Max tokens must be 1 or greater." in errors
 
 
 def test_readiness_reports_missing_key_for_supported_openai_instead_of_wip() -> None:
@@ -1566,6 +1570,8 @@ def test_console_readiness_projects_exact_generation_and_credential_evidence():
         (),
         credential="present_unverified",
         generation="succeeded",
+        # Qodo #2958 (rewritten on purpose): a paid test names its model.
+        generation_model="gpt-test",
     )
 
     readiness = build_console_settings_readiness(
@@ -1627,6 +1633,8 @@ def test_failed_generation_remains_evidence_and_does_not_block_an_attempt():
         ("model",),
         generation="failed",
         generation_category="provider_error",
+        # Qodo #2958 (rewritten on purpose): a paid test names its model.
+        generation_model="model",
     )
 
     readiness = build_console_settings_readiness(
@@ -1741,6 +1749,193 @@ def test_endpoint_failure_category_selects_actionable_recovery(
     assert readiness.blocker == expected_blocker
     assert readiness.recovery_action == expected_recovery
     assert readiness.endpoint_category == category
+
+
+_LLAMA_CONFIG = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+
+
+def _shared_owner_with(identity, category="connection_refused"):
+    """An app's shared evidence owner holding one settled endpoint result."""
+    from datetime import UTC, datetime
+
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderConnectionEvidence,
+    )
+
+    owner = ProviderConnectionEvidence()
+    endpoint = "reachable" if category is None else "unreachable"
+    owner.publish(
+        ProviderTestEvidence(
+            identity,
+            endpoint,
+            ("model-a",) if category is None else (),
+            category,
+            observed_at=datetime(2026, 10, 1, 14, 1, tzinfo=UTC),
+        ),
+        order=1,
+    )
+    return owner
+
+
+@pytest.mark.parametrize(
+    "session_base_url", [None, "http://127.0.0.1:9099", "http://127.0.0.1:9099/v1"]
+)
+def test_console_readiness_reads_shared_evidence_for_its_connection(session_base_url):
+    """TASK-33005.2 (AC#1): a refused test of this chat's connection, settled
+    on any surface, blocks the Console with a retry recovery."""
+    identity = _readiness_identity(
+        provider="llama_cpp", endpoint="http://127.0.0.1:9099", draft_generation=0
+    )
+    owner = _shared_owner_with(identity)
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", base_url=session_base_url
+        ),
+        app_config=_LLAMA_CONFIG,
+        environ={},
+        connection_evidence=owner,
+    )
+
+    assert readiness.operability == "not_ready"
+    assert readiness.blocker == "endpoint_unreachable"
+    assert readiness.recovery_action == "retry_connection"
+    assert readiness.endpoint_category == "connection_refused"
+    assert readiness.connection == identity
+    assert readiness.observed_at.hour == 14
+    assert readiness.detail == (
+        "llama.cpp failed its last connection test (connection refused)."
+    )
+
+
+def test_future_chat_readiness_keys_an_unconfigured_llama_on_its_default_origin():
+    """TASK-33005.2 (AC#3): a new chat's llama.cpp with nothing saved sends to
+    the default origin, the connection Chat settings tests."""
+    identity = _readiness_identity(
+        provider="llama_cpp", endpoint="http://127.0.0.1:9099", draft_generation=0
+    )
+    settings = session_settings.build_target_default_console_session_settings(
+        {"api_settings": {"llama_cpp": {}}}, "llama_cpp", "model-a"
+    )
+
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config={"api_settings": {"llama_cpp": {}}},
+        environ={},
+        connection_evidence=_shared_owner_with(identity, "timeout"),
+    )
+
+    assert readiness.blocker == "endpoint_unreachable"
+    assert readiness.endpoint_category == "timeout"
+
+
+@pytest.mark.parametrize(
+    "tested",
+    [
+        {"endpoint": "http://127.0.0.1:9199"},
+        {"credential_source": "stored", "credential_revision": 7},
+    ],
+    ids=["other-endpoint", "other-credential"],
+)
+def test_other_connections_evidence_never_changes_console_readiness(tested):
+    """TASK-33005.2 (AC#4/#5): no evidence for this exact connection reads
+    Ready, not tested -- whatever another endpoint or credential reported."""
+    identity = _readiness_identity(
+        provider="llama_cpp",
+        **{"endpoint": "http://127.0.0.1:9099", **tested},
+        draft_generation=0,
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=_LLAMA_CONFIG,
+        environ={},
+        connection_evidence=_shared_owner_with(identity),
+    )
+
+    assert readiness.operability == "ready_to_send"
+    assert readiness.endpoint == "not_tested"
+    assert readiness.connection is None
+    assert readiness.observed_at is None
+
+
+def test_console_evidence_for_a_keyed_connection_follows_the_saved_key():
+    """TASK-33005.2 (AC#5): the key a send would use is part of the
+    connection; evidence for another key never applies."""
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        connection_credential_revision,
+    )
+
+    config = {
+        "api_settings": {
+            "vllm": {"api_url": "http://127.0.0.1:8000", "api_key": "sk-saved-vllm"}
+        }
+    }
+
+    def readiness_after(key):
+        identity = _readiness_identity(
+            provider="vllm",
+            endpoint="http://127.0.0.1:8000",
+            credential_source="stored",
+            credential_revision=connection_credential_revision(key),
+            draft_generation=0,
+        )
+        return build_console_settings_readiness(
+            ConsoleSessionSettings(provider="vllm", model="model-a"),
+            app_config=config,
+            environ={},
+            connection_evidence=_shared_owner_with(identity, "timeout"),
+        )
+
+    assert readiness_after("sk-saved-vllm").blocker == "endpoint_unreachable"
+    assert readiness_after("sk-other-key").operability == "ready_to_send"
+
+
+def test_shared_evidence_adds_no_provider_config_reads() -> None:
+    """TASK-33005.2 (AC#6, the task-24454 probe): the connection key comes
+    from values the readiness build already resolved, so a build that reads
+    shared evidence normalizes provider keys exactly as often as one that
+    does not."""
+    import sys
+
+    identity = _readiness_identity(
+        provider="llama_cpp", endpoint="http://127.0.0.1:9099", draft_generation=0
+    )
+    owner = _shared_owner_with(identity)
+
+    def config_reads(**kwargs) -> int:
+        calls = 0
+
+        def profile(frame, event, _arg):
+            nonlocal calls
+            if event == "call" and frame.f_code.co_name in {
+                "normalize_provider_config_key",
+                "load_settings",
+                "get_provider_readiness",
+            }:
+                calls += 1
+
+        sys.setprofile(profile)
+        try:
+            build_console_settings_readiness(
+                ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+                app_config=_LLAMA_CONFIG,
+                environ={},
+                **kwargs,
+            )
+        finally:
+            sys.setprofile(None)
+        return calls
+
+    # Initialize the shared support set before comparing per-build work.
+    build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=_LLAMA_CONFIG,
+        environ={},
+    )
+    baseline = config_reads()
+    assert baseline > 0
+    assert config_reads(connection_evidence=owner) == baseline
 
 
 def test_malformed_provider_configuration_precedes_endpoint_persistence():
@@ -1973,7 +2168,7 @@ def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
 
     assert readiness.label == "Endpoint not saved"
     assert readiness.native_send_supported is False
-    assert "Save model defaults" in readiness.detail
+    assert SAVE_ENDPOINT_ACTION_LABEL in readiness.detail
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in readiness.detail
     assert "Saved endpoint: http://127.0.0.1:11434" in readiness.detail
 
@@ -2012,6 +2207,9 @@ def test_settings_summary_includes_runtime_endpoint_credential_and_streaming_row
     assert state.endpoint_row == "Endpoint: http://127.0.0.1:11434"
     assert state.credential_row == "Credential: not required"
     assert state.transport_row == "Streaming: off"
+    # TASK-33004.7: the rail's Streaming row reads a structured value, the
+    # way Temperature and Max tokens do (TASK-32338), not this display row.
+    assert state.streaming == "Off"
 
 
 def test_readiness_explicit_send_capable_injection_allows_supported_generic_provider() -> (
@@ -2061,7 +2259,7 @@ def test_malformed_ipv6_url_returns_validation_and_readiness_errors() -> None:
     errors = validate_console_session_settings(settings, app_config={})
 
     assert readiness.label == "Invalid URL"
-    assert "Base URL must be a valid http(s) URL." in errors
+    assert "Endpoint must be a valid http(s) URL." in errors
 
 
 def test_whitespace_host_url_returns_validation_and_readiness_errors() -> None:
@@ -2073,7 +2271,7 @@ def test_whitespace_host_url_returns_validation_and_readiness_errors() -> None:
     errors = validate_console_session_settings(settings, app_config={})
 
     assert readiness.label == "Invalid URL"
-    assert "Base URL must be a valid http(s) URL." in errors
+    assert "Endpoint must be a valid http(s) URL." in errors
 
 
 def test_invalid_port_urls_return_validation_and_readiness_errors() -> None:
@@ -2086,7 +2284,7 @@ def test_invalid_port_urls_return_validation_and_readiness_errors() -> None:
         errors = validate_console_session_settings(settings, app_config={})
 
         assert readiness.label == "Invalid URL"
-        assert "Base URL must be a valid http(s) URL." in errors
+        assert "Endpoint must be a valid http(s) URL." in errors
 
 
 def test_configured_url_provider_validates_invalid_base_url() -> None:
@@ -2106,7 +2304,7 @@ def test_configured_url_provider_validates_invalid_base_url() -> None:
 
     assert readiness.label == "Unknown"
     assert readiness.blocker == "provider_unsupported"
-    assert "Base URL must be a valid http(s) URL." in errors
+    assert "Endpoint must be a valid http(s) URL." in errors
 
 
 def test_vllm_session_validation_preserves_a_verified_different_endpoint() -> None:
@@ -2225,9 +2423,12 @@ def test_unknown_openai_model_uses_shared_unverified_api_fallback() -> None:
         model="unlisted-model",
     )
 
-    assert estimate.token_limit == 4096
+    # TASK-33940.5: no OpenAI-specific 4,096 row any more -- that left a fresh
+    # profile no input room at the shipped 4,096-token reservation. Unlisted
+    # OpenAI models take ADR-052's 32,000-token application fallback.
+    assert estimate.token_limit == 32000
     assert estimate.token_limit_verified is False
-    assert estimate.token_limit_source == "provider fallback"
+    assert estimate.token_limit_source == "application fallback"
     assert "estimated; model unverified" in estimate.label
 
 
@@ -2761,54 +2962,6 @@ async def _request_settings_close(pilot, source: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_settings_modal_provider_switch_takes_the_target_providers_own_model() -> (
-    None
-):
-    """TASK-33001.1: the Conversation settings modal's provider switch runs the
-    REAL controller rebase and fills the target provider's own model -- never
-    the chat-defaults model that belongs to another provider."""
-    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-
-    def real_rebase(state, **kwargs):
-        return ConsoleChatController.rebase_console_settings_draft(
-            object(), state, **kwargs
-        )
-
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="local-gguf")
-    estimate = ConsoleSettingsContextEstimate(
-        used_tokens=None, token_limit=None, label="unavailable"
-    )
-    modal = ConsoleSettingsModal(
-        settings=settings,
-        app_config={
-            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
-            "api_settings": {
-                "llama_cpp": {"api_url": "http://127.0.0.1:8080"},
-                "anthropic": {"api_key": "test-key", "model": "claude-sonnet-5"},
-            },
-        },
-        # The configured model is NOT the catalog's first entry, so a
-        # snap-to-first-catalog-model regression cannot pass.
-        providers_models={
-            "llama_cpp": ["local-gguf"],
-            "anthropic": ["claude-haiku-5", "claude-sonnet-5"],
-        },
-        context_estimate=estimate,
-        can_save=True,
-        draft_rebaser=real_rebase,
-    )
-    app = _SettingsCloseHarness()
-    async with app.run_test(size=(120, 42)) as pilot:
-        await app.push_screen(modal, callback=app.capture)
-        await pilot.pause()
-        modal.query_one("#console-settings-provider", Select).value = "anthropic"
-        await pilot.pause()
-
-        assert modal._draft.settings.provider == "anthropic"
-        assert modal._draft.settings.model == "claude-sonnet-5"
-
-
-@pytest.mark.asyncio
 async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_model() -> (
     None
 ):
@@ -2819,6 +2972,9 @@ async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_mode
     llama.cpp -> Anthropic fills Anthropic's own model; Anthropic -> Moonshot
     (a key, no configured model, a non-empty catalog) leaves the model empty and
     the popover reads as needing one instead of borrowing any model.
+
+    Rewritten for TASK-33004.4: Switch model has no provider Select, so the
+    switch is a pair row and the pin is that every pair keeps its own model.
     """
     from types import SimpleNamespace
 
@@ -2838,7 +2994,6 @@ async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_mode
     from tldw_chatbook.Widgets.Console.console_model_popover import (
         ConsoleModelPopover,
     )
-    from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 
     app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
@@ -2891,46 +3046,31 @@ async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_mode
     async with app.run_test(size=(120, 42)) as pilot:
         await app.push_screen(popover, callback=app.capture)
         await pilot.pause()
-        picker = popover.query_one("#console-popover-model-search", ModelSearchPicker)
-        picker_input = picker.query_one("#model-search-picker-input", Input)
-        provider_select = popover.query_one("#console-popover-provider", Select)
-
-        provider_select.value = "anthropic"
-        await pilot.pause()
         await app.workers.wait_for_complete()
         await pilot.pause()
+        # TASK-33004.4: Switch model offers pairs only, so a provider always
+        # arrives with one of its own models; the rows prove nothing borrows.
+        for row in popover._rows:
+            if row.provider == "moonshot":
+                assert row.model in {None, "kimi-k3"}, row
+            if row.provider == "anthropic":
+                assert row.model in {"claude-haiku-5", "claude-sonnet-5"}, row
+        find = popover.query_one("#console-popover-find", Input)
+        temperature = popover.query_one("#console-popover-temperature", Input)
 
-        assert popover._draft.settings.provider == "anthropic"
-        assert popover._draft.settings.model == "claude-sonnet-5"
-        assert picker.value == "claude-sonnet-5"
-        assert picker_input.value == "claude-sonnet-5"
+        for query, pair in (
+            ("claude-sonnet-5", ("anthropic", "claude-sonnet-5")),
+            ("kimi-k3", ("moonshot", "kimi-k3")),
+        ):
+            find.focus()
+            find.value = query
+            await pilot.pause()
+            temperature.focus()  # editing values rebases to the highlighted pair
+            await pilot.pause()
+            settings = popover._draft.settings
+            assert (settings.provider, settings.model) == pair
+            assert settings.model != "gpt-5.6-terra"
 
-        provider_select.value = "moonshot"
-        await pilot.pause()
-        await app.workers.wait_for_complete()
-        await pilot.pause()
-
-        # AC#3: no model, and nothing borrowed -- not gpt-5.6-terra, not
-        # Anthropic's model, not the first catalog entry.
-        assert popover._draft.settings.provider == "moonshot"
-        assert popover._draft.settings.model is None
-        assert picker.value is None
-        assert picker_input.value == ""
-        assert picker_input.placeholder == "Choose or search models"
-        target = popover.query_one("#console-popover-defaults-target", Static)
-        assert str(target.renderable) == "Defaults target: moonshot/No model"
-        block = popover.query_one("#console-popover-new-chat-default-block", Static)
-        assert str(block.renderable) == "Unavailable: choose a model first."
-        assert popover.query_one(
-            "#console-popover-make-new-chat-default", Button
-        ).disabled
-
-        popover.query_one("#console-popover-apply", Button).press()
-        await pilot.pause()
-
-        error = popover.query_one("#console-popover-error", Static)
-        assert error.display is True
-        assert str(error.renderable) == "Choose a model."
         assert app.results == []
         assert app.screen is popover
 
@@ -2988,7 +3128,7 @@ async def test_settings_modal_min_p_for_anthropic_is_neither_sent_nor_saved() ->
     async with app.run_test(size=(120, 42)) as pilot:
         await app.push_screen(modal, callback=app.capture)
         await pilot.pause()
-        modal.query_one("#console-settings-provider", Select).value = "anthropic"
+        modal._model_picked(("anthropic", model))  # what pick mode hands back
         await pilot.pause()
         assert "min_p" not in {field.name for field in modal._draft.field_drafts}
 
@@ -3938,6 +4078,25 @@ def test_summary_state_carries_structured_sampling_fields():
     state = _build_console_settings_summary_state_for_test()
     assert state.temperature == "0.70"
     assert state.max_tokens == "4096"
+
+
+@pytest.mark.parametrize("blank", ["temperature", "top_p"])
+def test_summary_names_the_provider_for_a_blank_required_sampler(blank):
+    """Qodo #2992: validation lets Temperature or Top P stay blank when the
+    provider drops it (Custom OpenAI 2 has no Top P), so the summary shows a
+    blank as the field rows' Source word, not a float() crash."""
+    settings = ConsoleSessionSettings(
+        provider="custom-openai-api-2", model="model-a", **{blank: None}
+    )
+    word = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
+    state = build_console_settings_summary_state(
+        settings,
+        ConsoleSettingsContextEstimate(None, None, "Context: unavailable"),
+        build_console_settings_readiness(settings, app_config={}, environ={}),
+    )
+    label = "T" if blank == "temperature" else "P"
+    assert f"{label} {word}" in state.sampling_row
+    assert state.temperature == ("0.70" if blank == "top_p" else word)
 
 
 def _registry_config() -> dict:

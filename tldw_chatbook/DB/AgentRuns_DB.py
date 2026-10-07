@@ -82,7 +82,8 @@ CREATE TABLE IF NOT EXISTS automatic_work_chains (
     deadline_at REAL,
     clock_owner_id TEXT,
     started_monotonic REAL,
-    last_observed_at REAL NOT NULL
+    last_observed_at REAL NOT NULL,
+    allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id)
 );
 CREATE TABLE IF NOT EXISTS automatic_work_reservations (
     id TEXT PRIMARY KEY,
@@ -105,6 +106,8 @@ CREATE TABLE IF NOT EXISTS automatic_wake_attempts (
     owner_id TEXT NOT NULL,
     generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),
     run_ids_json TEXT NOT NULL,
+    cause TEXT NOT NULL DEFAULT 'completion' CHECK (cause IN ('completion', 'progress', 'mixed')),
+    message_ids_json TEXT NOT NULL DEFAULT '[]',
     state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),
     created_at REAL NOT NULL,
     accepted_at REAL,
@@ -118,12 +121,69 @@ CREATE TABLE IF NOT EXISTS automatic_wake_claims (
 );
 CREATE INDEX IF NOT EXISTS idx_automatic_claims_attempt
     ON automatic_wake_claims(attempt_id);
+CREATE TABLE IF NOT EXISTS automatic_progress_wake_claims (
+    message_id TEXT PRIMARY KEY,
+    source_run_id TEXT NOT NULL REFERENCES agent_runs(id),
+    attempt_id TEXT NOT NULL REFERENCES automatic_wake_attempts(id)
+);
+CREATE INDEX IF NOT EXISTS idx_automatic_progress_claims_attempt
+    ON automatic_progress_wake_claims(attempt_id);
 CREATE TRIGGER IF NOT EXISTS automatic_chain_identity_immutable
-BEFORE UPDATE OF conversation_id, root_submission_id, limits_json ON automatic_work_chains
-WHEN OLD.conversation_id IS NOT NEW.conversation_id
+BEFORE UPDATE OF id, conversation_id, root_submission_id, limits_json, allowance_root_chain_id ON automatic_work_chains
+WHEN OLD.id IS NOT NEW.id
+  OR OLD.allowance_root_chain_id IS NOT NEW.allowance_root_chain_id
+  OR OLD.conversation_id IS NOT NEW.conversation_id
   OR OLD.root_submission_id IS NOT NEW.root_submission_id
   OR OLD.limits_json IS NOT NEW.limits_json
 BEGIN SELECT RAISE(ABORT, 'automatic chain identity is immutable'); END;
+CREATE INDEX IF NOT EXISTS idx_automatic_chains_allowance_root
+    ON automatic_work_chains(allowance_root_chain_id);
+CREATE TRIGGER IF NOT EXISTS automatic_chain_root_insert
+BEFORE INSERT ON automatic_work_chains
+WHEN NEW.allowance_root_chain_id IS NOT NULL
+AND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (
+    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id
+    AND allowance_root_chain_id IS NULL))
+BEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END;
+CREATE TRIGGER IF NOT EXISTS automatic_chain_root_update
+BEFORE UPDATE OF allowance_root_chain_id ON automatic_work_chains
+WHEN NEW.allowance_root_chain_id IS NOT NULL
+AND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (
+    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id
+    AND allowance_root_chain_id IS NULL))
+BEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END;
+CREATE TABLE IF NOT EXISTS automatic_chat_start_attempts (
+    id TEXT PRIMARY KEY,
+    source_run_id TEXT NOT NULL REFERENCES agent_runs(id),
+    source_chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),
+    chain_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_chains(id),
+    conversation_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    session_incarnation TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    draft_revision INTEGER NOT NULL CHECK (typeof(draft_revision)='integer' AND draft_revision>=0),
+    context_epoch INTEGER NOT NULL CHECK (typeof(context_epoch)='integer' AND context_epoch>=0),
+    request_fingerprint TEXT NOT NULL CHECK (length(request_fingerprint)=64 AND request_fingerprint NOT GLOB '*[^0-9a-f]*'),
+    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),
+    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),
+    created_at REAL NOT NULL,
+    accepted_at REAL,
+    completed_at REAL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_automatic_chat_start_conversation_active
+    ON automatic_chat_start_attempts(conversation_id) WHERE state IN ('prepared', 'accepted');
+CREATE TRIGGER IF NOT EXISTS automatic_chat_start_identity_immutable
+BEFORE UPDATE OF id, source_run_id, source_chain_id, chain_id, conversation_id,
+    session_id, session_incarnation, owner_id, draft_revision, context_epoch,
+    request_fingerprint, generation_reservation_id ON automatic_chat_start_attempts
+WHEN OLD.id IS NOT NEW.id OR OLD.source_run_id IS NOT NEW.source_run_id
+  OR OLD.source_chain_id IS NOT NEW.source_chain_id OR OLD.chain_id IS NOT NEW.chain_id
+  OR OLD.conversation_id IS NOT NEW.conversation_id OR OLD.session_id IS NOT NEW.session_id
+  OR OLD.session_incarnation IS NOT NEW.session_incarnation OR OLD.owner_id IS NOT NEW.owner_id
+  OR OLD.draft_revision IS NOT NEW.draft_revision OR OLD.context_epoch IS NOT NEW.context_epoch
+  OR OLD.request_fingerprint IS NOT NEW.request_fingerprint
+  OR OLD.generation_reservation_id IS NOT NEW.generation_reservation_id
+BEGIN SELECT RAISE(ABORT, 'chat start identity is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS automatic_run_chain_immutable
 BEFORE UPDATE OF work_chain_id ON agent_runs
 WHEN OLD.work_chain_id IS NOT NULL AND OLD.work_chain_id IS NOT NEW.work_chain_id
@@ -262,7 +322,7 @@ class AgentRunsDB(BaseDB):
     # to v21 and chains after v20. The guarded ALTERs below are idempotent
     # either way, and the from-now-on contract only requires the constant to
     # equal the HIGHEST recorded version.
-    _CURRENT_SCHEMA_VERSION = 21
+    _CURRENT_SCHEMA_VERSION = 23
     _swept_paths: set[str] = set()  # DB files already reconciled this process
 
     #: Liveness-ping gate (mirrors ChaChaNotes/WorkspaceDB, task-261/3011):
@@ -502,7 +562,9 @@ class AgentRunsDB(BaseDB):
                     resolved_provider TEXT,
                     resolved_model TEXT,
                     resolved_base_url TEXT,
-                    resolved_params_json TEXT
+                    resolved_params_json TEXT,
+                    fallback_targets_json TEXT,
+                    active_fallback_index INTEGER NOT NULL DEFAULT 0
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation
@@ -590,6 +652,7 @@ class AgentRunsDB(BaseDB):
                     -- overrides as a JSON object string ('{}' = none).
                     provider TEXT NOT NULL DEFAULT '',
                     params_json TEXT NOT NULL DEFAULT '{}',
+                    fallback_models_json TEXT NOT NULL DEFAULT '[]',
                     enabled INTEGER NOT NULL DEFAULT 1,
                     max_wall_seconds REAL,
                     deleted INTEGER NOT NULL DEFAULT 0,
@@ -741,6 +804,19 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE agent_runs ADD COLUMN work_chain_id TEXT "
                     "REFERENCES automatic_work_chains(id)"
                 )
+            # ADR-219: historical roots keep NULL membership and their limits.
+            chain_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(automatic_work_chains)")
+            }
+            if chain_columns and "allowance_root_chain_id" not in chain_columns:
+                conn.execute(
+                    "ALTER TABLE automatic_work_chains ADD COLUMN allowance_root_chain_id "
+                    "TEXT REFERENCES automatic_work_chains(id)"
+                )
+                conn.execute(
+                    "DROP TRIGGER IF EXISTS automatic_chain_identity_immutable"
+                )
             conn.executescript(AUTOMATIC_WORK_SCHEMA)
             conn.executescript(AGENT_WORKTREES_SCHEMA)
             definition_columns = {
@@ -822,9 +898,7 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_notes ADD COLUMN diff_line_index INTEGER"
                 )
             if "diff_line_text" not in note_columns:
-                conn.execute(
-                    "ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT"
-                )
+                conn.execute("ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT")
             # v20->v21 (ADR-147, TASK-32477): preset routing fields on
             # agent_definitions; resolved-target snapshot on agent_runs.
             # Same idempotent-ALTER mechanism as every column above.
@@ -848,13 +922,39 @@ class AgentRunsDB(BaseDB):
                     "TEXT NOT NULL DEFAULT '{}'"
                 )
             for column in (
-                "resolved_provider", "resolved_model",
-                "resolved_base_url", "resolved_params_json",
+                "resolved_provider",
+                "resolved_model",
+                "resolved_base_url",
+                "resolved_params_json",
             ):
                 if column not in existing_columns:
-                    conn.execute(
-                        f"ALTER TABLE agent_runs ADD COLUMN {column} TEXT"
-                    )
+                    conn.execute(f"ALTER TABLE agent_runs ADD COLUMN {column} TEXT")
+            # ADR-200: authored pairs and immutable candidate snapshots.
+            if "fallback_models_json" not in definition_columns:
+                conn.execute(
+                    "ALTER TABLE agent_definitions ADD COLUMN fallback_models_json TEXT NOT NULL DEFAULT '[]'"
+                )
+            if "fallback_targets_json" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN fallback_targets_json TEXT"
+                )
+            if "active_fallback_index" not in existing_columns:
+                conn.execute(
+                    "ALTER TABLE agent_runs ADD COLUMN active_fallback_index INTEGER NOT NULL DEFAULT 0"
+                )
+            # ADR-199: wake claims retain report IDs, never report bodies.
+            wake_columns = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(automatic_wake_attempts)")
+            }
+            if "cause" not in wake_columns:
+                conn.execute(
+                    "ALTER TABLE automatic_wake_attempts ADD COLUMN cause TEXT NOT NULL DEFAULT 'completion' CHECK (cause IN ('completion', 'progress', 'mixed'))"
+                )
+            if "message_ids_json" not in wake_columns:
+                conn.execute(
+                    "ALTER TABLE automatic_wake_attempts ADD COLUMN message_ids_json TEXT NOT NULL DEFAULT '[]'"
+                )
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -907,6 +1007,8 @@ class AgentRunsDB(BaseDB):
             # + agent_runs resolved-target snapshot (planned as v16;
             # renumbered past dev's v16-v20, landed via #2641 and #2665).
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (21)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (22)")
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (23)")
 
     def _create_console_activity_receipts_schema(
         self, conn: sqlite3.Connection
@@ -1836,6 +1938,8 @@ class AgentRunsDB(BaseDB):
         resolved_model: str | None = None,
         resolved_base_url: str | None = None,
         resolved_params_json: str | None = None,
+        fallback_targets_json: str | None = None,
+        active_fallback_index: int = 0,
     ) -> str:
         """Create a new run record in ``running`` status.
 
@@ -1909,8 +2013,8 @@ class AgentRunsDB(BaseDB):
                     assistant_message_id, agent_definition, definition_fingerprint,
                     resumed_from_run_id, spawn_event_id, work_chain_id,
                     resolved_provider, resolved_model,
-                    resolved_base_url, resolved_params_json)
-                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    resolved_base_url, resolved_params_json, fallback_targets_json, active_fallback_index)
+                   VALUES (?, ?, ?, ?, ?, 'running', '[]', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id,
                     conversation_id,
@@ -1930,6 +2034,8 @@ class AgentRunsDB(BaseDB):
                     resolved_model,
                     resolved_base_url,
                     resolved_params_json,
+                    fallback_targets_json,
+                    active_fallback_index,
                 ),
             )
         return run_id
@@ -1953,9 +2059,9 @@ class AgentRunsDB(BaseDB):
                 conn.execute(
                     """INSERT INTO agent_definitions
                        (id, name, description, instructions, tool_allowlist,
-                        model, provider, params_json, enabled,
+                        model, provider, params_json, fallback_models_json, enabled,
                         max_wall_seconds, deleted, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)""",
                     (
                         definition_id,
                         defn.name,
@@ -1965,6 +2071,7 @@ class AgentRunsDB(BaseDB):
                         defn.model,
                         defn.provider,
                         json.dumps(params_to_dict(defn.params)),
+                        json.dumps(defn.fallback_models),
                         1 if defn.enabled else 0,
                         wall_cap,
                         now,
@@ -1999,7 +2106,7 @@ class AgentRunsDB(BaseDB):
                     """UPDATE agent_definitions
                        SET name = ?, description = ?, instructions = ?,
                            tool_allowlist = ?, model = ?, provider = ?,
-                           params_json = ?, enabled = ?,
+                           params_json = ?, fallback_models_json = ?, enabled = ?,
                            max_wall_seconds = ?, updated_at = ?
                        WHERE id = ? AND deleted = 0""",
                     (
@@ -2010,6 +2117,7 @@ class AgentRunsDB(BaseDB):
                         defn.model,
                         defn.provider,
                         json.dumps(params_to_dict(defn.params)),
+                        json.dumps(defn.fallback_models),
                         1 if defn.enabled else 0,
                         wall_cap,
                         _now_iso(),
@@ -2036,6 +2144,7 @@ class AgentRunsDB(BaseDB):
         # ``tool_allowlist`` above follows (JSON text in, decoded value
         # out). ``provider`` needs no decoding and flows through as-is.
         data["params"] = json.loads(data.pop("params_json") or "{}")
+        data["fallback_models"] = json.loads(data.pop("fallback_models_json") or "[]")
         data.pop("deleted", None)
         return data
 
@@ -2310,6 +2419,7 @@ class AgentRunsDB(BaseDB):
             if cursor.rowcount != 1:
                 raise RuntimeError("terminal status changed during transaction")
         return True
+
     def continuation_budget(self, conversation_id: str, run_id: str) -> dict | None:
         """Read this sub-agent's recorded budget and continuation ancestors.
 
@@ -2723,18 +2833,63 @@ class AgentRunsDB(BaseDB):
         with self.connection() as conn:
             row = conn.execute(
                 "SELECT resolved_provider, resolved_model,"
-                " resolved_base_url, resolved_params_json"
+                " resolved_base_url, resolved_params_json, fallback_targets_json, active_fallback_index"
                 " FROM agent_runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
         if row is None or row[0] is None:
             return None
+        if row[4] is not None:
+            targets = json.loads(row[4])
+            index = row[5]
+            if not isinstance(index, int) or not 0 <= index < len(targets):
+                raise ValueError("invalid frozen fallback index")
+            return {
+                key: targets[index][key]
+                for key in ("provider", "model", "base_url", "params_json")
+            }
         return {
             "provider": row[0],
             "model": row[1],
             "base_url": row[2],
             "params_json": row[3],
         }
+
+    def get_run_fallback_state(self, run_id: str) -> dict | None:
+        """Read original audit identity and selected immutable candidate."""
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT fallback_targets_json, active_fallback_index FROM agent_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        targets = json.loads(row[0])
+        if type(row[1]) is not int or not 0 <= row[1] < len(targets):
+            raise ValueError("invalid frozen fallback index")
+        return {
+            "targets_json": row[0],
+            "active_index": row[1],
+            "active_target": targets[row[1]],
+            "original_target": targets[0],
+        }
+
+    def set_run_active_fallback(self, run_id: str, index: int) -> None:
+        """Persist selection before dispatch; failed persistence stops fallback."""
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT fallback_targets_json, active_fallback_index FROM agent_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None or not row[0]:
+                raise ValueError("no frozen fallback targets")
+            targets = json.loads(row[0])
+            if type(index) is not int or not row[1] < index < len(targets):
+                raise ValueError("invalid fallback target index")
+            conn.execute(
+                "UPDATE agent_runs SET active_fallback_index=?, updated_at=? WHERE id=?",
+                (index, _now_iso(), run_id),
+            )
 
     def latest_primary_run(self, conversation_id: str) -> dict | None:
         """Fetch the newest non-superseded PRIMARY run for a conversation.

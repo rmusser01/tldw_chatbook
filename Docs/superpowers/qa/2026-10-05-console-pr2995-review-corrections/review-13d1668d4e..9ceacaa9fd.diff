@@ -1,0 +1,3236 @@
+# Review package: 13d1668d4eedbdfcab50fff28a47a8a68346f033..HEAD
+
+## Commits
+9ceacaa9fd docs: record reviewed chat-start cleanup diagnostics
+408453025f docs: scope diagnostic inventory and Stop fixture follow-ups
+54a1818021 docs: scope current Qodo repairs and command integration
+6f3bfd539b docs: preserve approved PR2995 review and latest-dev evidence
+3e1d9555db test(ui): restore canonical profiles and typed send adapter
+e829ced927 docs: scope live typed-answer screen adapter repair
+17d52f1659 docs: scope two proven reader-profile baseline repairs
+307816c5e5 docs: scope latest-dev roleplay and merge queue integration
+f666be7d91 docs: record approved chat-start cleanup and uncertainty repair
+d7a219068b fix(console): retain uncertain-start denial with captured store identity
+6366ba8d03 docs: scope persistent chat-start restriction failure repair
+cfcc07a020 fix(console): finish bounded chat-start cleanup after registration failures
+7f69cecbe6 docs: record approved Together integration and CI fixture repair
+020a108d88 test(console): supply Session consumers in reconciliation fixture
+001afab590 chore: scope current-head review and latest-dev repairs
+e18cd0be56 docs: pack immutable PR2995 qualification evidence
+9b1b26e00d docs: preserve qualified source on latest dev documentation update
+ca8caf18be docs: archive qualified PR2995 integration and source decisions
+7d60b16179 style(console): normalize incoming trace-row calls and bank controller headroom
+d548aee4b1 docs: preserve final loading and scope newest dev send repair
+c23aa374e4 docs: close integration review and scope final loading
+8ad8f7c7cd test(console): adapt latest dev timeout policy to native interrupt host
+3adf31817b docs: close reviewed console ownership qualification
+1aaa363d2f docs: preserve historical QA with exact upstream append
+137390b338 docs: link canonical character activation decision
+56d5e7e9cf docs: scope latest dev console runtime integration
+8aaec13be4 test(console): observe native video resolution state
+279137943b docs: scope native video resolver observation repair
+b11e9819da fix(console): trigger legacy approval summary on session projection
+7c8cb40c0f docs: scope remaining native console fixture qualification
+49786c63bf test(console): admit selected remaining qualification fixtures
+1aa7a9093c docs: scope remaining Console fixture reconstruction
+6a06a1c9fd fix: bound inherited Console policy and profile provider waits
+a0dacec080 docs: scope inherited bounded provider resolution repair
+59c366b3b7 test: enroll bounded Console confirmation fixtures in profile admission
+cb3b4196ba docs: scope reproduced Console fixture admission repairs
+c939be4788 refactor(console): place decision and compaction coordination with explicit owners
+bd751b2123 docs: select explicit Console decision and preflight ownership
+d683ba3441 docs: record latest dev integration evidence
+c662c9b1e9 docs: scope latest modal lifetime integration
+52a437aecb test(console): admit selected evidence recovery fixtures through private profiles
+d20e66a616 docs: scope remaining inherited evidence admission fixtures
+e925924ff4 test(console): admit capture cancellation through private profile
+dc03a55cc5 docs(console): scope inherited capture-cancellation admission fixture
+8dbe6cca36 docs(console): close fork cap review and pin latest-dev follow-up
+6eb534c4b2 fix(console): order fork type-only imports
+708126011c refactor(console): place pure fork projections with fork owner
+77938f82d1 docs(console): select pure fork cap repair and current-dev integration
+73d8f1ff33 docs: record reviewed lock fix and remaining controller cap gate
+fc6ff39923 fix(console): keep creation validation reads outside registry lock
+440f216251 docs: scope storage-free creation registry decisions
+0fa2e8ffcb fix(console): preserve prepared drafts across source Close
+3dda77c5f3 docs: scope latest dev Console Close integration
+a1677ce5df docs(console): checkpoint provider adoption qualification and final dev scope
+7d1a0cdfa3 docs(tests): clarify verified adoption configuration contract
+3238e7e6c5 chore(console): reconcile reviewed diagnostic owner moves
+e01987b4fa refactor(console): keep hooks review UI adapter in wiring
+5a854ba0e4 refactor(console): move verified adoption into Session owner
+7a03226ec4 fix(console): honor verified provider adoption and canonical rebase
+982902a258 docs: scope inherited Console adoption and ownership baseline repairs
+7eec9e5e9c test(console): isolate the settings return profile after dev integration
+1a01965d65 docs: checkpoint schema qualification and next dev integration scope
+0b51c8bc84 fix(db): preserve native receipt archives across schema 77 integration
+9dda232eb5 docs: retain exact legacy receipt schemas during latest-dev rebase
+43a546f032 docs: scope current-dev schema integration for console PR
+e2778b7a1d test(console): detect setattr publication in fork census
+1896348b28 test(library): qualify reader fixtures and preserve size guards
+34a1c87008 docs: record navigation ownership proof and reader integration scope
+249246b692 test(console): own startup before navigation continuity mount
+06db628159 docs: checkpoint console integration and ADR219 references
+3716316140 docs(console): allocate ADR219 for bounded chat starts
+f5791d4e83 fix(console): fence public fork mutations and drain name persistence
+e9b5e36a47 fix(console): retain integration diagnostics and private provider tests
+c1b41d1424 docs(console): retain Qodo and ownership repair evidence before dev integration
+fa08381ce8 test(console): claim manual screen startup before mounting
+31895da4d9 fix(ledger): fence recovery cleanup to committed restriction entries
+778c2ddd8d fix(console): settle uncertain chat starts and retain commit ownership
+8003fa309e fix(console): validate chat creation and preserve handoff labels
+10dd73bab1 docs(console): qualify latest dev and retain complete review logs
+2ab3455188 docs(console): retain PR rebase and review repair evidence
+a0f9cf5908 fix(console): preserve grants when close tickets are refused
+1d69920f31 docs(console): record authorized PR review and merge follow-up
+d70bc5a2bc fix(console): preserve accepted handoffs through composer navigation
+d4b141e7e3 docs(console): record attached draft PR and remaining gate
+eb27865e44 docs(console): verify artifact integrity and publication payload
+c98b8179ae docs(console): preserve qualification and draft review blockers
+9fc31f10f2 fix(console): preserve child approval and consume mounted handoffs
+16c31926a9 fix(console): cancel idle spend refresh under turn custody
+f78457d123 docs: reconcile Console chat task identities and qualification scope
+7116ee79de Reject mixed native replay and preserve child chat drafts
+2d53a9042b docs: record current-dev compatibility requirements and verification scope
+e945d38198 Retire unshipped predecessor chat-start migration names
+d553c5d4b3 Integrate Console bounded chat starts with current dev owners
+48e56d149d docs: plan dev integration for Console chat starts PR
+8c4dfe59a2 Merge pull request #3006 from rmusser01/fix/task-33622.16-video-send-freeze
+8ef6fa7f28 test(console): wait for a command's answer row instead of a fixed settle (TASK-33622.16)
+9199a9774a docs(backlog): TASK-33622.16 Done; real-MiniMax confirmation
+88f343b6a0 docs(backlog): record the PR #3006 review round for TASK-33622.16
+13bd08e448 fix(console): a failed generation always offers its command for resend (TASK-33622.16)
+9857cbf7d2 fix(console): a slash command acts only on the chat it was sent from (TASK-33622.16)
+ba03d7d0f5 docs(backlog): record the checkpoint-review fixes for TASK-33622.16 (TASK-33622.16)
+e0cbb2690d fix(console): a failed /generate-video or /generate-image never overwrites the live draft (TASK-33622.16)
+162ecaae15 fix(console): run slash commands off the send's pump so /generate-video never freezes input (TASK-33622.16)
+8d7843893a docs(backlog): file TASK-33622.16 (/generate-video send freezes input)
+
+## Files changed
+ Docs/User_Guide/console.md                         |  11 +
+ .../User_Guide/console/attachments-images-voice.md |   5 +
+ Docs/User_Guide/console/video.md                   |  10 +
+ Docs/security/production-diagnostic-inventory.json |  11 +-
+ .../2026-10-03-console-pr2995-review-and-merge.md  |  23 +
+ Tests/Chat/test_console_generation_actions.py      |  32 +-
+ Tests/Console/test_console_command_draft.py        | 346 ++++++++
+ Tests/UI/test_console_command_origin_chat.py       | 384 +++++++++
+ Tests/UI/test_console_video_send_freeze.py         | 895 +++++++++++++++++++++
+ backlog/docs/lessons-textual.md                    |  72 ++
+ ...scape-F1-and-CtrlQ-until-generation-resolves.md | 118 +++
+ ...t-starts-with-current-dev-before-publication.md |   4 +-
+ tldw_chatbook/UI/Console_Modules/command_draft.py  | 152 ++++
+ .../UI/Console_Modules/command_handoff.py          | 215 +++++
+ tldw_chatbook/UI/Console_Modules/image.py          |  30 +-
+ tldw_chatbook/UI/Console_Modules/message.py        |   5 +-
+ tldw_chatbook/UI/Console_Modules/prompts.py        |  27 +-
+ tldw_chatbook/UI/Console_Modules/skill.py          |   9 +-
+ tldw_chatbook/UI/Console_Modules/video.py          |  37 +-
+ tldw_chatbook/UI/Console_Modules/wiring.py         |   4 +-
+ tldw_chatbook/UI/Screens/chat_screen.py            |  30 +-
+ 21 files changed, 2368 insertions(+), 52 deletions(-)
+
+## Diff
+diff --git a/Docs/User_Guide/console.md b/Docs/User_Guide/console.md
+index 08135a2854..92ac0b213a 100644
+--- a/Docs/User_Guide/console.md
++++ b/Docs/User_Guide/console.md
+@@ -1016,20 +1016,31 @@ Screen-level keys only — global keys live in the [guide index](index.md).
+ | Ctrl+Shift+P | Conversation Inspector (the Current Context / Next Send viewer — what the model will see) |
+ | Ctrl+Shift+F | Toggle focus mode — the chrome-free Console surface (see above) |
+ | Ctrl+Shift+H | Optional Hands-free binding when delivered by the terminal; use the visible **Hands-free** switch on macOS. |
+ | Esc | Return focus to the composer (expanding it first if collapsed) |
+ 
+ While Console is the active screen, the command palette (**Ctrl+P**) also
+ gains "Console: …" entries for these same actions. Slash commands
+ (`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/steer`,
+ `/redirect`, `/stop`, `/emergency-stop`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
+ 
++**A slash command stays with its chat.** Commands run in the background, so
++the Console keeps answering while one works — looking up a saved prompt,
++running `/doctor`'s checks, checking a `/stream-video` URL. A command belongs
++to the chat you sent it from. If you switch chats before it finishes, a
++command that would change a chat (`/system <name>`, `/prompt <name>`) does
++nothing and says so in a warning; send it again from the chat you meant. A
++command that only reports (`/doctor`, `/skills`,
++`/fewer-permission-prompts`, a failed `/stream-video`) posts its answer in
++the chat you sent it from. Anything you type while a command runs stays in
++the composer.
++
+ **Steering a running turn.** `/steer <guidance>` delivers text into the
+ *currently running* agent turn — it is read before the next model call, after
+ the in-flight tool batch finishes, so it never interrupts a tool mid-write.
+ A plain message typed while a run is active still queues for the next turn
+ (that default is unchanged); `/steer` is the explicit per-message opt-in.
+ Steering is refused with a visible notice — never silently dropped — when no
+ run is active, the run has already finished, the text is empty, or it exceeds
+ the 4,000-character steering cap.
+ 
+ **Redirecting a running turn.** When the current response is already going
+diff --git a/Docs/User_Guide/console/attachments-images-voice.md b/Docs/User_Guide/console/attachments-images-voice.md
+index c994fe6f56..4067864c91 100644
+--- a/Docs/User_Guide/console/attachments-images-voice.md
++++ b/Docs/User_Guide/console/attachments-images-voice.md
+@@ -106,20 +106,25 @@ Type `/generate-image [:backend] [@style] <prompt>` in the composer to run
+ an image-generation batch; with no prompt it composes one from the
+ conversation. Insert an `@style` token with the **"Insert image style"**
+ picker (command palette: **"Console: Insert image style…"**). A generation
+ message shows an **Image Generation** card; when a batch produces several
+ variants, browse them with **<** / **>** and press **keep** to make the
+ browsed variant the message's canonical image. If nothing is set up you
+ get: "No image generation backend configured. Set
+ [image_generation].default_backend, or use /generate-image :backend
+ <prompt>."
+ 
++If a batch fails, the command comes back into the composer so **Enter**
++runs it again. Anything you typed after sending it stays in the composer;
++if the composer has changed since (new text, another chat), your text is
++left alone and the failure message shows the command to send again.
++
+ ### Voice dictation — the Mic button
+ 
+ The **Mic** button walks through four states:
+ 
+ | Button reads | Meaning | Pressing it |
+ |---|---|---|
+ | **Mic** | Idle | Starts dictation |
+ | **Mic…** | Preparing the speech model | Cancels ("Dictation cancelled.") |
+ | **Rec ●** | Recording | Stops and transcribes |
+ | **Text…** | Transcribing | Disabled — wait for the text |
+diff --git a/Docs/User_Guide/console/video.md b/Docs/User_Guide/console/video.md
+index 6ddf8062b0..d24ea77524 100644
+--- a/Docs/User_Guide/console/video.md
++++ b/Docs/User_Guide/console/video.md
+@@ -22,20 +22,30 @@ writing them into your chat database.
+ - `@style` applies a style template (prompt language + sensible defaults
+   for duration/fps/ratio). Built-ins: `cinematic`, `drone`, `timelapse`,
+   `anime`. Your own styles live in config.toml under
+   `[video_generation.styles.<id>]`.
+ - One generation runs per session at a time; the composer's **Stop**
+   button cancels (a queued MiniMax task is cancelled remotely and does
+   not bill to completion).
+ - **Paid backends ask first.** When `[video_generation]
+   confirm_cost_estimate` is on (default), cloud backends show the
+   billing shape (per generated second) and wait for confirmation.
++  **Escape** (or **Cancel**) starts nothing and keeps your draft.
++- The Console stays responsive while a video generates, whether you sent
++  with **Enter** or the **Send** button: **Stop**, **F1** help, **Ctrl+Q**
++  and other commands (`/stop`, `/help`, …) keep working. Sending the same
++  unchanged draft again while its first run is still going does nothing.
++- If a generation fails or you stop it, the `/generate-video` command
++  comes back into the composer so **Enter** runs it again. If you have
++  typed something new or switched chats in the meantime, your new text is
++  left alone and the failure message shows the command to send again.
++  `/generate-image` works the same way.
+ 
+ ### Backends
+ 
+ | Backend | Kind | Notes |
+ |---|---|---|
+ | `minimax` | cloud | MiniMax-H3 (768P/2K, 4–15 s). Needs an API key. |
+ | `comfyui` | local server | Your ComfyUI install + video workflow. |
+ | `stable_diffusion_cpp` | local binary | Wan2.x / MiniMax-H3 weights via the `sd` binary. |
+ 
+ Enable backends and set defaults in **Settings → Video Gen** (mirrors the
+diff --git a/Docs/security/production-diagnostic-inventory.json b/Docs/security/production-diagnostic-inventory.json
+index 958df603a1..2bc53b3077 100644
+--- a/Docs/security/production-diagnostic-inventory.json
++++ b/Docs/security/production-diagnostic-inventory.json
+@@ -386,22 +386,22 @@
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+     },
+     {
+       "call_count": 71,
+       "diagnostic_digest": "a4855dacbc9b60957758",
+       "owner": "TASK-492",
+       "path": "tldw_chatbook/Chat/console_chat_controller.py",
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+     },
+     {
+-      "call_count": 6,
+-      "diagnostic_digest": "ec602b5bd3b0fafe72cc",
++      "call_count": 11,
++      "diagnostic_digest": "568a6855dc033a46aebc",
+       "owner": "TASK-492",
+       "path": "tldw_chatbook/Chat/console_chat_start.py",
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+     },
+     {
+       "call_count": 93,
+       "diagnostic_digest": "3a27e46667c8e6bbfc43",
+       "owner": "TASK-492",
+       "path": "tldw_chatbook/Chat/console_chat_store.py",
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+@@ -2709,20 +2709,27 @@
+       "path": "tldw_chatbook/UI/Console_Modules/archive.py",
+       "reason": "remaining Chatbook production diagnostic owner"
+     },
+     {
+       "call_count": 6,
+       "diagnostic_digest": "2cbdd29f8f55c9b28688",
+       "owner": "TASK-494",
+       "path": "tldw_chatbook/UI/Console_Modules/character.py",
+       "reason": "remaining Chatbook production diagnostic owner"
+     },
++    {
++      "call_count": 3,
++      "diagnostic_digest": "9cf00a2c9afc387b0ba0",
++      "owner": "TASK-494",
++      "path": "tldw_chatbook/UI/Console_Modules/command_handoff.py",
++      "reason": "remaining Chatbook production diagnostic owner"
++    },
+     {
+       "call_count": 2,
+       "diagnostic_digest": "af49e52f732a07b8f946",
+       "owner": "TASK-494",
+       "path": "tldw_chatbook/UI/Console_Modules/connection_probe.py",
+       "reason": "remaining Chatbook production diagnostic owner"
+     },
+     {
+       "call_count": 12,
+       "diagnostic_digest": "4f9fd8c23b014fbdae51",
+diff --git a/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md b/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md
+index 3f944c2889..c95819de60 100644
+--- a/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md
++++ b/Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md
+@@ -589,20 +589,32 @@ changed_visible_send_plain_answer_control:
+ 
+ - Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer
+ 
+ composed_static_owners:
+ 
+ - Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]
+ - Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]
+ - Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged
+ 
+ 
++### Task17 extension: Record the reviewed five existing cleanup diagnostics
++
++ADR required: no
++ADR path: N/A for an inventory-only correction under existing persistent diagnostic governance.
++Reason: the selected diagnostic node reveals unchanged Task15 source has11 calls while its committed row still records6; existing statement review proves exactly five safe additions.
++
++- [ ] Resume the same Task17 implementer after root metadata handoff. Initial21pass/1fail report is frozen at task-17-report-before-inventory-fix.md; original brief at task-17-brief-before-inventory-fix.md; original task-17-safe-evidence/manifest.json and all64 artifacts remain byte-identical. Map that manifest's report SHA explicitly to the frozen initial report without rewriting history. No21 passing-case replay.
++- [ ] Read task-17-diagnostic-statements-review.txt: existing --statements --since100fa9d819 proves five added warning calls with fixed phases restriction, restriction_fallback, absence, abandonment and run_state plus type(exception).__name__. No removed/reworded/captured-exception/private-content/path/URL/sink change. Verify this exact drift before modifying metadata; unexpected drift returns to root.
++- [ ] Use the existing scripts/check_persistent_diagnostic_inventory.py --write only after that review. Assert the sole JSON data change is the console_chat_start.py owner row call_count6→11 and diagnostic_digestec602b5bd3b0fafe72cc→568a6855dc033a46aebc; derived TASK492 summary1437→1442 is not a stored waiver. Every other row/sink/privacy/method/threshold and exact upstream command_handoff row stays unchanged. No production or test edit and no inventory-check bypass.
++- [ ] Run only Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged with unchanged canonical profile/Python/PYTHONPATH/-p no:randomly/fresh basetemp/300s bounds, preserving original failure and all21 passes at54a. Retain complete actual argv/source/outputs/XML/exit; source whitespace and exact unowned/QA/ZIP carry. Freeze a separate compact task-17-diagnostic-fix-safe-evidence/manifest; append report with initial byte-exact prefix and transparent initial-report alias. Commit only the reviewed inventory row and return clean source ownership/closed processes. Independent Task17 scoped review uses the full original BASE through final source, including this bounded extension.
++
++
+ ### Task 18: Repair stale interrupt fixtures and remove annotation-only host wiring
+ 
+ ADR required: no new ADR
+ ADR path: backlog/decisions/220-console-human-decision-coordination-ownership.md (dated annotation-only clarification); backlog/decisions/219-console-chat-destinations-and-bounded-starts.md.
+ Reason: reuse existing test binding and imported types while preserving all runtime live dependencies and authorization behavior.
+ 
+ A fresh sole source implementer follows approved Task17; no children. Read own-SDD task-17-interrupt-preflight.md and Ruling75 for complete constructor/type/caller census, plus exact Qodo feedback in task-17-initial-feedback.json. The recovery finding4179836584 is addressed separately by existing ADR126/219 policy and frozen10case evidence; no paired-store restore, new schema/migration or imported authority change is authorized.
+ 
+ - [ ] On the actual integrated BASE, run the two existing stale test owners Tests/Chat/test_console_decision_clock.py and Tests/UI/test_buddy_speech.py before repair to retain constructor RED (44 source-inferred cases). Preserve all actual collected IDs/failures/output, with shared Python3.12/WT PYTHONPATH/canonical private profiles/-p no:randomly/fresh basetemp/unchanged300s timeout.
+ - [ ] Replace only their actual InterruptRoundHost import with make_interrupt_host as InterruptRoundHost from Tests.Chat.console_interrupt_test_bindings. Keep separate KIND_SETTER_ATTRS/FakeSeamsFull imports in the clock owner. No fixture/helper attribute addition is needed. Preserve all six original positional call sites, function bodies/assertions/signatures/decorators/parameterization/waits/deadlines/events/cleanup.
+@@ -610,10 +622,21 @@ A fresh sole source implementer follows approved Task17; no children. Read own-S
+ - [ ] Replace exactly17 annotation references to self._read_global_Any()/self._read_global_Mapping() in InterruptRoundHost with existing imported Any/Mapping. Delete only their two keyword-only constructor parameters, two assignments, and matching controller/test-helper lambda arguments. Result120required keywords and33runtime global getters; retain all86controller readers and one write-through callback. Preserve non-annotation executable AST in every other method and exact runtime lookup/patch/nullability/order/alias/lock authority. Separate build_tool_review_hook Any interface and compaction accessors stay exact. No broad receiver/global bypass, dependency bag, proxy, import or new abstraction.
+ - [ ] Run the same two corrected test owners (44source-inferred cases) and only four binding selectors below (eight source-inferred cases), retaining all actual IDs/argv/source/exits/log/XML/warnings. Prove import reversal recovers both owner bodies and annotation removal/reversal preserves all nonconstructor executable methods. Verify unchanged unowned source/QA/ZIP; preserve old RED and all historical passes/warnings. Fatal Ruff/added-hunk formatter/whitespace plus actual host/controller size measurements; existing downward/slack rules apply only to a demonstrated shrink, never raise caps.
+ - [ ] Commit only authorized source/test overlays, freeze task-18-report.md and compact additive task-18-safe-evidence/source+AST manifest, return clean source/index/HEAD/closed processes. Root dispatches independent scoped spec/quality review. All four new Qodo threads remain open until reviewed repairs/rebuttal are published with evidence; one fresh current-head Qodo and normal checks/PerfGuard/ancestry precede merge.
+ 
+ **Selected binding controls:**
+ 
+ - Tests/Chat/test_console_owner_live_bindings.py::test_interrupt_remount_reads_replaced_sink_and_controller_state
+ - Tests/Chat/test_console_interrupt_host_wiring.py::test_legacy_registry_payload_and_lock_names_alias_the_host
+ - Tests/Chat/test_console_interrupt_host_wiring.py::test_approvals_register_the_permission_summary_as_the_after_remount_hook
+ - Tests/Chat/test_console_ask_user_round.py::test_timeout_reads_console_config_when_no_seam
++
++
++### Task18 extension: Await actual mounted Stop control publication
++
++ADR required: no
++ADR path: N/A for a test-only synchronization repair; retain ADR094/219 native lifetime/custody.
++Reason: current-head CI establishes STREAMING with an idle Stop projection; the awaited sync may coalesce, and pilot.pause is not a publication-completion barrier. No lost-request product defect is demonstrated.
++
++- [ ] Read task-17-stop-ci-preflight.md and its exact frozen one-node receipts plus task-17-PR-fast-lane-failure-receipt.json. Preserve initial CI1fail/221pass/oldxfail/fivewarnings and unchanged06 local1PASS without treating the latter as a fix.
++- [ ] In Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target, add only await _wait_for_selector(chat, pilot, "#console-stop-generation.console-stop-active") after the existing sync/pilot.pause and before reading/asserting the Stop button. Reuse the already imported helper and its existing2second bound. Preserve every original statement, signature, marker, assertion, physical acceptance/provider entry,120second release guard,0.5second custody timeout, click/cancel/claim/drain/STOPPED/one-generation evidence. No production change, new helper, increased time, retry, skip/XFAIL or relaxed assertion.
++- [ ] Run only this exact node once after repair with the same canonical private profile/Python/PYTHONPATH/-p no:randomly/fresh basetemp/300s bounds; retain original failure/localpass and complete new receipts. If it fails the unchanged bound, retain flags/owned workers at the deadline and report before another change/run. Include exact body reversal/source/QA/ZIP carry and fatal Ruff/added-hunk formatter/whitespace in Task18 report and independent scoped review.
+diff --git a/Tests/Chat/test_console_generation_actions.py b/Tests/Chat/test_console_generation_actions.py
+index 7a7e0a8ac1..1beed38015 100644
+--- a/Tests/Chat/test_console_generation_actions.py
++++ b/Tests/Chat/test_console_generation_actions.py
+@@ -1700,33 +1700,59 @@ async def test_generate_image_handler_prompt_present_never_resolves_llm_context(
+     )
+ 
+     parse = CommandParse(kind="command", name="generate-image", args="a red dragon")
+     await screen._console_command_generate_image(parse)
+ 
+     assert len(batch_calls) == 1
+     assert batch_calls[0]["prompt"] == "a red dragon"
+ 
+ 
+ class _FakeComposer:
+-    """Minimal composer double: draft_text()/clear_draft()/insert_text_as_paste()."""
++    """Minimal composer double for the draft-revision API a command takes and
++    restores its draft through (``UI/Console_Modules/command_draft.py``):
++    text, user edit serial, and a draft generation that every scope change
++    (clear, commit, restore) advances."""
+ 
+     def __init__(self, text: str = ""):
+         self._text = text
++        self.edit_serial = 0
++        self._generation = 0
+ 
+     def draft_text(self) -> str:
+         return self._text
+ 
+     def clear_draft(self) -> None:
+         self._text = ""
++        self._generation += 1
+ 
+-    def insert_text_as_paste(self, text: str) -> None:
+-        self._text = text
++    def capture_draft_for_send(self):
++        if not self._text:
++            return None
++        return SimpleNamespace(
++            text=self._text, edit_serial=self.edit_serial, generation=self._generation
++        )
++
++    def capture_draft_snapshot(self):
++        return SimpleNamespace(generation=self._generation)
++
++    def commit_captured_draft(self, stash) -> bool:
++        if self._generation != stash.generation or not self._text.startswith(
++            stash.text
++        ):
++            return False
++        self._text = self._text[len(stash.text) :]
++        self._generation += 1
++        return True
++
++    def restore_stashed_draft(self, stash) -> None:
++        self._text = stash.text + self._text
++        self._generation += 1
+ 
+ 
+ @pytest.mark.asyncio
+ async def test_generate_image_handler_restores_draft_when_batch_raises(monkeypatch):
+     """task-558: today only the zero-success RETURN path restores the
+     composer draft; when ``run_generation_batch`` RAISES instead (e.g. an
+     unexpected adapter bug, not a caught-and-reported ``ImageGenerationError``
+     per-variant failure), the draft stayed cleared and the user's typed
+     prompt was lost with no way to recover it. This pins the fix: an
+     ``except`` around the batch call restores the draft the same way the
+diff --git a/Tests/Console/test_console_command_draft.py b/Tests/Console/test_console_command_draft.py
+new file mode 100644
+index 0000000000..75152a6237
+--- /dev/null
++++ b/Tests/Console/test_console_command_draft.py
+@@ -0,0 +1,346 @@
++"""Decisions of the Console command-draft and command-origin helpers.
++
++TASK-33622.16 review. ``command_draft`` decides whether a slash command takes
++its draft, puts it back, or only says how to send it again;
++``command_handoff`` decides whether a command still acts on the chat it was
++sent from. The mounted tests (``test_console_video_send_freeze``,
++``test_console_command_origin_chat``) drive them through the real Console;
++these pin each branch against a composer double that keeps the composer's
++draft-revision contract (``ConsoleComposerBar.commit_captured_draft``):
++typing advances ``edit_serial``, a scope change (clear, load, commit,
++restore) advances the draft generation.
++"""
++
++from __future__ import annotations
++
++import contextvars
++from types import SimpleNamespace
++
++import pytest
++
++from tldw_chatbook.UI.Console_Modules.command_draft import (
++    CAPTURED_COMMAND_DRAFT,
++    TakenCommandDraft,
++    restore_command_draft,
++    take_command_draft,
++    with_resend_hint,
++)
++from tldw_chatbook.UI.Console_Modules.command_handoff import (
++    COMMAND_ORIGIN,
++    CommandOrigin,
++    append_command_output,
++    command_origin_session,
++    refuse_if_chat_changed,
++)
++
++COMMAND = "/generate-video a paper boat"
++TYPED = "what about a sailboat"
++
++
++class _Composer:
++    def __init__(self, text: str = "") -> None:
++        self.text = text
++        self.edit_serial = 0
++        self.generation = 0
++        self.restored: list = []
++
++    # The user and the Console.
++    def type(self, more: str) -> None:
++        self.text += more
++        self.edit_serial += 1
++
++    def load(self, text: str) -> None:
++        """A chat switch: the composer now shows another chat's draft."""
++        self.text = text
++        self.generation += 1
++
++    def clear(self) -> None:
++        self.text = ""
++        self.generation += 1
++
++    # The draft-revision API the helpers use.
++    def draft_text(self) -> str:
++        return self.text
++
++    def capture_draft_for_send(self):
++        if not self.text:
++            return None
++        return SimpleNamespace(
++            text=self.text, edit_serial=self.edit_serial, generation=self.generation
++        )
++
++    def capture_draft_snapshot(self):
++        return SimpleNamespace(generation=self.generation)
++
++    def commit_captured_draft(self, stash) -> bool:
++        if (
++            self.generation != stash.generation
++            or not self.text.startswith(stash.text)
++            or (self.text == stash.text and self.edit_serial != stash.edit_serial)
++        ):
++            return False
++        self.text = self.text[len(stash.text) :]
++        self.generation += 1
++        return True
++
++    def restore_stashed_draft(self, stash) -> None:
++        self.restored.append(stash)
++        self.text = stash.text + self.text
++        self.generation += 1
++
++
++class _Clear:
++    def __init__(self, composer: _Composer | None) -> None:
++        self.calls = 0
++        self._composer = composer
++
++    def __call__(self) -> None:
++        self.calls += 1
++        if self._composer is not None:
++            self._composer.clear()
++
++
++def _take(composer: _Composer | None, captured=None):
++    """``take_command_draft`` as a handed-off command runs it: inside a
++    context holding the send's capture (None: a direct call)."""
++    clear = _Clear(composer)
++
++    def run():
++        CAPTURED_COMMAND_DRAFT.set(captured)
++        return take_command_draft(composer, clear)
++
++    return contextvars.copy_context().run(run), clear
++
++
++# -- take_command_draft ---------------------------------------------------------
++
++
++def test_take_clears_a_composer_holding_exactly_the_captured_draft():
++    composer = _Composer(COMMAND)
++    captured = composer.capture_draft_for_send()
++
++    taken, clear = _take(composer, captured)
++
++    assert clear.calls == 1
++    assert composer.text == ""
++    assert taken.removed and taken.stash is captured
++    assert taken.generation == composer.generation
++
++
++def test_take_keeps_text_typed_after_the_captured_draft():
++    composer = _Composer(COMMAND)
++    captured = composer.capture_draft_for_send()
++    composer.type(" " + TYPED)
++
++    taken, clear = _take(composer, captured)
++
++    assert clear.calls == 0
++    assert composer.text == " " + TYPED
++    assert taken.removed
++
++
++@pytest.mark.parametrize("change", ["replaced", "switched"])
++def test_take_removes_nothing_but_keeps_a_draft_that_changed(change):
++    """Qodo #4: a take that removed nothing returned None, so a later
++    failure had no command to offer for resend."""
++    composer = _Composer(COMMAND)
++    captured = composer.capture_draft_for_send()
++    if change == "replaced":
++        composer.clear()
++        composer.type(TYPED)
++        expected = TYPED
++    else:
++        composer.load(COMMAND)  # another chat, same text: still not ours
++        expected = COMMAND
++
++    taken, clear = _take(composer, captured)
++
++    assert clear.calls == 0
++    assert composer.text == expected, "the take touched a draft it does not own"
++    assert taken is not None and taken.stash is captured
++    assert not taken.removed
++
++
++def test_take_without_a_capture_takes_the_live_draft():
++    """A direct call (no hand-off) takes the whole draft, as before."""
++    composer = _Composer(COMMAND)
++
++    taken, clear = _take(composer)
++
++    assert clear.calls == 1 and composer.text == ""
++    assert taken.removed and taken.stash.text == COMMAND
++
++
++def test_take_of_an_empty_draft_keeps_nothing():
++    composer = _Composer("")
++
++    taken, clear = _take(composer)
++
++    assert taken is None and clear.calls == 1
++
++
++def test_take_without_a_composer_still_keeps_the_captured_command():
++    captured = _Composer(COMMAND).capture_draft_for_send()
++
++    taken, clear = _take(None, captured)
++
++    assert clear.calls == 1
++    assert taken == TakenCommandDraft(None, captured, None)
++    assert _take(None)[0] is None
++
++
++# -- restore_command_draft --------------------------------------------------------
++
++
++def _taken_from(composer: _Composer) -> TakenCommandDraft:
++    taken, _clear = _take(composer, composer.capture_draft_for_send())
++    assert taken.removed
++    return taken
++
++
++def test_restore_puts_the_command_back_into_its_own_empty_scope():
++    composer = _Composer(COMMAND)
++    taken = _taken_from(composer)
++
++    assert restore_command_draft(composer, taken) == ""
++    assert composer.restored == [taken.stash]
++    assert composer.text == COMMAND
++
++
++def test_restore_of_nothing_says_nothing():
++    assert restore_command_draft(_Composer(), None) == ""
++
++
++def _refused(composer, taken) -> str:
++    before = composer.text if composer is not None else None
++    hint = restore_command_draft(composer, taken)
++    if composer is not None:
++        assert composer.restored == [], "restored over a changed composer"
++        assert composer.text == before
++    return hint
++
++
++def test_restore_never_overwrites_text_typed_since():
++    composer = _Composer(COMMAND)
++    taken = _taken_from(composer)
++    composer.type(TYPED)
++
++    assert COMMAND in _refused(composer, taken)
++
++
++def test_restore_never_writes_into_the_chat_switched_to():
++    composer = _Composer(COMMAND)
++    taken = _taken_from(composer)
++    composer.load("")  # the other chat's draft is empty
++
++    assert COMMAND in _refused(composer, taken)
++
++
++def test_restore_never_writes_into_another_composer():
++    composer = _Composer(COMMAND)
++    taken = _taken_from(composer)
++
++    assert COMMAND in _refused(_Composer(), taken)
++    assert COMMAND in _refused(None, taken)
++
++
++def test_restore_of_a_command_the_take_left_behind_only_offers_a_resend():
++    """Qodo #4: same composer, same generation, empty draft -- but the take
++    never removed the command, so putting it back would duplicate or
++    overwrite; the failure row offers it instead."""
++    composer = _Composer(COMMAND)
++    captured = composer.capture_draft_for_send()
++    composer.clear()
++    taken, _clear = _take(composer, captured)
++    assert not taken.removed
++
++    hint = _refused(composer, taken)
++
++    assert hint.endswith(f"send: {COMMAND}")
++
++
++# -- with_resend_hint -------------------------------------------------------------
++
++
++@pytest.mark.parametrize(
++    ("message", "hint", "expected"),
++    [
++        ("Video generation failed (X).", "", "Video generation failed (X)."),
++        ("Image generation failed: boom", "", "Image generation failed: boom"),
++        ("Video generation failed (X).", "Send: /c", "Video generation failed (X). Send: /c"),
++        ("Image generation failed: boom", "Send: /c", "Image generation failed: boom. Send: /c"),
++        ("Failed...", "Send: /c", "Failed. Send: /c"),
++    ],
++)
++def test_with_resend_hint_joins_with_exactly_one_period(message, hint, expected):
++    assert with_resend_hint(message, hint) == expected
++
++
++# -- command_handoff origin helpers ------------------------------------------------
++
++
++class _Screen:
++    def __init__(self, active: str | None, visible: str | None) -> None:
++        self.toasts: list[tuple[str, str | None]] = []
++        store = SimpleNamespace(active_session_id=active)
++        self._ensure_console_chat_store = lambda: store
++        self._console_visible_draft_session_id = visible
++        self.app_instance = SimpleNamespace(
++            notify=lambda message, severity=None: self.toasts.append(
++                (message, severity)
++            )
++        )
++
++
++def _in_command(screen, origin: str, fn):
++    def run():
++        COMMAND_ORIGIN.set(CommandOrigin(screen, origin))
++        return fn()
++
++    return contextvars.copy_context().run(run)
++
++
++def test_a_direct_call_has_no_origin_and_is_never_refused():
++    screen = _Screen(active="b", visible="b")
++
++    assert command_origin_session() is None
++    assert refuse_if_chat_changed("system") is False
++    assert screen.toasts == []
++
++
++def test_a_command_from_the_chat_showing_runs():
++    screen = _Screen(active="a", visible="a")
++
++    assert _in_command(screen, "a", command_origin_session) == "a"
++    assert _in_command(screen, "a", lambda: refuse_if_chat_changed("system")) is False
++    assert screen.toasts == []
++
++
++@pytest.mark.parametrize(
++    ("active", "visible"),
++    [("b", "b"), ("b", "a"), ("a", "b")],
++    ids=["switched", "store-switched", "composer-switched"],
++)
++def test_a_command_whose_chat_no_longer_shows_is_refused_aloud(active, visible):
++    screen = _Screen(active=active, visible=visible)
++
++    assert _in_command(screen, "a", lambda: refuse_if_chat_changed("system")) is True
++    assert len(screen.toasts) == 1
++    message, severity = screen.toasts[0]
++    assert "/system" in message and severity == "warning"
++
++
++async def test_command_output_goes_to_the_origin_chat_only_inside_a_command():
++    calls: list[tuple[str, dict]] = []
++
++    async def append(message, **kwargs):
++        calls.append((message, kwargs))
++
++    await append_command_output(append, "direct")
++    token = COMMAND_ORIGIN.set(CommandOrigin(_Screen("b", "b"), "a"))
++    try:
++        await append_command_output(append, "handed off")
++    finally:
++        COMMAND_ORIGIN.reset(token)
++
++    assert calls == [("direct", {}), ("handed off", {"session_id": "a"})]
+diff --git a/Tests/UI/test_console_command_origin_chat.py b/Tests/UI/test_console_command_origin_chat.py
+new file mode 100644
+index 0000000000..729d124613
+--- /dev/null
++++ b/Tests/UI/test_console_command_origin_chat.py
+@@ -0,0 +1,384 @@
++"""A slash command acts only on the Console chat it was sent from.
++
++TASK-33622.16 review. Every slash command now runs in a Console worker
++(``UI/Console_Modules/command_handoff.py``), so the Console keeps taking input
++while a command awaits a prompt search, a health check or a URL resolution:
++the user can switch chats or type a new draft before the command acts. A
++command written when the send parked the pump re-read "the active chat" and
++"the live draft" after that await, so it acted on whatever was showing then:
++
++* ``/system <name>`` applied the saved prompt to the chat switched to, and
++  cleared that chat's draft -- or, without a switch, wiped text typed after
++  the keypress;
++* ``/doctor``, ``/skills``, ``/fewer-permission-prompts`` and
++  ``/stream-video`` posted their answer into the chat switched to;
++* a command whose worker started after a switch ran against the new chat.
++
++Each test parks the command at its own await seam with a gate, does what the
++user can now do, then releases it. Keys are delivered the way the terminal
++driver does (``_key``), as in ``test_console_video_send_freeze``.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import contextlib
++import threading
++from types import SimpleNamespace
++
++import pytest
++from textual.widgets import Button
++
++from Tests.UI.app_factory import _build_test_app
++from Tests.UI.test_console_hook_review_send_freeze import _key, _until
++from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
++from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
++from tldw_chatbook.Chat.console_command_grammar import KIND_COMMAND, CommandParse
++from tldw_chatbook.Media_Playback import stream_resolve
++from tldw_chatbook.UI.Console_Modules.command_handoff import (
++    COMMAND_WORKER_GROUP,
++    run_console_command,
++)
++from tldw_chatbook.Utils import doctor
++
++pytestmark = pytest.mark.bootstrap_profile
++
++SYSTEM_DRAFT = "/system Terse"
++TERSE = {
++    "name": "Terse",
++    "system_prompt": "Answer tersely.",
++    "user_prompt": "",
++    "artifact_type": "prompt",
++}
++TYPED = "what about a sailboat"
++ROUTES = ["enter", "send-button"]
++
++
++@contextlib.asynccontextmanager
++async def _console():
++    """Run the real ``TldwCli`` on its Console and yield ``(app, console)``."""
++    app = _build_test_app(configured_default="chat")
++    _configure_native_ready_console(app)
++    async with app.run_test(size=(140, 44)) as pilot:
++        assert await _until(
++            lambda: (
++                type(app.screen).__name__ == "ChatScreen"
++                and bool(app.screen.query("#console-native-composer"))
++            ),
++            15,
++        ), "the Console composer never mounted"
++        await pilot.pause(0.2)
++        yield app, app.screen
++
++
++def _record_toasts(monkeypatch, app) -> list[tuple[str, str | None]]:
++    toasts: list[tuple[str, str | None]] = []
++    original = app.notify
++
++    def _notify(message, *args, **kwargs):
++        toasts.append((str(message), kwargs.get("severity")))
++        return original(message, *args, **kwargs)
++
++    monkeypatch.setattr(app, "notify", _notify)
++    return toasts
++
++
++async def _load(console, draft: str) -> None:
++    composer = console._console_composer_or_none()
++    composer.load_draft(draft)
++    composer.focus()
++    await asyncio.sleep(0.1)
++    assert composer.draft_text() == draft
++
++
++def _send(route: str, app, console) -> None:
++    if route == "send-button":
++        console.query_one("#console-send-message", Button).press()
++    else:
++        _key(app, "enter", "\r")
++
++
++def _type(app, text: str) -> None:
++    for char in text:
++        _key(app, "space" if char == " " else char, char)
++
++
++async def _type_into(app, composer, text: str) -> None:
++    composer.focus()
++    await asyncio.sleep(0.1)
++    _type(app, text)
++    assert await _until(lambda: composer.draft_text() == text, 5), (
++        f"typing never reached the composer: {composer.draft_text()!r}"
++    )
++
++
++async def _switch_to_new_chat(console) -> str:
++    other = console._ensure_console_chat_controller().new_session().id
++    await console._sync_native_console_chat_ui()
++    assert await _until(
++        lambda: console._console_visible_draft_session_id == other, 5
++    ), "the Console never switched to the new chat"
++    return other
++
++
++def _commands_idle(console) -> bool:
++    return not [
++        worker
++        for worker in console.workers
++        if worker.group == COMMAND_WORKER_GROUP and not worker.is_finished
++    ]
++
++
++def _system_rows(store, session_id: str) -> list[str]:
++    return [
++        message.content
++        for message in store.messages_for_session(session_id)
++        if message.role is ConsoleMessageRole.SYSTEM
++    ]
++
++
++def _system_prompt(store, session_id: str):
++    settings = store.session_settings(session_id)
++    return getattr(settings, "system_prompt", None)
++
++
++class _AsyncGate:
++    """Parks an awaited seam until the test releases it."""
++
++    def __init__(self, result=None, error: Exception | None = None) -> None:
++        self.entered = threading.Event()
++        self.released = threading.Event()
++        self._result = result
++        self._error = error
++
++    async def __call__(self, *_args, **_kwargs):
++        self.entered.set()
++        while not self.released.is_set():
++            await asyncio.sleep(0.02)
++        if self._error is not None:
++            raise self._error
++        return self._result
++
++
++class _ThreadGate:
++    """Parks a seam that runs in ``asyncio.to_thread``."""
++
++    def __init__(self, result=None, error: Exception | None = None) -> None:
++        self.entered = threading.Event()
++        self.released = threading.Event()
++        self._result = result
++        self._error = error
++
++    def __call__(self, *_args, **_kwargs):
++        self.entered.set()
++        self.released.wait(30)
++        if self._error is not None:
++            raise self._error
++        return self._result
++
++
++def _gate_prompt_search(monkeypatch, console) -> _AsyncGate:
++    gate = _AsyncGate(result=[TERSE])
++    monkeypatch.setattr(console._prompts, "_console_prompt_search", gate)
++    return gate
++
++
++# -- /system <name> -----------------------------------------------------------
++
++
++@pytest.mark.parametrize("route", ROUTES)
++async def test_a_named_system_prompt_never_lands_on_the_chat_switched_to(
++    route, monkeypatch
++):
++    """Review (Qodo #1/#2): ``/system <name>`` applied its prompt to the chat
++    active once the search returned, and cleared that chat's draft. Neither
++    chat changes, the other chat's draft stays, the command stays in its own
++    chat's draft, and the refusal says so."""
++    async with _console() as (app, console):
++        toasts = _record_toasts(monkeypatch, app)
++        gate = _gate_prompt_search(monkeypatch, console)
++        try:
++            store = console._ensure_console_chat_store()
++            await _load(console, SYSTEM_DRAFT)
++            _send(route, app, console)
++            assert await _until(gate.entered.is_set, 10), "/system never searched"
++            origin = store.active_session_id
++            origin_before = _system_prompt(store, origin)
++            composer = console._console_composer_or_none()
++            other = await _switch_to_new_chat(console)
++            other_before = _system_prompt(store, other)
++            await _type_into(app, composer, TYPED)
++            gate.released.set()
++            assert await _until(lambda: _commands_idle(console), 10)
++            await asyncio.sleep(0.3)
++            assert _system_prompt(store, other) == other_before, (
++                f"{route}: /system applied to the chat switched to"
++            )
++            assert _system_prompt(store, origin) == origin_before
++            assert composer.draft_text() == TYPED, (
++                f"{route}: /system cleared the other chat's draft: "
++                f"{composer.draft_text()!r}"
++            )
++            assert store.session_draft(origin) == SYSTEM_DRAFT
++            assert any(
++                "/system" in message and severity == "warning"
++                for message, severity in toasts
++            ), f"{route}: the refusal was silent: {toasts}"
++        finally:
++            gate.released.set()
++
++
++@pytest.mark.parametrize("edit", ["appended", "replaced"])
++async def test_a_named_system_prompt_takes_only_the_draft_its_send_captured(
++    edit, monkeypatch
++):
++    """Review (Qodo #2): with no switch, the prompt applies -- but its success
++    path cleared the live composer, wiping what was typed after Enter. Only
++    the captured ``/system Terse`` goes; later text stays."""
++    async with _console() as (app, console):
++        gate = _gate_prompt_search(monkeypatch, console)
++        try:
++            store = console._ensure_console_chat_store()
++            await _load(console, SYSTEM_DRAFT)
++            _send("enter", app, console)
++            assert await _until(gate.entered.is_set, 10), "/system never searched"
++            origin = store.active_session_id
++            composer = console._console_composer_or_none()
++            if edit == "appended":
++                _type(app, " " + TYPED)
++                expected = " " + TYPED
++                assert await _until(
++                    lambda: composer.draft_text() == SYSTEM_DRAFT + expected, 5
++                )
++            else:
++                _key(app, "ctrl+u")
++                assert await _until(lambda: composer.draft_text() == "", 5)
++                await _type_into(app, composer, TYPED)
++                expected = TYPED
++            gate.released.set()
++            assert await _until(lambda: _commands_idle(console), 10)
++            await asyncio.sleep(0.3)
++            assert _system_prompt(store, origin) == "Answer tersely."
++            assert composer.draft_text() == expected, (
++                f"{edit}: /system took text typed after its send: "
++                f"{composer.draft_text()!r}"
++            )
++        finally:
++            gate.released.set()
++
++
++# -- output rows ----------------------------------------------------------------
++
++
++def _doctor(monkeypatch, _app, _console):
++    gate = _ThreadGate(result=[])
++    monkeypatch.setattr(doctor, "run_doctor", gate)
++    return gate
++
++
++def _skills(monkeypatch, _app, console):
++    gate = _AsyncGate(result={})
++    monkeypatch.setattr(console._skill, "_fetch_console_skill_context", gate)
++    return gate
++
++
++def _fewer_permission_prompts(monkeypatch, app, _console):
++    gate = _AsyncGate(error=RuntimeError("recommendations unavailable"))
++    monkeypatch.setattr(
++        app,
++        "unified_mcp_service",
++        SimpleNamespace(permission_prompt_recommendations=gate),
++        raising=False,
++    )
++    return gate
++
++
++def _stream_video(monkeypatch, _app, _console):
++    gate = _ThreadGate(error=stream_resolve.StreamResolutionError("not a stream"))
++    monkeypatch.setattr(stream_resolve, "resolve_stream_url", gate)
++    return gate
++
++
++OUTPUT_COMMANDS = [
++    pytest.param("/doctor", _doctor, id="doctor"),
++    pytest.param("/skills", _skills, id="skills"),
++    pytest.param(
++        "/fewer-permission-prompts",
++        _fewer_permission_prompts,
++        id="fewer-permission-prompts",
++    ),
++    pytest.param(
++        "/stream-video https://example.com/clip.mp4", _stream_video, id="stream-video"
++    ),
++]
++
++
++@pytest.mark.parametrize(("draft", "install_gate"), OUTPUT_COMMANDS)
++async def test_a_command_answers_in_the_chat_it_was_sent_from(
++    draft, install_gate, monkeypatch
++):
++    """A command that awaits before it answers posted its row into whichever
++    chat was showing when the await returned. It lands in the chat it was
++    sent from; the chat switched to gets nothing."""
++    async with _console() as (app, console):
++        gate = install_gate(monkeypatch, app, console)
++        try:
++            store = console._ensure_console_chat_store()
++            await _load(console, draft)
++            # A bare command has the popup open, where Enter accepts the
++            # completion instead of sending; the Send button always sends.
++            _send("send-button", app, console)
++            assert await _until(gate.entered.is_set, 10), f"{draft} never ran"
++            origin = store.active_session_id
++            origin_rows = len(_system_rows(store, origin))
++            other = await _switch_to_new_chat(console)
++            other_rows = _system_rows(store, other)
++            gate.released.set()
++            assert await _until(lambda: _commands_idle(console), 10)
++            # The answer is posted after the worker returns; wait for the row
++            # itself rather than a fixed settle (flaked under load).
++            await _until(lambda: len(_system_rows(store, origin)) > origin_rows, 10)
++            await asyncio.sleep(0.3)
++            assert _system_rows(store, other) == other_rows, (
++                f"{draft} answered in the chat switched to: "
++                f"{_system_rows(store, other)}"
++            )
++            assert len(_system_rows(store, origin)) == origin_rows + 1, (
++                f"{draft} never answered in its own chat: {_system_rows(store, origin)}"
++            )
++        finally:
++            gate.released.set()
++
++
++# -- the hand-off's own origin check ------------------------------------------
++
++
++async def test_a_command_never_starts_in_a_chat_it_was_not_sent_from(monkeypatch):
++    """The hand-off runs a command on a later loop step than its send. If the
++    chat it came from is no longer the one showing by then, it does not run
++    -- in either chat -- and says so; from the chat showing, it runs."""
++    async with _console() as (app, console):
++        toasts = _record_toasts(monkeypatch, app)
++        dispatched: list[str] = []
++
++        async def _record(parse) -> None:
++            dispatched.append(parse.name)
++
++        monkeypatch.setattr(console, "_dispatch_console_command", _record)
++        origin = console._console_visible_send_session_id()
++        other = await _switch_to_new_chat(console)
++        parse = CommandParse(kind=KIND_COMMAND, name="help", args="")
++
++        run_console_command(console, parse, origin, "/help")
++        assert await _until(lambda: _commands_idle(console), 5)
++        await asyncio.sleep(0.2)
++        assert dispatched == [], "a command ran in a chat it was not sent from"
++        assert any(
++            "/help" in message and severity == "warning"
++            for message, severity in toasts
++        ), f"the refusal was silent: {toasts}"
++
++        run_console_command(console, parse, other, "/help")
++        assert await _until(lambda: dispatched == ["help"], 5), (
++            "a command sent from the chat showing never ran"
++        )
+diff --git a/Tests/UI/test_console_video_send_freeze.py b/Tests/UI/test_console_video_send_freeze.py
+new file mode 100644
+index 0000000000..41256cc9b6
+--- /dev/null
++++ b/Tests/UI/test_console_video_send_freeze.py
+@@ -0,0 +1,895 @@
++"""A ``/generate-video`` send never parks the pump that delivered it.
++
++TASK-33622.16. Found live during TASK-33622.15 and reproduced on dev: after
++Enter sent ``/generate-video`` to a paid backend, the "Generate video?" cost
++confirm ignored Escape, F1 and Ctrl+Q, and so did the storage choice after it,
++while a mouse click on Send left them working.
++
++The mechanism these tests pin (each fails on dev for it, on a bounded poll):
++
++* Enter schedules the visible send with ``app.call_later``. Textual's
++  ``MessagePump.on_callback`` AWAITS a coroutine callback on the pump it was
++  posted to -- the APP pump, which reads every key and click. A slash command
++  ran inline in that send (``_dispatch_console_command``), and
++  ``/generate-video`` awaits its cost confirm, the whole paid generation and
++  the storage choice. The app pump was parked under all of it, so the confirm
++  could never receive the Escape that would have ended it.
++* The Send button awaits the same send on the Console's own pump. The app
++  pump stayed free (why a click "worked"), but the Console pump was parked for
++  the whole generation -- and the Stop button that cancels a paid run is
++  handled there.
++
++Input after the send is delivered the way the terminal driver does (``_key``,
++shared with TASK-33621.28's ``test_console_hook_review_send_freeze``), never
++through Pilot, whose idle wait never returns while a pump is parked. Every
++test releases what it opened in a ``finally`` so a red run fails instead of
++hanging the suite.
++
++The paid backend is a stand-in at the Console's generation seam
++(``run_video_generation``): these tests are about which pump waits, not about
++MiniMax. The live run with the real backend is recorded in the task.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import contextlib
++import tempfile
++import threading
++from types import SimpleNamespace
++
++import pytest
++from textual.widgets import Button
++
++from Tests.UI.app_factory import _build_test_app
++from Tests.UI.test_console_hook_review_send_freeze import (
++    _key,
++    _pump_runs,
++    _task_factory,
++    _until,
++)
++from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
++from tldw_chatbook.Chat.console_generate_video import PendingVideoArtifact
++from tldw_chatbook.UI.Console_Modules import image as image_module
++from tldw_chatbook.UI.Console_Modules import video as video_module
++from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
++from tldw_chatbook.Video_Generation import adapter_registry
++from tldw_chatbook.Video_Generation.exceptions import VideoGenerationError
++from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
++from tldw_chatbook.Widgets.cancel_confirmation_dialog import CancelConfirmationDialog
++from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
++from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
++    ConsoleVideoCapacityModal,
++)
++
++pytestmark = pytest.mark.bootstrap_profile
++
++DRAFT = "/generate-video a paper boat drifting on a pond"
++COST_CONFIRM = "Generate video?"
++ROUTES = ["enter", "send-button"]
++
++
++class _PaidBackend:
++    """Stand-in for a paid backend at the Console's generation seam.
++
++    Blocks like a real remote poll until released, and honours the
++    cooperative cancel event the way the MiniMax adapter does.
++    """
++
++    def __init__(self, outcome=None) -> None:
++        self.calls: list[dict] = []
++        self.started = threading.Event()
++        self.release = threading.Event()
++        self.cancelled = threading.Event()
++        self._outcome = outcome
++
++    def __call__(self, **kwargs):
++        self.calls.append(kwargs)
++        self.started.set()
++        cancel = kwargs.get("cancel_event")
++        while not self.release.wait(0.02):
++            if cancel is not None and cancel.is_set():
++                self.cancelled.set()
++                raise VideoGenerationError("cancelled by user")
++        if self._outcome is None:
++            raise VideoGenerationError("released by the test")
++        return self._outcome(kwargs)
++
++
++class _Registry:
++    @staticmethod
++    def resolve_backend(backend):
++        return backend
++
++
++def _pending_artifact(kwargs) -> PendingVideoArtifact:
++    stream = tempfile.TemporaryFile(mode="w+b")
++    stream.write(b"generated-video")
++    stream.seek(0)
++    return PendingVideoArtifact(
++        metadata=VideoGenerationMetadata(
++            name="paper-boat", prompt="a paper boat", backend="minimax"
++        ),
++        message_id=kwargs["message_id"],
++        slug="paper-boat",
++        extension="mp4",
++        size_bytes=300 * 1024 * 1024,
++        max_bytes=256 * 1024 * 1024,
++        reason="over_capacity",
++        stream=stream,
++    )
++
++
++def _configure_paid_backend(monkeypatch, console, backend: _PaidBackend) -> None:
++    monkeypatch.setattr(
++        video_module,
++        "get_video_generation_config",
++        lambda: SimpleNamespace(default_backend="minimax", confirm_cost_estimate=True),
++    )
++    monkeypatch.setattr(adapter_registry, "get_registry", lambda: _Registry())
++    monkeypatch.setattr(video_module, "run_video_generation", backend)
++    console._video._console_video_store = object()
++
++
++def _send(route: str, app, console) -> None:
++    if route == "send-button":
++        console.query_one("#console-send-message", Button).press()
++    else:
++        _key(app, "enter", "\r")
++
++
++async def _load_draft(app, console, pilot, draft: str = DRAFT) -> None:
++    composer = console._console_composer_or_none()
++    composer.load_draft(draft)
++    composer.focus()
++    await pilot.pause()
++    assert composer.draft_text() == draft
++
++
++def _cost_confirm(app):
++    screen = app.screen
++    if (
++        isinstance(screen, CancelConfirmationDialog)
++        and screen.is_mounted
++        and screen.title == COST_CONFIRM
++    ):
++        return screen
++    return None
++
++
++async def _wait_for_cost_confirm(app, route: str):
++    assert await _until(lambda: _cost_confirm(app) is not None, 10), (
++        f"{route}: the cost confirm never opened"
++    )
++    await asyncio.sleep(0.1)
++    return _cost_confirm(app)
++
++
++async def _assert_pumps_run(app, console, when: str) -> None:
++    assert await _pump_runs(app), (
++        f"{when}: the app pump -- the one that reads every key, Escape, F1 "
++        "and Ctrl+Q included -- is parked"
++    )
++    assert await _pump_runs(console), f"{when}: the Console message pump is parked"
++
++
++async def _release(app, backend: _PaidBackend) -> None:
++    """Let a red run tear down instead of hanging: release the stand-in
++    backend's thread, then answer, top down, every prompt nothing reached --
++    each confirm as its safe "no", the storage choice as Discard. Their
++    results are futures the waiting worker holds, so no parked pump has to
++    flush them, and the pump the send parked comes free."""
++    backend.release.set()
++    for _ in range(6):
++        await asyncio.sleep(0.2)
++        top = app.screen
++        if isinstance(top, ConfirmationDialog):
++            top.dismiss(False)
++        elif isinstance(top, ConsoleVideoCapacityModal):
++            top.dismiss("discard")
++        else:
++            break
++    await asyncio.sleep(0.3)
++
++
++def _video_idle(console) -> bool:
++    return not console._video._console_videogen_inflight_sessions()
++
++
++def _dialogs_titled(app, title: str) -> list[ConfirmationDialog]:
++    return [
++        screen
++        for screen in app.screen_stack
++        if isinstance(screen, ConfirmationDialog) and screen.title == title
++    ]
++
++
++def _confirm_button(dialog) -> Button | None:
++    """``dialog``'s confirm button once the dialog has composed it, else None.
++
++    A pushed dialog is on ``app.screen_stack`` before its children exist, so
++    querying a button as soon as the dialog appears races its compose -- it
++    raised ``NoMatches`` in 2 of 6 loaded runs (TASK-33622.16 review)."""
++    if not dialog.is_mounted:
++        return None
++    return next(iter(dialog.query("#confirm-button").results(Button)), None)
++
++
++async def _press_confirm(app, title: str, why: str) -> None:
++    """Press the confirm button of the dialog titled ``title`` once it exists
++    -- a synthetic click its own pump handles."""
++
++    def button() -> Button | None:
++        dialogs = _dialogs_titled(app, title)
++        return _confirm_button(dialogs[-1]) if dialogs else None
++
++    assert await _until(lambda: button() is not None, 5), why
++    button().press()
++
++
++@contextlib.asynccontextmanager
++async def _console_sending_video(
++    monkeypatch, route: str, backend, *, draft: str = DRAFT, configure=None
++):
++    """Run the real ``TldwCli`` on its Console, send ``draft`` by ``route``
++    and yield ``(app, console, cleanups)``. ``configure(console)`` installs
++    the backend stand-in (default: ``backend`` as the paid video backend).
++
++    ``ChatScreen`` pushes the cost confirm on its ``app_instance``, which in
++    a ``ConsoleHarness`` is a TldwCli that is not running -- the confirm never
++    shows there -- so every test here drives the real app. Its irreversible
++    shutdown is replaced by a recorder, as the other quit tests do.
++    """
++    app = _build_test_app(configured_default="chat")
++    _configure_native_ready_console(app)
++    cleanups: list[bool] = []
++
++    async def _record_cleanup() -> None:
++        cleanups.append(True)
++
++    monkeypatch.setattr(app, "_run_approved_quit_cleanup", _record_cleanup)
++    async with app.run_test(size=(140, 44)) as pilot:
++        assert await _until(
++            lambda: (
++                type(app.screen).__name__ == "ChatScreen"
++                and bool(app.screen.query("#console-native-composer"))
++            ),
++            15,
++        ), "the Console composer never mounted"
++        await pilot.pause(0.2)
++        console = app.screen
++        if configure is None:
++            _configure_paid_backend(monkeypatch, console, backend)
++        else:
++            configure(console)
++        await _load_draft(app, console, pilot, draft)
++        _send(route, app, console)
++        try:
++            yield app, console, cleanups
++        finally:
++            await _release(app, backend)
++
++
++async def _confirm_generate(app, route: str) -> None:
++    """Answer the cost confirm with a synthetic click its own pump handles,
++    so a test of a later leg reaches it even on dev, where the keyboard could
++    not answer the confirm at all."""
++    await _wait_for_cost_confirm(app, route)
++    await _press_confirm(
++        app, COST_CONFIRM, f"{route}: the cost confirm has no Generate"
++    )
++
++
++async def _wait_for_storage_choice(app) -> ConsoleVideoCapacityModal:
++    assert await _until(
++        lambda: (
++            isinstance(app.screen, ConsoleVideoCapacityModal) and app.screen.is_mounted
++        ),
++        10,
++    ), "the storage choice never opened"
++    await asyncio.sleep(0.1)
++    return app.screen
++
++
++@pytest.mark.parametrize("route", ROUTES)
++@pytest.mark.parametrize("factory", ["lazy", "eager"])
++async def test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing(
++    route, factory, monkeypatch
++):
++    """AC#1/#3: while "Generate video?" is up, both pumps run, F1 is consumed
++    (the modal owns the keyboard, so it opens nothing over it), and Escape
++    cancels with no generation started and the draft kept. ``eager`` runs it
++    under the task factory the real app installs, where the hand-off's worker
++    starts inside the send itself (see ``_task_factory``)."""
++    backend = _PaidBackend()
++    with _task_factory(factory):
++        await _escape_at_the_cost_confirm(route, backend, monkeypatch)
++
++
++async def _escape_at_the_cost_confirm(route, backend, monkeypatch) -> None:
++    async with _console_sending_video(monkeypatch, route, backend) as (
++        app,
++        console,
++        _cleanups,
++    ):
++        confirm = await _wait_for_cost_confirm(app, route)
++        await _assert_pumps_run(app, console, f"{route}, cost confirm open")
++        _key(app, "f1")
++        await _assert_pumps_run(app, console, f"{route}, F1 under the confirm")
++        assert app.screen is confirm, "F1 covered the cost confirm"
++        _key(app, "escape")
++        assert await _until(lambda: app.screen is console, 5), (
++            f"{route}: Escape never reached the cost confirm"
++        )
++        await _assert_pumps_run(app, console, f"{route}, after Escape")
++        assert backend.calls == [], "Escape at the cost confirm started a generation"
++        composer = console._console_composer_or_none()
++        assert composer.draft_text() == DRAFT, "a cancelled confirm lost the draft"
++        assert _video_idle(console)
++
++
++@pytest.mark.parametrize("route", ROUTES)
++async def test_ctrl_q_under_the_cost_confirm_reaches_the_quit_flow(route, monkeypatch):
++    """AC#1: Ctrl+Q under the cost confirm starts the app's own quit flow.
++    Nothing has been generated, so quitting there loses no video: the flow
++    may ask about other Console work ("Quit Chatbook?") or run straight
++    through to the (recorded) shutdown -- either proves it was answered."""
++    backend = _PaidBackend()
++    async with _console_sending_video(monkeypatch, route, backend) as (
++        app,
++        _console,
++        cleanups,
++    ):
++        await _wait_for_cost_confirm(app, route)
++        _key(app, "ctrl+q")
++        assert await _until(
++            lambda: bool(cleanups) or bool(_dialogs_titled(app, "Quit Chatbook?")),
++            10,
++        ), f"{route}: Ctrl+Q under the cost confirm never reached the quit flow"
++        assert backend.calls == []
++
++
++@pytest.mark.parametrize("route", ROUTES)
++async def test_a_paid_generation_in_flight_answers_keys_help_and_stop(
++    route, monkeypatch
++):
++    """AC#2/#3: once the generation runs, both pumps keep running: Escape is
++    consumed, F1 opens and closes help, and the Stop button reaches the
++    backend's cancel event (dev parked the Console pump that handles it, on
++    the Send route too)."""
++    backend = _PaidBackend()
++    async with _console_sending_video(monkeypatch, route, backend) as (
++        app,
++        console,
++        _cleanups,
++    ):
++        await _confirm_generate(app, route)
++        assert await _until(backend.started.is_set, 10), (
++            f"{route}: Generate never started the generation"
++        )
++        await _assert_pumps_run(app, console, f"{route}, generation in flight")
++        _key(app, "escape")
++        await _assert_pumps_run(app, console, f"{route}, Escape in flight")
++        _key(app, "f1")
++        assert await _until(lambda: isinstance(app.screen, WorkbenchHelpPanel), 5), (
++            f"{route}: F1 never opened help during the generation"
++        )
++        _key(app, "f1")
++        assert await _until(lambda: app.screen is console, 5), (
++            f"{route}: F1 never closed help again"
++        )
++        stop = console.query_one("#console-stop-generation", Button)
++        assert await _until(lambda: stop.display and not stop.disabled, 5), (
++            f"{route}: Stop is not offered during the generation"
++        )
++        stop.press()
++        assert await _until(backend.cancelled.is_set, 5), (
++            f"{route}: Stop never reached the paid backend's cancel event"
++        )
++        assert await _until(lambda: _video_idle(console), 5), (
++            f"{route}: the stopped generation never settled"
++        )
++        await _assert_pumps_run(app, console, f"{route}, after Stop")
++
++
++async def test_ctrl_q_during_a_paid_generation_reaches_the_quit_flow(monkeypatch):
++    """AC#2: Ctrl+Q while an Enter-sent generation runs reaches the quit
++    flow. No video exists yet, so there is nothing to ask about here."""
++    backend = _PaidBackend()
++    async with _console_sending_video(monkeypatch, "enter", backend) as (
++        app,
++        _console,
++        cleanups,
++    ):
++        await _confirm_generate(app, "enter")
++        assert await _until(backend.started.is_set, 10)
++        _key(app, "ctrl+q")
++        assert await _until(
++            lambda: bool(cleanups) or bool(_dialogs_titled(app, "Quit Chatbook?")),
++            10,
++        ), "Ctrl+Q during the Enter-sent generation never reached the quit flow"
++
++
++async def test_the_storage_choice_after_an_enter_send_answers_its_keys(monkeypatch):
++    """AC#2: the storage choice an Enter send leads to answers F1 (consumed)
++    and Escape (its own "Discard generated video?" guard), and Discard
++    settles the send."""
++    backend = _PaidBackend(outcome=_pending_artifact)
++    backend.release.set()
++    async with _console_sending_video(monkeypatch, "enter", backend) as (
++        app,
++        console,
++        _cleanups,
++    ):
++        await _confirm_generate(app, "enter")
++        choice = await _wait_for_storage_choice(app)
++        await _assert_pumps_run(app, console, "storage choice open")
++        _key(app, "f1")
++        await _assert_pumps_run(app, console, "F1 under the storage choice")
++        assert app.screen is choice
++        _key(app, "escape")
++        await _press_confirm(
++            app, "Discard generated video?", "Escape never reached the storage choice"
++        )
++        assert await _until(lambda: app.screen is console, 5)
++        assert await _until(lambda: _video_idle(console), 5), (
++            "the discarded video's send never settled"
++        )
++        await _assert_pumps_run(app, console, "after Discard")
++
++
++async def test_ctrl_q_under_an_enter_sent_storage_choice_asks_before_discarding(
++    monkeypatch,
++):
++    """AC#2: Ctrl+Q over the storage choice an Enter send led to still asks
++    "Discard generated video and quit?"; Stay returns to the choice with the
++    video's fate undecided."""
++    backend = _PaidBackend(outcome=_pending_artifact)
++    backend.release.set()
++    async with _console_sending_video(monkeypatch, "enter", backend) as (
++        app,
++        console,
++        cleanups,
++    ):
++        await _confirm_generate(app, "enter")
++        choice = await _wait_for_storage_choice(app)
++        _key(app, "ctrl+q")
++        assert await _until(
++            lambda: (
++                bool(_dialogs_titled(app, "Discard generated video and quit?"))
++                or bool(cleanups)
++            ),
++            10,
++        ), "Ctrl+Q over the Enter-sent storage choice was never answered"
++        assert cleanups == [], "quit straight past the generated video"
++        _key(app, "escape")
++        assert await _until(lambda: app.screen is choice, 5), (
++            "Stay never returned to the storage choice"
++        )
++        assert await _until(lambda: app._quit_in_progress is False, 5)
++        assert cleanups == []
++        assert console._video._pending_console_video_artifacts(), (
++            "Stay decided the video's fate"
++        )
++
++
++# -- the hand-off's own contract ---------------------------------------------
++
++
++async def test_a_repeat_press_of_the_same_draft_opens_one_cost_confirm(monkeypatch):
++    """The hand-off lets a second press arrive while the first command runs
++    (a parked pump used to queue it until the draft was gone). A fast second
++    click on Send for the same unmodified draft must not stack a second paid
++    confirm."""
++    backend = _PaidBackend()
++    async with _console_sending_video(monkeypatch, "enter", backend) as (
++        app,
++        console,
++        _cleanups,
++    ):
++        confirm = await _wait_for_cost_confirm(app, "enter")
++        _send("send-button", app, console)
++        await asyncio.sleep(0.5)
++        assert _dialogs_titled(app, COST_CONFIRM) == [confirm], (
++            "a repeat press of the same draft stacked a second cost confirm"
++        )
++        _key(app, "escape")
++        assert await _until(lambda: app.screen is console, 5)
++        assert backend.calls == []
++
++
++async def test_another_command_runs_while_a_generation_is_in_flight(monkeypatch):
++    """Only a repeat of the same draft waits: a different command sent while
++    the generation runs runs at once -- ``/help`` leaves the generation going,
++    and ``/stop`` (sent with the Send button: a bare ``/stop`` has the command
++    popup open, where Enter accepts the completion) stops it. On dev both
++    queued behind the parked pump until the generation had resolved."""
++    backend = _PaidBackend()
++    async with _console_sending_video(monkeypatch, "enter", backend) as (
++        app,
++        console,
++        _cleanups,
++    ):
++        helped: list[str] = []
++
++        async def _record_help(parse) -> None:
++            helped.append(parse.name)
++
++        monkeypatch.setattr(console, "_console_command_help", _record_help)
++        await _confirm_generate(app, "enter")
++        assert await _until(backend.started.is_set, 10)
++        composer = console._console_composer_or_none()
++        assert await _until(lambda: composer.draft_text() == "", 5), (
++            "the generation never took its draft"
++        )
++        # With an argument: a bare "/help" has the command popup open, and
++        # Enter there accepts the completion instead of sending.
++        composer.load_draft("/help generate-video")
++        composer.focus()
++        await asyncio.sleep(0.2)
++        _key(app, "enter", "\r")
++        assert await _until(lambda: helped == ["help"], 5), (
++            "/help never ran while the generation was in flight"
++        )
++        assert not backend.cancelled.is_set() and not _video_idle(console)
++        composer.load_draft("/stop")
++        await asyncio.sleep(0.2)
++        _send("send-button", app, console)
++        assert await _until(backend.cancelled.is_set, 5), (
++            "/stop never reached the paid backend's cancel event"
++        )
++        assert await _until(lambda: _video_idle(console), 5)
++
++
++async def test_a_command_whose_modal_wait_is_cancelled_ends_quietly(monkeypatch):
++    """Live finding: Ctrl+Q under the cost confirm quit the app, and the
++    shutdown cancelled the worker holding the confirm, so ``Worker.wait``
++    raised ``WorkerCancelled`` through the command into its own worker -- an
++    "unhandled_exception" on the way out. The command is over, not broken:
++    it ends quietly, starts nothing, keeps the draft and frees its repeat
++    key. Cancelling that one waiting worker reproduces it without quitting."""
++    from textual.worker import WorkerState
++
++    backend = _PaidBackend()
++    async with _console_sending_video(monkeypatch, "enter", backend) as (
++        app,
++        console,
++        _cleanups,
++    ):
++        await _wait_for_cost_confirm(app, "enter")
++        waits = [
++            worker
++            for worker in console.workers
++            if worker.state == WorkerState.RUNNING
++            and "push_screen_wait" in getattr(worker._work, "__qualname__", "")
++        ]
++        assert len(waits) == 1, f"expected the confirm's one waiting worker: {waits}"
++        waits[0].cancel()
++        assert await _until(lambda: _video_idle(console) and app.screen is not None, 5)
++        await asyncio.sleep(0.5)
++        assert app._exception is None, f"the command surfaced {app._exception!r}"
++        assert app.is_running
++        assert backend.calls == []
++        composer = console._console_composer_or_none()
++        assert composer.draft_text() == DRAFT
++        # The repeat key is free again: the same draft opens a fresh confirm.
++        for screen in _dialogs_titled(app, COST_CONFIRM):
++            screen.dismiss(False)
++        await asyncio.sleep(0.3)
++        _send("send-button", app, console)
++        assert await _until(lambda: len(_dialogs_titled(app, COST_CONFIRM)) == 1, 5)
++
++
++# -- the draft a failed generation puts back ---------------------------------
++#
++# The hand-off keeps the Console live while a generation runs, so the user can
++# type, switch chats and press Stop -- none of which dev's parked pumps let
++# them do. The command takes its own draft when the paid work starts and puts
++# it back when that work fails; that put-back must never overwrite what the
++# user has done since, and must come back as a command, not a paste (a
++# paste-bearing draft is never parsed as one).
++
++TYPED = "what about a sailboat"
++IMAGE_DRAFT = "/generate-image a red fox asleep in the snow"
++
++
++def _type(app, text: str) -> None:
++    for char in text:
++        _key(app, "space" if char == " " else char, char)
++
++
++def _record_system_messages(monkeypatch, console) -> list[tuple[str, str | None]]:
++    said: list[tuple[str, str | None]] = []
++    original = console._append_native_console_system_message
++
++    async def _record(message, *, session_id=None):
++        said.append((message, session_id))
++        await original(message, session_id=session_id)
++
++    monkeypatch.setattr(console, "_append_native_console_system_message", _record)
++    return said
++
++
++async def _generation_took_the_draft(app, console, backend, route: str):
++    await _confirm_generate(app, route)
++    assert await _until(backend.started.is_set, 10), (
++        f"{route}: Generate never started the generation"
++    )
++    composer = console._console_composer_or_none()
++    assert await _until(lambda: composer.draft_text() == "", 5), (
++        f"{route}: the generation never took its draft"
++    )
++    return composer
++
++
++async def _type_into(app, composer, text: str) -> None:
++    composer.focus()
++    await asyncio.sleep(0.1)
++    _type(app, text)
++    assert await _until(lambda: composer.draft_text() == text, 5), (
++        f"typing during the generation never reached the composer: "
++        f"{composer.draft_text()!r}"
++    )
++
++
++def _said_how_to_resend(said, command: str, session_id: str) -> bool:
++    return any(command in message and sid == session_id for message, sid in said)
++
++
++@pytest.mark.parametrize("route", ROUTES)
++async def test_stop_keeps_a_draft_typed_during_the_generation(route, monkeypatch):
++    """Review blocker: typing while a video generates, then Stop, wiped the
++    typed text -- the failure path cleared the composer and pasted the
++    command back. The typed draft stays, and the failure row carries the
++    command so it can be sent again."""
++    backend = _PaidBackend()
++    async with _console_sending_video(monkeypatch, route, backend) as (
++        app,
++        console,
++        _cleanups,
++    ):
++        said = _record_system_messages(monkeypatch, console)
++        origin = console._ensure_console_chat_store().active_session_id
++        composer = await _generation_took_the_draft(app, console, backend, route)
++        await _type_into(app, composer, TYPED)
++        stop = console.query_one("#console-stop-generation", Button)
++        assert await _until(lambda: stop.display and not stop.disabled, 5)
++        stop.press()
++        assert await _until(backend.cancelled.is_set, 5)
++        assert await _until(lambda: _video_idle(console), 5)
++        await asyncio.sleep(0.3)
++        assert composer.draft_text() == TYPED, (
++            f"{route}: Stop overwrote the draft typed during the generation: "
++            f"{composer.draft_text()!r}"
++        )
++        assert not composer.has_paste_segments()
++        assert _said_how_to_resend(said, DRAFT, origin), (
++            f"{route}: the failure never said how to send the command again: {said}"
++        )
++
++
++async def test_a_failed_generation_puts_the_command_back_ready_to_resend(monkeypatch):
++    """With nothing typed since, a failure puts the command back as the
++    literal draft it was -- not a paste, which the send never parses as a
++    command (Enter would have sent it to the model as a chat prompt) -- so
++    Enter runs it again."""
++    backend = _PaidBackend()
++    async with _console_sending_video(monkeypatch, "enter", backend) as (
++        app,
++        console,
++        _cleanups,
++    ):
++        composer = await _generation_took_the_draft(app, console, backend, "enter")
++        backend.release.set()  # the stand-in fails once released
++        assert await _until(lambda: _video_idle(console), 5)
++        assert await _until(lambda: composer.draft_text() == DRAFT, 5), (
++            f"the failed command never came back: {composer.draft_text()!r}"
++        )
++        assert not composer.has_paste_segments(), (
++            "the command came back as a paste, so Enter would send it as chat"
++        )
++        composer.focus()
++        await asyncio.sleep(0.2)
++        _key(app, "enter", "\r")
++        assert await _until(lambda: _cost_confirm(app) is not None, 10), (
++            "Enter on the restored draft never re-ran /generate-video"
++        )
++        _key(app, "escape")
++        assert await _until(lambda: app.screen is console, 5)
++
++
++@pytest.mark.parametrize("other_draft", ["", TYPED], ids=["empty", "typed"])
++async def test_a_failed_generation_never_writes_into_the_chat_switched_to(
++    other_draft, monkeypatch
++):
++    """Review aggravation: the composer is shared by every Console chat, so
++    a failure after a switch cleared the OTHER chat's draft and pasted the
++    command into it. That chat's draft stays as it is -- empty or typed;
++    the origin chat is told how to send the command again."""
++    backend = _PaidBackend()
++    async with _console_sending_video(monkeypatch, "enter", backend) as (
++        app,
++        console,
++        _cleanups,
++    ):
++        said = _record_system_messages(monkeypatch, console)
++        origin = console._ensure_console_chat_store().active_session_id
++        composer = await _generation_took_the_draft(app, console, backend, "enter")
++        other = console._ensure_console_chat_controller().new_session().id
++        await console._sync_native_console_chat_ui()
++        assert await _until(
++            lambda: console._console_visible_draft_session_id == other, 5
++        ), "the Console never switched to the new chat"
++        if other_draft:
++            await _type_into(app, composer, other_draft)
++        backend.release.set()  # the stand-in fails once released
++        assert await _until(lambda: _video_idle(console), 5)
++        await asyncio.sleep(0.3)
++        assert composer.draft_text() == other_draft, (
++            f"the failure wrote into the chat switched to: {composer.draft_text()!r}"
++        )
++        assert not composer.has_paste_segments()
++        assert _said_how_to_resend(said, DRAFT, origin), said
++
++
++class _BlockingImageBatch:
++    """Stand-in for ``run_generation_batch``: blocks until released, then
++    raises, the way an unreachable backend does after its timeout."""
++
++    def __init__(self) -> None:
++        self.started = threading.Event()
++        self.release = threading.Event()
++
++    def __call__(self, **_kwargs):
++        self.started.set()
++        self.release.wait(30)
++        raise RuntimeError("image backend unreachable")
++
++
++def _configure_image_backend(monkeypatch, batch: _BlockingImageBatch):
++    def configure(_console) -> None:
++        monkeypatch.setattr(
++            image_module,
++            "get_image_generation_config",
++            lambda: SimpleNamespace(
++                default_backend="swarmui",
++                default_batch=1,
++                max_variants_per_message=8,
++                context_llm_enabled=False,
++                context_llm_turns=10,
++                context_llm_timeout_seconds=15.0,
++            ),
++        )
++        monkeypatch.setattr(
++            image_module,
++            "list_image_models_for_catalog",
++            lambda: [{"name": "swarmui", "is_configured": True}],
++        )
++        monkeypatch.setattr(image_module, "run_generation_batch", batch)
++
++    return configure
++
++
++async def test_a_failed_image_batch_keeps_a_draft_typed_while_it_ran(monkeypatch):
++    """``/generate-image`` takes and puts back its draft the same way, and an
++    Enter send no longer parks the pump under it, so the same typed-text wipe
++    was reachable there."""
++    batch = _BlockingImageBatch()
++    async with _console_sending_video(
++        monkeypatch,
++        "enter",
++        batch,
++        draft=IMAGE_DRAFT,
++        configure=_configure_image_backend(monkeypatch, batch),
++    ) as (app, console, _cleanups):
++        said = _record_system_messages(monkeypatch, console)
++        origin = console._ensure_console_chat_store().active_session_id
++        assert await _until(batch.started.is_set, 10), "the image batch never ran"
++        composer = console._console_composer_or_none()
++        assert await _until(lambda: composer.draft_text() == "", 5)
++        await _type_into(app, composer, TYPED)
++        batch.release.set()
++        assert await _until(
++            lambda: not console._image._console_imagegen_inflight_sessions(), 5
++        )
++        await asyncio.sleep(0.3)
++        assert composer.draft_text() == TYPED, (
++            f"the failed image batch overwrote the typed draft: "
++            f"{composer.draft_text()!r}"
++        )
++        assert _said_how_to_resend(said, IMAGE_DRAFT, origin), said
++
++
++async def test_an_image_command_takes_only_the_draft_its_send_captured(monkeypatch):
++    """``/generate-image`` awaits its prompt preparation before it takes its
++    draft, and the hand-off lets keys typed right after Enter land in that
++    window. The command takes only the draft its send captured -- what was
++    typed after the keypress stays in the composer -- where it used to take
++    the whole live draft with it."""
++    batch = _BlockingImageBatch()
++    preparing = threading.Event()
++    prepared = threading.Event()
++    real_prepare = image_module.prepare_generation_request
++
++    def slow_prepare(*args, **kwargs):
++        preparing.set()
++        prepared.wait(30)
++        return real_prepare(*args, **kwargs)
++
++    configure_backend = _configure_image_backend(monkeypatch, batch)
++
++    def configure(console) -> None:
++        configure_backend(console)
++        monkeypatch.setattr(image_module, "prepare_generation_request", slow_prepare)
++
++    try:
++        async with _console_sending_video(
++            monkeypatch, "enter", batch, draft=IMAGE_DRAFT, configure=configure
++        ) as (app, console, _cleanups):
++            assert await _until(preparing.is_set, 10), "the command never ran"
++            composer = console._console_composer_or_none()
++            _type(app, " " + TYPED)
++            assert await _until(
++                lambda: composer.draft_text() == f"{IMAGE_DRAFT} {TYPED}", 5
++            ), (
++                f"typing after Enter never reached the composer: {composer.draft_text()!r}"
++            )
++            prepared.set()
++            assert await _until(batch.started.is_set, 10), "the image batch never ran"
++            await asyncio.sleep(0.3)
++            assert composer.draft_text() == f" {TYPED}", (
++                f"the command took text typed after its send: {composer.draft_text()!r}"
++            )
++    finally:
++        prepared.set()
++
++
++async def test_a_failed_image_batch_still_offers_a_command_its_take_left_behind(
++    monkeypatch,
++):
++    """Review (Qodo #4): a draft replaced before the command took it made the
++    take remove nothing -- and keep nothing, so when the batch then failed
++    there was no command left to offer. The replacement stays, and the failure
++    row still says how to send the command again."""
++    batch = _BlockingImageBatch()
++    preparing = threading.Event()
++    prepared = threading.Event()
++    real_prepare = image_module.prepare_generation_request
++
++    def slow_prepare(*args, **kwargs):
++        preparing.set()
++        prepared.wait(30)
++        return real_prepare(*args, **kwargs)
++
++    configure_backend = _configure_image_backend(monkeypatch, batch)
++
++    def configure(console) -> None:
++        configure_backend(console)
++        monkeypatch.setattr(image_module, "prepare_generation_request", slow_prepare)
++
++    try:
++        async with _console_sending_video(
++            monkeypatch, "enter", batch, draft=IMAGE_DRAFT, configure=configure
++        ) as (app, console, _cleanups):
++            said = _record_system_messages(monkeypatch, console)
++            origin = console._ensure_console_chat_store().active_session_id
++            assert await _until(preparing.is_set, 10), "the command never ran"
++            composer = console._console_composer_or_none()
++            _key(app, "ctrl+u")
++            assert await _until(lambda: composer.draft_text() == "", 5)
++            await _type_into(app, composer, TYPED)
++            prepared.set()
++            assert await _until(batch.started.is_set, 10), "the image batch never ran"
++            batch.release.set()
++            assert await _until(
++                lambda: not console._image._console_imagegen_inflight_sessions(), 5
++            )
++            await asyncio.sleep(0.3)
++            assert composer.draft_text() == TYPED, (
++                f"the failure overwrote the replacement draft: {composer.draft_text()!r}"
++            )
++            assert _said_how_to_resend(said, IMAGE_DRAFT, origin), (
++                f"the failure never said how to send the command again: {said}"
++            )
++    finally:
++        prepared.set()
+diff --git a/backlog/docs/lessons-textual.md b/backlog/docs/lessons-textual.md
+index 3fbd5b1df3..45335024b6 100644
+--- a/backlog/docs/lessons-textual.md
++++ b/backlog/docs/lessons-textual.md
+@@ -1460,10 +1460,82 @@ escaped with `escape_markup` and then parsed with Rich. `textual.markup.escape`
+ wrong on Textual 8.2.8 for `[/` and `[TODO] y`. Prefer building literal `Text` or
+ `Content` over escaping; escape only into a shared markup-on widget you do not own.
+ 
+ **The test trap.** A markup sink crashes only when it is drawn. A hidden widget, a
+ clipped dropdown label or an unopened dropdown never parses, so a test that only
+ "sets the value" passes on the broken code. Paint the surface (open the dropdown,
+ render the tooltip text through `Static.update` the way the tooltip timer does), or
+ assert the literal type (`Text`/`Content`) when the surface cannot be painted in the
+ test, and prove the test red on the unfixed code. Tests:
+ `Tests/UI/test_roleplay_hostile_names.py`, `Tests/UI/test_roleplay_hostile_text_surfaces.py`.
++
++## A coroutine handed to `app.call_later` is awaited on the app pump: Enter froze every key, a click did not (TASK-33622.16, 2026-10-03)
++
++**Incident.** Found live during TASK-33622.15: after **Enter** sent
++`/generate-video` to MiniMax, the "Generate video?" confirm ignored Escape, F1
++and Ctrl+Q, and so did the storage choice after it, until the paid generation
++resolved; a click on **Send** did not freeze. An await-chain probe of each
++pump's task in a mounted test on dev (`01a2020981`) showed the APP pump parked in
++`MessagePump.on_callback` → `_send_console_message_from_visible_action` →
++`_dispatch_console_command` → `_console_command_generate_video` →
++`Worker.wait()` (the confirm's `push_screen_wait` worker). On the Send route
++the app pump was idle and the Console's own pump was parked in
++`on_button_pressed`, so the composer's Stop button was dead for the whole paid
++run. TASK-33621.28 had fixed this exact freeze for the send's hook review
++only. The same send also awaited every slash command inline, so the freeze came
++back through `/generate-video`.
++
++**Why (Textual 8.2.8).** Enter schedules the send with
++`app.call_later(coroutine_function)`, and `MessagePump.on_callback` AWAITS a
++coroutine callback on the pump it was posted to. That is the app pump, which
++dispatches every key. A `Button.Pressed` handler is awaited on the screen's
++pump instead. So "click works, Enter freezes" means the send awaited
++something user-paced.
++
++**What to do.** A send path reached from a key must not await anything with a
++user-paced lifetime (a modal, a remote job). Hand it to a worker, as
++`UI/Console_Modules/command_handoff.py` does for every slash command. When you
++fix "pump parked by awaiting X", list everything else that path awaits. Second
++trap, found live on the fix build: Ctrl+Q under the confirm quit the app, and
++shutdown cancelled the confirm's waiting worker. `Worker.wait()` then raised
++`WorkerCancelled` through the command's own worker, and that showed up as an
++`unhandled_exception` on the way out. A worker that waits on a modal must
++treat `WorkerCancelled` as "over", not "broken". Test it with keys delivered
++the way the driver does (`_key`), and use a bounded `_pump_runs` poll on BOTH
++pumps (`Tests/UI/test_console_video_send_freeze.py`). Do not use Pilot here:
++its idle wait never returns while a pump is parked.
++
++**Third trap: unfreezing a flow makes its "nobody can act now" code
++reachable (checkpoint review of the same fix).** Once the hand-off kept the
++Console live during a generation, the user could type, switch chats or press
++Stop -- and `/generate-video`'s failure path, written when none of that was
++possible, ran `composer.clear_draft()` then pasted the saved command back. A
++review repro on the fix build (Enter the command → Generate → type "what about
++a sailboat?" → Stop) wiped the typed text with no undo, and after a chat switch
++it wiped the OTHER chat's draft, because every Console chat shares one
++composer. The pasted-back command was also unusable: a draft holding a paste is
++never parsed as a command, so Enter sent it to the model as chat. Five mounted
++tests went red on exactly that. `/generate-image` had the same code. The fix
++(`UI/Console_Modules/command_draft.py`): take only the revision the send
++captured (`commit_captured_draft`), and put it back only into the same draft
++scope while that is still empty. A chat switch, a load or another send always
++advances the composer's draft generation; typing does not. Restore with
++`restore_stashed_draft`, which brings back the original segments, so the draft
++is not marked as a paste. **When a fix lets the user act during something that
++used to block them, grep that flow for every save/clear/restore of shared UI
++state and ask what happens if they typed in between.**
++
++**Fourth trap: the same holds for "the active chat", in every handler, not
++just the one you fixed (PR #3006 review).** Handing every slash command to a
++worker made all of them run with the Console live, and most handlers resolve
++"the active session" or clear "the composer" after an await -- written when
++the send parked the pump, so nothing could change in between. A mounted repro:
++`/system Terse`, prompt search parked, switch to a new chat, release -- the
++prompt applied to the NEW chat and wiped its typed draft. An audit of all 17
++handlers found four more that answered after an await (`/doctor`, `/skills`,
++`/fewer-permission-prompts`, `/stream-video`), and live, `/stream-video`
++against a loopback server holding the request posted its error into the chat
++switched to. The fix binds the command to its origin in the worker
++(`command_handoff.COMMAND_ORIGIN`): refuse at start and after an await when
++that chat no longer shows, and post awaited answers with an explicit
++`session_id`. **Making a call asynchronous changes the contract of everything
++it calls: list each handler's awaits and what it re-reads after them.**
+diff --git a/backlog/tasks/task-33622.16 - Console-generate-video-send-freezes-input-the-cost-confirm-and-storage-choice-ignore-Escape-F1-and-CtrlQ-until-generation-resolves.md b/backlog/tasks/task-33622.16 - Console-generate-video-send-freezes-input-the-cost-confirm-and-storage-choice-ignore-Escape-F1-and-CtrlQ-until-generation-resolves.md
+new file mode 100644
+index 0000000000..4043057c64
+--- /dev/null
++++ b/backlog/tasks/task-33622.16 - Console-generate-video-send-freezes-input-the-cost-confirm-and-storage-choice-ignore-Escape-F1-and-CtrlQ-until-generation-resolves.md	
+@@ -0,0 +1,118 @@
++---
++id: TASK-33622.16
++title: >-
++  Console /generate-video send freezes input: the cost confirm and storage
++  choice ignore Escape, F1 and Ctrl+Q until generation resolves
++status: Done
++assignee:
++  - '@claude'
++created_date: '2026-10-04 01:36'
++updated_date: '2026-10-04 18:08'
++labels:
++  - console
++  - ux-review-2026-09-29
++  - p1
++  - quit-safety
++dependencies: []
++parent_task_id: TASK-33622
++priority: high
++---
++
++## Description
++
++<!-- SECTION:DESCRIPTION:BEGIN -->
++Found live during TASK-33622.15 (2026-10-03) and reproduced on dev. After sending /generate-video with Enter against a paid backend, the 'Generate video?' cost confirmation ignores Escape, F1 and Ctrl+Q, and so does the capacity/storage choice that follows, until the generation resolves. Sending with a mouse click on Send does not freeze. The suspected cause (the send awaiting the whole slash command inline on the UI path) is inferred from symptoms, not confirmed with a stack. The user cannot cancel a paid generation or quit while it runs.
++<!-- SECTION:DESCRIPTION:END -->
++
++## Acceptance Criteria
++<!-- AC:BEGIN -->
++- [x] #1 After a /generate-video send with Enter, the 'Generate video?' confirmation answers Escape (cancel, no generation started), F1 and Ctrl+Q while it is shown
++- [x] #2 While a generation is in flight and when the storage choice is shown, Escape, F1 and Ctrl+Q are answered; Ctrl+Q still asks before discarding a generated video
++- [x] #3 Enter and the Send button take the same non-blocking path
++- [x] #4 A mounted test reproduces the freeze on dev and passes after the fix, and a live run with a real backend confirms it
++- [x] #5 A failed or stopped /generate-video or /generate-image never overwrites text typed in the composer, or another chat's draft, while it ran; with nothing changed, the command comes back as a draft that Enter runs again
++- [x] #6 A slash command acts only on the chat it was sent from: if the user switches chats before it acts, it changes neither chat and says so; a command that only reports answers in the chat it was sent from; text typed while a command runs is never removed by it; a failed generation always offers its command for resend
++<!-- AC:END -->
++
++## Implementation Plan
++
++<!-- SECTION:PLAN:BEGIN -->
++1. Confirm the mechanism: Enter schedules the visible send with app.call_later, so Textual's App.on_callback awaits the whole send -- and a slash command's handler (/generate-video: cost confirm, generation, storage choice) -- on the APP pump that reads every key; the Send button awaits the same send on the Console pump (Stop button, Console keys dead). Prove it with mounted tests that fail on origin/dev on a bounded pump-runs poll (driver-style keys, like TASK-33621.28's test), not by inference.
++2. Red tests first (bootstrap_profile): ConsoleHarness /generate-video via Enter and via Send button, paid backend + cost confirm: app pump and Console pump keep running while the confirm is up; Escape cancels with no generation started and the draft kept; F1/Ctrl+Q consumed. Generation in flight (blocked stub at the adapter seam): both pumps run, F1 opens help, Stop reaches the cancel event. Storage choice reached via Enter answers keys. Real TldwCli: Enter-sent /generate-video, Ctrl+Q under the cost confirm reaches the quit flow; Ctrl+Q under the storage choice still asks 'Discard generated video and quit?'.
++3. Fix at the root: the visible send hands slash-command dispatch to a ChatScreen worker whenever it is not already on a worker's own task (reuse hooks.in_worker_task), so Enter (app pump), Send and Workbench (Console pump) take the same non-blocking path; spoken send (already a worker) keeps awaiting. No priority bindings. New logic in a small module; chat_screen.py net-zero or shrink.
++4. Close the double-send window the hand-off opens: reserve the per-session video in-flight guard before the cost confirm and release it on cancel.
++5. Targeted suites vs merge base (video, command composer, hook freeze, quit-under-modal, send paths), boot ratchets if a module is added, module-size ratchet, preflight. User Guide console/video.md if behaviour visibly changes.
++6. Live: isolated profile via launch.sh, real MiniMax key, Enter-sent /generate-video: Escape at the cost confirm (no spend), F1, Ctrl+Q; at most 3 real generations; scrub key afterwards.
++7. Checkpoint-review fixes: (a) de-flake the storage-choice test -- wait for the Discard guard to be mounted with its buttons before pressing; (b) the draft a failed/stopped /generate-video or /generate-image puts back must never overwrite text typed (or a chat switched to) while it ran -- red test first (type during the generation, Stop, typed text survives), then a small shared module that takes only the command's own captured revision and restores only into the untouched, same-scope composer, otherwise keeping the user's text and saying how to retry; restore as the literal draft (not a paste segment) so Enter re-runs the command.
++8. Re-run the gates: new tests green under the plain command and red on origin/dev, touched suites vs an origin/dev base worktree, boot ratchets, module-size ratchet, collect-only, preflight; live check of the Stop-with-typed-text leg.
++9. PR #3006 review round: bind every handed-off command to the chat it was sent from (refuse at start and after an await when that chat no longer shows; post awaited answers into it), take only the captured draft in `/system <name>`, keep the captured command when a take removes nothing; audit every handler; mounted red tests first, direct unit tests for the helpers, live check of a chat switch during a slow command.
++<!-- SECTION:PLAN:END -->
++
++## Implementation Notes
++
++<!-- SECTION:NOTES:BEGIN -->
++**Summary.** Every Console slash command now runs in a ChatScreen worker, and the send returns at once. The one exception is an argument-free `/rewind`, which opens its picker with a `push_screen` callback and never waits on it. Enter, the Send button, the Workbench "send" action and a spoken "Console, send." all take that path. The cost confirm, the paid generation and the storage choice no longer park any message pump. A failed or stopped `/generate-video` or `/generate-image` never overwrites what the user did in the composer while it ran.
++
++**Root cause (confirmed, not inferred).** An await-chain dump of each pump's task, taken in a mounted test on dev `01a2020981` (evidence `uxrev/evidence/bd3/V/await-chain-dev-01a2020981.txt`), shows the mechanism.
++- Enter: the APP pump was parked in `MessagePump.on_callback` → `_send_console_message_from_visible_action` → `_dispatch_console_command` → `_console_command_generate_video` → `Worker.wait()` (the confirm's `push_screen_wait`). Enter schedules the send with `app.call_later`, and Textual awaits a coroutine callback on the pump it was posted to. That pump dispatches every key, so Escape, F1 and Ctrl+Q were all dead.
++- Send button: the same chain ran on the Console's own pump (`on_button_pressed`). Keys still worked, but the Stop button that cancels a paid run was dead for the whole generation.
++- TASK-33621.28 had fixed this freeze for the hook review only. The send also awaited every slash command inline.
++
++**Changes.**
++- New `tldw_chatbook/UI/Console_Modules/command_handoff.py` (lazy-loaded on the first slash command, never on the boot path). `run_console_command` starts the dispatch in a non-exclusive `console-command` worker group, so `/stop` can run beside a generation.
++  - It drops a repeat of the SAME captured draft revision for the same chat while that draft's first run is in flight. The hand-off lets a second press arrive early; on dev it queued behind the parked pump.
++  - It ends a command quietly when the modal it waits on is cancelled (`WorkerCancelled`). Live finding: Ctrl+Q under the confirm made shutdown cancel the confirm's waiting worker, and that surfaced as an `unhandled_exception`.
++  - It hands the command the draft its send captured (a contextvar set inside the command's own worker).
++- New `tldw_chatbook/UI/Console_Modules/command_draft.py` (checkpoint-review fix, also lazy). `/generate-video` and `/generate-image` used to save the live draft, clear the composer, and on failure clear it again and paste the saved text back. Once the Console stays live during a generation, that wiped text typed meanwhile (the review repro: Enter the command → Generate → type → Stop), and after a chat switch it wiped the OTHER chat's draft, because every Console chat shares one composer. Now:
++  - A command takes only the revision its send captured (`commit_captured_draft`), so keys typed right after Enter stay. `/generate-image` awaits its prompt preparation before taking the draft, so this window was real there.
++  - It puts the command back only into the same draft scope (unchanged draft generation) while that scope is still empty. Otherwise the user's text stays, and the failure row ends "The composer has changed since, so the command was not put back; to try again, send: <command>".
++  - It restores with `restore_stashed_draft` (the original literal segments), not as a paste. A paste-bearing draft is never parsed as a command, so Enter used to send the restored command to the model as chat; now Enter re-runs it.
++- `chat_screen.py`: the KIND_COMMAND branch calls the hand-off. Net-zero lines (25402 on both origin/dev `5e0341d1ec` and the branch merged onto it).
++- `Docs/User_Guide/console/video.md` and `attachments-images-voice.md`: Escape at the cost confirm starts nothing and keeps the draft; the Console stays responsive during a generation; what comes back into the composer after a failure or Stop.
++- Diagnostic inventory: two constant-string `logger.debug` calls in `command_handoff.py`, read before regenerating (no user content, paths or secrets). `command_draft.py` logs nothing.
++
++**Deviations from the plan.**
++- Step 3: every command but argument-free `/rewind` is handed off, with no `in_worker_task` check. A command is never "sent", so the spoken path has no outcome to wait for. An unconditional hand-off also avoids the contextvar and eager-task traps recorded under TASK-33621.28.
++- Step 4: no early reservation of the video in-flight guard. The repeat-key drop closes the double-press window. A different `/generate-video` sent while one runs still gets the existing post-confirm "already running" refusal, so there is no double spend.
++
++**Tests.** `Tests/UI/test_console_video_send_freeze.py`, 21 tests, `bootstrap_profile` marker, driving the real `TldwCli` with driver-style keys and bounded `_pump_runs` polls on both pumps.
++- 14 freeze tests: 13 failed / 1 passed on origin/dev `5e0341d1ec` (the pass is Send-route Ctrl+Q, where the app pump is free); each failure is the freeze itself: a parked app or Console pump, Ctrl+Q unanswered, `/help` not run, a stacked second confirm, or `WorkerCancelled` surfaced. 14 passed on the branch, eager task factory included.
++- 7 draft tests (checkpoint review): all 7 fail on the first-round fix commit `14fe27434d`, each for the reviewed bug (typed text overwritten by Stop on both routes; command back as a paste; the switched-to chat's draft overwritten, empty and typed; failed image batch overwrote typed text; image command took text typed after its send). All 7 fail on origin/dev `5e0341d1ec` too, mostly because typing could not reach the frozen composer at all.
++- Full file on the branch: 21 passed under the plain command, run beside a concurrent load.
++- Storage-choice flake (checkpoint review): the test pressed the "Discard generated video?" guard's button as soon as the guard was on the screen stack, before it had composed, so `NoMatches` hit 2 of 8 loaded runs with the old wait. It now waits for the guard to be mounted with its confirm button (`_press_confirm`, also used for the cost confirm): 12 of 12 runs, three at a time, plus every full-file run.
++- `Tests/Chat/test_console_generation_actions.py`: the composer double now models the draft-revision API (text, edit serial, generation).
++- Mutation checks (first round): removing the repeat drop fails the repeat test; narrowing the `WorkerCancelled` catch fails the cancelled-wait test.
++
++**Regression check**, origin/dev `5e0341d1ec` against the branch merged onto it, over 54 test files touching video, image, command dispatch, the send path, composer, popup, quit-under-modal, rewind, skills and diagnostics.
++- Non-UI files: identical failure sets (105 on both; pre-existing, mostly this machine's `RecoveryRequired raw_source_selection_changed` setup failure).
++- UI files: identical except `test_console_fork_fresh_lineage_flow.py::test_fresh_saved_pair_opens_the_fork_dialog_from_both_rows`, which failed once under `-n 4` on the merge only; solo it passed 3/3 on the merge and failed 1 of 3 on dev, so it is flaky on dev.
++- UI-ready module census and boot CSS budget pass on both trees; `command_handoff` and `command_draft` are never resident at `_ui_ready`. Module-size and screen-size ratchets: the same reds on both trees (none for a touched file).
++- `--collect-only` over Tests/UI and Tests/Chat: 44063 collected, 0 errors. `./scripts/preflight.sh` passes on the branch and on the merge.
++
++**Live**, isolated profiles via `launch.sh` on the fix worktree. Evidence is in `uxrev/evidence/bd3/V/`.
++- First round, real MiniMax (`bd3v-live2`): Escape at the Enter-sent confirm closed it with no generation and the draft kept (L03–L05); F1 under the confirm is consumed (L04). During the generation F1 opened help, Escape closed it, typing worked (L08–L11). The real 1.1 MiB video opened the storage choice (`max_store_mb = 1`): F1 consumed; Escape opened "Discard generated video?" and Escape there returned to the choice; Ctrl+Q asked "Discard generated video and quit?" and Stay returned to the choice (L12–L17); Discard settled the send and Ctrl+Q then quit cleanly (L18–L20). A no-spend run: Ctrl+Q under the Enter-sent confirm reached the quit flow with no unhandled exception (M01). Real generations: 2 of the 3 allowed; the key was scrubbed afterwards.
++- Checkpoint-review fixes (`bd3v-fix2`, zero spend): the real MiniMax adapter pointed at a stdlib stand-in server on 127.0.0.1 that reports "Processing" until cancelled or told to fail (`R-fake-minimax-requests.log`).
++  - Review repro: Enter `/generate-video a paper boat…` → Generate → type "what about a sailboat?" → Stop. The typed text stayed, the failure row carried the command to resend, and the adapter's remote cancel reached the server (R01–R05).
++  - Stop with nothing typed: the command came back as a literal draft; Enter on it reopened the cost confirm (a command, not a chat prompt); Escape kept it (R06–R10).
++  - Generation running in Chat 1, switch to a new Chat 2, type there, the generation fails: Chat 2's draft stayed and got no row; Chat 1 got the failure row with the command (R11–R16). Ctrl+Q then quit; the app log has no unhandled exception (`R-run-app.log`).
++
++**Observed, not changed** (pre-existing, independent of the send route):
++- Stop during a generation reports "Video generation failed (VideoGenerationError)" rather than a cancellation.
++- The "⏳ Generating video…" system line stays in the transcript after a Discard.
++- Ctrl+Q during an in-flight generation quits without asking. No video exists yet, which is consistent with TASK-33622.15's scope.
++
++**Lesson** added to `backlog/docs/lessons-textual.md` (the freeze mechanism, and "unfreezing a flow makes its nobody-can-act-now code reachable").
++
++**PR #3006 review round (Qodo, 5 threads; all verified, 3 behavioural claims reproduced red first).**
++- *A command acted on the chat showing when it acted, not the one it was sent from.* `run_console_command` used the send's session only for repeat detection. Mounted repro: `/system Terse` sent, prompt search parked, switch to a new chat, release → "Answer tersely." applied to the NEW chat and its typed draft cleared. Fix in `command_handoff.py`: the worker carries a `CommandOrigin` (screen + session) in a contextvar; the command does not start unless that chat is still both the store's active session and the composer's visible one; `refuse_if_chat_changed` (called by `/system <name>` and `/prompt <name>` after their search) stops with a warning toast; `append_command_output` posts an awaited answer with `session_id=` the origin. Refuse, not apply-to-origin, for chat-changing commands: the switch already saved the command into its own chat's draft, so nothing is lost and nothing lands on the wrong chat.
++- *Handler audit* (every entry in `_dispatch_console_command`'s map, for "active chat" or live-composer reads after an await): `/system <name>` (search → apply + clear: refused if moved, draft taken by revision); `/prompt <name>` (search → already guarded by `_apply_guarded_prompt_application`'s session/snapshot check; the recipe row now refuses too); `/doctor` (`to_thread` checks), `/skills` (context fetch), `/fewer-permission-prompts` (MCP loader), `/stream-video` (network resolution) → answers now go to the origin chat (the skill controller's injected append now forwards `session_id`). Safe as they were, given the start check: `/help`, `/research` (conversation id read before any await), `/prefill`, `/steer`, `/redirect`, `/stop`, `/emergency-stop`, `/rewind`, the action commands (`/model`, `/sessions`, `/new`, …) -- no await before their effect or their clear, which therefore runs in the worker's first step; `/generate-image` and `/generate-video` capture their session once at the top and thread `session_id` (Task 4 audit). Bare `/system` and the pickers open modals whose callbacks are unchanged by the hand-off. `/stream-video`'s player screen is app-wide, not chat-scoped.
++- *A delayed `/system <name>` erased a newer draft.* Its success path cleared the live composer. Repro: type after Enter while the search is parked → draft wiped to "". Now `take_command_draft` removes only the captured revision (typed suffix kept; a replaced draft untouched).
++- *A failed generation lost its resend hint when the take removed nothing.* `take_command_draft` returned None when `commit_captured_draft` refused. Repro: replace the draft during `/generate-image`'s prompt preparation, batch fails → no resend row. Now it returns the captured command with `generation=None` (`removed` False); `restore_command_draft` never restores such a take and always returns the resend sentence.
++- `with_resend_hint` docstring has Args/Returns; `Tests/Console/test_console_command_draft.py` (24 tests, composer double keeping the revision contract) pins take/restore/hint and the origin helpers directly. Reverting the left-behind branch fails 3 of them.
++- Tests: `Tests/UI/test_console_command_origin_chat.py` (9 mounted, `bootstrap_profile`) + one new test in `test_console_video_send_freeze.py`: all 10 failed on the PR head `c6a3980792` for the reviewed reasons and pass after. The touched test files under the plain command: 65 passed.
++- Regression check vs a `git archive` of `c6a3980792`: `test_console_command_composer`, `test_console_prompts_controller`, `test_console_command_popup`, `test_console_system_prompt`, `test_console_skill_commands`, `test_console_generation_actions` fail at setup on this machine (`RecoveryRequired raw_source_selection_changed`) on both trees under the plain command; with a scratch collection-time-import + `bootstrap_profile` plugin they reach their assertions and give identical failure sets (3 and 8 pre-existing). Tests/Architecture: identical except git-history tests that skip or differ in an archive without `.git`; the two `test_task_15743_*` reds also failed in this branch's previous round. `chat_screen.py` stays line-neutral (25442).
++- Diagnostic inventory: one added `logger.debug` in `command_handoff.py` naming the registered command word (no user text, path or secret), reviewed with `--statements` before `--write`. `./scripts/preflight.sh` passes.
++- User Guide `console.md`: "A slash command stays with its chat".
++- Live (isolated profile, null keyring, invalid OpenAI key, zero spend): `/stream-video http://127.0.0.1:<port>/clip.mp4` against a stdlib loopback server that holds each request 10 s, then Ctrl+T to a new chat during resolution. Fixed build: Chat 2 got nothing; Chat 1 got "Cannot stream that URL: …". PR head `c6a3980792`, same sequence: the row landed in Chat 2 and Chat 1 had none.
++**Real-backend confirmation (2026-10-04, branch @ bd65b32fad, real MiniMax, 2 paid generations).** The checkpoint-review fixes had been checked against a local stand-in server; this re-ran them against MiniMax itself. Enter on /generate-video: the send's ui_action finished in 10-24 ms. Escape at the cost confirm cancelled with nothing generated. During a generation, F1 opened help and typing worked. Stop kept the typed 'what about a sailboat?' and posted the resend hint. A completed 3.4 MiB generation opened the storage choice, and Escape there asked before discarding. No tracebacks in the log. Found and filed separately: Stop does not cancel the running MiniMax task remotely (TASK-33621.50).
++<!-- SECTION:NOTES:END -->
+diff --git a/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md b/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md
+index 4b16391fac..5a8e341f4e 100644
+--- a/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md	
++++ b/backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md	
+@@ -1,18 +1,18 @@
+ ---
+ id: TASK-34215.2
+ title: Integrate Console chat starts with current dev before publication
+ status: In Progress
+ assignee:
+   - '@codex'
+ created_date: '2026-10-03 14:59'
+-updated_date: '2026-10-05 01:05'
++updated_date: '2026-10-05 01:23'
+ labels:
+   - console
+   - integration
+ dependencies: []
+ parent_task_id: TASK-34215
+ ---
+ 
+ ## Description
+ 
+ <!-- SECTION:DESCRIPTION:BEGIN -->
+@@ -150,13 +150,15 @@ Task15 correction eb7cb87139 independently approved: ImportantI1 addressed, no n
+ 
+ Latest dev a78a9a900b integration scoped before source work: preserve49 incoming paths and two independent ratchet/lesson compositions;47 files exact upstream,132 protected feature source/test/script paths exact. Run only55 source-inferred cases for shared question/Roleplay handoff, CI dispatch/aggregation contracts,8 ratchet rows and one actual preimport LOC case. Preserve upstream owner-approved Personas16528 and all feature/startup limits. Task14/15/R1 historical evidence and original ZIP remain frozen; fresh scoped review/current-head external checks/actual merge required.
+ 
+ Task16 automatic rebase749e preserves49 incoming paths/132 feature pins and original QA/ZIP. Actual selection expands58cases:56pass,2 reader admission failures reproduce identically on immutable6cd44. Scope amended before source repair: add existing per-node bootstrap_profile marker only to exact typed-answer round and preview-staging tests; preserve signatures/bodies/assertions/waits/original decorators and all passing receipts. Current preimport557/415370/127527 passes unchanged limits; warning retained. Initial140artifact/report/manifest/brief snapshots stay exact, first independent integration review and external merge gates remain open.
+ 
+ Task16 canonical markers admit both reader tests: Persona staging passes; typed reaches original real-send assertion then fails at missing stand-in monitor. Typed-only immutable6cd with marker overlay reproduces identical failure. Scope amended before correction: five exact namespace fields supply optional monitor, live observed delegate and exact visible session/pending identity while retaining real answer/controller/card/composer worker and every original assertion/wait. Preserve57 prior passes, initial140/interim81 packages and warnings; rerun only typed node, then first scoped independent integration review and all external gates.
+ 
+ Task16 source81484b688a independently Compliant/Approved after latest dev a78a integration. All49 incoming paths and two compositions preserve exact selected ownership. Exactly two canonical reader markers plus five typed-screen namespace fields repair immutable-base-proven harness failures, retaining original real runtime assertions. The58 distinct selected cases pass across separately frozen source phases (56 initial, Persona1, typed1), with no passing-case replay. Root verified29999 unchanged tracked tree hashes and all source/metadata exceptions, original QA/ZIP/report-prefix snapshots and six manifest sets. Historical warning/format debt stays disclosed. Additive publication and fresh current-head Qodo/PR Fast Lane/UI1/UI2/Derived final/actual PerfGuard/latest-dev ancestry/normal merge remain required; actual merge criterion and In Progress status remain open.
+ 
+ Current-head Qodo review adds four findings. Task17 selects the actual PR3006 dev8c4dfe59 delta (19paths, three exact compositions, 22 bounded nodes) while retaining fixed caps and all historical QA. Task18 reuses existing test-only interrupt binding in two stale test owners, documents authorizes and removes only17 annotation uses/two host type getters under the dated ADR220 clarification. Independent conversations-history restore remains inert per ADR126/219; ten frozen tests support the Qodo recovery rebuttal without claiming a full native ZIP journey. The single mounted Stop CI failure remains independently attributed; local same-node PASS is not a fix. Source implementation and independent task review precede one additive publication, fresh Qodo/CI/PerfGuard/ancestry and actual merge. Status and AC8 stay open.
++
++Task17 integration54a18180211 preserves all19 incoming paths and92 replayed patches; 21 of22 selected cases pass. The sole diagnostic failure is the unchanged Task15 chat-start owner row6→11 calls. Existing statement audit confirms five fixed phases and exception-type-only arguments, so a bounded inventory-only correction and exact-node recheck are selected with original failures/passes frozen. Task18 additionally reuses the existing2second active Stop selector to await actual publication while preserving all original native/worker/allowance assertions. No product lost-sync defect is claimed; current external gates and merge remain open.
+ <!-- SECTION:NOTES:END -->
+ 
+ Current-dev publication identity: 34215.2 replaces unmerged 33805.2. The landed TASK33802 census keeps its identity; the design/foundation/feature chain moved together to preserve dependency ordering. Historical QA retains original identifiers and bytes. Current evidence: Docs/superpowers/qa/2026-10-03-console-chat-starts-dev-integration/README.md.
+diff --git a/tldw_chatbook/UI/Console_Modules/command_draft.py b/tldw_chatbook/UI/Console_Modules/command_draft.py
+new file mode 100644
+index 0000000000..2b7d87842c
+--- /dev/null
++++ b/tldw_chatbook/UI/Console_Modules/command_draft.py
+@@ -0,0 +1,152 @@
++"""The draft a Console slash command takes, and puts back if its work fails.
++
++TASK-33622.16. A slash command runs in a worker (``command_handoff``), so the
++Console keeps answering input while it runs: the user can type a new draft,
++switch chats or press Stop. ``/generate-video`` and ``/generate-image`` take
++their draft out of the composer when their paid work starts, and put it back
++when that work fails so it can be edited and sent again. The composer is
++shared by every Console chat, so two rules keep the put-back from destroying
++anything:
++
++* Take only the revision the send captured. ``commit_captured_draft`` removes
++  exactly that text and keeps whatever was typed after the keypress; it
++  removes nothing when the captured text changed or the composer moved to
++  another chat.
++* Put it back only into the scope it left, and only while that is still
++  empty. A chat switch, a load or another send always advances the
++  composer's draft generation; typing does not. Otherwise the user's newer
++  draft stays, and the failure row carries the command so it can be sent
++  again -- also when the take removed nothing, because the draft had already
++  changed: the command is kept either way.
++
++The command comes back as its own segments -- the literal draft it was -- not
++as a paste: a draft holding a paste is never parsed as a command, so a paste
++turned Enter-to-retry into a chat prompt.
++
++Loaded on the first slash command, never on the boot path (ADR-097).
++"""
++
++from __future__ import annotations
++
++from collections.abc import Callable
++from contextvars import ContextVar
++from dataclasses import dataclass
++from typing import Any
++
++CAPTURED_COMMAND_DRAFT: ContextVar[Any] = ContextVar(
++    "console_captured_command_draft", default=None
++)
++"""The ``ConsoleDraftStash`` the send captured for the command running in
++this task, set by ``command_handoff`` inside the command's own worker."""
++
++
++@dataclass(frozen=True)
++class TakenCommandDraft:
++    """A running command's captured draft, and whether the take removed it.
++
++    Attributes:
++        composer: The composer it was taken from, or None.
++        stash: The captured draft, segments included.
++        generation: The composer's draft generation right after the take, or
++            None when the take removed nothing -- the composer no longer held
++            the captured draft -- so it must never be put back.
++    """
++
++    composer: Any
++    stash: Any
++    generation: int | None
++
++    @property
++    def removed(self) -> bool:
++        """Whether the take removed the draft from the composer."""
++        return self.generation is not None
++
++
++def take_command_draft(
++    composer: Any | None, clear_draft: Callable[[], None]
++) -> TakenCommandDraft | None:
++    """Take the running command's own draft out of the composer.
++
++    Args:
++        composer: The mounted composer, or None.
++        clear_draft: The screen's clear (it also resyncs the command popup),
++            used when the composer holds exactly the captured draft.
++
++    Returns:
++        The captured command, ``removed`` or not: a captured draft the
++        composer no longer holds stays in it, but is still kept so a failure
++        can say how to send it again. None only when there is no command to
++        keep (an empty draft, or no capture and no composer).
++    """
++    captured = CAPTURED_COMMAND_DRAFT.get()
++    if composer is None:
++        clear_draft()
++        return None if captured is None else TakenCommandDraft(None, captured, None)
++    stash = captured or composer.capture_draft_for_send()
++    if stash is None:
++        clear_draft()
++        return None
++    if _holds_exactly(composer, stash):
++        clear_draft()
++    elif not composer.commit_captured_draft(stash):
++        return TakenCommandDraft(composer, stash, None)
++    return TakenCommandDraft(composer, stash, _generation(composer))
++
++
++def restore_command_draft(composer: Any | None, taken: TakenCommandDraft | None) -> str:
++    """Put a taken command back where it cannot overwrite anything.
++
++    Args:
++        composer: The mounted composer now, or None.
++        taken: What ``take_command_draft`` returned.
++
++    Returns:
++        "" when the command is back in the composer (or there was none);
++        otherwise -- the take removed nothing, or the composer has changed
++        since -- a sentence for the failure row saying how to send it again.
++    """
++    if taken is None:
++        return ""
++    if (
++        taken.removed
++        and composer is not None
++        and composer is taken.composer
++        and _generation(composer) == taken.generation
++        and composer.draft_text() == ""
++    ):
++        composer.restore_stashed_draft(taken.stash)
++        return ""
++    return (
++        "The composer has changed since, so the command was not put back; "
++        f"to try again, send: {taken.stash.text}"
++    )
++
++
++def with_resend_hint(message: str, hint: str) -> str:
++    """Append a resend hint to a failure row.
++
++    Args:
++        message: The failure row, with or without its closing period.
++        hint: What ``restore_command_draft`` returned: "" when the command
++            is back in the composer, else the sentence saying how to send it
++            again.
++
++    Returns:
++        ``message`` unchanged for an empty ``hint``; otherwise ``message``
++        ending in exactly one period, a space, then ``hint``.
++    """
++    if not hint:
++        return message
++    return f"{message.rstrip('.')}. {hint}"
++
++
++def _holds_exactly(composer: Any, stash: Any) -> bool:
++    return (
++        composer.draft_text() == stash.text
++        and composer.edit_serial == stash.edit_serial
++        and _generation(composer) == stash.generation
++    )
++
++
++def _generation(composer: Any) -> int:
++    return composer.capture_draft_snapshot().generation
+diff --git a/tldw_chatbook/UI/Console_Modules/command_handoff.py b/tldw_chatbook/UI/Console_Modules/command_handoff.py
+new file mode 100644
+index 0000000000..c5b0d4a49c
+--- /dev/null
++++ b/tldw_chatbook/UI/Console_Modules/command_handoff.py
+@@ -0,0 +1,215 @@
++"""Run a Console slash command off the pump that delivered its send.
++
++TASK-33622.16. Every visible send -- Enter, the Send button, the Workbench
++"send" action -- reaches ``ChatScreen._send_console_message_from_visible_action``
++on a Textual message pump, and Textual awaits the handler there: Enter's
++``app.call_later`` callback on the APP pump (``MessagePump.on_callback``), a
++button press on the Console's own pump. A slash command used to be awaited
++right there, and some await a modal and a long operation: ``/generate-video``
++awaits its cost confirm, the paid generation and the storage choice. Parked
++under it, the app pump delivered no key or click at all -- the confirm never
++got the Escape that would have ended it, and Ctrl+Q and F1 were dead -- while
++a parked Console pump could not handle the Stop button that cancels the run.
++
++So every command runs in a Console worker and the send returns at once, the
++same way from every route (a spoken "Console, send." too: a command is never
++"sent", so it has no outcome to wait for). The one exception is an
++argument-free ``/rewind``, which the send still runs itself: it opens its
++picker with a ``push_screen`` callback and never waits on it. A command's captured draft stays in
++the composer until the command itself takes it, as before -- and the worker
++carries that capture, so the command takes only that revision
++(``command_draft``).
++
++Handing off lets a second press of the same draft arrive while the first
++command is still running -- on a parked pump it queued behind it and found the
++draft already taken. A repeat of the SAME captured draft for the same chat is
++therefore dropped while its first run is in flight; any other command (``/stop``
++during a generation, a retyped draft) runs.
++
++It also lets the user switch chats before a command acts, and every command
++reads "the active chat" -- written when nothing could change it under them. So
++a command is bound to the chat it was sent from (``COMMAND_ORIGIN``): it does
++not start unless that chat is still the one showing, a command that awaits
++before changing that chat stops when it no longer is
++(``refuse_if_chat_changed``), and one that awaits before answering answers in
++its own chat (``append_command_output``).
++
++Loaded on the first slash command, never on the boot path (ADR-097).
++"""
++
++from __future__ import annotations
++
++import weakref
++from collections.abc import Awaitable, Callable
++from contextvars import ContextVar
++from dataclasses import dataclass
++from typing import TYPE_CHECKING, Any
++
++from loguru import logger
++from textual.worker import WorkerCancelled
++
++from .command_draft import CAPTURED_COMMAND_DRAFT
++
++if TYPE_CHECKING:
++    from tldw_chatbook.Chat.console_command_grammar import CommandParse
++    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
++
++COMMAND_WORKER_GROUP = "console-command"
++"""Worker group of a handed-off command: non-exclusive, so a command never
++cancels another (``/stop`` must run beside a generation)."""
++
++_IN_FLIGHT: weakref.WeakKeyDictionary[Any, set[tuple]] = weakref.WeakKeyDictionary()
++
++
++@dataclass(frozen=True)
++class CommandOrigin:
++    """The chat a handed-off command was sent from.
++
++    Attributes:
++        screen: The Console screen that sent it.
++        session_id: The Console chat (session) it was sent from.
++    """
++
++    screen: Any
++    session_id: str
++
++
++COMMAND_ORIGIN: ContextVar[CommandOrigin | None] = ContextVar(
++    "console_command_origin", default=None
++)
++"""Set inside a handed-off command's own worker; None for a direct call."""
++
++
++def run_console_command(
++    screen: Any,
++    parse: CommandParse,
++    session_id: str,
++    captured: ConsoleDraftStash | str,
++) -> None:
++    """Start one parsed slash command in a worker; never await it here.
++
++    Args:
++        screen: The Console screen. Its ``_dispatch_console_command`` runs the
++            command and its ``run_worker`` owns the hand-off, so a removed
++            screen cancels its own commands.
++        parse: The parsed command.
++        session_id: The chat the send came from.
++        captured: The draft the send captured -- its stash (text plus edit
++            revision) or, with no composer, its text. With ``session_id`` it
++            names a repeat press of the same draft.
++    """
++    in_flight = _IN_FLIGHT.setdefault(screen, set())
++    key = _repeat_key(session_id, captured)
++    if key in in_flight:
++        logger.debug("Console command repeat dropped while its first run is in flight")
++        return
++    in_flight.add(key)
++    command = _dispatch_then_release(
++        screen,
++        parse,
++        CommandOrigin(screen, session_id),
++        in_flight,
++        key,
++        None if isinstance(captured, str) else captured,
++    )
++    try:
++        screen.run_worker(command, group=COMMAND_WORKER_GROUP, exclusive=False)
++    except BaseException:
++        command.close()
++        in_flight.discard(key)
++        raise
++
++
++async def _dispatch_then_release(
++    screen: Any,
++    parse: CommandParse,
++    origin: CommandOrigin,
++    in_flight: set[tuple],
++    key: tuple,
++    stash: ConsoleDraftStash | None,
++) -> None:
++    # Set inside the worker's own task, so they are this command's alone.
++    CAPTURED_COMMAND_DRAFT.set(stash)
++    COMMAND_ORIGIN.set(origin)
++    try:
++        # The worker starts after its send returned; a chat switch in between
++        # would point every handler's "active chat" at the wrong one.
++        if refuse_if_chat_changed(parse.name):
++            return
++        await screen._dispatch_console_command(parse)
++    except WorkerCancelled:
++        # A modal the command waited on was torn down with its screen or the
++        # app (Ctrl+Q under the cost confirm): the command is over, not
++        # broken, so it must not surface as an unhandled app exception.
++        logger.debug("Console command ended: the modal it waited on was cancelled")
++    finally:
++        in_flight.discard(key)
++
++
++def command_origin_session() -> str | None:
++    """The chat the running command was sent from.
++
++    Returns:
++        Its session id inside a handed-off command; None for a direct call,
++        which acts on the active chat as it always did.
++    """
++    origin = COMMAND_ORIGIN.get()
++    return origin.session_id if origin is not None else None
++
++
++def refuse_if_chat_changed(name: str) -> bool:
++    """Stop a command whose chat is no longer the one the Console shows.
++
++    A command calls this after an await and before it acts on "the active
++    chat" or the live composer, which by then may belong to another chat.
++
++    Args:
++        name: The command's name, for the warning.
++
++    Returns:
++        True -- after warning that nothing was done -- when the command must
++        stop; False for a direct call, or while its own chat still shows.
++    """
++    origin = COMMAND_ORIGIN.get()
++    if origin is None or _shows_chat(origin):
++        return False
++    logger.debug("Console command /{} refused: its chat is no longer shown", name)
++    origin.screen.app_instance.notify(
++        f"/{name} did nothing: you switched Console chats before it finished. "
++        "Send it again from the chat it was meant for.",
++        severity="warning",
++    )
++    return True
++
++
++async def append_command_output(
++    append: Callable[..., Awaitable[Any]], message: str
++) -> None:
++    """Post a command's answer in the chat the command was sent from.
++
++    Args:
++        append: The Console's system-row append
++            (``_append_native_console_system_message`` or a controller's
++            injected one); it takes ``session_id`` as a keyword.
++        message: The row to post.
++    """
++    session_id = command_origin_session()
++    if session_id is None:
++        await append(message)
++    else:
++        await append(message, session_id=session_id)
++
++
++def _shows_chat(origin: CommandOrigin) -> bool:
++    screen = origin.screen
++    store = screen._ensure_console_chat_store()
++    return (
++        store.active_session_id == origin.session_id
++        and screen._console_visible_draft_session_id == origin.session_id
++    )
++
++
++def _repeat_key(session_id: str, captured: ConsoleDraftStash | str) -> tuple:
++    if isinstance(captured, str):
++        return (session_id, captured)
++    return (session_id, captured.text, captured.edit_serial, captured.generation)
+diff --git a/tldw_chatbook/UI/Console_Modules/image.py b/tldw_chatbook/UI/Console_Modules/image.py
+index bdf09b7170..0e66df9f2b 100644
+--- a/tldw_chatbook/UI/Console_Modules/image.py
++++ b/tldw_chatbook/UI/Console_Modules/image.py
+@@ -1357,47 +1357,52 @@ class ConsoleImageController:
+             )
+             return
+         inflight = self._console_imagegen_inflight_sessions()
+         if session.id in inflight:
+             await self._append_native_console_system_message(
+                 "An image generation is already running for this session.",
+                 session_id=session.id,
+             )
+             return
+         inflight.add(session.id)
+-        # Capture draft before clearing so we can restore it on zero-success.
+-        composer = self._console_composer_or_none()
+-        saved_draft = composer.draft_text() if composer is not None else ""
+-        self._clear_console_composer_draft_fn()
++        # Lazy: keeps command_draft off the boot path (ADR-097).
++        from .command_draft import (
++            restore_command_draft,
++            take_command_draft,
++            with_resend_hint,
++        )
++
++        taken = take_command_draft(
++            self._console_composer_or_none(), self._clear_console_composer_draft_fn
++        )
+         try:
+             count = clamp_initial_batch(cfg.default_batch, cfg.max_variants_per_message)
+             batch = await asyncio.to_thread(
+                 run_generation_batch,
+                 backend=backend,
+                 prompt=prepared.prompt,
+                 negative_prompt=prepared.negative_prompt,
+                 seed=None,
+                 count=count,
+                 style_name=prepared.style_name,
+                 width=prepared.width,
+                 height=prepared.height,
+                 steps=prepared.steps,
+                 cfg_scale=prepared.cfg_scale,
+             )
+             if not batch.successes:
+-                # Restore the saved draft so the user can edit and retry.
+-                if composer is not None and saved_draft:
+-                    composer.clear_draft()
+-                    composer.insert_text_as_paste(saved_draft)
++                # Put the draft back so the user can edit and retry.
++                hint = restore_command_draft(self._console_composer_or_none(), taken)
+                 detail = "; ".join(batch.errors) or "unknown error"
+                 await self._append_native_console_system_message(
+-                    f"Image generation failed: {detail}", session_id=session.id
++                    with_resend_hint(f"Image generation failed: {detail}", hint),
++                    session_id=session.id,
+                 )
+                 return
+             ConsoleImageController._append_durable_generation_message(
+                 self,
+                 store,
+                 session.id,
+                 content=generation_content_marker(prepared.prompt),
+                 variants=batch.successes,
+             )
+             if len(batch.successes) < count:
+@@ -1410,22 +1415,21 @@ class ConsoleImageController:
+                     ),
+                 )
+             await self._sync_native_console_chat_ui()
+         except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare app crash
+             # task-558: `run_generation_batch` itself raising (as opposed to
+             # catching a per-variant failure and returning it in
+             # `batch.errors`, the zero-success path above) used to propagate
+             # straight past the draft-restore logic -- the user's typed
+             # prompt was gone with no way to recover it. Mirrors the
+             # zero-success restore exactly.
+-            if composer is not None and saved_draft:
+-                composer.clear_draft()
+-                composer.insert_text_as_paste(saved_draft)
++            hint = restore_command_draft(self._console_composer_or_none(), taken)
+             logger.error(
+                 "Image generation batch raised (exception_type={})",
+                 type(exc).__name__,
+             )
+             await self._append_native_console_system_message(
+-                f"Image generation failed: {exc}", session_id=session.id
++                with_resend_hint(f"Image generation failed: {exc}", hint),
++                session_id=session.id,
+             )
+         finally:
+             inflight.discard(session.id)
+diff --git a/tldw_chatbook/UI/Console_Modules/message.py b/tldw_chatbook/UI/Console_Modules/message.py
+index d27db4a9c3..e84b220f7e 100644
+--- a/tldw_chatbook/UI/Console_Modules/message.py
++++ b/tldw_chatbook/UI/Console_Modules/message.py
+@@ -1014,21 +1014,24 @@ class ConsoleMessageController:
+         resolving whichever session is active RIGHT NOW via
+         ``store.ensure_session``) is safe -- there is no gap in which the
+         active session could have changed underneath them.
+ 
+         A handler that spans a real await gap while already anchored to a
+         specific session (e.g. `/generate-image`'s in-flight batch, tracked
+         per session in ``_console_imagegen_inflight_sessions``) must pass
+         that session's id explicitly instead -- re-resolving "active" at
+         append time would let a session switch during the awaited work
+         misattribute the row to whatever the user is looking at NOW rather
+-        than the session that actually produced it. The resync below is
++        than the session that actually produced it. Slash commands run in a
++        worker (TASK-33622.16), so one that awaits before answering posts
++        through ``command_handoff.append_command_output``, which passes the
++        chat the command was sent from. The resync below is
+         unconditional either way and stays harmless: it only ever renders
+         the store's CURRENTLY active session, so a background session's
+         just-appended row simply doesn't show until the user visits it
+         (store-first discipline; no view write needs gating here beyond
+         that existing pull-based rebuild).
+         """
+         store = self._ensure_console_chat_store()
+         if session_id is not None:
+             try:
+                 store.append_message(
+diff --git a/tldw_chatbook/UI/Console_Modules/prompts.py b/tldw_chatbook/UI/Console_Modules/prompts.py
+index 06a5448fe6..8fc534190b 100644
+--- a/tldw_chatbook/UI/Console_Modules/prompts.py
++++ b/tldw_chatbook/UI/Console_Modules/prompts.py
+@@ -102,21 +102,25 @@ from __future__ import annotations
+ import asyncio
+ import inspect
+ import uuid
+ from collections.abc import Callable, Mapping
+ from dataclasses import dataclass, field, replace
+ from types import SimpleNamespace
+ from typing import TYPE_CHECKING, Any, Literal, Optional
+ 
+ from loguru import logger
+ 
+-from ...Chat.console_command_grammar import CommandParse
++from ...Chat.console_command_grammar import (
++    PROMPT_COMMAND_NAME,
++    SYSTEM_COMMAND_NAME,
++    CommandParse,
++)
+ from ...Chat.console_provider_endpoints import (
+     normalize_generic_endpoint_for_compare,
+     safe_endpoint_display,
+ )
+ from ...Chat.prompt_history import PromptHistory, default_prompt_history_path
+ from ...Constants import (
+     LIBRARY_NAV_CONTEXT_MODE,
+     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_ID,
+     LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE,
+     TAB_LIBRARY,
+@@ -1898,20 +1902,26 @@ class ConsolePromptsController:
+         the typed args. A resolved match REPLACES the composer draft
+         wholesale (the draft IS the `/prompt ...` command being replaced by
+         its result) via paste semantics, so an oversized body still
+         collapses to a token exactly like a real paste would.
+         """
+         target = self._capture_prompt_replace_target()
+         if target is None:
+             return
+         query = parse.args.strip()
+         resolved = await self._resolve_console_prompt_by_name(query) if query else None
++        # Lazy: keeps command_handoff off the boot path (ADR-097).
++        from .command_handoff import refuse_if_chat_changed
++
++        # The search let the user switch chats (TASK-33622.16).
++        if refuse_if_chat_changed(PROMPT_COMMAND_NAME):
++            return
+         if resolved is not None:
+             if self._is_recipe_prompt_record(resolved):
+                 await self._append_native_console_system_message(
+                     self._RECIPE_EXECUTION_BLOCKED_COPY
+                 )
+                 return
+             self._launch_prompt_application(resolved, target)
+             return
+         await self._open_console_prompt_picker_for_insert(query, target=target)
+ 
+@@ -2045,41 +2055,54 @@ class ConsolePromptsController:
+         insert always replacing its own draft (Task 12) -- so a handled
+         command never leaves its own invocation text behind. 0 or 2+
+         matches at either stage fall back to the apply-system picker mode
+         (Task 11), prefilled with the typed args.
+         """
+         args = parse.args.strip()
+         if not args:
+             await self._open_console_system_prompt_editor()
+             return
+         resolved = await self._resolve_console_prompt_by_name(args)
++        # Lazy: keeps command_handoff off the boot path (ADR-097).
++        from .command_handoff import refuse_if_chat_changed
++
++        # The search let the user switch chats, and "the active session"
++        # below would then be the other chat (TASK-33622.16).
++        if refuse_if_chat_changed(SYSTEM_COMMAND_NAME):
++            return
+         if resolved is not None:
+             if self._is_recipe_prompt_record(resolved):
+                 await self._append_native_console_system_message(
+                     self._RECIPE_EXECUTION_BLOCKED_COPY
+                 )
+                 return
+             # Blank check only via strip(); the applied value below is the
+             # raw prompt text so leading/trailing whitespace and internal
+             # formatting survive verbatim.
+             raw_system_prompt = resolved.get("system_prompt")
+             system_prompt = (
+                 raw_system_prompt if isinstance(raw_system_prompt, str) else ""
+             )
+             if not system_prompt.strip():
+                 name = str(resolved.get("name") or args)
+                 await self._append_native_console_system_message(
+                     CONSOLE_SYSTEM_PROMPT_NO_SYSTEM_PART_TEMPLATE.format(name=name)
+                 )
+                 return
+             self._apply_console_session_system_prompt(system_prompt)
+-            self._clear_console_composer_draft()
++            # Only the draft the send captured: text typed during the search
++            # stays (TASK-33622.16).
++            from .command_draft import take_command_draft
++
++            take_command_draft(
++                self._console_composer_or_none(), self._clear_console_composer_draft
++            )
+             return
+         await self._open_console_prompt_picker_for_apply_system(args)
+ 
+     async def _open_console_prompt_picker_for_apply_system(
+         self, initial_query: str
+     ) -> None:
+         """Open the prompt picker in apply-system mode for `/system`.
+ 
+         Rows without a ``system_prompt`` render dimmed and refuse selection
+         (``ConsolePromptPickerModal``'s own ``MODE_APPLY_SYSTEM`` behavior,
+diff --git a/tldw_chatbook/UI/Console_Modules/skill.py b/tldw_chatbook/UI/Console_Modules/skill.py
+index 52c9f3313f..0c996a1ba4 100644
+--- a/tldw_chatbook/UI/Console_Modules/skill.py
++++ b/tldw_chatbook/UI/Console_Modules/skill.py
+@@ -114,22 +114,27 @@ class ConsoleSkillController:
+             if character.isspace():
+                 return text[:index], text[index + 1 :]
+         return text, ""
+ 
+     async def _console_command_skills(self, parse: CommandParse) -> None:
+         """List trusted skills or show the static ``$name`` run hint."""
+         args = parse.args.strip()
+         if not args:
+             context = await self._fetch_console_skill_context()
+             candidates = self._console_skill_trusted_candidates_from_context(context)
+-            await self._append_native_console_system_message(
+-                format_skills_list(candidates)
++            # Lazy: keeps command_handoff off the boot path (ADR-097). After
++            # the fetch, answer in the chat /skills came from (TASK-33622.16).
++            from .command_handoff import append_command_output
++
++            await append_command_output(
++                self._append_native_console_system_message,
++                format_skills_list(candidates),
+             )
+             return
+         name, _rest = self._split_console_skill_name_args(args)
+         await self._append_native_console_system_message(
+             f"Run skills by typing ${name} — /skills only lists them."
+         )
+ 
+     async def _console_skill_blocked_match_response(
+         self, name: str, blocked_summaries: tuple[Mapping[str, Any], ...]
+     ) -> bool:
+diff --git a/tldw_chatbook/UI/Console_Modules/video.py b/tldw_chatbook/UI/Console_Modules/video.py
+index 0dfe1bbc39..93e8a6da2e 100644
+--- a/tldw_chatbook/UI/Console_Modules/video.py
++++ b/tldw_chatbook/UI/Console_Modules/video.py
+@@ -1213,24 +1213,30 @@ class ConsoleVideoController:
+             if not confirmed:
+                 return
+         inflight = self._console_videogen_inflight_sessions()
+         if session.id in inflight:
+             await self._append_native_console_system_message(
+                 "A video generation is already running for this session.",
+                 session_id=session.id,
+             )
+             return
+         inflight.add(session.id)
+-        # Capture draft before clearing so we can restore it on failure.
+-        composer = self._console_composer_or_none()
+-        saved_draft = composer.draft_text() if composer is not None else ""
+-        self._clear_console_composer_draft()
++        # Lazy: keeps command_draft off the boot path (ADR-097).
++        from .command_draft import (
++            restore_command_draft,
++            take_command_draft,
++            with_resend_hint,
++        )
++
++        taken = take_command_draft(
++            self._console_composer_or_none(), self._clear_console_composer_draft
++        )
+         cancel_event = threading.Event()
+         self._console_videogen_cancel_events()[session.id] = cancel_event
+         message_id = str(uuid4())
+         publication_gate = (
+             ConsoleVideoController._register_console_video_publication_gate(
+                 self, message_id
+             )
+         )
+         try:
+             await self._append_native_console_system_message(
+@@ -1247,30 +1253,30 @@ class ConsoleVideoController:
+                 style_negative_prompt=args.style is not None,
+                 video_format="mp4",
+                 duration_seconds=style_params.get("duration_seconds"),
+                 fps=style_params.get("fps"),
+                 ratio=style_params.get("ratio"),
+                 cancel_event=cancel_event,
+                 publication_gate=publication_gate,
+                 video_store=self._ensure_console_video_store(),
+             )
+         except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare crash
+-            if composer is not None and saved_draft:
+-                composer.clear_draft()
+-                composer.insert_text_as_paste(saved_draft)
++            hint = restore_command_draft(self._console_composer_or_none(), taken)
+             logger.error(
+                 "Console video operation={} failed error_type={}",
+                 "generation",
+                 type(exc).__name__,
+             )
+             await self._append_native_console_system_message(
+-                f"Video generation failed ({type(exc).__name__}).",
++                with_resend_hint(
++                    f"Video generation failed ({type(exc).__name__}).", hint
++                ),
+                 session_id=session.id,
+             )
+         finally:
+             inflight.discard(session.id)
+             self._console_videogen_cancel_events().pop(session.id, None)
+             ConsoleVideoController._release_console_video_publication_gate(
+                 self, message_id, publication_gate
+             )
+ 
+     async def _play_console_video(self, message_id: str) -> None:
+@@ -1488,33 +1494,40 @@ class ConsoleVideoController:
+             await self._append_native_console_system_message(
+                 "Usage: /stream-video <url>"
+             )
+             return
+         from tldw_chatbook.Media_Playback.stream_resolve import (
+             MAX_STREAM_SECONDS,
+             StreamResolutionError,
+             resolve_stream_url,
+         )
+ 
++        # Lazy: keeps command_handoff off the boot path (ADR-097). Resolution
++        # is network I/O; a failure answers in the chat the command came
++        # from, not whichever chat shows by then (TASK-33622.16).
++        from .command_handoff import append_command_output
++
+         try:
+             resolution = await asyncio.to_thread(resolve_stream_url, url)
+         except StreamResolutionError as exc:
+-            await self._append_native_console_system_message(
+-                f"Cannot stream that URL: {exc}"
++            await append_command_output(
++                self._append_native_console_system_message,
++                f"Cannot stream that URL: {exc}",
+             )
+             return
+         except Exception as exc:  # egress refusal or unexpected resolution failure
+             logger.warning(
+                 "stream resolution failed (error_type={})", type(exc).__name__
+             )
+-            await self._append_native_console_system_message(
+-                f"Cannot stream that URL: {exc}"
++            await append_command_output(
++                self._append_native_console_system_message,
++                f"Cannot stream that URL: {exc}",
+             )
+             return
+         from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
+ 
+         self.app_instance.push_screen(
+             VideoPlayerScreen(
+                 resolution.final_url,
+                 title="stream",
+                 seekable=resolution.seekable,
+                 max_seconds=MAX_STREAM_SECONDS,
+diff --git a/tldw_chatbook/UI/Console_Modules/wiring.py b/tldw_chatbook/UI/Console_Modules/wiring.py
+index 8f618ea02a..f7fd9104cf 100644
+--- a/tldw_chatbook/UI/Console_Modules/wiring.py
++++ b/tldw_chatbook/UI/Console_Modules/wiring.py
+@@ -933,21 +933,23 @@ def build_console_controllers(
+         direct_library_tools=lambda: load_direct_library_tools(
+             getattr(screen.app_instance, "app_config", None)
+         ),
+         push_screen=lambda modal: screen.app.push_screen(modal),
+         request_control_bar_sync=lambda: screen._request_console_control_bar_sync(),
+     )
+ 
+     screen._skill = ConsoleSkillController(
+         app_instance=screen.app_instance,
+         append_native_console_system_message=(
+-            lambda message: screen._append_native_console_system_message(message)
++            lambda message, **kwargs: screen._append_native_console_system_message(
++                message, **kwargs
++            )
+         ),
+         sync_console_command_popup=lambda: screen._sync_console_command_popup(),
+         task_resume_state=lambda: screen._task_resume_state,
+         set_task_resume_state=lambda state: screen.set_task_resume_state(state),
+         current_chat_controller=lambda: screen._console_chat_controller,
+     )
+ 
+     #: Workspace policy, lifecycle, resume, scope, and conversation-browser
+     #: behavior have one owner. The controller keeps canonical rich browser
+     #: state and projects legacy Workspace rows through compatibility aliases.
+diff --git a/tldw_chatbook/UI/Screens/chat_screen.py b/tldw_chatbook/UI/Screens/chat_screen.py
+index b883071acb..4dbd873b1c 100644
+--- a/tldw_chatbook/UI/Screens/chat_screen.py
++++ b/tldw_chatbook/UI/Screens/chat_screen.py
+@@ -18934,24 +18934,24 @@ class ChatScreen(BaseAppScreen):
+                 if (
+                     current is opening_composer
+                     and current.edit_serial == opening_revision[0]
+                     and current_snapshot is not None
+                     and current_snapshot.generation == opening_revision[1]
+                     and current.draft_text() == opening_revision[2]
+                 ):
+                     self._clear_console_composer_draft()
+             return False
+ 
+-        if parse.kind == KIND_COMMAND:
+-            # Captured drafts remain in the composer until runtime custody.
++        if parse.kind == KIND_COMMAND:  # Never on this pump (TASK-33622.16).
+             self._console_unknown_send_armed = None
+-            await self._dispatch_console_command(parse)
++            from ..Console_Modules.command_handoff import run_console_command
++            run_console_command(self, parse, session_id, stash or draft)
+             return False
+ 
+         if parse.kind == KIND_UNKNOWN:
+             # Fold-in (Task 9 fix-wave review; hard removal Task 4 -- there
+             # is no fallback resolver at all anymore, so EVERY unmatched
+             # `/word` reaches here as KIND_UNKNOWN): a typed `/name` that
+             # matches ONLY needs-review (trust-blocked) skills would
+             # otherwise fall through to the generic "Unknown command" hint
+             # just like any other unrecognized word. Checking against a
+             # FRESH context surfaces the same needs-review response instead,
+@@ -19187,30 +19187,31 @@ class ChatScreen(BaseAppScreen):
+ 
+     async def _console_command_doctor(self, parse: CommandParse) -> None:
+         """TASK-25906: run the aggregate health checks and print the report.
+ 
+         The DB integrity PRAGMA can be slow, so the checks run off the event
+         loop. Network probes are opt-in via `/doctor network`.
+         """
+         import asyncio as _asyncio
+ 
+         from ...Utils.doctor import run_doctor, format_doctor_report
++        from ..Console_Modules.command_handoff import append_command_output
+ 
+         include_network = "network" in (parse.args or "").lower()
+         try:
+             checks = await _asyncio.to_thread(
+                 run_doctor, include_network=include_network
+             )
+             report = format_doctor_report(checks)
+         except Exception as exc:  # noqa: BLE001 - a command must not crash the screen
+             report = f"Doctor could not complete: {exc}"
+-        await self._append_native_console_system_message(report)
++        await append_command_output(self._append_native_console_system_message, report)
+ 
+     async def _console_command_run_action(self, parse: CommandParse) -> None:
+         """TASK-25909: dispatch a typed action command to the existing screen
+         action method that already implements it. Refuses honestly when the
+         action is unavailable rather than failing silently (AC#4)."""
+         method_name = self._CONSOLE_ACTION_COMMAND_TARGETS.get(parse.name)
+         method = getattr(self, method_name, None) if method_name else None
+         if method is None:
+             await self._append_native_console_system_message(
+                 f"/{parse.name} is not available in this context."
+@@ -19956,27 +19957,26 @@ class ChatScreen(BaseAppScreen):
+                 "MCP prompt recommendations unavailable - MCP service is not ready."
+             )
+             return
+         try:
+             report = await loader()
+         except Exception as exc:  # noqa: BLE001 -- render recovery, never send command
+             logger.warning(
+                 "MCP prompt recommendations command failed (exception_type={})",
+                 type(exc).__name__,
+             )
+-            await self._append_native_console_system_message(
+-                "MCP prompt recommendations unavailable - local analysis failed."
+-            )
+-            return
+-        await self._append_native_console_system_message(
+-            format_permission_prompt_report(report)
+-        )
++            text = "MCP prompt recommendations unavailable - local analysis failed."
++        else:
++            text = format_permission_prompt_report(report)
++        # Into the chat it was sent from, not the one showing now (TASK-33622.16).
++        from ..Console_Modules.command_handoff import append_command_output
++        await append_command_output(self._append_native_console_system_message, text)
+ 
+     @on(Input.Changed, "#console-command-input")
+     def _on_console_composer_draft_changed(self, event: Input.Changed) -> None:
+         """Disarm the unknown-command Enter-again escape on any draft edit.
+ 
+         ``ConsoleComposerBar`` keeps a hidden compatibility ``Input`` synced to
+         the canonical draft text on every segment mutation (typing, pasting,
+         backspace, clear, ``load_draft``); its reactive ``value`` posts this
+         `Changed` message whenever that text actually changes. Any such edit
+         must invalidate a pending unknown-command arm -- otherwise a user
+@@ -22564,24 +22564,24 @@ class ChatScreen(BaseAppScreen):
+                 # A hidden/pruned action is unavailable. The capture was
+                 # non-destructive, so releasing the duplicate gate is enough.
+                 logger.warning(
+                     "Console send Enter: no-op press guard tripped "
+                     "(disabled={}, display={}) -- keeping the live draft.",
+                     send_button.disabled,
+                     send_button.display,
+                 )
+                 self._console_pending_send = None
+                 return
+-            # Enter and Send converge on the same visible-action handler.
+-            # Scheduling it on the app pump preserves the keypress snapshot;
+-            # app-owned runtime custody owns accepted work, except that a Send
+-            # held for hook review goes on in a ChatScreen worker (TASK-33621.28).
++            # Enter and Send converge on the same visible-action handler, run
++            # here on the APP pump to keep the keypress snapshot; nothing may
++            # park it: runtime custody owns accepted work, and a hook review
++            # or slash command goes on in a worker (TASK-33621.28, -33622.16).
+             self.app.call_later(
+                 partial(
+                     self._send_console_message_from_visible_action,
+                     pending_send_token=pending_send.token,
+                 )
+             )
+             return
+         if event.key in {"pageup", "pagedown"}:
+             # TASK-348: scrollback must be keyboard-reachable. The composer
+             # never uses paging keys (Home/End move its caret), so route

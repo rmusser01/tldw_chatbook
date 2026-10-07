@@ -67,7 +67,72 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # removed -- both import tldw_chatbook.UI.MediaWindow_v2 (and V88), which
 # that task deleted as dead code. This is the one shrink the floor is not
 # meant to stop: no behaviour went uncovered, the covered thing is gone.
-MINIMUM_FILES = 118
+# TASK-33621.15 raised it to 119: Tests/UI/test_console_session_tab_close.py
+# (8 private-profile tests, ~90 s serial) guards the Console tab close that
+# stayed broken for three weeks because no PR gate ran its routing tests.
+# TASK-33622.10 raised it to 120: Tests/UI/test_quit_prompt_vanish.py gates
+# the Ctrl+Q orphaned-prompt hang, which no other PR-gated test would catch.
+# TASK-33661 raised it to 121: Tests/UI/test_console_turn_resend_ui.py pins
+# the Resend action row, its `r` key, the in-flight guard, and a real-Console
+# click and keypress through both Resend paths.
+# Roleplay frame B0 raised it to 125: test_adaptive_pane_shell.py,
+# test_destination_rail_row.py and test_base_app_screen_tab_region.py gate the
+# shared pane shell, rail-row fitting and the behaviour-neutral Tab region.
+# The mounted every-route Tab test (test_base_app_screen_tab_region_routes.py,
+# ~65 s) stays out of the fast lane; the B0 gate run executes it on both arms.
+# TASK-33006 raised it to 130: the five Chat settings files (core-first,
+# disclosures, hidden fields, model change, saved defaults; ~5.3 min serial)
+# gate the redesigned modal, now inside TASK-34353 sharded lane.
+# Retain the existing Console pending-kind/compact approval floor increment
+# (+3 over dev), alongside every incoming settings and existing UI census entry.
+# TASK-33622.15 raised it to 135: test_close_under_quit_question.py and
+# test_modal_quit_in_flight_hooks.py pin Ctrl+Q's still-working answer and a
+# dialog that finishes under "Quit while still working?" closing after Wait
+# (~35 s serial together). The PR's two real-app quit files
+# (test_app_quit_in_flight_modals.py ~2.7 min, test_console_video_picker_cancel.py
+# ~1 min locally) stay out until the lane has a shard with room for them.
+# TASK-33003.20 adds the production approval batch geometry guard.
+# TASK-34000.1 raised it to 139: the census held 138 files on dev (two past
+# the 136 floor), and Tests/UI/test_library_quit_guard.py joins it. It is a
+# deliberately lean core: 3 real-app boots, about 35-45 s locally; the typed
+# tail and a new note reach the DB before exit; a refused save keeps the
+# typist in place and Ctrl+Q asks. The other quit variants live in
+# test_library_quit_guard_extended.py, outside this lane: it was near its
+# 20-minute cap when they were written (TASK-34353 has since sharded it).
+# TASK-34000.2 raised it to 140: Tests/UI/test_library_notes_sync_attention.py
+# is one real-app boot over a real lasting-sync root wedged the way review
+# finding N-02 left it: the tree row, the Notes list and the editor say "needs
+# attention", and the real Recovery button heals the folder with no
+# "RuntimeError". Measured 24 s wall (14 s call) alone and 56 s wall under
+# local load, against the lane's 60 s per-file rule -- keep it a SINGLE test;
+# further attention variants go in non-gated files.
+# Re-measured at 142 after rebasing onto dev (138 files there + this branch's
+# four): TASK-34000.3's test_library_export_replace_confirm.py (two real-app
+# boots: a note and a prompt export ask before replacing) and the TASK-32633
+# slice's test_library_notes_sync_delete_restore.py (one boot: Delete holds the
+# synced folder, Undo returns it) joined the census without a floor bump of
+# their own, which left them free to be deleted unnoticed.
+# The wave's final review raised it to 143 (C1):
+# Tests/UI/test_library_note_autosave_recovers.py is two real-app boots, about
+# 20 s locally. A burst whose max wait had run out armed a 0 s timer, which
+# Textual never fires, so autosave stayed dead after Keep editing on a refused
+# quit and after a rail switch away and back. The unit test that should have
+# caught it asserted the 0.0 against a fake ``set_timer``; these read the row.
+# TASK-34100.5 raised it to 146 (dev's 143 plus its three files): the
+# first-run handoff's mounted guards -- Console's real first mount warns
+# nothing (test_console_first_chat_first_mount.py), toasts clear the nav and
+# chips at 120x40 (test_console_toast_clears_header.py), and a turn finishing
+# in the visible tab raises no hidden notice (test_console_visible_turn_
+# attention.py). About 3.5 min serial under load average 30 locally.
+# TASK-33620.9 adds the private-profile mounted rename publication regressions.
+# TASK-31245 adds the private-profile hydration and handle-ownership regressions.
+# TASK-31966 adds the mounted recovery-bar idempotence/geometry regressions.
+# TASK-31966 adds the shared Send-reason size idempotence/resize regressions.
+# TASK-34100.16 raised it to 151 (dev's floor plus its one file):
+# Tests/UI/test_backup_restore_setup_entry.py -- setup's Restore entry opens
+# on Inspect, names the format, and explains a settings file, a folder and a
+# disabled Create.
+MINIMUM_FILES = 151
 
 
 def read_census(path: Path) -> list[str]:
@@ -89,8 +154,36 @@ def read_census(path: Path) -> list[str]:
     return entries
 
 
-def main() -> int:
-    """Verify the PR-gate census is intact.
+def shard(entries: list[str], index: int, total: int) -> list[str]:
+    """Pick one UI Fast Lane shard: every `total`-th entry from `index`.
+
+    Round-robin, not contiguous halves (TASK-34353): the census's slow files
+    sit together (the Console cluster), so a contiguous split measured 14.2
+    vs 2.3 min where round-robin gives 6.8 vs 9.7. Each shard is still a
+    subsequence of the census, so census order holds inside it.
+
+    Args:
+        entries: The census, in file order.
+        index: This shard, 0-based (`strategy.job-index`).
+        total: The shard count (`strategy.job-total`).
+
+    Returns:
+        This shard's paths, in census order.
+
+    Raises:
+        ValueError: When `index` is not in `range(total)`.
+    """
+    if not 0 <= index < total:
+        raise ValueError(f"shard index {index} is not in range({total})")
+    return entries[index::total]
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Verify the PR-gate census is intact, or print one shard of it.
+
+    Args:
+        argv: Command-line arguments; ``--shard INDEX TOTAL`` prints that
+            shard's paths, one per line, instead of checking the census.
 
     Returns:
         0 when every listed path exists, is unique, sits under `Tests/UI/`, and
@@ -101,6 +194,10 @@ def main() -> int:
         return 1
 
     entries = read_census(CENSUS_PATH)
+    args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["--shard"]:
+        print("\n".join(shard(entries, int(args[1]), int(args[2]))))
+        return 0
     problems: list[str] = []
 
     seen: set[str] = set()

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 from textual.binding import Binding
 
+from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook import app as app_module
 from tldw_chatbook.UI.Workbench.focus import WorkbenchFocusRegistry
@@ -20,7 +21,7 @@ def _disable_full_app_splash(monkeypatch: pytest.MonkeyPatch) -> None:
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(app_module, "get_cli_setting", get_cli_setting_without_splash)
+    set_app_global(monkeypatch, "get_cli_setting", get_cli_setting_without_splash)
 
 
 def test_focus_registry_cycles_visible_panes_only():
@@ -210,6 +211,7 @@ async def test_help_panel_second_f1_dismisses():
 @pytest.mark.asyncio
 async def test_generic_help_fallback_lists_screen_bindings():
     """Screens without a custom handler get help generated from their BINDINGS."""
+
     class BareScreen:
         BINDINGS = [
             Binding("ctrl+s", "send", "Send message"),

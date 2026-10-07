@@ -27,6 +27,7 @@ from ...Chat.console_turn_preparation import (
     ConsoleTurnPreparationState,
 )
 from ...Chat.provider_continuation import ProviderContinuationCheckpoint
+from ...Utils.egress import latest_rate_limit_headers
 from ...Utils.input_validation import validate_console_draft
 from ...Widgets.Console.console_context_controls import (
     ConsoleContextControlState,
@@ -306,6 +307,27 @@ def build_console_next_send_projection(
     )
 
 
+def console_rate_limit_line(provider_key: str) -> str | None:
+    """The remaining rate limit the provider's last response reported (TASK-28229).
+
+    Args:
+        provider_key: The session provider's config key.
+
+    Returns:
+        The tooltip line, or ``None`` when the provider sent no rate-limit
+        headers in this process.
+    """
+    entry = latest_rate_limit_headers(provider_key)
+    if entry is None:
+        return None
+    # Imported only once an entry exists, so it is never loaded before the
+    # UI is ready (Tests/Performance/test_ui_ready_module_census.py).
+    from ...Chat.provider_rate_limits import format_rate_limit_line
+
+    captured_at, headers = entry
+    return format_rate_limit_line(headers, captured_at)
+
+
 def build_console_spend_cost_state(
     snapshot: ConsoleCostSnapshot,
     cache_state: ConsoleCacheState,
@@ -319,6 +341,7 @@ def build_console_spend_cost_state(
     has_pending_attachments: bool,
     input_per_mtok: float | None,
     draft_text: str,
+    rate_limit_line: str | None = None,
 ) -> ConsoleCostState:
     """Compose Current and next-send display state from captured pure inputs.
 
@@ -335,6 +358,7 @@ def build_console_spend_cost_state(
         has_pending_attachments: Whether the draft carries staged media.
         input_per_mtok: Uncached input price per million tokens, if known.
         draft_text: Current composer text before canonical validation.
+        rate_limit_line: The provider's remaining rate limit, if reported.
 
     Returns:
         Current spend, optionally combined with context and next-send copy.
@@ -366,7 +390,9 @@ def build_console_spend_cost_state(
         input_per_mtok,
         draft_text,
     )
-    return build_console_context_cost_state(context_state, current, next_send)
+    return build_console_context_cost_state(
+        context_state, current, next_send, rate_limit_line
+    )
 
 
 @dataclass(slots=True, kw_only=True)

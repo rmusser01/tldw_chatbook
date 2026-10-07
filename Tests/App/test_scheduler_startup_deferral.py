@@ -16,7 +16,7 @@ _SLOW_MOUNT = """
     tick_ready_states = []
     owner_loop = asyncio.get_running_loop()
     real_setup = tldw_chatbook.app.TldwCli._post_mount_setup
-    real_tick = tldw_chatbook.app.SchedulerLoop.tick
+    real_tick = tldw_chatbook.app_service_wiring.SchedulerLoop.tick
 
     async def slow_setup(self):
         try:
@@ -32,7 +32,7 @@ _SLOW_MOUNT = """
         tick_finished.set()
 
     tldw_chatbook.app.TldwCli._post_mount_setup = slow_setup
-    tldw_chatbook.app.SchedulerLoop.tick = observed_tick
+    tldw_chatbook.app_service_wiring.SchedulerLoop.tick = observed_tick
 """
 
 _VERIFY_TICK = """

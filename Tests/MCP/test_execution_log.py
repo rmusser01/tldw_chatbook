@@ -163,7 +163,9 @@ def test_legacy_payload_records_are_migrated_off_disk_on_read(
 ) -> None:
     private = "MCP-LEGACY-SENTINEL-sk-not-a-real-key"
     active = tmp_path / "mcp_execution_log.jsonl"
-    selected = active if generation == "active" else active.with_name(active.name + ".1")
+    selected = (
+        active if generation == "active" else active.with_name(active.name + ".1")
+    )
     selected.write_text(
         json.dumps(
             {
@@ -347,9 +349,7 @@ def test_steady_state_appends_do_not_reparse_the_whole_log(tmp_path, monkeypatch
     for index in range(5):
         execution_log.append(_record(f"hot-{index}"))
 
-    assert counter["loads"] == 0, (
-        f"appends re-parsed the log {counter['loads']} times"
-    )
+    assert counter["loads"] == 0, f"appends re-parsed the log {counter['loads']} times"
 
 
 def test_appends_after_a_rotation_do_not_reparse_either_generation(

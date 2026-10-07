@@ -680,12 +680,7 @@ def _admit_push_transport(
         )
         _value, destination = _read_frozen_endpoint(endpoint)
         configured_identity = hashlib.sha256(
-            (
-                "test-local-bare\0"
-                + local_path
-                + "\0"
-                + destination_ref
-            ).encode("utf-8")
+            ("test-local-bare\0" + local_path + "\0" + destination_ref).encode("utf-8")
         ).hexdigest()
         return _AdmittedPushTransport(
             configured_identity=configured_identity,
@@ -747,7 +742,9 @@ def _resolve_push_configuration(
     selected_remote = (
         branch_push_remote[0]
         if branch_push_remote
-        else push_default[0] if push_default else tracking_remote
+        else push_default[0]
+        if push_default
+        else tracking_remote
     )
     if selected_remote != tracking_remote:
         raise PushContractError("invalid_configuration")
@@ -767,9 +764,7 @@ def _resolve_push_configuration(
     )
     if len(push_urls) > 1 or (not push_urls and len(fetch_urls) != 1):
         raise PushContractError("invalid_configuration")
-    endpoint_source: Literal["pushurl", "url"] = (
-        "pushurl" if push_urls else "url"
-    )
+    endpoint_source: Literal["pushurl", "url"] = "pushurl" if push_urls else "url"
     configured_endpoint = push_urls[0] if push_urls else fetch_urls[0]
     effective_endpoint = _rewrite_push_endpoint(
         configured_endpoint,
@@ -854,35 +849,25 @@ def _validate_push_security_facts(
     for fact in facts:
         lowered = fact.key.lower()
         value = fact.value.strip().lower()
-        if (
-            lowered == "push.pushoption"
-            or any(
-                _config_key_matches(fact.key, "remote", remote, name)
-                for name in remote_blocked_names
-            )
+        if lowered == "push.pushoption" or any(
+            _config_key_matches(fact.key, "remote", remote, name)
+            for name in remote_blocked_names
         ):
             raise PushContractError("invalid_configuration")
         if _config_key_matches(fact.key, "remote", remote, "mirror"):
             if value not in {"false", "no", "off", "0"}:
                 raise PushContractError("invalid_configuration")
         if (
-            (lowered == "http.sslverify" or lowered.endswith(".sslverify"))
-            and value in {"false", "no", "off", "0"}
-        ):
+            lowered == "http.sslverify" or lowered.endswith(".sslverify")
+        ) and value in {"false", "no", "off", "0"}:
             raise PushContractError("invalid_configuration")
         if fact.scope not in {"local", "worktree"}:
             continue
         last_name = lowered.rsplit(".", 1)[-1]
         if (
-            (
-                lowered.startswith("credential.")
-                and last_name == "helper"
-            )
+            (lowered.startswith("credential.") and last_name == "helper")
             or lowered in {"core.sshcommand", "ssh.variant"}
-            or (
-                lowered.startswith("http.")
-                and last_name in local_security_names
-            )
+            or (lowered.startswith("http.") and last_name in local_security_names)
             or _config_key_matches(fact.key, "remote", remote, "proxy")
         ):
             raise PushContractError("invalid_configuration")
@@ -895,9 +880,7 @@ def _rewrite_push_endpoint(
     use_push_rewrites: bool,
 ) -> str:
     push_rules = (
-        _rewrite_rules(facts, "pushinsteadof", endpoint)
-        if use_push_rewrites
-        else ()
+        _rewrite_rules(facts, "pushinsteadof", endpoint) if use_push_rewrites else ()
     )
     rules = push_rules or _rewrite_rules(facts, "insteadof", endpoint)
     if not rules:
@@ -919,10 +902,7 @@ def _rewrite_rules(
     rules: list[tuple[str, str]] = []
     for fact in facts:
         lowered = fact.key.lower()
-        if (
-            not lowered.startswith("url.")
-            or not lowered.endswith(suffix)
-        ):
+        if not lowered.startswith("url.") or not lowered.endswith(suffix):
             continue
         replacement = fact.key[4 : len(fact.key) - len(suffix)]
         if replacement and endpoint.startswith(fact.value):
@@ -1106,8 +1086,7 @@ def _freeze_test_local_bare_endpoint(
     """Issue an opaque local endpoint only from the private test capability."""
     try:
         allowed = (
-            type(admission) is TransportAdmission
-            and admission._test_local_bare is True
+            type(admission) is TransportAdmission and admission._test_local_bare is True
         )
     except AttributeError:
         allowed = False

@@ -21,7 +21,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, NoReturn
 
 from loguru import logger
 
@@ -33,6 +33,7 @@ from tldw_chatbook.Tools.remote_binding_locator import RemoteLocator, build_ssh_
 from tldw_chatbook.Tools.remote_session_frames import (
     CANCEL,
     HELLO,
+    HOST_SPAWN_FAILED,
     LINE,
     REQUEST,
     STATUS,
@@ -47,7 +48,6 @@ from tldw_chatbook.Tools.remote_workspace_transport import (
     RemoteWorkspaceTransport,
     TransportFailure,
     TransportFailureKind,
-    _BoundedCapture,
     _frame_is_admitted_marker,
     _remote_command,
 )
@@ -91,9 +91,13 @@ class SessionStartError(Exception):
     """The session could not start.
 
     Attributes:
-        transport: True for transport-class failures (record in the status
-            cache, no one-shot retry); False for protocol-class ones (fall
-            back to the one-shot path for the rest of the run).
+        transport: True when the failure is the call's own result: it is
+            recorded in the status cache, there is no one-shot retry, and
+            the key stays enabled. That covers the transport-class kinds
+            (``_TRANSPORT_START_KINDS``) and also the post-answer budget
+            ``OP_TIMEOUT`` (see ``_stalled_after_answer``), which is not
+            transport-class in the ADR-181 sense. False for protocol-class
+            failures (fall back to the one-shot path for the rest of the run).
         failure: The typed failure when the taxonomy classified one.
     """
 
@@ -101,6 +105,13 @@ class SessionStartError(Exception):
         super().__init__(reason)
         self.transport = transport
         self.failure = failure
+
+
+class SessionClosed(Exception):
+    """The laptop closed this healthy session (idle reap, run end, app
+    exit) before the call's request was registered (TASK-33401) or before
+    any byte of it was written (TASK-33421): nothing was sent, so the
+    caller may ask the registry again."""
 
 
 class _HandshakeFailed(Exception):
@@ -121,6 +132,13 @@ class _NotSent(Exception):
     written and the stream is intact."""
 
 
+class _StdinClosed(BrokenPipeError):
+    """Internal: none of this write's bytes went out -- stdin was already
+    closed (by ``close()``), or the pipe broke (``close()`` killed the host
+    while another writer held the lock) before any byte was accepted.
+    Distinct from an EPIPE after part of the frame went out."""
+
+
 def _checked_status(body: bytes) -> tuple[int | None, int | None]:
     """``decode_status`` plus type checks: a malformed STATUS is a frame
     error (the reader kills the session), never a TypeError on a caller."""
@@ -137,6 +155,31 @@ def _wait_fd(fd: int, events: int, timeout: float) -> bool:
     with selectors.DefaultSelector() as selector:
         selector.register(fd, events)
         return bool(selector.select(timeout))
+
+
+class _TailCapture:
+    """Byte sink keeping the LAST ``cap`` bytes (TASK-33403).
+
+    A long-lived session's death reason (a mux marker, ssh's final error)
+    is at the end of its stderr; a head capture drops it once earlier
+    output fills the cap, turning a status-preserving MUX_ERROR into
+    UNREACHABLE (BLOCKED).
+    """
+
+    def __init__(self, cap: int) -> None:
+        self._cap = cap
+        self._buf = bytearray()
+        self._lock = threading.Lock()
+
+    def append(self, chunk: bytes) -> None:
+        with self._lock:
+            self._buf += chunk
+            if len(self._buf) > self._cap:
+                del self._buf[: len(self._buf) - self._cap]
+
+    def value(self) -> bytes:
+        with self._lock:
+            return bytes(self._buf)
 
 
 @dataclass
@@ -159,6 +202,9 @@ class RemoteSessionWorker:
         idle_s: Host-side idle exit sent in HELLO.
         cache: Whether the loader may use its ``$XDG_RUNTIME_DIR`` cache.
         spawn: Test seam replacing the ssh ``Popen``; receives the ssh argv.
+        handshake_timeout: Caps the handshake wall-clock ceiling: ``None``
+            means the module's ``_HANDSHAKE_TIMEOUT_S`` (30 s), a number is
+            capped at it (a call's own budget may never outlive it).
     """
 
     def __init__(
@@ -171,6 +217,7 @@ class RemoteSessionWorker:
         idle_s: float,
         cache: bool,
         spawn: Callable[[list[str]], subprocess.Popen[bytes]] | None = None,
+        handshake_timeout: float | None = None,
     ) -> None:
         self._loc = loc
         self._transport = transport
@@ -178,6 +225,8 @@ class RemoteSessionWorker:
         self._max_children = max_children
         self._idle_s = idle_s
         self._cache = cache
+        self._handshake_timeout = handshake_timeout
+        self._handshake_limit = _HANDSHAKE_TIMEOUT_S
         self._spawn = spawn or (
             lambda argv: subprocess.Popen(
                 argv,
@@ -188,7 +237,7 @@ class RemoteSessionWorker:
             )
         )
         self._proc: subprocess.Popen[bytes] | None = None
-        self._stderr = _BoundedCapture(_STDERR_CAP)
+        self._stderr = _TailCapture(_STDERR_CAP)
         self._stderr_thread: threading.Thread | None = None
         self._reader_thread: threading.Thread | None = None
         self._write_lock = threading.Lock()
@@ -201,6 +250,12 @@ class RemoteSessionWorker:
         #: death (EOF / ssh exited), False when the laptop ended it.
         self._death_natural: bool | None = None
         self._death_code: int | None = None
+        #: True once close() retired this session while it was alive
+        #: (TASK-33401). Alone it does not mean a call's request never
+        #: reached the session; together with the call finding the session
+        #: not alive at registration, or with the pre-send stdin check
+        #: (``_StdinClosed``), it means nothing of that call was sent.
+        self._retired = False
         self._settled = threading.Event()  # set once _die has reaped
 
     @property
@@ -252,6 +307,23 @@ class RemoteSessionWorker:
             )
             raise SessionStartError(True, failure, "ssh could not be run") from None
         self._proc = proc
+        try:
+            self._handshake(proc, loader=loader, compressed=compressed, artifact=artifact)
+        except SessionStartError:
+            self._abandon_start()
+            raise
+        except OSError:
+            # A local pipe error outside the classified paths: nothing can
+            # be said about the host, so fall back to one-shot for the run.
+            self._abandon_start()
+            raise SessionStartError(False, None, "session start failed: local pipe error") from None
+        except BaseException:
+            self._abandon_start()
+            raise
+
+    def _handshake(
+        self, proc: subprocess.Popen[bytes], *, loader: bytes, compressed: bytes, artifact
+    ) -> None:
         # Every write is select-bounded (see _write): a stalled remote can
         # never wedge a writer, and so never the write lock.
         os.set_blocking(proc.stdin.fileno(), False)  # type: ignore[union-attr]
@@ -262,15 +334,28 @@ class RemoteSessionWorker:
 
         bundle_hash = hashlib.sha256(compressed).hexdigest()
         header = json.dumps({"hash": bundle_hash, "cache": self._cache}).encode() + b"\n"
-        deadline = time.monotonic() + _HANDSHAKE_TIMEOUT_S
+        limit = _HANDSHAKE_TIMEOUT_S
+        if self._handshake_timeout is not None:
+            limit = min(self._handshake_timeout, limit)
+        deadline = time.monotonic() + limit
+        self._handshake_limit = limit
         try:
             # LOCKSTEP: after each write, send nothing until the loader answers.
             self._handshake_write(loader + header, deadline)
             line = self._read_handshake_line(deadline)
             cache_hit = line != b"NEED " + bundle_hash.encode()
             if not cache_hit:
-                self._handshake_write(len(compressed).to_bytes(4, "big") + compressed, deadline)
-                line = self._read_handshake_line(deadline)
+                # The host answered NEED: from here a deadline is never
+                # transport-class (TASK-33420).
+                self._handshake_write(
+                    len(compressed).to_bytes(4, "big") + compressed, deadline, answered=True
+                )
+                try:
+                    line = self._read_handshake_line(deadline)
+                except _HandshakeFailed as ended:
+                    if ended.stalled:
+                        self._stalled_after_answer("handshake stalled after the host answered")
+                    raise
         except _HandshakeFailed as ended:
             self._fail_start(ended)
         if line != b"READY " + expected_bundle_stamp(artifact).encode():
@@ -296,6 +381,24 @@ class RemoteSessionWorker:
             "ssh session worker started; bundle cache {}", "hit" if cache_hit else "miss"
         )
 
+    def _abandon_start(self) -> None:
+        """Leave nothing behind after a failed start: reap ssh, close its pipes."""
+        self._kill_and_reap()
+        if self._stderr_thread is not None:
+            self._stderr_thread.join(_CLOSE_WAIT_S)
+        proc = self._proc
+        if proc is None:
+            return
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            if stream is None:
+                continue
+            if stream is proc.stderr and self._stderr_thread is not None and self._stderr_thread.is_alive():
+                continue  # still read by the drain thread: left to GC, never closed under it
+            try:
+                stream.close()
+            except OSError:
+                pass
+
     def _drain_stderr(self) -> None:
         stream = self._proc.stderr if self._proc else None
         if stream is None:
@@ -308,12 +411,14 @@ class RemoteSessionWorker:
         except (OSError, ValueError):
             pass
 
-    def _handshake_write(self, data: bytes, deadline: float) -> None:
+    def _handshake_write(self, data: bytes, deadline: float, *, answered: bool = False) -> None:
         try:
             self._write(data, deadline)
         except OSError:
             pass  # the process died; the read below sees EOF and classifies it
         except (_WriteStalled, _NotSent):
+            if answered:
+                self._stalled_after_answer("handshake write stalled")
             self._kill_and_reap()
             raise SessionStartError(False, None, "handshake write stalled") from None
 
@@ -364,7 +469,7 @@ class RemoteSessionWorker:
             exit_code=exit_code,
             admitted=False,
             admitted_at=None,
-            budget=_HANDSHAKE_TIMEOUT_S,
+            budget=self._handshake_limit,
             killed=killed and ended.stalled,
             noise_capped=ended.noise,
             stderr=self._stderr.value(),
@@ -372,6 +477,25 @@ class RemoteSessionWorker:
         raise SessionStartError(
             failure.kind in _TRANSPORT_START_KINDS, failure, f"session start failed: {failure.reason}"
         )
+
+    def _stalled_after_answer(self, reason: str) -> NoReturn:
+        """The host answered the handshake, then the deadline passed.
+
+        A live channel proves reachability, so this is never UNREACHABLE or
+        BLOCKED (ADR-181, R8). When the deadline was the call's own budget
+        (only when budget + grace is under the 30 s cap: a short tool
+        timeout, not the default 300 s budget), this call fails as
+        ``OP_TIMEOUT`` -- raised with ``transport=True`` only so it becomes
+        this call's result -- and the next call tries a session again. At
+        the 30 s cap it is protocol-class (``reason``), one-shot for the
+        run: a stuck loader, or an upload still progressing too slowly to
+        finish (``_write``'s deadline is absolute, not an inactivity window).
+        """
+        self._kill_and_reap()
+        if self._handshake_limit < _HANDSHAKE_TIMEOUT_S:
+            failure = TransportFailure(TransportFailureKind.OP_TIMEOUT, None, "operation timed out")
+            raise SessionStartError(True, failure, "session start ran out of the call's budget") from None
+        raise SessionStartError(False, None, reason) from None
 
     # -- steady state ------------------------------------------------------
 
@@ -386,11 +510,16 @@ class RemoteSessionWorker:
         Raises:
             _NotSent: The lock stayed busy (another caller's slow upload)
                 until the deadline: nothing written, the stream is intact.
-            _WriteStalled: Holding the lock, the pipe stopped draining for
-                the whole write window before the frame was out: the host is
-                not reading (and a partial frame corrupts the stream), so
-                the session must die.
-            OSError: The pipe broke (the process is gone).
+            _WriteStalled: Holding the lock, the frame was not fully out by
+                the absolute write deadline, ``max(deadline, now + grace)``
+                taken once the lock is held. Progress does not extend it, so
+                a write still draining slowly ends here too, not only a pipe
+                that stopped draining. A partial frame corrupts the stream,
+                so the session must die.
+            _StdinClosed: stdin was closed, or the pipe broke, before any
+                byte of ``data`` was accepted: nothing of it was sent.
+            OSError: The pipe broke after part of ``data`` went out, or
+                another write error (the process is gone).
         """
         if not self._write_lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
             raise _NotSent()
@@ -400,20 +529,25 @@ class RemoteSessionWorker:
             # another thread's open) while this loop writes to it.
             stdin = self._proc.stdin  # type: ignore[union-attr]
             if stdin is None or stdin.closed:
-                raise BrokenPipeError("session stdin closed")
+                raise _StdinClosed("session stdin closed")
             fd = stdin.fileno()
             view = memoryview(data)
             write_deadline = max(deadline, time.monotonic() + self._transport.grace_seconds)
             while view:
                 if not _wait_fd(fd, selectors.EVENT_WRITE, write_deadline - time.monotonic()):
-                    # Holding the lock, the pipe took nothing (or stopped
-                    # mid-frame) for a full write window: the host is not
-                    # reading, so this is a stuck parent either way.
+                    # Holding the lock, the absolute write deadline passed
+                    # before the frame was out: the pipe took nothing, stopped
+                    # mid-frame, or drained too slowly. Progress never extends
+                    # the deadline; any partial frame kills the stream.
                     raise _WriteStalled()
                 try:
                     view = view[os.write(fd, view) :]
                 except BlockingIOError:
                     continue
+                except BrokenPipeError:
+                    if len(view) < len(data):
+                        raise  # part of the frame may have reached the host
+                    raise _StdinClosed("session pipe broke before any byte was written") from None
         finally:
             self._write_lock.release()
 
@@ -507,24 +641,42 @@ class RemoteSessionWorker:
         one-shot path's answer at once -- the worker's unadmitted
         ``invalid_request`` failure frame. The executor already refuses
         such requests while building them, so this is a defensive bound.
+
+        Raises:
+            SessionClosed: ``close()`` retired this healthy session before
+                any byte of the REQUEST was written (TASK-33401/33421); a
+                request that was written is never reported this way.
         """
         if len(request_bytes) > MAX_REQUEST_BYTES:
             return RemoteCallResult(False, _OVERSIZED_REQUEST_FRAME, None)
         with self._lock:
             alive = self._alive
+            retired = self._retired
             if alive:
                 request_id = self._next_id
                 self._next_id += 1
                 pending = self._pending[request_id] = _Pending()
                 self._idle_since = None
         if not alive:
+            if retired:
+                raise SessionClosed()
             return self._dead_session_result()
         grace = self._transport.grace_seconds
         sent_at = time.monotonic()
         killed = False
         not_sent = False
         try:
-            self._write(encode_frame(REQUEST, request_id, request_bytes), sent_at + budget + grace)
+            try:
+                self._write(encode_frame(REQUEST, request_id, request_bytes), sent_at + budget + grace)
+            except _StdinClosed:
+                if self._retired:
+                    # close() retired this healthy session after the request
+                    # registered but before any REQUEST byte was written
+                    # (stdin already closed, or the pipe broke by close()'s
+                    # kill before a byte was accepted): nothing ran, so the
+                    # caller may ask again (TASK-33421, PR #2907 review).
+                    raise SessionClosed() from None
+                raise
             while not pending.done.is_set():
                 remaining = (pending.admitted_at or sent_at) + budget + grace - time.monotonic()
                 if remaining <= 0:
@@ -612,6 +764,18 @@ class RemoteSessionWorker:
             code = self._death_code if self._death_code is not None else -9
         else:
             exit_code, signal_no = pending.status
+            if not admitted and exit_code == HOST_SPAWN_FAILED:
+                # The host could not fork for this request (process limit):
+                # the live session proves reachability, so status-preserving.
+                return RemoteCallResult(
+                    False,
+                    None,
+                    TransportFailure(
+                        TransportFailureKind.REMOTE_OP_FAILED,
+                        exit_code,
+                        "host could not start the operation",
+                    ),
+                )
             code = exit_code if exit_code is not None else -(signal_no or 9)
             refused = exit_code is None and signal_no == signal.SIGKILL
             if (killed or refused) and not admitted:
@@ -676,6 +840,7 @@ class RemoteSessionWorker:
             if self._death_natural is None:
                 self._death_natural = False
             was_alive, self._alive = self._alive, False
+            self._retired = self._retired or was_alive
         proc = self._proc
         if proc is None:
             return

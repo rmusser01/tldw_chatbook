@@ -70,9 +70,7 @@ def _run_parent(
 ) -> None:
     if ignore_termination:
         _ignore_graceful_termination()
-    grandchild_ready = (
-        f"{ready_file}.grandchild" if ready_file is not None else None
-    )
+    grandchild_ready = f"{ready_file}.grandchild" if ready_file is not None else None
     grandchild_argv = [
         sys.executable,
         os.path.abspath(__file__),

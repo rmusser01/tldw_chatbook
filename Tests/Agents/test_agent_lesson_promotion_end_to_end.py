@@ -51,13 +51,16 @@ def test_repository_apply_is_exact_and_outcome_note_needs_separate_approval(
         content=original_note_content,
         ensure_keywords=("agent-lesson",),
     )
+
     def approve(rows):
         return {row.call_id: "approve_once" for row in rows}
 
     try:
         _, prepared = _review_and_invoke(
             provider,
-            _prepare_args("# Existing instruction\n\nCheck current state before write.\n"),
+            _prepare_args(
+                "# Existing instruction\n\nCheck current state before write.\n"
+            ),
             "prepare-e2e",
             approve,
         )
@@ -71,9 +74,7 @@ def test_repository_apply_is_exact_and_outcome_note_needs_separate_approval(
             "expected_sha256": proposal["expected_sha256"],
             "proposal_digest": proposal["proposal_digest"],
         }
-        _, applied = _review_and_invoke(
-            provider, apply_args, "apply-e2e", approve
-        )
+        _, applied = _review_and_invoke(provider, apply_args, "apply-e2e", approve)
 
         assert applied.ok
         assert target.read_text(encoding="utf-8") == proposal["replacement_content"]
@@ -104,9 +105,7 @@ def test_repository_apply_is_exact_and_outcome_note_needs_separate_approval(
             "content": outcome_content,
             "note_id": public_id,
             "expected_version": original_lesson["version"],
-            "expected_organization_version": original_lesson[
-                "organization_version"
-            ],
+            "expected_organization_version": original_lesson["organization_version"],
         }
         replies = [
             _turn("find_tools", {"query": "library_save_note"}, "o-find"),

@@ -1,0 +1,7 @@
+{
+  "checked_utc": "2026-10-04T21:55:27Z",
+  "owned_pytest_processes": [],
+  "all_execution_receipts_have_exit": true,
+  "native_worker_exits_asserted": "green.xml and green-boundaries.xml",
+  "no_private_profile_or_database_export": true
+}

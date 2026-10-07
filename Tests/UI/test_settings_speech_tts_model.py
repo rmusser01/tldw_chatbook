@@ -108,9 +108,7 @@ def _malformed_sized_compressed_sample(response_format: str) -> bytes:
     if response_format == "mp3":
         return b"\xff\xfb\x90\x64" + b"\x00" * 413
     if response_format == "opus":
-        opus_head = (
-            b"OpusHead\x01\x01\x00\x00\x80\xbb\x00\x00\x00\x00\x00"
-        )
+        opus_head = b"OpusHead\x01\x01\x00\x00\x80\xbb\x00\x00\x00\x00\x00"
         return _ogg_page(opus_head, sequence=0, header_type=2) + _ogg_page(
             b"\x00" * 20,
             sequence=1,
@@ -119,12 +117,7 @@ def _malformed_sized_compressed_sample(response_format: str) -> bytes:
         stream_info = bytearray(34)
         packed = (44_100 << 44) | (15 << 36) | 1
         stream_info[10:18] = packed.to_bytes(8, "big")
-        return (
-            b"fLaC\x80\x00\x00\x22"
-            + bytes(stream_info)
-            + b"\xff\xf8"
-            + b"\x00" * 20
-        )
+        return b"fLaC\x80\x00\x00\x22" + bytes(stream_info) + b"\xff\xf8" + b"\x00" * 20
     if response_format == "aac":
         return b"\xff\xf1\x50\x80\x02\x9f\xfc" + b"\x00" * 13
     raise AssertionError(f"Unsupported test format: {response_format}")
@@ -770,6 +763,58 @@ def test_openai_none_auth_is_complete_without_a_credential_and_saves_mode() -> N
         global_speech_tts_provider_configuration_state(draft, provider_id="openai")
         is not SpeechTTSConfigurationState.INCOMPLETE
     )
+
+
+@pytest.mark.parametrize("configure_provider", ["openai", "kokoro"])
+def test_a_pocket_tts_base_url_needs_a_wav_default_format(configure_provider) -> None:
+    """TASK-34100.8 review round 2 (G8-R2-F3): an OpenAI Base URL ending in
+    /tts speaks pocket-tts's own API, which returns WAV only. Settings saved
+    it beside an AAC default ('Settings saved successfully!'); the backend
+    then refused every reply and setup refused an untouched re-run. The
+    first-run Voice step already refuses that pair; Settings now agrees,
+    whichever provider's pane the save comes from."""
+    original = load_global_speech_tts_state({}, environment={})
+    draft = deepcopy(original)
+    draft.providers["openai"].update(
+        {"base_url": "http://127.0.0.1:8766/tts", "authentication_mode": "none"}
+    )
+    draft.defaults.provider_id = "openai"
+    draft.defaults.response_format = "aac"
+
+    with pytest.raises(GlobalSpeechTTSValidationError) as error:
+        build_global_speech_tts_save_proposal(
+            original, draft, configure_provider=configure_provider
+        )
+
+    assert (error.value.provider_id, error.value.field_id) == (
+        "defaults",
+        "response_format",
+    )
+    assert "WAV" in str(error.value)
+    draft.defaults.response_format = "wav"
+    proposal = build_global_speech_tts_save_proposal(
+        original, draft, configure_provider="openai"
+    )
+    assert proposal.settings["OPENAI_BASE_URL"] == "http://127.0.0.1:8766/tts"
+    assert proposal.preferences.response_format == "wav"
+
+
+def test_a_pocket_tts_base_url_leaves_another_providers_format_alone() -> None:
+    """The default format belongs to the provider reading replies; beside a
+    kokoro default, the OpenAI slot's /tts address constrains nothing."""
+    original = load_global_speech_tts_state({}, environment={})
+    draft = deepcopy(original)
+    draft.providers["openai"].update(
+        {"base_url": "http://127.0.0.1:8766/tts", "authentication_mode": "none"}
+    )
+    draft.defaults.provider_id = "kokoro"
+    draft.defaults.response_format = "mp3"
+
+    proposal = build_global_speech_tts_save_proposal(
+        original, draft, configure_provider="openai"
+    )
+
+    assert proposal.preferences.response_format == "mp3"
 
 
 def test_official_openai_rejects_none_and_loads_existing_none_fail_closed() -> None:

@@ -304,9 +304,7 @@ class TestResolveRrfK:
     resolve_rrf_k with no explicit value).
     """
 
-    def test_profile_with_nothing_to_say_returns_the_shipped_default(
-        self, monkeypatch
-    ):
+    def test_profile_with_nothing_to_say_returns_the_shipped_default(self, monkeypatch):
         """No explicit value AND the active profile has nothing to say
         (``search.rrf_k`` itself resolves to ``None``) -> the SHIPPED
         default. Mocked rather than relying on the test env's real default

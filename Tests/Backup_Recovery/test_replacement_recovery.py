@@ -7,6 +7,7 @@ from threading import Event
 import pytest
 
 from Tests.Backup_Recovery.test_held_sqlite_rollback import replacement_case
+from Tests.Backup_Recovery.test_replacement import profile_provider
 from tldw_chatbook.Backup_Recovery import bootstrap, crypto, publication, replacement
 from tldw_chatbook.Backup_Recovery.journal import Journal
 
@@ -411,7 +412,9 @@ def test_actual_original_credentials_reuse_or_remap_and_new_scopes_are_retained(
         prepared = next(row.evidence for row in rows if row.event == "prepared")
         scoped = dict(backend.values)
         if drift:
-            store.set_secret("peer", "api_key", "changed-old-secret")
+            profile_provider(store).store_scoped_credential(
+                "peer", "api_key", "changed-old-secret"
+            )
             assert (
                 replacement.recover_replacement(
                     operation,
@@ -427,8 +430,14 @@ def test_actual_original_credentials_reuse_or_remap_and_new_scopes_are_retained(
             purpose = json.loads(targets.read_bytes())["targets"][0][
                 "auth_reference"
             ].removeprefix("keyring:")
-            assert store.get_secret("peer", purpose) == "current-shared-secret"
-            assert store.get_secret("peer", "api_key") == "changed-old-secret"
+            assert (
+                profile_provider(store)._get_credential_secret("peer", purpose)
+                == "current-shared-secret"
+            )
+            assert (
+                profile_provider(store)._get_credential_secret("peer", "api_key")
+                == "changed-old-secret"
+            )
             assert case[-1].read_bytes() == original[case[-1]]
             assert bootstrap.startup_permission(case[-1], tmp_path / "bootstrap")[0]
         else:

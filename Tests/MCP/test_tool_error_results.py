@@ -23,16 +23,19 @@ from tldw_chatbook.MCP.unified_control_plane_service import (
 @pytest.mark.unit
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "content",
+    ("content", "expected"),
     [
-        {"text": "private-malformed-sentinel"},
-        [None, "private-malformed-sentinel"],
-        [{"type": "text", "text": {"secret": "private-malformed-sentinel"}}],
+        ({"text": "private-malformed-sentinel"}, "mcp_transport_unavailable"),
+        ([None, "private-malformed-sentinel"], "mcp_transport_unavailable"),
+        (
+            [{"type": "text", "text": {"secret": "private-malformed-sentinel"}}],
+            "mcp_tool_error",
+        ),
     ],
 )
 @private_profile_test
 async def test_malformed_error_content_stays_failed_without_logging_body(
-    request, content
+    request, content, expected
 ):
     """An invalid server body stays a recoverable failure at the client boundary."""
     client = MCPClient()
@@ -44,7 +47,7 @@ async def test_malformed_error_content_stays_failed_without_logging_body(
     sink = logger.add(lambda message: logs.append(str(message)))
     try:
         assert await client.call_tool("result-review", "review_echo", {}) == {
-            "error": "MCP tool reported an error."
+            "error": expected
         }
         assert client.sessions["result-review"] is session
         assert "private-malformed-sentinel" not in "".join(logs)
@@ -99,35 +102,29 @@ async def connected_tool(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("content", "expected"),
+    "content",
     [
-        ([{"type": "text", "text": "Fixture tool failed."}], "Fixture tool failed."),
-        (
-            [
-                {"type": "text", "text": "First error."},
-                {"type": "image", "data": "not-exposed", "mimeType": "image/png"},
-                {"type": "text", "text": "Second error."},
-            ],
-            "First error.\nSecond error.",
-        ),
-        ([], "MCP tool reported an error."),
-        (
-            [{"type": "image", "data": "not-exposed", "mimeType": "image/png"}],
-            "MCP tool reported an error.",
-        ),
-        ([{"type": "text", "text": "   "}], "MCP tool reported an error."),
+        [{"type": "text", "text": "Fixture tool failed."}],
+        [
+            {"type": "text", "text": "First error."},
+            {"type": "image", "data": "not-exposed", "mimeType": "image/png"},
+            {"type": "text", "text": "Second error."},
+        ],
+        [],
+        [{"type": "image", "data": "not-exposed", "mimeType": "image/png"}],
+        [{"type": "text", "text": "   "}],
     ],
 )
 @private_profile_test
-async def test_stdio_tool_error_uses_text_only_failure_and_keeps_connection(
-    request, tmp_path, content, expected
+async def test_stdio_tool_error_uses_fixed_diagnostic_and_keeps_connection(
+    request, tmp_path, content
 ):
     async with connected_tool(tmp_path) as (client, _service, state):
         session = client.sessions["result-review"]
         state.write_text(json.dumps({"isError": True, "content": content}))
         assert await client.call_tool(
             "result-review", "review_echo", {"message": "fail"}
-        ) == {"error": expected}
+        ) == {"error": "mcp_tool_error"}
         assert client.sessions["result-review"] is session
         assert session.process.returncode is None
         state.write_text(
@@ -177,7 +174,7 @@ async def test_non_boolean_error_flag_is_bounded_failure_and_can_retry(
         logs = []
         sink = logger.add(lambda message: logs.append(str(message)))
         try:
-            with pytest.raises(RuntimeError, match="^Invalid MCP tool result$"):
+            with pytest.raises(RuntimeError, match="^mcp_result_invalid$"):
                 await service.execute_hub_tool(
                     "local:result-review",
                     "review_echo",
@@ -221,7 +218,7 @@ async def test_control_plane_audits_tool_failure_without_error_body_and_recovers
         logs = []
         sink = logger.add(lambda message: logs.append(str(message)))
         try:
-            with pytest.raises(RuntimeError, match="Fixture failure"):
+            with pytest.raises(RuntimeError, match="^mcp_tool_error$"):
                 await service.execute_hub_tool(
                     "local:result-review",
                     "review_echo",

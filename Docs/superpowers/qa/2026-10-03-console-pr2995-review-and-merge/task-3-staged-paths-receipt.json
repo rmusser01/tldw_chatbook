@@ -1,0 +1,26 @@
+{
+  "name": "staged-paths",
+  "revision": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "git",
+    "diff",
+    "--cached",
+    "--name-only"
+  ],
+  "environment": {
+    "TLDW_TEST_CONFIG_ROOT": null
+  },
+  "sha256": {
+    "tldw_chatbook/Chat/console_agent_bridge.py": "36aed2217dcebb0c2513f573101323911ead833506ee8019f3ba3f4728f10f83",
+    "tldw_chatbook/Utils/input_validation.py": "ebf77a23e64d7762202b864ad4caa576c2a5748015da6046c0cde39d45598cab",
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": "7186f5a96ac30cb92bdb8ed619f644dba5c216ca1e41706725a450f175e8e700",
+    "tldw_chatbook/Chat/console_chat_controller.py": "65b4a2effa969439b0848584bb103bea7273c6def9310408c99bd35bc40c777d",
+    "Tests/Agents/test_agent_chat_create_tools.py": "e7601b3151b19ee0a9d0c8a594003bf024f74169f7b15a7468a32b58580ced8e",
+    "Tests/Chat/test_console_chat_create_integration.py": "2501f1c8914c9851c78907b0c1f7fa9040e8888950495450cd61373a9c645c5a",
+    "Tests/Chat/test_console_note_span_actions.py": "b6e587bd6cf8d69054a7ebc60a683cece8fbc92f0642750dc8f56266337e3cae",
+    "Tests/UI/test_console_composer_run_controls.py": "5ac84432c1034c1430a456b098ef5aed33abc6c43ffd645f7a4d2cd4fe66567a",
+    "Tests/Utils/test_console_new_chat_input_validation.py": "db132d42be48574ed69dee060412c2d2cfd7d22a3c86b83a005285022725e685"
+  },
+  "exit": 0
+}

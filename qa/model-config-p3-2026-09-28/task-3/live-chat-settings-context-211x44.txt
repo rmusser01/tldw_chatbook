@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+   New tab     S│                                                                                                                                                                                 │
+────────────────│   Model and generation  Context and memory · Selected                                                                                                                           │────────────────
+                │  Use: this conversation only. Defaults: F4 Settings > Console Behavior.                                                                                                         │     │
+                │  Budget strategy        █ Automatic ▼                                                                                                                                           │     │
+   Terminal     │  Conversation max tokens│ if Custom                                                                                                                                             │     │
+ ───────────────│  Effective           27,264 tokens                                                                                                                                              │     │
+ Workspaces     │  Next request        0 tokens                                                                                                                                                   │     │
+ ───────────────│  Request overhead    unknown tokens                                                                                                                                             │     │
+ Conversations  │                                                                                                                                                                                 │     │
+        Archive │  Compaction                                                                                                                                                                  ▂  │     │
+          Archiv│  When limit nears       │ Ask       ▼                                                                                                                                           │     │
+        Search a│  Representation         │ Text summary      ▼                                                                                                                                   │     │
+   Chat 1       │  Visual transcript and Hybrid require a vision-capable model.                                                                                                                   │     │
+                │  Compact at (%)         │ 80                                                                                                                                                    │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│  Reduce context to (%)  │ 55                                                                                                                                                    │     │
+  ▊  Filter visi│  Summary response max   │ 1024                                                                                                                                                  │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│  Summary response max applies only to Text summary and Hybrid.                                                                                                                  │     │
+                │  If compaction fails    │ Stop and ask       ▼                                                                                                                                  │     │◂ Inspect
+   New conversat│  Keep after compaction  │ Memory with recent turns    ▼                                                                                                                         │     │
+  Chats         │  Inherited from Console Behavior defaults.                                                                                                                                      │     │
+   Chat 1       │                                                                                                                                                                                 │     │
+                │  Thinking history replay                                                                                                                                                        │     │
+ ───────────────│  History policy         │ Auto    ▼                                                                                                                                             │     │
+ Character · No │  Effective: Auto                                                                                                                                                                │     │
+ ───────────────│   Save as default for new conversations                                                                                                                                         │     │
+ Model          │                                                                                                                                                                                 │     │
+ ───────────────│  Current memory                                                                                                                                                                 │     │
+ Agent          │  No conversation memory. Transcript remains authoritative.                                                                                                                      │     │
+ ───────────────│   No conversation memory is active on this branch.                                                                                                                              │     │
+ Details        │                                                                                                                                                                                 │     │
+                │    Compact now    Reset current branch memory                                                                                                                                   │     │
+                │   Reset overrides  Reset all conversation memory…                                                                                                                               │     │
+                │  ▼ more — scroll for the rest                                                                                                                                                   │     │
+                │                                                                                                                                    Used by future conversations for llama.cpp.  │     │
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                                                                                           Cancel    Use for this conversation   │rrent $0.00 · O
+                │                                                                                                                                                                                 │
+│  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

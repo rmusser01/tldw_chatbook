@@ -25,11 +25,28 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+_additional_activation_databases = pytest.StashKey[list[object]]()
+
+
+def register_activation_database(
+    request: pytest.FixtureRequest, database: object
+) -> None:
+    """Register an exact additional test owner after activation runtime disposal.
+
+    Args:
+        request: The test node using the activation_library fixture.
+        database: Explicitly created disposable database; never inferred from app state.
+    """
+    request.node.stash[_additional_activation_databases].append(database)
+
 
 @pytest_asyncio.fixture
-async def activation_library(library):  # noqa: F811 - imported pytest fixture
+async def activation_library(library, request):  # noqa: F811 - imported pytest fixture
     """End this Console fixture's runtime before its borrowed file owner closes."""
     owner, _, _ = library
+    databases = []
+    request.node.stash[_additional_activation_databases] = databases
     try:
         yield library
     finally:
@@ -39,6 +56,8 @@ async def activation_library(library):  # noqa: F811 - imported pytest fixture
         from Tests.conftest import _close_database_instance
 
         _close_database_instance(runtime._agent_runs_db)
+        for database in databases:
+            _close_database_instance(database)
 
 
 async def _until(predicate):

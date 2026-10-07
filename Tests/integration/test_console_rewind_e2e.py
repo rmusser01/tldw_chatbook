@@ -56,9 +56,7 @@ class _SequencedCapturingGateway:
         self.calls: list[list[dict]] = []
 
     async def resolve_for_send(self, selection):
-        return provider_resolution(
-            base_url="http://127.0.0.1:9099", max_tokens=512
-        )
+        return provider_resolution(base_url="http://127.0.0.1:9099", max_tokens=512)
 
     async def stream_chat(self, resolution, messages, **kwargs):
         self.calls.append(messages)
@@ -172,16 +170,12 @@ async def test_before_first_survives_restart_then_resend_clears_marker(tmp_path)
             store=resumed,
             provider_gateway=_SequencedCapturingGateway(["A1 edited"]),
         )
-        assert (
-            await resumed_controller.submit_draft("U1 edited")
-        ).accepted is True
+        assert (await resumed_controller.submit_draft("U1 edited")).accepted is True
         active_leaf, before = db.get_conversation_active_cursor(conversation_id)
         assert active_leaf is not None
         assert before is None
 
-        restarted, restarted_session = _resume_into_fresh_store(
-            db, conversation_id
-        )
+        restarted, restarted_session = _resume_into_fresh_store(db, conversation_id)
         assert [
             message.content
             for message in restarted.messages_for_session(restarted_session.id)
@@ -220,9 +214,7 @@ async def test_before_first_unsent_draft_edit_is_session_only(tmp_path):
         assert resumed.session_draft(resumed_session.id) == "unsent local edit"
 
         del resumed, resumed_session
-        restarted, restarted_session = _resume_into_fresh_store(
-            db, conversation_id
-        )
+        restarted, restarted_session = _resume_into_fresh_store(db, conversation_id)
         assert restarted.active_path_message_ids(restarted_session.id) == []
         assert restarted.session_draft(restarted_session.id) == "U1"
         assert db.get_conversation_active_cursor(conversation_id) == (
@@ -328,9 +320,7 @@ async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
         assert "SUMMARY TEXT" in outgoing[0]["content"]
         # Meanwhile the store's own transcript view is the FULL, uncompacted
         # history -- compaction only ever touches the provider payload.
-        full_transcript = [
-            m.content for m in store.messages_for_session(session.id)
-        ]
+        full_transcript = [m.content for m in store.messages_for_session(session.id)]
         assert full_transcript == [
             "U1",
             "A1",
@@ -341,9 +331,7 @@ async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
         ]
 
         # ---- Step 6: persist -> DROP the store -> resume ----
-        resumed_store, resumed_session = _resume_into_fresh_store(
-            db, conversation_id
-        )
+        resumed_store, resumed_session = _resume_into_fresh_store(db, conversation_id)
         resumed_transcript = resumed_store.messages_for_session(resumed_session.id)
         assert [m.content for m in resumed_transcript] == [
             "U1",
@@ -394,8 +382,7 @@ async def test_console_rewind_restore_edit_summarize_resume_leak_rule(tmp_path):
             resumed_store, resumed_session.id, resumed_u2_prime.id
         )
         assert [
-            m.content
-            for m in resumed_store.messages_for_session(resumed_session.id)
+            m.content for m in resumed_store.messages_for_session(resumed_session.id)
         ] == ["U1", "A1"]
         # The stored summary/boundary is left in place (not cleared)...
         assert resumed_store.session_context_summary(resumed_session.id) == (

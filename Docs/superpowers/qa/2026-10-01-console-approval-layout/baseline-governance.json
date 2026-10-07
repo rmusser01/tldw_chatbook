@@ -1,0 +1,55 @@
+{
+  "baseline": "83c2c9810d",
+  "dimension_diagnostics_unchanged": [
+    {
+      "source": "tldw_chatbook/css/components/_agentic_terminal.tcss",
+      "baseline": [
+        "width: 1"
+      ],
+      "current": [
+        "width: 1"
+      ]
+    },
+    {
+      "source": "tldw_chatbook/css/components/_settings_splash_theme.tcss",
+      "baseline": [
+        "width: 1",
+        "width: 1"
+      ],
+      "current": [
+        "width: 1",
+        "width: 1"
+      ]
+    },
+    {
+      "source": "tldw_chatbook/css/features/_workflows.tcss",
+      "baseline": [
+        "height: 45",
+        "height: 8",
+        "height: 1",
+        "height: 1",
+        "height: 1",
+        "height: 6",
+        "width: 90",
+        "width: 100",
+        "height: 90",
+        "height: 1",
+        "height: 6"
+      ],
+      "current": [
+        "height: 45",
+        "height: 8",
+        "height: 1",
+        "height: 1",
+        "height: 1",
+        "height: 6",
+        "width: 90",
+        "width: 100",
+        "height: 90",
+        "height: 1",
+        "height: 6"
+      ]
+    }
+  ],
+  "python_width_diagnostic_source_identical_to_base": "tldw_chatbook/Widgets/Library/library_skill_work_pane.py"
+}

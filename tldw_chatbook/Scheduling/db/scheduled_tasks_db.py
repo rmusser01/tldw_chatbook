@@ -164,23 +164,47 @@ class ScheduledTasksDB(BaseDB):
     _RUNS_RETAINED_PER_DEFINITION = 200
 
     _AUTOMATION_RUN_COLUMNS = {
-        "server_id", "status", "outcome", "schedule_slot",
-        "scope_snapshot", "finding_policy_snapshot", "rag_request_snapshot",
-        "run_summary", "evidence_summary", "failure_reason",
-        "updated_at", "started_at", "ended_at",
+        "server_id",
+        "status",
+        "outcome",
+        "schedule_slot",
+        "scope_snapshot",
+        "finding_policy_snapshot",
+        "rag_request_snapshot",
+        "run_summary",
+        "evidence_summary",
+        "failure_reason",
+        "updated_at",
+        "started_at",
+        "ended_at",
     }
     _AUTOMATION_RUN_JSON_FIELDS = {
-        "scope_snapshot", "finding_policy_snapshot", "rag_request_snapshot",
-        "run_summary", "evidence_summary", "failure_reason",
+        "scope_snapshot",
+        "finding_policy_snapshot",
+        "rag_request_snapshot",
+        "run_summary",
+        "evidence_summary",
+        "failure_reason",
     }
 
     _AUTOMATION_RESULT_COLUMNS = {
-        "server_id", "answer", "answer_mode", "confidence", "source_refs",
-        "visibility_destination", "review_state", "reviewed_at",
-        "reviewed_by", "review_note", "updated_at",
+        "server_id",
+        "answer",
+        "answer_mode",
+        "confidence",
+        "source_refs",
+        "visibility_destination",
+        "review_state",
+        "reviewed_at",
+        "reviewed_by",
+        "review_note",
+        "updated_at",
     }
     _AUTOMATION_RESULT_JSON_FIELDS = {
-        "answer", "confidence", "source_refs", "visibility_destination",
+        "answer",
+        "confidence",
+        "source_refs",
+        "visibility_destination",
     }
 
     _DATETIME_FIELDS = {
@@ -330,15 +354,11 @@ class ScheduledTasksDB(BaseDB):
         """
         try:
             with closing(self._get_connection()) as conn:
-                row = conn.execute(
-                    "SELECT MAX(version) FROM schema_version"
-                ).fetchone()
+                row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
         except sqlite3.Error:
             return False
         return bool(
-            row
-            and row[0] is not None
-            and int(row[0]) >= self._CURRENT_SCHEMA_VERSION
+            row and row[0] is not None and int(row[0]) >= self._CURRENT_SCHEMA_VERSION
         )
 
     def get_schema_version(self) -> int:
@@ -665,11 +685,13 @@ class ScheduledTasksDB(BaseDB):
             if existing:
                 local_id = existing["id"]
                 if local_id in pending:
-                    conflicts.append({
-                        "local_id": local_id,
-                        "server_state": dict(item),
-                        "local_state": {"record": dict(existing)},
-                    })
+                    conflicts.append(
+                        {
+                            "local_id": local_id,
+                            "server_state": dict(item),
+                            "local_state": {"record": dict(existing)},
+                        }
+                    )
                     continue
                 self._update_reminder_task_conn(conn, local_id, **fields)
             else:
@@ -702,7 +724,12 @@ class ScheduledTasksDB(BaseDB):
         with self.transaction() as conn:
             state = self._get_sync_state_conn(conn, owner_id) or {}
             errors = list(state.get("sync_errors") or [])
-            errors.append({"message": message, "timestamp": datetime.now(timezone.utc).isoformat()})
+            errors.append(
+                {
+                    "message": message,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
             errors = errors[-10:]
             self._update_sync_state_conn(conn, owner_id, sync_errors=errors)
 
@@ -833,9 +860,7 @@ class ScheduledTasksDB(BaseDB):
     def create_reminder_task(self, owner_id: str, title: str, **kwargs: Any) -> str:
         """Create a reminder task and return its generated local UUID."""
         with self.transaction() as conn:
-            task_id = self._create_reminder_task_conn(
-                conn, owner_id, title, **kwargs
-            )
+            task_id = self._create_reminder_task_conn(conn, owner_id, title, **kwargs)
 
         logger.debug(f"Created reminder task {task_id} for owner {owner_id}")
         return task_id
@@ -857,9 +882,7 @@ class ScheduledTasksDB(BaseDB):
     ) -> Optional[dict[str, Any]]:
         """Fetch a reminder task by owner and server-side identifier."""
         with self.connection() as conn:
-            return self._get_reminder_task_by_server_id_conn(
-                conn, owner_id, server_id
-            )
+            return self._get_reminder_task_by_server_id_conn(conn, owner_id, server_id)
 
     def list_reminder_tasks(
         self,
@@ -983,9 +1006,7 @@ class ScheduledTasksDB(BaseDB):
     #: The non-terminal status a reconcile sweep fails on next start (AC#4).
     _RUNNING_RUN_STATUS = "running"
 
-    def begin_task_run(
-        self, task_id: str, task_type: str, started_at: datetime
-    ) -> int:
+    def begin_task_run(self, task_id: str, task_type: str, started_at: datetime) -> int:
         """Record the start of one dispatch; returns the run row id.
 
         The row is left in ``running`` until ``finish_task_run`` writes a
@@ -1030,9 +1051,7 @@ class ScheduledTasksDB(BaseDB):
                 ),
             )
 
-    def list_task_runs(
-        self, task_id: str, *, limit: int = 20
-    ) -> list[dict[str, Any]]:
+    def list_task_runs(self, task_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return a task's run history, newest first (AC#2)."""
         with closing(self._get_connection()) as conn:
             conn.row_factory = sqlite3.Row
@@ -1223,9 +1242,7 @@ class ScheduledTasksDB(BaseDB):
 
         scheduled_at = self._parse_utc_iso(row.get("next_run_at"))
         late_by = (
-            (now - scheduled_at).total_seconds()
-            if scheduled_at is not None
-            else 0.0
+            (now - scheduled_at).total_seconds() if scheduled_at is not None else 0.0
         )
         if scheduled_at is not None and late_by > grace_seconds:
             fields["missed_at"] = scheduled_at
@@ -1664,9 +1681,11 @@ class ScheduledTasksDB(BaseDB):
                     ).fetchone(),
                     json_fields={"payload"},
                 )
-                if queued is not None and (queued.get("payload") or {}).get(
-                    "action"
-                ) == "release_from_server":
+                if (
+                    queued is not None
+                    and (queued.get("payload") or {}).get("action")
+                    == "release_from_server"
+                ):
                     return None
 
             if table_kind == "reminder_task":
@@ -2495,7 +2514,9 @@ class ScheduledTasksDB(BaseDB):
         Mirrors ``create_automation_run``'s create shape: no pruning here
         (results are user-facing findings, not run bookkeeping).
         """
-        self._validate_kwargs(kwargs, self._AUTOMATION_RESULT_COLUMNS, "automation result")
+        self._validate_kwargs(
+            kwargs, self._AUTOMATION_RESULT_COLUMNS, "automation result"
+        )
         result_id = str(uuid.uuid4())
         now_iso = self._to_utc_iso(datetime.now(timezone.utc))
         fields: dict[str, Any] = {
@@ -2816,7 +2837,12 @@ class ScheduledTasksDB(BaseDB):
     #: Result columns that may be copied verbatim from a server item on
     #: insert, beyond id/server_id/owner_id (handled separately).
     _AUTOMATION_RESULT_INSERT_FIELDS = _AUTOMATION_RESULT_COLUMNS | {
-        "definition_id", "run_id", "kind", "title", "summary", "dedupe_key",
+        "definition_id",
+        "run_id",
+        "kind",
+        "title",
+        "summary",
+        "dedupe_key",
         "created_at",
     }
 
@@ -2824,7 +2850,11 @@ class ScheduledTasksDB(BaseDB):
     #: existing row -- review state only (spec §5: "results sync down,
     #: review pushes up").
     _AUTOMATION_RESULT_REVIEW_FIELDS = {
-        "review_state", "reviewed_at", "reviewed_by", "review_note", "updated_at",
+        "review_state",
+        "reviewed_at",
+        "reviewed_by",
+        "review_note",
+        "updated_at",
     }
 
     def upsert_automation_definitions_from_server(
@@ -2938,12 +2968,15 @@ class ScheduledTasksDB(BaseDB):
                 else:
                     if not fields:
                         continue
-                    if "lifecycle" in fields and self._definition_lifecycle_guard_active(
-                        conn,
-                        owner_id,
-                        existing["id"],
-                        server_id,
-                        skip_lifecycle_server_ids,
+                    if (
+                        "lifecycle" in fields
+                        and self._definition_lifecycle_guard_active(
+                            conn,
+                            owner_id,
+                            existing["id"],
+                            server_id,
+                            skip_lifecycle_server_ids,
+                        )
                     ):
                         fields = dict(fields)
                         del fields["lifecycle"]
@@ -3022,7 +3055,9 @@ class ScheduledTasksDB(BaseDB):
                 fields = dict(fields)
                 fields["config"] = {
                     **config,
-                    "scope": {k: v for k, v in scope.items() if k != "resolved_sources"},
+                    "scope": {
+                        k: v for k, v in scope.items() if k != "resolved_sources"
+                    },
                 }
 
         serialized: dict[str, Any] = {}
@@ -3255,7 +3290,11 @@ class ScheduledTasksDB(BaseDB):
                                 skipped_dedupe += 1
                                 continue
                             if self._apply_result_review_update(
-                                conn, owner_id, raced_row["id"], server_id, item,
+                                conn,
+                                owner_id,
+                                raced_row["id"],
+                                server_id,
+                                item,
                                 skip_review_server_ids,
                             ):
                                 updated += 1
@@ -3267,7 +3306,11 @@ class ScheduledTasksDB(BaseDB):
                     inserted += 1
                 else:
                     if self._apply_result_review_update(
-                        conn, owner_id, existing["id"], server_id, item,
+                        conn,
+                        owner_id,
+                        existing["id"],
+                        server_id,
+                        item,
                         skip_review_server_ids,
                     ):
                         updated += 1
@@ -3398,9 +3441,7 @@ class ScheduledTasksDB(BaseDB):
     ) -> None:
         """Create or replace the mapping between a local and server record."""
         with self.transaction() as conn:
-            self._set_sync_mapping_conn(
-                conn, local_id, server_id, primitive, owner_id
-            )
+            self._set_sync_mapping_conn(conn, local_id, server_id, primitive, owner_id)
 
     def delete_sync_mapping(
         self,
@@ -3571,9 +3612,7 @@ class ScheduledTasksDB(BaseDB):
                 """,
                 (local_id, primitive),
             )
-            return self._row_to_dict(
-                cursor.fetchone(), json_fields={"payload"}
-            )
+            return self._row_to_dict(cursor.fetchone(), json_fields={"payload"})
 
     def delete_pending_mutation(self, mutation_id: int) -> None:
         """Delete a pending mutation by its row id."""

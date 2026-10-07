@@ -334,6 +334,7 @@ def test_every_durable_installed_adapter_has_a_named_selectable_group():
 
     nonselectable = {
         "cache.model_catalog",
+        "hooks.permissions",
         "runtime.instance_lock",
         "runtime.config_lock",
         "runtime.chatbook_scratch",

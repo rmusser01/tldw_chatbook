@@ -73,6 +73,8 @@ class MCPTools:
     #: source loader, so its character writes refuse in server mode. None (the
     #: in-process runtime) skips the check: the default profile's source is not
     #: the calling Console session's, so it would misjudge either direction.
+    #: The Console's per-run MCPToolProvider applies the session's own check
+    #: instead (TASK-33106).
     runtime_source_loader: Any = None
 
     def __init__(self, chachanotes_db: CharactersRAGDB, media_db: MediaDatabase):

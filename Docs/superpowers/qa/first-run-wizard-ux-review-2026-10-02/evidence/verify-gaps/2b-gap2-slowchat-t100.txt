@@ -1,0 +1,40 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control ac… Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                             │ Conversation | Hello slow model                                               │
+                  Context ◂  │    Hello slow model    ✕    New tab     Temporary                             │
+   Terminal                  │                                                                               │
+ ──────────────────────────  │                                                                               │
+ Workspaces             ▸    │                                                                               │
+ ──────────────────────────  │                                                                               │
+ Conversations          ▾    │                                                                               │
+     Archive this chat       │                                                                               │
+      Archived chats         │                                                                               │
+     Search all chats…       │                                                                               │
+   Hello slow model          │                                                                               │
+                             │                                                                               │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                               │
+  ▊  Filter      ▎           │                                                                               │◂ Inspect
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │  ───────────────────────────────────────────────────────────────────────────  │
+                             │   User                                                                        │
+  Chats                 ▾    │   Hello slow model                                                            │
+   Hello slow model    💬    │  ───────────────────────────────────────────────────────────────────────────  │
+                             │  ▊ Assistant  Failed                                                          │
+ ──────────────────────────  │  ▊                                                                            │
+ Character · No chats   ▸    │  ▊  Response failed.                                                          │
+ ──────────────────────────  │  ▊                                                                            │
+ Model                  ▸    │  ▊                                                                            │
+ ──────────────────────────  │  ───────────────────────────────────────────────────────────────────────────  │
+ Agent                  ▸    │   System                                                                      │
+ ──────────────────────────  │   Agent run failed: unexpected provider error (stream produced no content     │
+ Details                ▸    │   for 90s (provider=llama_cpp)).                                              │
+                             │  ───────────────────────────────────────────────────────────────────────────  │  failed
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: llama.cpp     Model: llama3.1:70b     System Prompt: off
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...   Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+P · Ctrl+Q

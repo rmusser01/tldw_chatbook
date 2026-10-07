@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, TYPE_CHECKING
 
@@ -28,8 +28,12 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleControllerActivity,
-    ConsoleDispatchRecoveryAction,
-    ConsoleDispatchRecoveryState,
+    ConsoleMessageRole,
+)
+from tldw_chatbook.Chat.console_display_state import (
+    QUEUE_REASON_FULL,
+    QUEUE_REASON_PREPARING,
+    QUEUE_REASON_RUN_HOLD,
 )
 from tldw_chatbook.Chat.console_prompt_queue import (
     MAX_CONSOLE_QUEUE_ENTRIES,
@@ -39,6 +43,7 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueuePauseReason,
     PromptQueueSnapshot,
     QueueMutationStatus,
+    make_prompt_preview,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -70,12 +75,32 @@ def commit_queued_draft_transaction(
         pass
 
 
+#: Assistant-message statuses each typed queue retry action can re-run.
+_RECOVERY_TURN_STATUSES: dict[str, frozenset[str]] = {
+    "retry-failed": frozenset({"failed"}),
+    "retry-stopped": frozenset({"stopped", "interrupted"}),
+}
+#: Cells of the failed turn's prompt the one-row shelf names it by.
+RECOVERY_TURN_PREVIEW_CELLS = 32
+
+
+@dataclass(frozen=True, slots=True)
+class ConsoleQueueRecoveryTurn:
+    """The exact paused-queue turn a typed retry action re-runs."""
+
+    message_id: str
+    preview: str = field(repr=False)
+
+
 class ConsolePromptDispatchStatus(str, Enum):
     """Typed outcome returned to every visible/programmatic send caller."""
 
     SENT = "sent"
     QUEUED = "queued"
     REFUSED = "refused"
+    #: Parked behind a hook review that a worker now owns: neither sent nor
+    #: refused yet, and still cancellable (TASK-33621.28).
+    AWAITING_REVIEW = "awaiting_review"
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,12 +115,20 @@ class ConsolePromptDispatchResult:
     def accepted(self) -> bool:
         """Return whether the caller may truthfully say the draft was accepted."""
 
-        return self.status is not ConsolePromptDispatchStatus.REFUSED
+        return self.status in (
+            ConsolePromptDispatchStatus.SENT,
+            ConsolePromptDispatchStatus.QUEUED,
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class ConsolePromptQueuePresentation:
-    """Body-free, immutable projection consumed by queue widgets."""
+    """Immutable projection consumed by queue widgets.
+
+    It never carries a full prompt body: ``next_preview`` and a failed turn's
+    name inside ``state_label`` are bounded one-line ``make_prompt_preview``
+    renderings only.
+    """
 
     revision: int
     count: int
@@ -109,8 +142,31 @@ class ConsolePromptQueuePresentation:
     pause_label: str
     primary_action: str
     pause_enabled: bool
-    recovery_actions: tuple[ConsoleDispatchRecoveryAction, ...] = ()
     turn_recovery_id: str | None = field(default=None, repr=False)
+
+
+#: TASK-33621.2: the widest unsent-turn summary that leaves whole Restore and
+#: Discard buttons on an 80-column shelf (80 - 9 - 15, less a margin).
+TURN_RECOVERY_SUMMARY_CELLS = 52
+
+
+def turn_recovery_label(
+    reason: str, *, budget: int = TURN_RECOVERY_SUMMARY_CELLS
+) -> str:
+    """Return the unsent-turn summary: the refusal reason, fitted to ``budget``.
+
+    Args:
+        reason: The controller's refusal copy, or "" when none was retained.
+        budget: Cells the label may use on the shelf.
+
+    Returns:
+        ``Not sent: <reason>`` (ellipsized), or the generic label.
+    """
+    text = " ".join(str(reason or "").split()).rstrip(".")
+    if not text:
+        return "Unsent turn needs attention"
+    label = f"Not sent: {text}"
+    return label if len(label) <= budget else label[: budget - 1].rstrip() + "…"
 
 
 def derive_prompt_queue_presentation(
@@ -118,22 +174,64 @@ def derive_prompt_queue_presentation(
     activity: ConsoleControllerActivity,
     *,
     composer_collapsed: bool = False,
-    dispatch_recovery: ConsoleDispatchRecoveryState | None = None,
     dispatch_recovery_blocked: bool = False,
     turn_recovery_id: str | None = None,
+    turn_recovery_reason: str = "",
+    failed_turn_preview: str | None = None,
 ) -> ConsolePromptQueuePresentation:
-    """Derive exact visible queue vocabulary without reading a prompt body."""
+    """Derive exact visible queue vocabulary from bounded previews only.
+
+    No full prompt body is read here.
+
+    Args:
+        snapshot: Body-free queue snapshot for the session.
+        activity: The session's controller activity; a live accepted turn or
+            an occupied agent slot decides the Send/Queue/Preparing label.
+        composer_collapsed: True hides the shelf whatever its state.
+        dispatch_recovery_blocked: True when a response recovery blocks the
+            queue; the shelf shows a disabled Resume. The recovery's own
+            actions live only on the #console-dispatch-recovery card: the
+            shelf never carries them (TASK-33625.5).
+        turn_recovery_id: An unsent turn needing attention. It outranks every
+            other state and keeps the shelf visible with no queued entries.
+        turn_recovery_reason: Why that turn was refused; the shelf states it
+            in place of the generic label (TASK-33621.2).
+        failed_turn_preview: Bounded one-line preview of the prompt whose turn
+            failed and paused the queue (the caller's ``make_prompt_preview``),
+            or ``None`` when the newest assistant message on the active
+            transcript is not failed (no turn failed, or the failed attempt
+            is off-path, as after a failed regeneration). ``""`` is a failed
+            turn whose preceding user prompt is missing or has no previewable
+            text (only whitespace or control characters, or only
+            attachments); the shelf then shows a bare "Turn failed" with
+            Retry. A FAILED pause given ``None`` offers Resume, because a
+            Retry there could only refuse (TASK-33621.19).
+
+    Returns:
+        The immutable shelf/composer presentation: Send label and gate, shelf
+        visibility, state label, next waiting preview, and primary action and
+        its label.
+    """
 
     count = snapshot.total_count
     queue_owned = activity.accepted_live_turn or count > 0
+    # TASK-33620.4: a refusing state's tooltip is also the composer's reason
+    # strip copy (its own queue slot, never the provider-setup one), so it
+    # names the actual wait and fits the strip's 52-cell budget. Only a
+    # prompt-chain turn is ever queue-accepted: regenerate / continue / an
+    # agent wake occupy the slot with no chain, so no queue opens behind them.
     if activity.occupies_slot and not queue_owned:
         send_label = "Preparing..."
         send_enabled = False
-        send_tooltip = "Wait for this turn to be accepted before queueing a message."
+        send_tooltip = (
+            QUEUE_REASON_PREPARING
+            if activity.preparing_before_acceptance
+            else QUEUE_REASON_RUN_HOLD
+        )
     elif queue_owned and count >= MAX_CONSOLE_QUEUE_ENTRIES:
         send_label = "Queue full"
         send_enabled = False
-        send_tooltip = f"{count}/{MAX_CONSOLE_QUEUE_ENTRIES} · Manage to make room"
+        send_tooltip = QUEUE_REASON_FULL
     elif queue_owned:
         send_label = "Queue"
         send_enabled = True
@@ -144,8 +242,15 @@ def derive_prompt_queue_presentation(
         send_tooltip = "Send the active Console session draft."
 
     if snapshot.mode is PromptQueueMode.PAUSED:
-        if snapshot.pause_reason is PromptQueuePauseReason.FAILED:
-            state_label = "Turn failed"
+        if (
+            snapshot.pause_reason is PromptQueuePauseReason.FAILED
+            and failed_turn_preview is not None
+        ):
+            state_label = (
+                f'Turn failed: "{failed_turn_preview}"'
+                if failed_turn_preview
+                else "Turn failed"
+            )
             pause_label = "Retry"
             primary_action = "retry-failed"
         elif snapshot.pause_reason is PromptQueuePauseReason.STOPPED:
@@ -188,26 +293,21 @@ def derive_prompt_queue_presentation(
         "",
     )
     if turn_recovery_id is not None:
-        state_label = "Unsent turn needs attention"
+        # An empty queue drops the "Queue 0/10 · " prefix (sync_presentation).
+        prefix = len(f"Queue {count}/{MAX_CONSOLE_QUEUE_ENTRIES} · ") if count else 0
+        state_label = turn_recovery_label(
+            turn_recovery_reason, budget=TURN_RECOVERY_SUMMARY_CELLS - prefix
+        )
         pause_label = ""
         primary_action = "turn-recovery"
         pause_enabled = False
-        recovery_actions = ()
-    elif dispatch_recovery is not None:
-        state_label = dispatch_recovery.visible_copy
-        pause_label = ""
-        primary_action = "dispatch-recovery"
-        pause_enabled = False
-        recovery_actions = dispatch_recovery.actions
     elif dispatch_recovery_blocked:
         state_label = "Paused for response recovery"
         pause_label = "Resume"
         primary_action = "toggle-pause"
         pause_enabled = False
-        recovery_actions = ()
     else:
         pause_enabled = count > 0
-        recovery_actions = ()
     return ConsolePromptQueuePresentation(
         revision=snapshot.revision,
         count=count,
@@ -222,7 +322,6 @@ def derive_prompt_queue_presentation(
         pause_label=pause_label,
         primary_action=primary_action,
         pause_enabled=pause_enabled,
-        recovery_actions=recovery_actions,
         turn_recovery_id=turn_recovery_id,
     )
 
@@ -230,11 +329,19 @@ def derive_prompt_queue_presentation(
 class ConsolePromptQueueRegion(Widget):
     """Always-mounted one-row queue shelf directly above the composer."""
 
+    # Every byte below is parsed at boot (ADR-097's boot CSS ratchet), so
+    # nothing here restates what already holds (TASK-33621.19). The
+    # #console-prompt-queue-row Horizontal has no rule: its own defaults
+    # (1fr x 1fr, horizontal layout) fill this region, which max-height
+    # clamps to one row. No min-height sits beside a fixed `height: 1`:
+    # it could never take effect. The two Buttons keep Button's own
+    # `width: auto` (label + line-pad): fixed widths clipped 'Manage' to
+    # 'Mana' and 'Keep draining' to 'Keep' (TASK-33625.4). min-width 8
+    # undoes Button's 16; Pause's 15 keeps its short labels one size.
     BUNDLED_CSS = """
     ConsolePromptQueueRegion {
         display: none;
         height: 1;
-        min-height: 1;
         max-height: 1;
         width: 100%;
         background: $panel;
@@ -243,12 +350,6 @@ class ConsolePromptQueueRegion(Widget):
 
     ConsolePromptQueueRegion.-visible {
         display: block;
-    }
-
-    ConsolePromptQueueRegion > #console-prompt-queue-row {
-        height: 1;
-        width: 100%;
-        layout: horizontal;
     }
 
     #console-prompt-queue-summary {
@@ -266,23 +367,32 @@ class ConsolePromptQueueRegion(Widget):
     }
 
     #console-prompt-queue-manage {
-        width: 8;
         min-width: 8;
         height: 1;
-        min-height: 1;
         padding: 0 1;
     }
 
     #console-prompt-queue-pause {
-        width: 15;
         min-width: 15;
         height: 1;
-        min-height: 1;
         padding: 0 1;
     }
 
     ConsolePromptQueueRegion.-narrow #console-prompt-queue-preview {
         display: none;
+    }
+
+    /* TASK-33621.19: a narrow shelf's summary (the named 'Turn failed: "..."'
+       is its longest label) truncates instead of pushing Retry off-screen.
+       TASK-33625.4: it also gives up its min-width 20. The shelf spans the
+       Console shell (rails open or not), so this only binds in a terminal
+       under 47 columns, where Manage + Keep draining (27 cells) now stay
+       whole instead of painting 'Keep dra'. */
+    ConsolePromptQueueRegion.-narrow #console-prompt-queue-summary {
+        width: 1fr;
+        min-width: 0;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
     """
 
@@ -345,7 +455,9 @@ class ConsolePromptQueueRegion(Widget):
         except NoMatches:
             return True
         summary.update(
-            f"Queue {presentation.count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
+            presentation.state_label
+            if presentation.primary_action == "turn-recovery" and not presentation.count
+            else f"Queue {presentation.count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
             f"{presentation.state_label}"
         )
         preview.update(
@@ -360,41 +472,19 @@ class ConsolePromptQueueRegion(Widget):
             pause.label = "Discard"
             pause.disabled = False
             pause.tooltip = "Discard this unsent turn."
-        elif presentation.primary_action == "dispatch-recovery":
-            first = (
-                presentation.recovery_actions[0]
-                if presentation.recovery_actions
-                else None
-            )
-            second = (
-                presentation.recovery_actions[1]
-                if len(presentation.recovery_actions) > 1
-                else None
-            )
-            manage.label = first.label if first is not None else "Unavailable"
-            manage.disabled = first is None or not first.enabled
-            manage.tooltip = (
-                first.disabled_reason or first.label
-                if first is not None
-                else presentation.state_label
-            )
-            pause.label = second.label if second is not None else "Unavailable"
-            pause.disabled = second is None or not second.enabled
-            pause.tooltip = (
-                second.disabled_reason or second.label
-                if second is not None
-                else presentation.state_label
-            )
         else:
             manage.label = "Manage"
             manage.disabled = presentation.count == 0
             manage.tooltip = "Open the prompt queue manager."
             pause.label = presentation.pause_label
             pause.disabled = not presentation.pause_enabled
-            pause.tooltip = (
-                f"{presentation.pause_label} this session's prompt queue."
-            )
+            pause.tooltip = f"{presentation.pause_label} this session's prompt queue."
         self.refresh(layout=True)
+        # A Button caches its box model per its OWN layout count, so a new
+        # label keeps the old width unless the Button itself is re-laid
+        # out: 'Pause' -> 'Keep draining' painted 'Keep' (TASK-33625.4).
+        manage.refresh(layout=True)
+        pause.refresh(layout=True)
         return True
 
     def on_resize(self) -> None:
@@ -418,16 +508,6 @@ class ConsolePromptQueueRegion(Widget):
                     presentation.revision,
                     f"turn-recovery:restore:{presentation.turn_recovery_id}",
                 )
-            elif (
-                presentation.primary_action == "dispatch-recovery"
-                and presentation.recovery_actions
-                and self._on_primary_requested is not None
-            ):
-                self._on_primary_requested(
-                    self._session_id,
-                    presentation.revision,
-                    presentation.recovery_actions[0].action_id.value,
-                )
             elif self._on_manage_requested is not None:
                 self._on_manage_requested(self._session_id, presentation.revision)
             else:
@@ -446,26 +526,12 @@ class ConsolePromptQueueRegion(Widget):
                     presentation.revision,
                     f"turn-recovery:discard:{presentation.turn_recovery_id}",
                 )
-            elif (
-                presentation.primary_action == "dispatch-recovery"
-                and len(presentation.recovery_actions) > 1
-                and self._on_primary_requested is not None
-            ):
-                self._on_primary_requested(
-                    self._session_id,
-                    presentation.revision,
-                    presentation.recovery_actions[1].action_id.value,
-                )
             elif presentation.primary_action == "review":
                 if self._on_manage_requested is not None:
-                    self._on_manage_requested(
-                        self._session_id, presentation.revision
-                    )
+                    self._on_manage_requested(self._session_id, presentation.revision)
                 else:
                     self.post_message(
-                        self.ManageRequested(
-                            self._session_id, presentation.revision
-                        )
+                        self.ManageRequested(self._session_id, presentation.revision)
                     )
             elif self._on_primary_requested is not None:
                 self._on_primary_requested(
@@ -504,6 +570,7 @@ class ConsolePromptQueueUIController:
         edit_refusal: Callable[[str], str],
         sync_ui: Callable[[], Awaitable[None]],
         guardian_checker_getter: Callable[[], Any] | None = None,
+        turn_recovery_reason: Callable[[str], str] = lambda _session_id: "",
     ) -> None:
         self._chat_controller_accessor = chat_controller_accessor
         self._capture_configuration = capture_configuration
@@ -518,6 +585,7 @@ class ConsolePromptQueueUIController:
         self._commit_captured_draft = commit_captured_draft
         self._commit_queued_draft = commit_queued_draft
         self._turn_recovery_ids = turn_recovery_ids
+        self._turn_recovery_reason = turn_recovery_reason
         self._restore_turn_recovery = restore_turn_recovery
         self._discard_turn_recovery = discard_turn_recovery
         self._load_recovered_turn = load_recovered_turn
@@ -537,6 +605,10 @@ class ConsolePromptQueueUIController:
         on_recovery_complete: Callable[[], None] | None = None,
     ) -> None:
         """Apply the shelf's state-specific primary action and repaint.
+
+        Response recovery actions (retry_response, retry_anyway, discard) come
+        only from the #console-dispatch-recovery card; the shelf never offers
+        them (TASK-33625.5).
 
         Args:
             session_id: Session whose recovery or queue action is requested.
@@ -572,6 +644,10 @@ class ConsolePromptQueueUIController:
                         result.visible_copy or "That recovery action is unavailable.",
                         "warning",
                     )
+                elif result.queue_notice:
+                    # The response settled, but the prompts queued behind it
+                    # stopped at a context review (TASK-33621.19).
+                    self._notify(result.queue_notice, "warning")
             except (Exception, asyncio.CancelledError) as exc:
                 action_error = exc
                 raise
@@ -605,6 +681,9 @@ class ConsolePromptQueueUIController:
                 result.detail or "That prompt queue action is unavailable.",
                 "warning",
             )
+        elif result.detail:
+            # A Retry/Resume next stopped at a context review says why.
+            self._notify(result.detail, "warning")
         await self._sync_ui()
 
     async def _handle_turn_recovery_intent(self, session_id: str, action: str) -> None:
@@ -644,18 +723,27 @@ class ConsolePromptQueueUIController:
     async def handle_pause_intent(
         self, session_id: str, *, expected_revision: int
     ) -> None:
-        """Apply a shelf pause intent, report refusal, and repaint."""
+        """Apply a shelf pause intent, report refusal, and repaint.
+
+        An accepted result can still carry ``detail``: a Resume that the
+        coordinator stopped at a context review (TASK-33621.19). That notice
+        is shown too, so the press does not look dead.
+        """
 
         result = await self.toggle_pause(
             session_id, expected_revision=expected_revision
         )
         if result.status is QueueMutationStatus.STALE_REVISION:
-            self._notify("The prompt queue changed. Review it and try again.", "warning")
+            self._notify(
+                "The prompt queue changed. Review it and try again.", "warning"
+            )
         elif not result.applied and result.status is not QueueMutationStatus.UNCHANGED:
             self._notify(
                 result.detail or "That prompt queue action is unavailable.",
                 "warning",
             )
+        elif result.detail:
+            self._notify(result.detail, "warning")
         await self._sync_ui()
 
     def presentation_for(
@@ -668,7 +756,13 @@ class ConsolePromptQueueUIController:
         activity = controller.activity_for(session_id)
         recovery_ids = self._turn_recovery_ids(session_id)
         turn_recovery_id = recovery_ids[0] if recovery_ids else None
-        return derive_prompt_queue_presentation(
+        failed_turn = (
+            self.recovery_turn(session_id, action="retry-failed")
+            if snapshot.mode is PromptQueueMode.PAUSED
+            and snapshot.pause_reason is PromptQueuePauseReason.FAILED
+            else None
+        )
+        presentation = derive_prompt_queue_presentation(
             snapshot,
             activity,
             composer_collapsed=composer_collapsed,
@@ -678,7 +772,76 @@ class ConsolePromptQueueUIController:
                 )
             ),
             turn_recovery_id=turn_recovery_id,
+            turn_recovery_reason=(
+                self._turn_recovery_reason(session_id) if turn_recovery_id else ""
+            ),
+            failed_turn_preview=(
+                failed_turn.preview if failed_turn is not None else None
+            ),
         )
+        if controller._chat_start.is_prepared(session_id):
+            return replace(
+                presentation,
+                send_label="Send",
+                send_enabled=True,
+                send_tooltip="Send this draft and withdraw the prepared background start.",
+            )
+        if controller._chat_start.is_accepted(session_id):
+            # Native starts own no FIFO chain; they have already been accepted.
+            return replace(
+                presentation, send_label="Running", send_enabled=False, send_tooltip=""
+            )
+        return presentation
+
+    def recovery_turn(
+        self, session_id: str, *, action: str
+    ) -> ConsoleQueueRecoveryTurn | None:
+        """Return the exact turn a paused queue's retry ``action`` re-runs.
+
+        A paused queue gates every other generation in its session, so the
+        turn that paused it is the transcript's newest assistant message.
+        Only that message is a retry target: an older failure elsewhere in
+        the conversation did not pause this queue. TASK-33621.19: a FAILED
+        pause with no failed turn used to offer Retry, which then refused
+        with "No matching stopped or failed turn is available."
+
+        Args:
+            session_id: Session owning the paused queue.
+            action: ``"retry-failed"`` or ``"retry-stopped"``.
+
+        Returns:
+            The newest assistant message and a one-line preview of the
+            prompt it answered, or ``None`` when that message is not in a
+            status ``action`` can retry.
+        """
+
+        statuses = _RECOVERY_TURN_STATUSES.get(action)
+        if statuses is None:
+            return None
+        target = None
+        try:
+            messages = (
+                self._chat_controller_accessor().store.iter_messages_newest_first(
+                    session_id
+                )
+            )
+            for item in messages:
+                if target is None:
+                    if item.role is not ConsoleMessageRole.ASSISTANT:
+                        continue
+                    if str(item.status) not in statuses:
+                        return None
+                    target = item
+                elif item.role is ConsoleMessageRole.USER:
+                    return ConsoleQueueRecoveryTurn(
+                        target.id,
+                        make_prompt_preview(
+                            item.content, cell_budget=RECOVERY_TURN_PREVIEW_CELLS
+                        ),
+                    )
+        except KeyError:
+            return None
+        return None if target is None else ConsoleQueueRecoveryTurn(target.id, "")
 
     def snapshot(self, session_id: str) -> PromptQueueSnapshot:
         """Return the immutable body-free snapshot for a pinned session."""
@@ -850,29 +1013,19 @@ class ConsolePromptQueueUIController:
                 reviewed_context_epoch=reviewed_context_epoch,
             )
             return self._latest_result(session_id, result)
-        wanted_statuses = (
-            {"failed"} if action == "retry-failed" else {"stopped", "interrupted"}
-        )
-        message = next(
-            (
-                item
-                # TASK-24300: lazy newest-first walk (see console_chat_store).
-                for item in controller.store.iter_messages_newest_first(session_id)
-                if str(item.status) in wanted_statuses
-            ),
-            None,
-        )
-        if message is None:
+        # TASK-33621.19: retry exactly the turn the shelf/manager named.
+        turn = self.recovery_turn(session_id, action=action)
+        if action in _RECOVERY_TURN_STATUSES and turn is None:
             return PromptQueueMutationResult(
                 QueueMutationStatus.INVALID,
                 snapshot,
                 detail="No matching stopped or failed turn is available.",
             )
-        if action == "retry-failed":
-            result = await controller.retry_failed_queue_turn(message.id)
+        if action == "retry-failed" and turn is not None:
+            result = await controller.retry_failed_queue_turn(turn.message_id)
             return self._latest_result(session_id, result)
-        if action == "retry-stopped":
-            result = await controller.retry_stopped_queue_turn(message.id)
+        if action == "retry-stopped" and turn is not None:
+            result = await controller.retry_stopped_queue_turn(turn.message_id)
             return self._latest_result(session_id, result)
         return PromptQueueMutationResult(
             QueueMutationStatus.INVALID,
@@ -973,6 +1126,9 @@ class ConsolePromptQueueUIController:
         controller = self._chat_controller_accessor()
         if session_id is None:
             session_id = controller.store.active_session_id or ""
+        chat_start = getattr(controller, "_chat_start", None)
+        if chat_start is not None:
+            await chat_start.withdraw_for_manual(session_id)
         snapshot = controller.prompt_queue_registry.snapshot(session_id)
         activity = controller.activity_for(session_id)
 
@@ -986,7 +1142,7 @@ class ConsolePromptQueueUIController:
             )
 
         if activity.accepted_live_turn or snapshot.total_count > 0:
-            queued = controller.queue_prompt(
+            queued = await controller.queue_prompt(
                 session_id,
                 text=draft,
                 expected_revision=snapshot.revision,
@@ -1038,7 +1194,7 @@ class ConsolePromptQueueUIController:
             )
         if activity.accepted_live_turn:
             snapshot = controller.prompt_queue_registry.snapshot(session_id)
-            queued = controller.queue_prompt(
+            queued = await controller.queue_prompt(
                 session_id,
                 text=draft,
                 expected_revision=snapshot.revision,
@@ -1098,6 +1254,7 @@ __all__ = [
     "ConsolePromptQueuePresentation",
     "ConsolePromptQueueRegion",
     "ConsolePromptQueueUIController",
+    "ConsoleQueueRecoveryTurn",
     "commit_queued_draft_transaction",
     "derive_prompt_queue_presentation",
 ]

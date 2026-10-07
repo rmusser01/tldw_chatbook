@@ -34,19 +34,23 @@ class FakeResponse:
 
     def __init__(self, payload=None):
         self.text = ""
-        self._payload = payload if payload is not None else {
-            # Kobold native generate
-            "results": [{"text": " SUMMARY "}],
-            # OpenAI-compatible envelope -- TabbyAPI validates every one of
-            # these keys before reading the content, so a fake carrying only
-            # "choices" passes nothing.
-            "id": "cmpl-test",
-            "created": 0,
-            "model": "test-model",
-            "object": "chat.completion",
-            "usage": {"completion_tokens": 3},
-            "choices": [{"message": {"role": "assistant", "content": " SUMMARY "}}],
-        }
+        self._payload = (
+            payload
+            if payload is not None
+            else {
+                # Kobold native generate
+                "results": [{"text": " SUMMARY "}],
+                # OpenAI-compatible envelope -- TabbyAPI validates every one of
+                # these keys before reading the content, so a fake carrying only
+                # "choices" passes nothing.
+                "id": "cmpl-test",
+                "created": 0,
+                "model": "test-model",
+                "object": "chat.completion",
+                "usage": {"completion_tokens": 3},
+                "choices": [{"message": {"role": "assistant", "content": " SUMMARY "}}],
+            }
+        )
 
     def json(self):
         return self._payload
@@ -71,6 +75,7 @@ def captured_post(monkeypatch):
 
     monkeypatch.setattr(lib, "create_default_session", lambda: FakeSession())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+
     monkeypatch.setattr(_general, "create_default_session", lambda: FakeSession())
     return captured
 
@@ -210,7 +215,9 @@ def test_kobold_streaming_uses_the_openai_compatible_endpoint(monkeypatch):
     endpoint -- only `api_streaming_ip` is OpenAI-compatible. Preferring the
     modern url sent streaming to the native endpoint and yielded nothing."""
     conf = settings()
-    conf["api_settings"]["koboldcpp"]["api_url"] = "http://kobold.invalid/api/v1/generate"
+    conf["api_settings"]["koboldcpp"]["api_url"] = (
+        "http://kobold.invalid/api/v1/generate"
+    )
     conf["kobold_api"]["api_ip"] = "http://kobold.invalid/api/v1/generate"
     conf["kobold_api"]["api_streaming_ip"] = "http://kobold.invalid/v1/chat/completions"
     monkeypatch.setattr(lib, "load_settings", lambda: conf)
@@ -241,6 +248,7 @@ def test_kobold_streaming_uses_the_openai_compatible_endpoint(monkeypatch):
 
     monkeypatch.setattr(lib, "create_default_session", lambda: StreamSession())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+
     monkeypatch.setattr(_general, "create_default_session", lambda: StreamSession())
 
     drain(lib.summarize_with_kobold("text", None, "Summarize.", streaming=True))
@@ -253,7 +261,9 @@ def test_kobold_non_streaming_uses_the_native_endpoint(monkeypatch, captured_pos
     must go to the NATIVE generate endpoint. Shaped like the real config, where
     both the modern api_url and the legacy api_ip are native."""
     conf = settings()
-    conf["api_settings"]["koboldcpp"]["api_url"] = "http://kobold.invalid/api/v1/generate"
+    conf["api_settings"]["koboldcpp"]["api_url"] = (
+        "http://kobold.invalid/api/v1/generate"
+    )
     conf["kobold_api"]["api_ip"] = "http://kobold.invalid/api/v1/generate"
     conf["kobold_api"]["api_streaming_ip"] = "http://kobold.invalid/v1/chat/completions"
     monkeypatch.setattr(lib, "load_settings", lambda: conf)
@@ -282,6 +292,7 @@ def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
 
     monkeypatch.setattr(lib, "create_default_session", lambda: Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+
     monkeypatch.setattr(_general, "create_default_session", lambda: Session())
 
     result = drain(
@@ -304,6 +315,7 @@ def test_configuration_reaches_the_public_analyze_boundary(monkeypatch):
     # directly (not a generator surfaced as "Unexpected result type").
     assert isinstance(result, str), result
     assert "SUMMARY" in result, result
+
 
 @pytest.mark.parametrize(
     "summarize",

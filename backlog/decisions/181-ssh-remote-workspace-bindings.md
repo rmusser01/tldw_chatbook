@@ -15,6 +15,17 @@ Design: [SSH Remote Workspace Bindings — Design](../../Docs/superpowers/specs/
   `(st_dev, st_ino)` identity), confinement, atomic writes, and CAS identity
   checks keep their current semantics and run server-side; `fs_*` parity and
   the ro/rw toggle are unchanged.
+
+  **Limit, accepted:** `(st_dev, st_ino)` names a directory, not its
+  history. A filesystem that hands a freed inode number straight back
+  (observed on ext4 on the 2026-09-27 live host: `rm -rf root && mkdir
+  root` recreated the same pair) makes a deleted-and-recreated root
+  indistinguishable from the original, so it is served without a
+  `STALE_IDENTITY` stop. The pin still defeats what it exists for — a
+  symlink swap, a root replaced by a *different* live directory, and
+  escapes out of the root — and this is the same limit local bindings have.
+  A stronger identity (ext4's `i_generation` via an ioctl) is
+  filesystem-specific and not stdlib-portable, so it is not used.
 - **Transient stdlib-only worker over SSH stdio.** Per tool call, chatbook
   spawns `ssh [opts] [-p <port>] [-l <user>] -- <host> <interpreter> -I -c
   '<bootstrap>'` — argv built from the parsed locator components, never a
@@ -181,10 +192,16 @@ target is a warm call of about one round trip.
     channel proves reachability, so a slow host queue never flips the
     binding to BLOCKED.
   - A session the laptop ended (stuck-parent kill, decode-error kill, run
-    close, or a call arriving on an already-closed session) fails its
-    unadmitted calls as `REMOTE_OP_FAILED` (status-preserving). Only a
-    natural death (EOF, ssh exited on its own) classifies unadmitted calls
-    through the transport taxonomy, using the session's real ssh exit code.
+    close) fails its unadmitted calls as `REMOTE_OP_FAILED` (status-preserving).
+    Only a natural death (EOF, ssh exited on its own) classifies unadmitted
+    calls through the transport taxonomy, using the session's real ssh exit code.
+  - A call whose session the laptop closed while it was healthy (idle reap,
+    run end, app exit) **before the call's request was sent** is not failed:
+    nothing ran, so it asks the registry again and gets a fresh session, or
+    the one-shot path once the run or the app has ended. This covers a close
+    that lands before the call registered (TASK-33401) and one that lands
+    after it registered but before any REQUEST byte was written
+    (TASK-33421); a request that was written is never retried.
   - A natural death with ssh exit code 0 (host idle-exit, clean EOF) is a
     benign session end, never a transport failure: its unadmitted calls get
     `REMOTE_OP_FAILED` and the next call starts a fresh session without
@@ -214,3 +231,48 @@ target is a warm call of about one round trip.
   start took 110–422 ms (medians 192 ms and 367 ms over 5 starts per run),
   dominated by opening the ssh channel over the ControlMaster; a cache miss
   took 498 ms and 591 ms. Both are paid once per run per binding.
+- **Follow-ups (2026-09-28, TASK-33400–33408).**
+  - Callers queued behind a session start that fails transport-class all
+    get that failure; nobody starts again against the same dead host. A
+    later call still tries a fresh session.
+  - A session handshake is part of its call: it gives up at the call's
+    remaining budget + grace, capped at 30 s. Both Console callers build
+    their executors with the default 300 s tool budget, so in practice the
+    30 s cap is the deadline. Before the host answers, a silent host is
+    classified like a one-shot handshake (transport-class). Once the host
+    has answered (NEED or READY), the deadline is never transport-class
+    (TASK-33420). At the 30 s cap the start is protocol-class: the binding
+    status is unchanged and the run falls back to one-shot calls. That
+    catches a stuck loader, and equally a cache-miss bundle upload still
+    making progress slower than about 2.5 KB/s (74,233 B against the 30 s):
+    the write deadline is absolute, not an inactivity window. Only when the
+    call's budget + grace is under the 30 s cap (a short budget, not the
+    default) does running out of it (mid-upload, or waiting for a READY
+    that never comes) fail just that call as `OP_TIMEOUT`
+    (status-preserving); that failure is not shared with callers queued
+    behind the start, and the next call tries a session again. An ssh exit
+    after the answer is still classified by its exit code, like any natural
+    death. Trade-off (the budget case only; at the cap the run is one-shot
+    and waiters go one-shot too): callers queued behind a start that ran
+    out of budget each run their own start in turn with their full budget,
+    so the k-th waits up to about (k+1) × (budget + grace), and that queue
+    is bounded by `max_concurrent_calls`; handing a waiter only its
+    remaining budget would push a nearly spent one into a pre-answer stall
+    (UNREACHABLE, so BLOCKED), which is worse.
+  - A mux failure (`MUX_ERROR`) at session start runs that call one-shot
+    over the restarted master and fails nothing; the next call tries a
+    session again. A second one in the same run switches the binding to
+    one-shot for the run.
+  - A session's death is classified from the **last** 64 KiB of its ssh
+    stderr, where the reason is.
+  - A request the host cannot fork or pipe for gets `STATUS(71)`
+    (`EX_OSERR`) and fails alone as `REMOTE_OP_FAILED` (status-preserving:
+    the live session proves reachability); the session carries on.
+  - Idle reaping closes sessions on a background thread, never on the
+    calling tool call; run end and app exit close a run's (or every)
+    session in parallel and wait at most 5 s.
+  - After app exit the master manager starts no new ControlMaster and runs
+    no health check; a straggler call connects directly.
+  - A fast operation's admitted marker, result and STATUS leave the host
+    in one write; the parent holds a running child's output at most 10 ms
+    before writing it. Measured: live host over Wi-Fi, 2026-09-28: warm median 11.5-13.8 ms coalesced vs 16.6-17.2 ms without (3.3, 4.7, 5.1 ms lower in three interleaved pairs).

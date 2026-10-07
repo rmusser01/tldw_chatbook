@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType
 
+from tldw_chatbook.Backup_Recovery.participants import _core_operation
 from tldw_chatbook.Chat.console_trace_legacy import (
     LegacyDecodedByteLimitError,
     LegacyTraceNormalizer,
@@ -280,12 +281,8 @@ class PhysicalTraceCompactor:
     def _refresh_storage_observation(self, result: TraceGCResult) -> TraceGCResult:
         with self.db.transaction() as cursor:
             page_size = int(cursor.execute("PRAGMA page_size").fetchone()[0])
-            allocated_pages = int(
-                cursor.execute("PRAGMA page_count").fetchone()[0]
-            )
-            freelist_pages = int(
-                cursor.execute("PRAGMA freelist_count").fetchone()[0]
-            )
+            allocated_pages = int(cursor.execute("PRAGMA page_count").fetchone()[0])
+            freelist_pages = int(cursor.execute("PRAGMA freelist_count").fetchone()[0])
         wal_path = Path(f"{self.db.db_path_str}-wal")
         try:
             wal_bytes = max(0, wal_path.stat().st_size)
@@ -349,7 +346,11 @@ class PhysicalTraceCompactor:
     ) -> TraceCompactionOutcome:
         reason: str | None = None
         failure_recorded = False
-        after = (result.allocated_bytes_after, result.freelist_bytes_after, result.wal_bytes)
+        after = (
+            result.allocated_bytes_after,
+            result.freelist_bytes_after,
+            result.wal_bytes,
+        )
         try:
             with self.db.quiesce_connections(
                 timeout_seconds=self.policy.quiesce_timeout_seconds
@@ -741,12 +742,60 @@ class LegacyTraceMaintenance:
         self.max_bytes = max_bytes
         self.max_seconds = float(max_seconds)
         self.clock = clock
+        #: TASK-33801: skip the read-only idle check on the next pass. The check
+        #: costs a storage admission of its own, which a pass with work pays
+        #: only to fall through to the write path. True at first (the state is
+        #: unknown); the runtime loop sets it when an exchange write wakes it.
+        self.expect_work = True
+
+    def _complete_without_pending_work(self) -> bool:
+        """Read-only: True when the migration is complete with no newer exchange.
+
+        PERF-10 (TASK-33269): the common idle answer no longer takes the
+        write lock that user sends contend for. Anything else -- a busy
+        lease, an incomplete migration, a newer row -- falls through to
+        ``run_batch``'s immediate transaction, which re-checks under the lock.
+        """
+
+        with self.db.transaction() as cursor:
+            lease = cursor.execute(
+                "SELECT state FROM console_trace_maintenance_state WHERE singleton_id = 1"
+            ).fetchone()
+            if lease is None or lease[0] != "idle":
+                return False
+            state = cursor.execute(
+                """SELECT status, last_exchange_id
+                     FROM console_trace_migration_state
+                    WHERE migration_name = ?""",
+                (LEGACY_MIGRATION_NAME,),
+            ).fetchone()
+            if state is None or state[0] != "logical_complete":
+                return False
+            last_exchange_id = -1 if state[1] is None else int(state[1])
+            return (
+                cursor.execute(
+                    "SELECT 1 FROM message_exchanges WHERE id > ? LIMIT 1",
+                    (last_exchange_id,),
+                ).fetchone()
+                is None
+            )
 
     def run_batch(self) -> LegacyMaintenanceBatch:
-        """Run at most one bounded transaction and yield to the caller."""
+        """Run one bounded batch under shared repository admission.
 
+        Returns:
+            Content-free normalization progress or an unadmitted busy result.
+        """
         if self.provider_active():
             return LegacyMaintenanceBatch(False, 0, 0, False)
+        with _core_operation(self.db):
+            return self._run_admitted_batch()
+
+    def _run_admitted_batch(self) -> LegacyMaintenanceBatch:
+        """Keep the read probe and locked write recheck in the admitted scope."""
+        expect_work, self.expect_work = self.expect_work, False
+        if not expect_work and self._complete_without_pending_work():
+            return LegacyMaintenanceBatch(True, 0, 0, True)
         started = self.clock()
         processed_rows = 0
         processed_bytes = 0
@@ -816,7 +865,9 @@ class LegacyTraceMaintenance:
                             cursor,
                             row,
                             max_decoded_bytes=remaining_bytes,
-                            oversized_policy=("omit" if not processed_rows else "defer"),
+                            oversized_policy=(
+                                "omit" if not processed_rows else "defer"
+                            ),
                         )
                     except LegacyDecodedByteLimitError:
                         break
@@ -1241,9 +1292,7 @@ class TraceGarbageCollector:
         retain_until: str,
         reason_code: str,
     ) -> str:
-        TraceGarbageCollector._validate_utc_timestamp(
-            retain_until, "retain_until"
-        )
+        TraceGarbageCollector._validate_utc_timestamp(retain_until, "retain_until")
         if type(reason_code) is not str or not 1 <= len(reason_code) <= 128:
             raise ValueError("reason_code")
         existing = cursor.execute(
@@ -1406,9 +1455,7 @@ class TraceGarbageCollector:
             "console_trace_redaction_spans": "span_id",
             "console_trace_request_headers": "header_id",
             "console_trace_response_links": "response_link_id",
-            "console_trace_revision_bindings": (
-                "revision_id || char(31) || policy_id"
-            ),
+            "console_trace_revision_bindings": ("revision_id || char(31) || policy_id"),
             "console_trace_segments": "segment_id",
             "console_trace_semantic_revisions": "revision_id",
             "console_trace_surface_nodes": "node_id",
@@ -1423,9 +1470,7 @@ class TraceGarbageCollector:
                 f"SELECT {identity} AS entity_id FROM {table}",
             )
 
-    def _mark_reachable_rows(
-        self, cursor: object, request_id: str, epoch: int
-    ) -> None:
+    def _mark_reachable_rows(self, cursor: object, request_id: str, epoch: int) -> None:
         cursor.execute(
             """WITH RECURSIVE roots(segment_id, through_sequence) AS (
                    SELECT owner.root_segment_id, NULL
@@ -1594,9 +1639,7 @@ class TraceGarbageCollector:
         )
         self._mark_revisions_policies_artifacts(cursor, request_id, epoch)
 
-    def _mark_surface_nodes(
-        self, cursor: object, request_id: str, epoch: int
-    ) -> None:
+    def _mark_surface_nodes(self, cursor: object, request_id: str, epoch: int) -> None:
         self._mark_sql(
             cursor,
             request_id,
@@ -1801,9 +1844,7 @@ class TraceGarbageCollector:
         return tuple(str(item[0]) for item in rows)
 
     @staticmethod
-    def _sweep_unmarked(
-        cursor: sqlite3.Cursor, request_id: str
-    ) -> dict[str, int]:
+    def _sweep_unmarked(cursor: sqlite3.Cursor, request_id: str) -> dict[str, int]:
         statements = (
             ("console_trace_redaction_spans", "span_id"),
             ("console_trace_response_links", "response_link_id"),
@@ -1892,7 +1933,9 @@ class TraceGarbageCollector:
     @staticmethod
     def _decode_result(value: str) -> TraceGCResult:
         payload = json.loads(value)
-        deleted = {str(key): int(count) for key, count in payload["deleted_rows"].items()}
+        deleted = {
+            str(key): int(count) for key, count in payload["deleted_rows"].items()
+        }
         page_size = int(payload.get("page_size_bytes", 0))
         free_before = int(payload["freelist_pages_before"])
         free_after = int(payload["freelist_pages_after"])

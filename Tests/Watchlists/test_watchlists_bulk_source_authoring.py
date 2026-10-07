@@ -110,7 +110,9 @@ async def test_source_authoring_controls_fit_production_layout(size):
             control = editor.query_one(selector)
             assert control.region.width > 0 and control.region.height > 0
             assert control.region.right <= pane.region.right
-        assert [str(label.render()) for label in editor.query(".sources-filter-label")] == [
+        assert [
+            str(label.render()) for label in editor.query(".sources-filter-label")
+        ] == [
             "Type",
             "Status",
             "Active",
@@ -149,9 +151,9 @@ async def test_bulk_modal_cannot_dismiss_an_admitted_write():
     async with app.run_test(size=(160, 42)) as pilot:
         modal = app.screen
         assert isinstance(modal, BulkSourcesModal)
-        modal.query_one("#bulk-sources-draft", TextArea).text = (
-            "https://admitted.example/feed"
-        )
+        modal.query_one(
+            "#bulk-sources-draft", TextArea
+        ).text = "https://admitted.example/feed"
         modal.query_one("#bulk-sources-create", Button).press()
         await pilot.pause()
 
@@ -286,11 +288,7 @@ async def test_bulk_modal_preserves_order_and_pauses_on_partial_results(size):
             for label in modal.query(".bulk-sources-field-label").results(Static)
         ] == ["Type", "Tags", "Next"]
         draft = modal.query_one("#bulk-sources-draft", TextArea)
-        draft.text = (
-            "https://one.example/feed\n"
-            "not a URL\n"
-            "https://two.example/feed"
-        )
+        draft.text = "https://one.example/feed\nnot a URL\nhttps://two.example/feed"
         modal.query_one("#bulk-sources-create", Button).press()
         modal.query_one("#bulk-sources-create", Button).press()
         await pilot.pause()
@@ -446,9 +444,9 @@ async def test_dismissed_bulk_modal_ignores_late_batch_callback():
         service.create_sources_exact_batch = AsyncMock(side_effect=delayed_batch)
         screen._local_watchlists_service = Mock(return_value=service)
         modal.apply_results = Mock()
-        modal.query_one("#bulk-sources-draft", TextArea).text = (
-            "https://late.example/feed"
-        )
+        modal.query_one(
+            "#bulk-sources-draft", TextArea
+        ).text = "https://late.example/feed"
         modal.query_one("#bulk-sources-create", Button).press()
         await entered.wait()
 
@@ -560,9 +558,10 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
         assert screen.selected_source is not None
         assert screen.selected_source["id"] == second["id"]
         assert pane.query_one("#sources-add-several-button", Button).disabled is False
-        assert pane.query_one(
-            "#sources-create-watchlist-selected", Button
-        ).disabled is False
+        assert (
+            pane.query_one("#sources-create-watchlist-selected", Button).disabled
+            is False
+        )
 
         screen.runtime_backend = "server"
         await pilot.pause()
@@ -593,9 +592,10 @@ async def test_server_mode_never_enables_local_only_source_actions(size):
         assert pane.selected_source is None
         assert pane.selected_source_ids == frozenset({first["id"]})
         assert pane.query_one("#sources-add-several-button", Button).disabled is False
-        assert pane.query_one(
-            "#sources-create-watchlist-selected", Button
-        ).disabled is False
+        assert (
+            pane.query_one("#sources-create-watchlist-selected", Button).disabled
+            is False
+        )
 
 
 @pytest.mark.asyncio
@@ -704,7 +704,9 @@ async def test_bulk_modal_keeps_draft_after_validation_and_write_failure():
         modal.query_one("#bulk-sources-create", Button).press()
         await pilot.pause()
         assert len(app.create_requests) == 1
-        modal.show_write_failure("Sources could not be saved. Return to the draft and retry.")
+        modal.show_write_failure(
+            "Sources could not be saved. Return to the draft and retry."
+        )
         await pilot.pause()
 
         assert draft.text == "https://recover.example/feed"
@@ -727,9 +729,9 @@ async def test_watchlists_screen_uses_exact_batch_and_continuation_changes_no_me
         )
         host.push_screen(modal)
         await pilot.pause()
-        modal.query_one("#bulk-sources-draft", TextArea).text = (
-            "https://one.example/feed\nhttps://two.example/feed"
-        )
+        modal.query_one(
+            "#bulk-sources-draft", TextArea
+        ).text = "https://one.example/feed\nhttps://two.example/feed"
         modal.query_one("#bulk-sources-create", Button).press()
 
         for _ in range(100):

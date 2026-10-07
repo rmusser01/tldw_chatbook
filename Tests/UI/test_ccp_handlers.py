@@ -400,6 +400,7 @@ class TestCCPPersonaHandler:
         mock_window.notify.assert_called_with(
             "Local chat greetings are not available yet.",
             severity="warning",
+            markup=False,
         )
 
 

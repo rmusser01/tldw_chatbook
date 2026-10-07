@@ -68,6 +68,16 @@
     overflow-x: hidden;
 }
 
+/* TASK-33003.7: the spec's Inspector width (36) as a floor wherever the
+   detail pane can spare it (the class is set from
+   SETTINGS_INSPECTOR_FLOOR_MIN_WIDTH, settings_screen.py). Below ~186
+   columns the 2fr share is narrower: 25 at 140 columns, an 18-cell text
+   column that wrapped each row 4-5 times and pushed the Overview boundary
+   note below the fold. It never binds at 211 or 235 columns. */
+#settings-impact-pane.settings-inspector-floor {
+    min-width: $ds-size-36;
+}
+
 /* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #settings-detail-pane-body,
 #settings-impact-pane-body {
@@ -187,6 +197,9 @@ Button.settings-category-button {
     content-align: left middle;
     text-align: left;
     background: $ds-surface-panel;
+    /* TASK-33003.6: the focus edge's column, blank (the row's own fill) at
+       rest, so focus moves no label. */
+    border-left: blank;
 }
 
 Button.settings-category-button.settings-active-section {
@@ -195,21 +208,28 @@ Button.settings-category-button.settings-active-section {
     text-style: bold underline;
 }
 
+/* TASK-33003.6 (WCAG 1.4.11): focus swapped only the fill (1.1:1). The cue
+   is now a thick edge in the readable primary tint, 3:1 on panel, surface
+   and the focus fill in every theme (test_theme_contrast.py). The text
+   colour and weight come from `#settings-shell Button:focus`, which
+   outranks these rules. */
 Button.settings-category-button:focus {
     outline: none;
+    border-left: thick $ds-active-fg;
     background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold;
 }
 
-Button.settings-category-button.settings-active-section:focus {
+Button.settings-category-button.settings-active-section:focus,
+Button.settings-category-button.settings-active-section:hover:focus {
+    border-left: thick $ds-active-fg;
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
 }
 
-Button.settings-category-button.settings-active-section:hover,
-Button.settings-category-button.settings-active-section:hover:focus {
+Button.settings-category-button.settings-active-section:hover {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
     text-style: bold underline;
@@ -281,9 +301,14 @@ Button.settings-category-button.settings-secondary-search-match {
     color: $ds-text-muted;
 }
 
+/* TASK-33003.6: no `background` here. It was `$ds-surface-raised`, the
+   resting surface (design-language §2.7 forbids that alias): a focused
+   primary lost its fill, and on light themes Textual's focus tint pulled a
+   default button's fill toward the card (1.08:1 -> 1.02:1 in textual-light).
+   The fill now comes from components/_buttons.tcss: the focus tint, or a
+   variant's own colour. */
 #settings-shell Button:focus,
 #settings-shell Button:hover:focus {
-    background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold underline;
     outline: none;
@@ -356,15 +381,10 @@ Button.settings-category-group-toggle:focus {
    components/_forms.tcss (documented variant of form-row; consumed on TWO
    production surfaces -- the Settings workbench and the STTS speech
    settings pane -- so it rides the boot bundle instead of the lazy
-   settings screen sheet). The scoped override below stays with its
-   surface. */
-
-/* The narrow Scope Inspector keeps the airy row rhythm: its prose wraps at
-   ~30 columns, so the blank line between rows earns its keep there (and
-   the F6 fold-geometry contract measures against it). */
-#settings-impact-pane .settings-detail-row {
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-}
+   settings screen sheet). TASK-33003.7 deleted the Scope Inspector's
+   blank-row override (#settings-impact-pane .settings-detail-row, margin
+   bottom 1): it cost 7 rows on Overview and cut the boundary note at the
+   211x44 fold, so inspector rows now sit without a blank row between them. */
 
 .settings-input-row {
     width: $ds-width-full;
@@ -498,7 +518,7 @@ Button.settings-category-group-toggle:focus {
 
 /* TextArea's border consumes two rows. Keep at least one painted content row
    when the preset row joins this scrollable form. */
-#agents-instructions-area {
+#agents-form .agents-area {
     height: $ds-size-5;
     min-height: $ds-size-3;
 }
@@ -852,7 +872,12 @@ Button.settings-category-group-toggle:focus {
     color: $ds-focus-fg;
 }
 
-.settings-workbench-compact #settings-overview-primary .settings-action-row {
+/* A Horizontal never wraps, so while the detail pane is narrower than its
+   widest action row its rows stack (SettingsRegion sets settings-stacked-actions
+   below SETTINGS_ACTION_ROWS_INLINE_MIN_WIDTH; this replaced the compact-only
+   Overview rule). The theme card keeps its own width switch
+   (components/_settings_splash_theme.tcss). */
+.settings-stacked-actions .settings-action-row {
     layout: vertical;
     height: auto;
 }
@@ -1084,9 +1109,9 @@ Button.settings-category-group-toggle:focus {
     margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
+/* TASK-33003.6: fill from components/_buttons.tcss, as above. */
 .settings-action-row Button:focus,
 #settings-impact-pane Button:focus {
-    background: $ds-surface-raised;
     color: $ds-text-primary;
     text-style: bold underline;
     outline: none;
@@ -1388,8 +1413,9 @@ Button.settings-category-group-toggle:focus {
     margin: $ds-space-0;
 }
 
-/* _conversations.tcss's bare `Checkbox { width: 100%; height: 2; }` is an
-   unscoped TYPE selector that reaches every Checkbox app-wide (verified
+/* _conversations.tcss's bare `Checkbox { width: 100%; height: 2; }` (retired
+   in TASK-18960) was an unscoped TYPE selector that reached every Checkbox
+   app-wide (verified
    live: region.width computed to the ROW's full width, overlapping/
    clipping the marker and Test button that come after it in the SAME
    row) -- override both Enabled checkboxes (one per backend row) and the
@@ -1488,4 +1514,60 @@ Button.settings-category-group-toggle:focus {
 .settings-imagegen-backend-row .settings-input-label {
     width: $ds-size-12;
     min-width: $ds-size-12;
+}
+
+
+.settings-hooks-review-modal { align: center middle; }
+    #console-hooks-review {
+        width: $ds-percent-90; max-width: $ds-size-110; height: $ds-percent-90;
+        background: $ds-surface-panel; border: round $ds-grid-line;
+        padding: $ds-space-inset;
+    }
+    #console-hooks-title { height: auto; text-style: $ds-text-strong; }
+    #console-hooks-notice { height: auto; color: $ds-status-warning; }
+    #console-hooks-tabs, #console-hooks-actions {
+        height: $ds-control-height; width: $ds-width-full;
+    }
+    #console-hooks-list { height: $ds-height-fill; }
+    .hook-review-row {
+        height: auto; border: round $ds-grid-line;
+        margin-bottom: $ds-space-stack; padding: $ds-space-0 $ds-space-inset;
+    }
+    .hook-review-heading, .hook-review-controls { height: $ds-control-height; }
+    .hook-review-select { width: $ds-width-fill; }
+    .hook-review-details { min-width: $ds-size-9; width: auto; }
+    .hook-review-state, .hook-review-detail { height: auto; }
+    .hook-review-state { color: $ds-text-muted; }
+    .hook-review-detail { background: $ds-surface-sunken; padding: $ds-space-inset; }
+    .hook-review-action {
+        width: auto; min-width: $ds-size-9; height: $ds-control-height;
+        margin-right: $ds-space-inline;
+        background: $ds-surface-raised; color: $ds-text-primary;
+    }
+    .hook-review-action:hover { background: $ds-hover-bg; color: $ds-hover-fg; }
+    .hook-review-action:focus {
+        background: $ds-focus-bg; color: $ds-focus-fg;
+    }
+    .hook-review-action:disabled {
+        background: $ds-disabled-bg; color: $ds-text-disabled-readable;
+    }
+    #console-hooks-review #console-hooks-settings { height: $ds-control-height-compact; border: none; }
+
+.settings-hooks-panel { height: auto; }
+    .settings-hooks-panel .settings-hooks-actions {
+        height: auto; margin-bottom: $ds-space-1; }
+    .settings-hooks-panel .settings-hooks-actions .settings-hooks-action {
+        min-width: $ds-size-9; margin-right: $ds-space-1; }
+    .settings-hooks-panel #settings-hooks-list { height: $ds-size-6; margin-bottom: $ds-space-1; }
+    .settings-hooks-panel #settings-hooks-editor { height: auto; }
+    .settings-hooks-panel #settings-hooks-command { height: $ds-textarea-min-height; margin-bottom: $ds-space-1; }
+    .settings-hooks-panel .settings-hooks-field {
+        margin-bottom: $ds-space-1; }
+    .settings-hooks-panel .settings-hooks-copy {
+        height: auto; color: $ds-text-muted; margin-bottom: $ds-space-1; }
+
+/* Hook review follows the existing wide modal cap ladder. */
+App.-wide-viewport #console-hooks-review {
+    width: $ds-percent-85;
+    max-width: $ds-size-170;
 }

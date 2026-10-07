@@ -71,9 +71,7 @@ def test_mounted_capture_path_is_confined_to_evidence_bundle(tmp_path: Path) -> 
     outside = tmp_path / "outside-capture-root"
     outside.mkdir()
 
-    assert _validated_capture_root(_MOUNTED_CAPTURE_BUNDLE) == (
-        _MOUNTED_CAPTURE_BUNDLE
-    )
+    assert _validated_capture_root(_MOUNTED_CAPTURE_BUNDLE) == (_MOUNTED_CAPTURE_BUNDLE)
     with pytest.raises(ValueError):
         _validated_capture_root(outside)
 
@@ -105,10 +103,7 @@ async def test_mounted_app_drives_console_approvals_receipts_and_navigation(
     )
     assert persist_provider_setup(mutation).fully_applied is True
 
-    feed_urls = [
-        f"https://public.example/feed-{index}.xml"
-        for index in range(1, 4)
-    ]
+    feed_urls = [f"https://public.example/feed-{index}.xml" for index in range(1, 4)]
 
     real_execute = briefing_service.execute_accepted_briefing
 
@@ -141,9 +136,7 @@ async def test_mounted_app_drives_console_approvals_receipts_and_navigation(
             runs = app.subscriptions_db.list_operations_for_agent(limit=10)[
                 "source_runs"
             ]
-            return len(runs) == 3 and all(
-                row["status"] == "completed" for row in runs
-            )
+            return len(runs) == 3 and all(row["status"] == "completed" for row in runs)
         rows = app.subscriptions_db.list_briefings(1)
         return bool(rows and rows[0]["status"] == "complete")
 
@@ -334,8 +327,7 @@ async def test_mounted_app_drives_console_approvals_receipts_and_navigation(
         app.post_message(NavigateToScreen("library"))
         deadline = time.monotonic() + 10.0
         while (
-            type(app.screen).__name__ != "LibraryScreen"
-            and time.monotonic() < deadline
+            type(app.screen).__name__ != "LibraryScreen" and time.monotonic() < deadline
         ):
             await pilot.pause(0.03)
         assert type(app.screen).__name__ == "LibraryScreen"

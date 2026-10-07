@@ -16,16 +16,17 @@
 # Rows are keyed by ENCLOSING FUNCTION, not by line number, so an edit
 # elsewhere in the file does not churn the census.
 #
-# path::async def	unguarded lookups in it
+# A third column is a REVIEWED row's note -- its verdict, evidence and
+# follow-up. --write carries a note forward for as long as its row
+# survives, so a re-pin never erases a review.
+#
+# path::async def	unguarded lookups in it[	note]
 tldw_chatbook/UI/ChatbookCreationWindow.py::on_mount	1
 tldw_chatbook/UI/ChatbookExportManagementWindow.py::_load_chatbook_details	2
 tldw_chatbook/UI/ChatbookExportManagementWindow.py::on_mount	3
 tldw_chatbook/UI/Chunking_Lab_Modules/results_region.py::update	1
-tldw_chatbook/UI/CodeRepoCopyPasteWindow.py::handle_node_selected	1
-tldw_chatbook/UI/CodeRepoCopyPasteWindow.py::load_tree	1
 tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py::_dispatch	2
 tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py::_prepare_dialog	1
-tldw_chatbook/UI/Library_Modules/library_browse_route_swap.py::_apply_library_notes_source_strip	1
 tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py::_apply_owned	5
 tldw_chatbook/UI/Library_Modules/library_character_repair_controller.py::_refresh_owned	5
 tldw_chatbook/UI/Library_Modules/library_prompts_controller.py::_refresh_library_prompt_detail	2
@@ -54,10 +55,6 @@ tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_permissions_mode_state_cyc
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::on_mcp_rail_scope_changed	1
 tldw_chatbook/UI/MCP_Modules/mcp_workbench.py::select_tool_policy_profile	1
 tldw_chatbook/UI/Outputs_Panel.py::_run_operation	1
-tldw_chatbook/UI/Outputs_Panel.py::create_output	1
-tldw_chatbook/UI/Outputs_Panel.py::create_output_template	1
-tldw_chatbook/UI/Outputs_Panel.py::delete_output	2
-tldw_chatbook/UI/Outputs_Panel.py::update_output_template	1
 tldw_chatbook/UI/Research_Workspace_Modules/add_source_modal.py::_search_catalog	4
 tldw_chatbook/UI/STTS_Window.py::_import_from_conversation_worker	1
 tldw_chatbook/UI/STTS_Window.py::_import_from_notes_worker	1
@@ -100,19 +97,11 @@ tldw_chatbook/UI/Screens/research_workspace_screen.py::_download_quick_note	3
 tldw_chatbook/UI/Screens/research_workspace_screen.py::_guard_quick_note_action	3
 tldw_chatbook/UI/Screens/research_workspace_screen.py::_load_quick_note_after_flush	1
 tldw_chatbook/UI/Screens/research_workspace_screen.py::apply	1
-tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py::_run_sync	1
 tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py::action_move_owner	2
 tldw_chatbook/UI/Screens/workflows_screen.py::_activate_issue	1
-tldw_chatbook/UI/Screens/workflows_screen.py::_attach_session	1
 tldw_chatbook/UI/Screens/workflows_screen.py::_initialize_authoring	2
 tldw_chatbook/UI/Screens/workflows_screen.py::_recovery_dialog	1
 tldw_chatbook/UI/Screens/workflows_screen.py::_render_authoring	4
-tldw_chatbook/UI/Sharing_Panel.py::_run_operation	1
-tldw_chatbook/UI/Sharing_Panel.py::create_share_token	3
-tldw_chatbook/UI/Sharing_Panel.py::create_workspace_share	3
-tldw_chatbook/UI/Sharing_Panel.py::list_workspace_shares	1
-tldw_chatbook/UI/Sharing_Panel.py::update_share	2
-tldw_chatbook/UI/SiteConfigSettings.py::on_delete_config	1
 tldw_chatbook/UI/Speech/speech_playback_mixin.py::_play_audio_async	1
 tldw_chatbook/UI/Speech/speech_playground_pane.py::_run_audio_cpp_lifecycle	1
 tldw_chatbook/UI/Speech/speech_profile_mixin.py::_save_current_result_as_profile	4
@@ -127,20 +116,19 @@ tldw_chatbook/UI/Voice_Cloning_Window.py::on_mount	1
 tldw_chatbook/UI/Watchlists_Modules/briefing_preset_modal.py::on_mount	1
 tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py::_apply_effective_layout_request	2
 tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py::_reconcile_body	2
-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_apply_password_worker	1
-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_discover_selected_provider	1
-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_on_show_all_cards	1
-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_on_show_all_themes	1
-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_render_rows	2
-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_run_probe	1
-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_run_voice_sample	4
 tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::open_voice_api_key_settings	1
+tldw_chatbook/UI/Wizards/first_run_appearance_step.py::_on_show_all_cards	1
+tldw_chatbook/UI/Wizards/first_run_appearance_step.py::_on_show_all_themes	1
+tldw_chatbook/UI/Wizards/first_run_protect_step.py::_apply_password_worker	1
+tldw_chatbook/UI/Wizards/first_run_provider_step.py::_discover_selected_provider	1
+tldw_chatbook/UI/Wizards/first_run_provider_step.py::_run_probe	1
+tldw_chatbook/UI/Wizards/first_run_summary_step.py::_render_rows	2
+tldw_chatbook/UI/Wizards/first_run_voice_step.py::_run_voice_sample	4
 tldw_chatbook/UI/Workflows_Modules/editor.py::render_draft	11
 tldw_chatbook/Widgets/Console/console_agent_history_modal.py::_read_page	5
 tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py::refresh_full_count	1
 tldw_chatbook/Widgets/Console/console_citation_sources_modal.py::_show_rows	1
 tldw_chatbook/Widgets/Console/console_citation_sources_modal.py::_show_unavailable	1
-tldw_chatbook/Widgets/Console/console_conversation_inspector.py::_recover_project_instructions	1
 tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py::export_selected	1
 tldw_chatbook/Widgets/Console/console_fork_chat_modal.py::_perform_safe_cancel	1
 tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py::handle_button	1

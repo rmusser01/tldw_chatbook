@@ -38,8 +38,7 @@ class OpmlImportDialog(ModalScreen[str | None]):
                 yield Button("Cancel", id="opml-import-cancel", variant="default")
 
     def action_cancel(self) -> None:
-        """Back out without applying anything.
-        """
+        """Back out without applying anything."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -73,8 +72,7 @@ class OpmlExportDialog(ModalScreen[None]):
                 yield Button("Close", id="opml-export-close", variant="primary")
 
     def action_cancel(self) -> None:
-        """Back out without applying anything.
-        """
+        """Back out without applying anything."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -192,8 +190,7 @@ class WatchlistNameDialog(ModalScreen[str | None]):
         self._submit()
 
     def action_cancel(self) -> None:
-        """Back out without applying anything.
-        """
+        """Back out without applying anything."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -222,9 +219,7 @@ class WatchlistNameDialog(ModalScreen[str | None]):
             self._show_error("A watchlist name cannot be empty. Type a name.")
             return
         if not validate_text_input(name, max_length=255):
-            self._show_error(
-                "That name contains invalid characters or is too long."
-            )
+            self._show_error("That name contains invalid characters or is too long.")
             return
         if name.lower() in self._taken:
             self._show_error(
@@ -308,8 +303,7 @@ class WatchlistSourcePickerDialog(ModalScreen[int | None]):
                 yield Button("Cancel", id="watchlist-add-source-cancel")
 
     def action_cancel(self) -> None:
-        """Back out without applying anything.
-        """
+        """Back out without applying anything."""
         self.dismiss(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -317,7 +311,7 @@ class WatchlistSourcePickerDialog(ModalScreen[int | None]):
         button_id = str(event.button.id)
         prefix = "wl-add-source-option-"
         if button_id.startswith(prefix):
-            self.dismiss(int(button_id[len(prefix):]))
+            self.dismiss(int(button_id[len(prefix) :]))
         elif button_id == "watchlist-add-source-cancel":
             self.dismiss(None)
 
@@ -413,6 +407,6 @@ class WatchlistPickerDialog(ModalScreen[int | None]):
         button_id = str(event.button.id)
         prefix = "wl-pick-option-"
         if button_id.startswith(prefix):
-            self.dismiss(int(button_id[len(prefix):]))
+            self.dismiss(int(button_id[len(prefix) :]))
         elif button_id == "watchlist-pick-cancel":
             self.dismiss(None)

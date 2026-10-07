@@ -79,7 +79,7 @@ async def test_real_mounted_runtime_migrates_then_opens_the_cutover_gate(
     marker_present: bool,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_service_wiring as wiring_module
 
     migrations: list[str] = []
     # TASK-21108: patch the defining module -- app.py imports this
@@ -91,7 +91,7 @@ async def test_real_mounted_runtime_migrates_then_opens_the_cutover_gate(
         "build_notes_sync_legacy_migrator",
         lambda **_kwargs: lambda: migrations.append("migrated"),
     )
-    store = NotesDeviceStateStore(app_module.get_notes_sync_state_db_path())
+    store = NotesDeviceStateStore(wiring_module.get_notes_sync_state_db_path())
     store.initialize()
     if marker_present:
         store.set_setting(
@@ -142,7 +142,7 @@ async def test_runtime_start_completion_refreshes_the_current_library_screen(
 
 @pytest.mark.asyncio
 async def test_mounted_migration_failure_is_bounded_and_observed() -> None:
-    import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_service_wiring as wiring_module
 
     loop = asyncio.get_running_loop()
     previous_handler = loop.get_exception_handler()
@@ -152,7 +152,7 @@ async def test_mounted_migration_failure_is_bounded_and_observed() -> None:
         # TASK-21112: the boot gate defers an unconfigured start, so give it
         # on-disk evidence first — this test is about a migration failure
         # inside an admitted start, not about the gate.
-        NotesDeviceStateStore(app_module.get_notes_sync_state_db_path()).initialize()
+        NotesDeviceStateStore(wiring_module.get_notes_sync_state_db_path()).initialize()
         app = _build_test_app(configured_default="chat")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
@@ -228,11 +228,11 @@ async def test_zero_profile_boot_creates_no_notes_sync_state_db(
     untouched — through shutdown as well.
     """
 
-    import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_service_wiring as wiring_module
 
     state_path = tmp_path / "notes_sync_state.db"
     monkeypatch.setattr(
-        app_module, "get_notes_sync_state_db_path", lambda: state_path
+        wiring_module, "get_notes_sync_state_db_path", lambda: state_path
     )
     app = _build_test_app(configured_default="chat")
 
@@ -259,11 +259,11 @@ async def test_legacy_sync_directory_key_still_boots_the_migration_path(
 ) -> None:
     """The one-time legacy migration must still run for users with the key."""
 
-    import tldw_chatbook.app as app_module
+    import tldw_chatbook.app_service_wiring as wiring_module
 
     state_path = tmp_path / "notes_sync_state.db"
     monkeypatch.setattr(
-        app_module, "get_notes_sync_state_db_path", lambda: state_path
+        wiring_module, "get_notes_sync_state_db_path", lambda: state_path
     )
     migrations: list[str] = []
     # TASK-21108: patch the defining module -- app.py imports this

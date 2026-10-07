@@ -1,0 +1,36 @@
+{
+  "actual_failure_message": "AttributeError: 'types.SimpleNamespace' object has no attribute '_ui_responsiveness_monitor'",
+  "applied_only_two_markers": true,
+  "current_HEAD": "b084d720e98e4c2a7aaaf17ab5c8386c84495aa9",
+  "no_further_tests_or_source_edits": true,
+  "production_wrapper_observed_diagnostic_sources_unchanged": {
+    "tldw_chatbook/Chat/console_send_diagnostics.py": {
+      "current_sha256": "56816a2704b3c28be908a3cbf0d4d3d9e9c017ae2d41e9395b46eb20936a4a53",
+      "pre_rebase_sha256": "56816a2704b3c28be908a3cbf0d4d3d9e9c017ae2d41e9395b46eb20936a4a53"
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+      "current_sha256": "056ecad8b39f7c9d5e3869768884b336f02120269779297fd5f5a39492762be2",
+      "pre_rebase_sha256": "056ecad8b39f7c9d5e3869768884b336f02120269779297fd5f5a39492762be2"
+    }
+  },
+  "proposal": {
+    "current_sha256": "5a03c3b5a041c5d0aa5a0e355060448860b468249c31a831765d21239175230e",
+    "five_new_SimpleNamespace_keywords": [
+      "_console_pending_send",
+      "_console_visible_draft_session_id",
+      "_console_visible_send_session_id",
+      "_ui_responsiveness_monitor",
+      "_send_console_message_from_visible_action_observed"
+    ],
+    "function": "test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer",
+    "not_implemented": true,
+    "path": "Tests/UI/test_console_ask_user_typed_answers.py",
+    "proposed_sha256": "b9c3ea4b8b0c35bb4501d36285b03b7b374f7a02466939451fb30fc7d93497e9",
+    "real_wrapper_observed_answer_card_composer_round_retained": true,
+    "requires_root_scope_amendment": true,
+    "reverse_five_keywords_entire_owner_AST_exact": true
+  },
+  "result": "1failed typed/1passed Roleplay;2RuntimeWarnings retained",
+  "same_exact_failed_node_exception_message_on_immutable6cd_with_selected_typed_marker_overlay": true,
+  "typed_node_reached_original_card_display_and_visible_send_assertion": true
+}

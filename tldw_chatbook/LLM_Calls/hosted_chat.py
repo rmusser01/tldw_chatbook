@@ -25,6 +25,7 @@ from urllib3.util import Retry
 
 from tldw_chatbook.Chat.Chat_Deps import (
     ChatAuthenticationError,
+    model_unavailable_error,
     ChatBadRequestError,
     ChatConfigurationError,
     ChatProviderError,
@@ -58,11 +59,18 @@ _REQUIRED_TOOL_CALL_KEYS = frozenset({"id", "type", "function"})
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 # Auth schemes the shared transport accepts (ADR-179 engine). ``"bearer"``
 # hard-requires a non-empty key; ``"bearer_optional"`` (Phase 2) admits an
-# empty key and then sends no Authorization header at all. ``"api_key_header"``
-# is the Phase 3 engine scheme and is deliberately absent until it has a
-# header contract, so an unknown scheme fails closed as invalid transport
-# configuration.
-_SUPPORTED_AUTH_SCHEMES = frozenset({"bearer", "bearer_optional"})
+# empty key and then sends no Authorization header at all.
+# ``"api_key_header"`` (Phase 3, TASK-33350) hard-requires a key too and
+# sends it as ``api-key: <key>`` instead of an Authorization header -- the
+# header Xiaomi MiMo documents (Azure OpenAI uses the same one). Any other
+# scheme fails closed as invalid transport configuration.
+_SUPPORTED_AUTH_SCHEMES = frozenset({"bearer", "bearer_optional", "api_key_header"})
+_KEY_REQUIRED_AUTH_SCHEMES = frozenset({"bearer", "api_key_header"})
+_API_KEY_HEADER = "api-key"
+# Header names only the transport may set: the credential carriers for every
+# scheme plus Content-Type. A provider's extra_headers can never override or
+# duplicate the credential.
+_RESERVED_HEADER_NAMES = frozenset({"authorization", _API_KEY_HEADER, "content-type"})
 # Upper bound on a provider-named Retry-After sleep (seconds). The engine's
 # workers run on threads Stop cannot interrupt, and every hosted provider's
 # api_base_url is user-configurable -- a hostile endpoint naming
@@ -123,16 +131,22 @@ class HostedHTTPTransportConfig:
     retries: int
     retry_delay: float
     # Provider-requested additional request headers (TASK-32851). The
-    # engine's Authorization/Content-Type pair is not overridable; any other
-    # header a provider's wire contract requires rides through here.
+    # credential headers (Authorization, api-key) and Content-Type are not
+    # overridable; any other header a provider's wire contract requires rides
+    # through here.
     extra_headers: Mapping[str, str] = field(default_factory=dict, compare=False)
     # Auth contract (engine, ADR-179 Phase 2): ``"bearer"`` requires a
     # non-empty key; ``"bearer_optional"`` admits an empty key (keyless
     # endpoint, ADR-146) and then sends no Authorization header at all.
-    # ``"api_key_header"`` is the Phase 3 engine scheme and is rejected by
-    # validation until it has a header contract. Legacy adapters construct
-    # without the field and keep the byte-identical ``"bearer"`` default.
+    # ``"api_key_header"`` (Phase 3) requires a key and sends it as
+    # ``api-key: <key>`` with no Authorization header. Legacy adapters
+    # construct without the field and keep the byte-identical ``"bearer"``
+    # default.
     auth_scheme: str = "bearer"
+    # The name user-facing error copy uses ("NVIDIA NIM authentication
+    # failed"); ``provider`` stays the error's identity key. Unset keeps the
+    # key in the copy, as legacy adapters always had (TASK-33002.14).
+    display_name: str | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -168,8 +182,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         tolerant_top_level_extras: bool = False,
         usage_optional: bool = False,
         event_check: Callable[[Mapping[str, Any]], None] | None = None,
+        annotation_key: str | None = None,
     ) -> None:
         self._records = records
+        # A provider annotation frame (TASK-33505: Azure's
+        # prompt_filter_results): no choices, no usage, this key present.
+        self._annotation_key = annotation_key
         # Provider-specific check on each decoded event before parsing
         # (TASK-33201: MiniMax status envelope); may raise ChatProviderError.
         self._event_check = event_check
@@ -292,6 +310,12 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         if usage is not None and not isinstance(usage, Mapping):
             raise HostedChatProtocolError("Hosted Chat stream usage is malformed.")
         if not choices:
+            if (
+                usage is None
+                and self._annotation_key is not None
+                and self._annotation_key in event
+            ):
+                return self._filtered_event(event)
             if self._finish_reason is None or usage is None:
                 raise HostedChatProtocolError("Hosted Chat stream usage is misplaced.")
             normalized_usage = deepcopy(dict(usage))
@@ -495,15 +519,19 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 self._tools[index] = state
                 self._reserve_output(len(call_id) + len(name))
             else:
-                if "id" in raw_tool and raw_tool.get("id") != state.call_id:
+                # A continuation may repeat a field as null (Fireworks sends
+                # ``"id": null``) instead of omitting it. Null claims nothing,
+                # so it counts as not sent; any other value must still match
+                # the call's first delta (TASK-34364).
+                if raw_tool.get("id") is not None and raw_tool["id"] != state.call_id:
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool identity changed."
                     )
-                if "type" in raw_tool and raw_tool.get("type") != "function":
+                if raw_tool.get("type") is not None and raw_tool["type"] != "function":
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool type changed."
                     )
-                if "name" in function and function.get("name") != state.name:
+                if function.get("name") is not None and function["name"] != state.name:
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool name changed."
                     )
@@ -526,8 +554,27 @@ def normalize_hosted_chat_response(
     allowed_choice_keys: frozenset[str] = frozenset(),
     allowed_message_keys: frozenset[str] = frozenset(),
     tolerant_top_level_extras: bool = False,
+    allowed_tool_call_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn:
-    """Normalize one non-streaming OpenAI-shaped Chat response."""
+    """Normalize one non-streaming OpenAI-shaped Chat response.
+
+    Args:
+        response: The decoded response body.
+        finish_policy: Validates the finish reason and reasoning content.
+        allowed_extra_keys: Tolerated extra top-level keys.
+        allowed_choice_keys: Tolerated extra choice-level keys (value rule).
+        allowed_message_keys: Tolerated extra message-level keys (value rule).
+        tolerant_top_level_extras: The long-tail tolerant profile switch.
+        allowed_tool_call_keys: Tolerated extra keys on each tool-call object
+            (value rule), validated then dropped (TASK-34364).
+
+    Returns:
+        The normalized turn.
+
+    Raises:
+        HostedChatProtocolError: The response does not match the strict shape
+            plus the given allowances.
+    """
     if not _json_shape_is_safe(response) or not isinstance(response, Mapping):
         raise HostedChatProtocolError("Hosted Chat response JSON is malformed.")
     _check_top_level_extras(
@@ -575,6 +622,7 @@ def normalize_hosted_chat_response(
     tool_calls = _normalize_tool_calls(
         message.get("tool_calls", ()),
         tolerant_extras=tolerant_top_level_extras,
+        allowed_keys=allowed_tool_call_keys,
     )
     if (
         len(text) + len(reasoning or "") + _tool_character_count(tool_calls)
@@ -661,8 +709,13 @@ def owned_json_post(
         ChatBadRequestError: For other client request failures.
         ChatProviderError: For network, service, or malformed response failures.
     """
+    label = (
+        config.display_name
+        if isinstance(config.display_name, str) and config.display_name.strip()
+        else config.provider
+    )
     if route not in {"chat/completions", "responses"}:
-        raise _transport_error(config.provider, "request route is invalid")
+        raise _transport_error(config.provider, "request route is invalid", label=label)
     try:
         base_url = normalize_hosted_chat_base_url(
             config.base_url,
@@ -672,13 +725,14 @@ def owned_json_post(
         raise _transport_error(
             config.provider,
             "transport configuration is invalid",
+            label=label,
         ) from None
     if (
         not isinstance(config.provider, str)
         or not config.provider
         or not isinstance(config.api_key, str)
         or config.auth_scheme not in _SUPPORTED_AUTH_SCHEMES
-        or (config.auth_scheme == "bearer" and not config.api_key)
+        or (config.auth_scheme in _KEY_REQUIRED_AUTH_SCHEMES and not config.api_key)
         or isinstance(config.timeout, bool)
         or not isinstance(config.timeout, (int, float))
         or not math.isfinite(float(config.timeout))
@@ -696,15 +750,21 @@ def owned_json_post(
             or not name
             or not isinstance(value, str)
             or not value
-            or name.lower() in {"authorization", "content-type"}
+            or name.lower() in _RESERVED_HEADER_NAMES
             for name, value in config.extra_headers.items()
         )
     ):
-        raise _transport_error(config.provider, "transport configuration is invalid")
+        raise _transport_error(config.provider, "transport configuration is invalid", label=label)
 
     retries = llm_retry_count(max(0, config.retries))
     url = f"{base_url}/{route}"
-    if config.api_key:
+    if config.api_key and config.auth_scheme == "api_key_header":
+        headers = {
+            _API_KEY_HEADER: config.api_key,
+            "Content-Type": "application/json",
+            **config.extra_headers,
+        }
+    elif config.api_key:
         headers = {
             "Authorization": f"Bearer {config.api_key}",
             "Content-Type": "application/json",
@@ -758,7 +818,21 @@ def owned_json_post(
                         time.sleep(delay)
                     continue
                 if status >= 400:
-                    _raise_http_error(config.provider, status)
+                    if status in {400, 404}:
+                        try:
+                            error_payload = response.json()
+                        except ValueError:
+                            error_payload = None
+                        unavailable = model_unavailable_error(config.provider, status, error_payload)
+                        if unavailable is not None:
+                            raise unavailable
+                    _raise_http_error(
+                        config.provider,
+                        status,
+                        label=label,
+                        response=response,
+                        known_credentials=(config.api_key,),
+                    )
                 if streaming:
                     stream = OwnedSSEStream(response=response, session=session)
                     response = None
@@ -768,11 +842,11 @@ def owned_json_post(
                     result = response.json()
                 except Exception:
                     raise _transport_error(
-                        config.provider, "returned malformed provider JSON"
+                        config.provider, "returned malformed provider JSON", label=label
                     ) from None
                 if not isinstance(result, Mapping):
                     raise _transport_error(
-                        config.provider, "response envelope must be an object"
+                        config.provider, "response envelope must be an object", label=label
                     )
                 return deepcopy(dict(result))
             except (ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError):
@@ -792,10 +866,11 @@ def owned_json_post(
                     config.provider,
                     "network request failed",
                     status_code=504 if isinstance(exc, RequestsTimeout) else 502,
+                    label=label,
                 ) from None
             except RequestException:
                 raise _transport_error(
-                    config.provider, "network request failed"
+                    config.provider, "network request failed", label=label
                 ) from None
             finally:
                 if response is not None:
@@ -804,7 +879,7 @@ def owned_json_post(
     finally:
         if not stream_owns_session:
             _best_effort_close(session)
-    raise _transport_error(config.provider, "request attempts were exhausted")
+    raise _transport_error(config.provider, "request attempts were exhausted", label=label)
 
 
 def _json_shape_is_safe(value: object) -> bool:
@@ -846,11 +921,12 @@ def _json_shape_is_safe(value: object) -> bool:
 def _level_allowance_value_is_valid(value: object) -> bool:
     """Value rule for level-keyed allowances (choice/message/delta).
 
-    An allowlisted extra may be null, a scalar (str/int/float/bool), or a
-    shape-safe mapping; anything else (e.g. a list) fails closed. Valid
+    An allowlisted extra may be null, an empty list (no data, e.g. OpenAI's
+    ``annotations: []``), a scalar (str/int/float/bool), or a shape-safe
+    mapping; anything else (e.g. a non-empty list) fails closed. Valid
     values are validated then dropped -- never passed through.
     """
-    if value is None or isinstance(value, (str, int, float)):
+    if value is None or value == [] or isinstance(value, (str, int, float)):
         return True
     return isinstance(value, Mapping) and _json_shape_is_safe(value)
 
@@ -1240,6 +1316,7 @@ def _normalize_tool_calls(
     value: object,
     *,
     tolerant_extras: bool = False,
+    allowed_keys: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], ...]:
     if value is None:
         return ()
@@ -1253,13 +1330,20 @@ def _normalize_tool_calls(
         if not isinstance(raw_call, Mapping):
             raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
         keys = set(raw_call)
-        if not _REQUIRED_TOOL_CALL_KEYS <= keys or (
-            not tolerant_extras and keys != _REQUIRED_TOOL_CALL_KEYS
-        ):
+        if not _REQUIRED_TOOL_CALL_KEYS <= keys:
+            raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
+        if not tolerant_extras:
             # Tolerant profile (controller ruling a): call objects may carry
             # extra keys (ollama emits ``index``); id/type/function stay
-            # mandatory and extras are dropped, never passed through.
-            raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
+            # mandatory and extras are dropped, never passed through. A strict
+            # record may allow named extras (Fireworks: ``index``, ``name``).
+            _check_level_extras(
+                raw_call,
+                known=_REQUIRED_TOOL_CALL_KEYS,
+                allowed=allowed_keys,
+                tolerant=False,
+                label="tool call is malformed",
+            )
         call_id = _required_metadata(raw_call.get("id"), "tool ID")
         if raw_call.get("type") != "function" or call_id in call_ids:
             raise HostedChatProtocolError("Hosted Chat tool identity is malformed.")
@@ -1352,34 +1436,64 @@ def _transport_error(
     detail: str,
     *,
     status_code: int = 502,
+    label: str | None = None,
 ) -> ChatProviderError:
     return ChatProviderError(
         provider=provider,
-        message=f"{provider} {detail}.",
+        message=f"{label or provider} {detail}.",
         status_code=status_code,
     )
 
 
-def _raise_http_error(provider: str, status: int) -> Never:
+def _raise_http_error(
+    provider: str,
+    status: int,
+    *,
+    label: str | None = None,
+    response: object | None = None,
+    known_credentials: tuple[str, ...] = (),
+) -> Never:
+    name = label or provider
     if status in {401, 403}:
-        raise ChatAuthenticationError(
+        error: Exception = ChatAuthenticationError(
             provider=provider,
-            message=f"{provider} authentication failed. Check the API key.",
-        ) from None
-    if status == 429:
-        raise ChatRateLimitError(
+            message=f"{name} authentication failed. Check the API key.",
+        )
+    elif status == 429:
+        error = ChatRateLimitError(
             provider=provider,
-            message=f"{provider} rate limit exceeded. Retry later.",
-        ) from None
-    if 400 <= status < 500:
-        raise ChatBadRequestError(
+            message=f"{name} rate limit exceeded. Retry later.",
+        )
+    elif status == 404:
+        # Usually an unknown model, or one this key cannot use: Fireworks,
+        # SambaNova, Nous and GMI check the model before the key (probed
+        # 2026-09-30, TASK-33640).
+        error = ChatBadRequestError(
             provider=provider,
-            message=f"{provider} rejected the request (status {status}).",
-        ) from None
-    raise _transport_error(
-        provider,
-        f"service failed (status {status})",
-        status_code=status,
+            message=(
+                f"{name} could not find that model or endpoint (status 404). "
+                "Check the model name and that your key can use it."
+            ),
+            status_code=404,
+        )
+    elif 400 <= status < 500:
+        error = ChatBadRequestError(
+            provider=provider,
+            message=f"{name} rejected the request (status {status}).",
+        )
+    else:
+        error = _transport_error(
+            provider,
+            f"service failed (status {status})",
+            status_code=status,
+            label=label,
+        )
+    # TASK-34100.5: keep the provider's own allowlisted sentence (error.message)
+    # as data on the exception; the chain stays severed (no body in str()).
+    from tldw_chatbook.Chat.provider_error_reason import attach_provider_reason
+
+    raise attach_provider_reason(
+        error, response, known_credentials=known_credentials
     ) from None
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from typing import TYPE_CHECKING, Literal
@@ -11,6 +11,7 @@ from markdown_it import MarkdownIt
 
 from tldw_chatbook.Chat.console_chat_fork import ConsoleForkEligibility
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_DISPATCH_DISCARDED_COPY,
     ConsoleActivityPresentation,
     ConsoleChatMessage,
     ConsoleMessageRole,
@@ -19,6 +20,96 @@ from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 
 if TYPE_CHECKING:
     from tldw_chatbook.Canvas.compiler import CanvasCompileError
+    from tldw_chatbook.Chat.console_message_delete import ConsoleDeleteScope
+
+
+def is_refused_echo(message: ConsoleChatMessage) -> bool:
+    """Whether ``message`` is a USER echo refused before the send was accepted.
+
+    Args:
+        message: A transcript row.
+
+    Returns:
+        True for a failed, never-persisted USER row (the optimistic echo a
+        refused send leaves behind), otherwise False.
+    """
+    return (
+        message.role is ConsoleMessageRole.USER
+        and message.status == "failed"
+        and message.persisted_message_id is None
+    )
+
+
+def _reply_text(message: ConsoleChatMessage) -> str:
+    """Read reply text while excluding the authored dispatch-discard marker.
+
+    Args:
+        message: Assistant reply on the active path.
+
+    Returns:
+        Stripped reply text, or empty for the authored discarded-reply marker.
+    """
+    text = message.content.strip()
+    if (
+        message.assistant_generation_state == "discarded"
+        and text == CONSOLE_DISPATCH_DISCARDED_COPY
+    ):
+        return ""
+    return text
+
+
+def resend_target_id(messages: Sequence[ConsoleChatMessage]) -> str | None:
+    """Return the last USER row's id when its turn is broken, else ``None``.
+
+    Args:
+        messages: The session's active-path rows, oldest first.
+
+    Returns:
+        The id of the user message Resend re-runs, or ``None`` when the last
+        turn is healthy, partial, still running, or has no user message. An
+        unpersisted user row with no reply is an in-flight send (validating,
+        or paused for preparation), never a broken one. Any tool output, text
+        from an earlier reply, or a restored (not live) failed reply with text
+        makes the turn partial: the clear would tombstone it. A live failed
+        reply keeps Resend even with partial text; it is retried in place.
+    """
+    index = next(
+        (
+            position
+            for position in range(len(messages) - 1, -1, -1)
+            if messages[position].role is ConsoleMessageRole.USER
+        ),
+        None,
+    )
+    if index is None:
+        return None
+    user = messages[index]
+    replies = [
+        row for row in messages[index + 1 :] if row.role is ConsoleMessageRole.ASSISTANT
+    ]
+    if is_refused_echo(user):
+        return None if replies else user.id
+    if user.status != "complete" or any(
+        row.role is ConsoleMessageRole.TOOL and row.content.strip()
+        for row in messages[index + 1 :]
+    ):
+        return None
+    if not replies:
+        return user.id if user.persisted_message_id is not None else None
+    last = replies[-1]
+    if last.status in {"pending", "streaming"}:
+        return None
+    if any(_reply_text(reply) for reply in replies[:-1]):
+        return None
+    if last.status == "failed":
+        return user.id
+    ended = last.status == "stopped" or last.assistant_generation_state in {
+        "failed",
+        "stopped",
+        "discarded",
+    }
+    return user.id if ended and not _reply_text(last) else None
+
 
 ConsoleActionStatus = Literal[
     "completed",
@@ -47,6 +138,9 @@ class ConsoleMessageAction:
     label: str
     enabled: bool = True
     disabled_reason: str = ""
+    #: TASK-33628.2: a legend that replaces the row guide while this action
+    #: is on screen (a pending delete's scoped question).
+    guide: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,7 +407,8 @@ class ConsoleSaveDestination:
 #: message, naming each glyph-only button in words so the meaning is on
 #: screen instead of behind a tooltip. Text-labeled buttons (Save as...,
 #: Full output, Review, Try, keep) already name themselves and are omitted.
-#: The key hints (c/e/r) mirror ConsoleTranscript.BINDINGS.
+#: The key hints (c/e/r) mirror ConsoleTranscript.BINDINGS; `r` also presses
+#: a row's Retry or Resend swap (TASK-33661), so those name their key too.
 ACTION_GUIDE_SEGMENTS: tuple[tuple[str, str], ...] = (
     ("copy", "c Copy"),
     ("speak", "🔊 Speak"),
@@ -321,6 +416,8 @@ ACTION_GUIDE_SEGMENTS: tuple[tuple[str, str], ...] = (
     ("edit", "e Edit"),
     ("fork", "f Fork"),
     ("regenerate", "r ♻ Regenerate"),
+    ("retry", "r Retry"),
+    ("resend", "r Resend"),
     ("continue", "---> Continue"),
     ("feedback", "👍/👎 Rate"),
     ("delete", "🗑 Delete"),
@@ -338,7 +435,8 @@ def action_row_guide(actions: list[ConsoleMessageAction]) -> str:
     speak-stop swap reads "⏹ Stop speech" instead of pointing at a 🔊 that
     is not there. Only glyph-only buttons need naming (DS-01); the key
     hints and j/k/Esc framing come from task-362's static guide, which this
-    replaces.
+    replaces. A disabled Fork is never advertised as ``f Fork`` (TASK-33621.10):
+    ``f`` would only repeat the refusal, which the transcript shows instead.
 
     Args:
         actions: The row's actions as returned by
@@ -350,9 +448,14 @@ def action_row_guide(actions: list[ConsoleMessageAction]) -> str:
         e Edit · r ♻ Regenerate · ---> Continue · 👍/👎 Rate · 🗑 Delete ·
         Esc clear``.
     """
+    override = next((action.guide for action in actions if action.guide), "")
+    if override:
+        return override
     segments_by_id = dict(ACTION_GUIDE_SEGMENTS)
     parts: list[str] = []
     for action in actions:
+        if action.action_id == "fork" and not action.enabled:
+            continue
         segment = segments_by_id.get(action.action_id)
         if segment is not None and segment not in parts:
             parts.append(segment)
@@ -441,6 +544,7 @@ class ConsoleMessageActionService:
             "fork",
             "regenerate",
             "retry",
+            "resend",
             "continue",
         }
     )
@@ -550,6 +654,7 @@ class ConsoleMessageActionService:
         ephemeral: bool = False,
         video_file_available: bool = False,
         fork_eligibility: ConsoleForkEligibility = ConsoleForkEligibility(True),
+        resend_available: bool = False,
     ) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message.
 
@@ -581,6 +686,10 @@ class ConsoleMessageActionService:
             fork_eligibility: Store-derived active-prefix durability result.
                 Message-local settled/content checks remain presentation-only;
                 this service never infers persisted lineage from message fields.
+            resend_available: Whether this user row is the broken last turn
+                that Resend may re-run (TASK-33661). The caller derives it from
+                the active path (``resend_target_id``) and
+                the live-run gate; this service never infers it from one row.
         """
         if not isinstance(fork_eligibility, ConsoleForkEligibility):
             raise TypeError("fork_eligibility must be ConsoleForkEligibility")
@@ -686,6 +795,18 @@ class ConsoleMessageActionService:
                 for action_id, label in completed_actions
                 if action_id != "edit"
             ]
+        if resend_available and message.role is ConsoleMessageRole.USER:
+            # TASK-33661: a broken last user turn swaps the disabled ♻ for
+            # Resend and drops Continue, mirroring the failed-assistant swap
+            # below: continuing from it parented the reply under the stale
+            # failure row instead of re-running the turn.
+            completed_actions = [
+                ("resend", "Resend")
+                if action_id == "regenerate"
+                else (action_id, label)
+                for action_id, label in completed_actions
+                if action_id != "continue"
+            ]
         if message.status == "failed" and self._is_assistant_message(message):
             # Retry regenerates a failed ASSISTANT response. A failed USER row —
             # e.g. the TASK-457(a) optimistic echo rejected before any provider
@@ -741,6 +862,8 @@ class ConsoleMessageActionService:
         ephemeral: bool = False,
         video_file_available: bool = False,
         fork_eligibility: ConsoleForkEligibility = ConsoleForkEligibility(True),
+        pending_delete: ConsoleDeleteScope | None = None,
+        resend_available: bool = False,
     ) -> ConsoleMessageActionGroups:
         """Resolve the row once, then split direct, overflow, and media actions.
 
@@ -753,6 +876,10 @@ class ConsoleMessageActionService:
             ephemeral: Whether disk-writing media actions must be blocked.
             video_file_available: Whether the ephemeral video bytes still exist.
             fork_eligibility: Store-derived active-prefix durability result.
+            pending_delete: The armed delete scope; on its own message the
+                direct row becomes ``[Delete N messages] [Cancel]`` with the
+                scoped question as the legend (TASK-33628.2).
+            resend_available: Whether this user row is a broken last turn.
 
         Returns:
             Immutable primary, overflow, and media action tuples.
@@ -768,6 +895,7 @@ class ConsoleMessageActionService:
                 ephemeral=ephemeral,
                 video_file_available=video_file_available,
                 fork_eligibility=fork_eligibility,
+                resend_available=resend_available,
             )
         )
         if not self._is_forkable_row(message):
@@ -818,6 +946,16 @@ class ConsoleMessageActionService:
                 or generation_variant_count > 0
             )
         )
+        if pending_delete is not None and pending_delete.message_id == message.id:
+            primary = (
+                ConsoleMessageAction(
+                    "delete-confirm",
+                    pending_delete.confirm_label,
+                    guide=pending_delete.guide,
+                ),
+                ConsoleMessageAction("delete-cancel", "Cancel"),
+            )
+            overflow = ()
         return ConsoleMessageActionGroups(
             primary=primary,
             overflow=overflow,
@@ -1090,6 +1228,13 @@ class ConsoleMessageActionService:
                 status="completed",
                 visible_copy="Retrying failed response.",
             )
+        if action_id == "resend" and message.role is ConsoleMessageRole.USER:
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Resending this turn.",
+                target_message_id=message.id,
+            )
         if action_id == "edit":
             target_content = (
                 message.variants.current.content
@@ -1328,6 +1473,11 @@ class ConsoleMessageActionService:
     ) -> str:
         if message.status in {"pending", "streaming"}:
             return "Wait for this message to finish before forking."
+        if not eligibility.eligible:
+            # The store's refusal names the blocking row and the nearest
+            # boundary to fork from instead (TASK-33621.10); the generic
+            # state reasons below only cover a caller with no store verdict.
+            return eligibility.reason or "This message cannot be forked."
         if message.status == "discarded":
             return "Discarded messages cannot be forked."
         if message.status in {"stopped", "failed"} and not message.content.strip():
@@ -1337,6 +1487,4 @@ class ConsoleMessageActionService:
             and not ConsoleMessageActionService._is_assistant_message(message)
         ):
             return "Only complete user messages can be forked."
-        if not eligibility.eligible:
-            return eligibility.reason or "This message cannot be forked."
         return ""

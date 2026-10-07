@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  N    I  Select a media item to read it here.
+  a    t
+  v    e
+       m
+       s
+
+--->
+
+
+     --->
+
+
+--->
+
+
+
+
+
+
+  F6 next pane | s select | esc focus rail | F1 · Ctrl+P · Ctrl+Q

@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Image Gen
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save/revert below | Defaults affect future Console image generations.                                      │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Image Gen                                                                                                                 │  │  │ Selected category: Image Gen            │
+│                              │  │  │  ComfyUI sends the source image and instruction to the configured server. ComfyUI retains inputs and saved outputs         │  │  │ No unsaved changes                      │
+│     Appearance               │  │  │  according to the server operator's policy.                                                                                │  │  │  Guided edits: change a backend or      │
+│     Theme                    │  │  │                                                                                                                            │  │  │  generation default first.              │
+│     Splash Screen            │  │  │                                                                                                                            │  │  │ Local-only: saves write your config     │
+│     Console Behavior         │  │  │  Backends                                                                                                                  │  │  │ file.                                   │
+│  Data & Privacy            ▂ │  │  │                         ┌───────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Impact and boundaries                   │
+│     Storage                  │  │  │ Default backend         │ SwarmUI (local)                                                                             ▼ │▃ │  │  │ Image generation backend defaults for   │
+│     Workspaces               │  │  │                         └───────────────────────────────────────────────────────────────────────────────────────────────┘  │  │  │ SwarmUI, OpenRouter, and other backend  │
+│     Tool Profiles            │  │  │                                                                                                                            │  │  │ models.                                 │
+│     Privacy & Security       │  │  │ SD.cpp      Not configured▐X▌ Off  Test                                                                                    │  │  │  Runtime owner: Settings persisted      │
+│     Network                  │  │  │                                                                                                                            │  │  │  defaults; Console /generate-image      │
+│     My Profile               │  │  │                                                                                                                            │  │  │                                         │
+│  Troubleshooting             │  │  │                                                                                                                            │  │  │  Writes allowed: Yes                    │
+│     Diagnostics (view)       │  │  │ SwarmUI     Configured    ▐X▌ On ★ Default Test                                                                            │  │  │                                         │
+│     About (view)             │  │  │                                                                                                                            │  │  │  Owns: image_generation.                │
+│     Agents                   │  │  │                                                                                                                            │  │  │    default_backend                      │
+│  Expert                      │  │  │                                                                                                                            │  │  │  image_generation.                      │
+│     Internal Prompts         │  │  │ ComfyUI (H3 Not configured▐X▌ Off  Test                                                                                    │  │  │    enabled_backends                     │
+│     Advanced Config          │  │  │                                                                                                                            │  │  │  image_generation.                      │
+│   Domain Defaults ▾ (11)     │  │  │                                                                                                                            │  │  │    <backend>.*                        ▄ │
+│     RAG                      │  │  │                                                                                                                            │  │  │  image_generation.                      │
+│     Artifacts (view)         │  │  │ OpenRouter  Not configured▐X▌ Off  Test                                                                                    │  │  │    default_batch                        │
+│     Roleplay (view)          │  │  │                                                                                                                            │  │  │  image_generation.                      │
+│     Skills (view)            │  │  │                                                                                                                            │  │  │    max_variants_per_message             │
+│     Schedules                │  │  │                                                                                                                            │  │  │  image_generation.                      │
+│     Watchlists (view)        │  │  │ Novita      Not configured▐X▌ Off  Test                                                                                    │  │  │    context_llm_enabled                  │
+│     Workflows (view)         │  │  │                                                                                                                            │  │  │  image_generation.                      │
+│     MCP Defaults (view)      │  │  │                                                                                                                            │  │  │    context_llm_turns                    │
+│     ACP Defaults (view)      │  │  │                                                                                                                            │  │  │  image_generation.                      │
+│   > Image Gen              ▇ │  │  │ Together    Not configured▐X▌ Off  Test                                                                                    │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

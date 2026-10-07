@@ -1,9 +1,10 @@
 ---
 id: TASK-399.9
 title: B2 Delete files with verified minimal restore
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 14:24'
+updated_date: '2026-10-04'
 labels:
   - notes
   - filesystem
@@ -35,3 +36,14 @@ Let users delete an actual file only when Chatbook can guarantee its exact recov
 - [ ] #7 Completion reports Deleted from disk with the guaranteed recovery expiry.
 - [ ] #8 Fault tests cover every delete/minimal-restore journal, publication, projection, and completion boundary, including stale tokens, late changes, quarantine crashes, interrupted restore, full/corrupt recovery, expired payloads, and occupied/missing-parent refusal.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Closed superseded with reslice. The minimal form landed under ADR-029:
+`FileNotesService.delete_file` / `restore_file` with persistent tombstones and
+replica-retained exact bytes (`tldw_chatbook/Notes/file_notes_service.py`;
+TASK-969, PR #992). The verified-quarantine, 30-day guaranteed-recovery
+expiry, and delete-refusal contract specified above was not built as written.
+
+Resliced 2026-10-04 — delete-safety/refusal now lives in TASK-34383 and the
+retention guarantees in TASK-34382. Superseded by ADR-029 (backlog/decisions/029-file-notes-disk-authority.md).

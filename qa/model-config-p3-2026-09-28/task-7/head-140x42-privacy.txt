@@ -1,0 +1,42 @@
+                                                                                                             ╭─────────────╮
+ ‹ le    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Re  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Privacy & Security
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────┐  │  ┌──────────────────────────────────┐
+│                              │  │  │                                                            │  │  │                                  │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Canvas availability and      │  │  │  Scope Inspector                 │
+│  No filter | / focus         │  │  │  create auto-open are editable; hard quotas, privacy       │  │  │                                  │
+│  category search             │  │  │  posture, and secrets remain read-only and redacted.       │  │  │ Selected category: Privacy &     │
+│                              │  │  │                                                            │  │  │ Security                         │
+│  Core                        │  │  │  Privacy & Security                                        │  │  │ No unsaved changes               │
+│      Overview (view)         │  │  │ ┌───────────────────────────────────────────────────────┐  │  │  │  Guided edits: Canvas controls   │
+│      Providers & Models      │  │  │ │                                                       │  │  │  │  and host-access unlock; quotas  │
+│      Web Search              │  │  │ │  Privacy posture                                      │  │  │  │  stay read-only.                 │
+│      Speech & TTS            │  │  │ │  Config encryption: disabled                          │  │  │  │  Save (s) — no changes           │
+│  Interface                   │  │  │ │  Redaction: active; raw secret values hidden          │▄ │  │  │  Revert (r) — no changes         │
+│      Appearance              │  │  │ │  Sensitive config fields: 10 present                  │  │  │  │ Local-only: saves write your     │
+│      Theme                   │  │  │ │  Provider config secrets: 0 present                   │  │  │  │ config file.                     │
+│      Splash Screen           │  │  │ │                                                       │  │  │  │ Impact and boundaries            │
+│      Console Behavior        │  │  │ │  Credential sources                                   │  │  │  │ Raw CLI host-access gate,        │
+│  Data & Privacy              │  │  │ │  Provider env vars: 0 of 30 referenced env vars are   │  │  │  │ secrets, redaction, and local    │
+│      Storage                 │  │  │ │  set (30 unset)                                       │  │  │  │ privacy boundaries.              │
+│      Workspaces              │  │  │ │  Preferred source: environment variables              │  │  │  │  Runtime owner: Canvas global    │
+│      Tool Profiles           │  │  │ │  Config secrets: counted only; raw values are never   │  │  │  │  execution gate plus Settings    │
+│ █  > Privacy & Security      │  │  │ │  displayed                                            │  │  │  │  unlock and RawCliRuntime        │
+│      Network                 │  │  │ │  Recovery actions: Check Privacy | Open Providers &   │  │  │  │  launch-local arm state          │
+│      My Profile              │  │  │ │  Models | Open Advanced Config                        │  │  │  │  Writes allowed: Yes             │
+│  Troubleshooting             │  │  │ │  Skill trust: uninitialized                           │  │  │  │  Owns: canvas.enabled            │
+│      Diagnostics (view)      │  │  │ │  Skill trust keyring convenience: disabled            │  │  │  │  canvas.auto_open_on_create      │
+│      About (view)            │  │  │ │  Skill trust rollback protection: reduced             │  │  │  │  console.raw_cli_permitted       │
+│      Agents                  │  │  │ │  Check Privacy    Open Providers & Models   Open Adva │  │  │  │  Affected config: Canvas         │
+│  Expert                      │  │  │ │                                                       │  │  │  │  availability and auto-open      │
+│      Internal Prompts        │  │  │ │  Data boundary                                        │  │  │  │  plus the raw CLI host-access    │
+│      Advanced Config         │  │  │ │  Local data: local data stays local unless explicit   │  │  │  │  unlock                          │
+│   Domain Defaults ▸ (11)     │  │  │ │  server handoff or sync is enabled                    │  │  │  │  Credential source:              │
+│                              │  │  │ │  Server tokens: server tokens are reported as         │  │  │  │  Environment variables are       │
+│                              │  │  │ │  configured/missing only                              │  │  │  │ ▼ more — scroll the inspector    │
+│                              │  │  │                                                            │  │  │                                  │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────┘  │  └──────────────────────────────────┘
+ Raw CLI host-access gate, secrets, redaction, and local privacy boundaries.
+  s save category | r revert category | t check privacy | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

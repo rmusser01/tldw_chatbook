@@ -475,7 +475,7 @@ async def test_console_memory_controls_mount_stage_and_fit_narrow_settings(
             Static,
         )
         assert _static_text(conversation_label) == "Conversation max tokens"
-        assert _static_text(response_label) == "Response max tokens"
+        assert _static_text(response_label) == "Max tokens"  # TASK-33002.1
 
         trigger = screen.query_one("#settings-console-context-trigger-percent", Input)
         mode = screen.query_one("#settings-console-context-compaction-mode", Select)

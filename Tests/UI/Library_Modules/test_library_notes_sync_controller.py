@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from inspect import signature
 from types import SimpleNamespace
 
@@ -11,6 +13,7 @@ import pytest
 
 from Tests.UI.background_signals import wait_for_signal
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+    root_status_label,
     LastingSyncApplyBlocker,
 )
 from tldw_chatbook.Notes.notes_sync_conflicts import (
@@ -762,6 +765,74 @@ async def test_root_status_projection_names_bounded_next_action(
     assert "/" not in repr(root)
 
 
+async def test_healthy_root_status_says_when_it_was_confirmed() -> None:
+    """TASK-32633 slice (N-03): no unqualified "✓ Up to date" over a live root.
+
+    Until every note-write path signals lasting sync, the healthy label names
+    the local wall-clock minute the runtime last confirmed it, read from the
+    publication itself -- the paint never invents a time.
+    """
+
+    confirmed_at = time.time()
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root:opaque.v1", "up_to_date", "sync_now", published_at=confirmed_at
+            ),
+        ),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    root = controller.snapshot.roots[0]
+    local_minute = (
+        datetime.fromtimestamp(confirmed_at, tz=UTC).astimezone().strftime("%H:%M")
+    )
+    assert root.status_label == f"✓ Up to date as of {local_minute}"
+    # A publication without a time (a hand-built snapshot) still never claims
+    # a time it does not have.
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (NotesSyncRootRuntimeSnapshot("root:opaque.v1", "up_to_date", "sync_now"),),
+    )
+    controller.refresh_roots()
+    assert controller.snapshot.roots[0].status_label == "✓ Up to date"
+    # The qualifier belongs to the healthy label only.
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root:opaque.v1",
+                "needs_attention",
+                "review_changes",
+                published_at=confirmed_at,
+            ),
+        ),
+    )
+    controller.refresh_roots()
+    assert controller.snapshot.roots[0].status_label == "⚠ Needs attention"
+
+
+def test_a_healthy_confirmation_from_another_day_carries_its_date() -> None:
+    """Review Minor 3: a 26-hour-old "as of 08:25" must not read as today."""
+
+    now = datetime(2026, 10, 4, 10, 30, tzinfo=UTC).astimezone()
+    yesterday = now - timedelta(hours=26)
+    label = root_status_label("up_to_date", yesterday.timestamp(), now=now)
+    assert label == f"✓ Up to date as of {yesterday.strftime('%Y-%m-%d %H:%M')}"
+    today = now - timedelta(minutes=3)
+    assert root_status_label("up_to_date", today.timestamp(), now=now) == (
+        f"✓ Up to date as of {today.strftime('%H:%M')}"
+    )
+
+
 async def test_runtime_failure_is_bounded_redacted_and_leaves_checking_phase() -> None:
     runtime = _Runtime()
 
@@ -901,7 +972,7 @@ async def test_manual_sync_now_and_operation_recovery_use_existing_runtime_metho
 
     assert ("request_sync_now", "root-1") in runtime.calls
     assert ("resolve_cleanup", "root-1", "operation-1") in runtime.calls
-    assert "Recovery reviewed" in controller.snapshot.status_line
+    assert "Recovery finished" in controller.snapshot.status_line
 
 
 async def test_not_configured_runtime_offers_lasting_setup() -> None:

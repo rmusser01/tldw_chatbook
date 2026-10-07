@@ -1,0 +1,24 @@
+...........................                                              [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-15-fix1-safe-evidence/green.xml -
+============================= slowest 25 durations =============================
+2.31s call     Tests/Chat/test_console_chat_start.py::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-canonical_resolution]
+2.23s call     Tests/Chat/test_console_chat_start.py::test_restriction_registration_failure_still_drains_exact_native_owners[provider-first]
+1.96s call     Tests/Chat/test_console_chat_start.py::test_restriction_registration_failure_still_drains_exact_native_owners[provider-first_uncertain]
+1.92s call     Tests/Chat/test_console_chat_start.py::test_restriction_registration_failure_still_drains_exact_native_owners[commit-second]
+1.90s call     Tests/Chat/test_console_chat_start.py::test_restriction_registration_failure_still_drains_exact_native_owners[provider-second]
+1.87s call     Tests/Chat/test_console_chat_start.py::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-canonical_resolution]
+1.82s call     Tests/Chat/test_console_chat_start.py::test_persistent_registration_and_settlement_failure_retains_native_denial[False-provider-persistent_registration]
+1.81s call     Tests/Chat/test_console_chat_start.py::test_persistent_registration_and_settlement_failure_retains_native_denial[True-provider-persistent_registration]
+1.74s call     Tests/Chat/test_console_chat_start.py::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-canonical_resolution]
+1.67s call     Tests/Chat/test_console_chat_start.py::test_failed_review_settlement_blocks_siblings_across_ledger_handles[raise-True]
+1.66s call     Tests/Chat/test_console_chat_start.py::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-canonical_resolution]
+1.61s call     Tests/Chat/test_console_chat_start.py::test_persistent_registration_and_settlement_failure_retains_native_denial[True-commit-persistent_registration]
+1.60s call     Tests/Chat/test_console_chat_start.py::test_restriction_registration_failure_still_drains_exact_native_owners[commit-first]
+1.59s call     Tests/Chat/test_console_chat_start.py::test_failed_review_settlement_blocks_siblings_across_ledger_handles[false-True]
+1.58s call     Tests/Chat/test_console_chat_start.py::test_failed_review_settlement_blocks_siblings_across_ledger_handles[false-False]
+1.56s call     Tests/Chat/test_console_chat_start.py::test_persistent_registration_and_settlement_failure_retains_native_denial[False-commit-persistent_registration]
+1.55s call     Tests/Chat/test_console_chat_start.py::test_failed_review_settlement_blocks_siblings_across_ledger_handles[raise-False]
+1.53s call     Tests/Chat/test_console_chat_start.py::test_restriction_registration_failure_still_drains_exact_native_owners[commit-first_uncertain]
+
+(7 durations < 1s hidden.)
+27 passed in 39.78s

@@ -1,0 +1,192 @@
+[
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "1162-1213",
+      "Tests/Chat/test_console_chat_create_integration.py"
+    ],
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "path": "Tests/Chat/test_console_chat_create_integration.py",
+    "before_sha256": "5bb8e30a9048528d1244822fc10b5a015d41404e3ce5e2cc8b08fc933330b4c4",
+    "after_sha256": "5f619626ac53e8a0788a3c2f7199efc64930eb6a63056b6138e7e45423dda3b1",
+    "ast_equal": true
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "3115-3254",
+      "Tests/UI/test_console_runtime_ownership.py"
+    ],
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "path": "Tests/UI/test_console_runtime_ownership.py",
+    "before_sha256": "0b37fb4574fdb94e2e963bbed37128f6e8d75ca820956f6097477a27871f32b1",
+    "after_sha256": "0e4f210396fb601634451abdedb1405551509757849189b3c885c3046116666f",
+    "ast_equal": true
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "11238-11238",
+      "tldw_chatbook/Chat/console_agent_bridge.py"
+    ],
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "11226-11227",
+      "tldw_chatbook/Chat/console_agent_bridge.py"
+    ],
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+    "before_sha256": "99a4a058c1d607d12c8f076275afbe61004ca3e445ec4d49fb3993b3f43dbe41",
+    "after_sha256": "4dba2b2104fe13f0e1cb16e114390c331e9c6ff64d8712542ea2fa6b2c054df6",
+    "ast_equal": true
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "13073-13073",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "before_sha256": "ec9fb94f83ab8e9680cd6c876d8f25ad38b3e88906b2c6ae68eaa839f1cc0308",
+    "after_sha256": "ec9fb94f83ab8e9680cd6c876d8f25ad38b3e88906b2c6ae68eaa839f1cc0308",
+    "ast_equal": true
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "9825-9826",
+      "tldw_chatbook/Chat/console_chat_store.py"
+    ],
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_chat_store.py",
+    "before_sha256": "f41686e595dad1bf704166be56a40099c81c1636b473bfed8192e4ba3bb20422",
+    "after_sha256": "f41686e595dad1bf704166be56a40099c81c1636b473bfed8192e4ba3bb20422",
+    "ast_equal": true
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "4938-4942",
+      "tldw_chatbook/UI/Console_Modules/session.py"
+    ],
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "4881-4881",
+      "tldw_chatbook/UI/Console_Modules/session.py"
+    ],
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "4820-4842",
+      "tldw_chatbook/UI/Console_Modules/session.py"
+    ],
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "1027-1027",
+      "tldw_chatbook/UI/Console_Modules/session.py"
+    ],
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-B",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "251-251",
+      "tldw_chatbook/UI/Console_Modules/session.py"
+    ],
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/session.py",
+    "before_sha256": "19ad6a8654b2aea0b439872129d22d5b9b55a854a257766d7dcd02222e70656d",
+    "after_sha256": "d9f68f6e864fc9c9d41b7f793fb35087435062375afb8e6d3c75c37d87e144c4",
+    "ast_equal": true
+  }
+]

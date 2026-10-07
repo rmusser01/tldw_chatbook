@@ -1,0 +1,19 @@
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/requests/__init__.py:113: RequestsDependencyWarning: urllib3 (2.6.3) or chardet (6.0.0dev0)/charset_normalizer (3.4.4) doesn't match a supported version!
+  warnings.warn(
+config path: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktrees/setup-wizard-ux-qa/homes/v-full-track-steps-1/.config/tldw_cli/config.toml
+[embedding_config].default_model_id = openai-text-embedding-3-small
+resolve_active_rag_config().embedding.model = all-MiniLM-L6-v2
+chat_defaults.rag_auto_retrieve_on_send = False
+Settings>RAG adapter embedding_model = all-MiniLM-L6-v2 | auto_retrieve = False
+gate tools.read_file_enabled enabled=False title='Read file'
+gate tools.list_directory_enabled enabled=False title='List directory'
+gate tools.write_file_enabled enabled=False title='Write file'
+gate tools.create_note_enabled enabled=False title='Create note'
+gate tools.update_note_enabled enabled=False title='Update note'
+gate tools.glob_files_enabled enabled=False title='Find files'
+gate tools.grep_files_enabled enabled=False title='Search in files'
+gate tools.expand_document_enabled enabled=False title='Expand document'
+gate console.local_tools_enabled enabled=True title='Local workspace, web, and Watchlists tools (master switch)'
+gate tools.web_deep_search_enabled enabled=False title='Deep web research (web_deep_search)'
+gate tools.ask_user_enabled enabled=True title='Ask you a question (ask_user)'
+gate tools.character_tools_enabled enabled=True title='Character cards (character_*)'

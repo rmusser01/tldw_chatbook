@@ -1,6 +1,7 @@
 # ADR-082: Give every Console chat private temporary scratch space
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-23
 Related Task: TASK-21161
 

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌───────────────────────────────────────────────────────┐  N  Ready · Next: Create a note or add from files.          │
+│ │ Navigation                     │  a  │ Library notes · Ready · Next: Create a note or add    │  o  Recently deleted                                        │
+│ │     Import…                    │  v  │ from files.                                           │  t  Deleted notes stay here until you restore them. Restore │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ Notes (123)                                           │  e  puts a note back where it was; nothing is removed for   │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ These notes live in the Library's own database — for  │  s  good from here.                                         │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ notes that live in a folder on disk, switch to Folder │         ‹ Notes                                             │
+│ │                                │     │ files. To copy or keep a folder synced, choose Add    │     Scratch — delete me · 1d                 Restore        │
+│ │ ─────────────────────────────  │     │ from files.                                           │     Old grocery list · 4d                    Restore        │
+│ │ Browse                    ▾    │     │                                                       │                                                             │
+│ │    Media (23) — your files     │     │ Filter                                                │                                                             │
+│ │    Conversations (12)          │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                             │
+│ │  ▸ Notes (123)                 │     │ ▊ quotes                                            ▎ │                                                             │
+│ │    Prompts (10) — reuse        │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                             │
+│ │    Skills (1) — AI add-ons     │<--- │                                                       │                                                             │
+│ │    Collections (0)             │     │    New     ○ Sort: Newest     Select                  │                                                             │
+│ │    Search / RAG — find all     │     │    Add from files…     Export     Manage sync folder  │                                                             │
+│ │ ─────────────────────────────  │     │ Folders & placement                                   │                                                             │
+│ │ Artifacts                 ▾    │     │    New folder     Add to folder     ○ Move note       │                                                             │
+│ │    All artifacts               │     │    ○ Remove placement                                 │<---                                                         │
+│ │    Chatbooks                   │     │ Sort unavailable — clear the filter                   │                                                             │
+│ │    Reports                     │     │ filter: quotes · 1 result                             │                                                             │
+│ │ ─────────────────────────────  │     │                                                       │                                                             │
+│ │ Create                    ▾    │     │   Clear filter                                        │                                                             │
+│ │    New note                    │<--- │  ▾ VSync                                              │                                                             │
+│ │    New prompt                  │     │ █  quotes · VSync · now                               │                                                             │
+│ │    New skill                   │     │   Recently deleted (2)                                │                                                             │
+│ │ ─────────────────────────────  │     │                                                       │                                                             │
+│ │ Study                     ▾    │     │                                                       │                                                             │
+│ │    Study decks (0)             │     │                                                       │                                                             │
+│ │    Flashcards due: 0           │     │                                                       │                                                             │
+│ │    Quizzes (0)                 │     │                                                       │                                                             │
+│ │ ─────────────────────────────  │     │                                                       │                                                             │
+│ │ Import / Export           ▾    │     │                                                       │                                                             │
+│ │    Import…                     │     │                                                       │                                                             │
+│ │    Export                    ▇ │     │                                                       │                                                             │
+│ │  ▾ scroll for more             │     │                                                       │                                                             │
+│ └────────────────────────────────┘     └───────────────────────────────────────────────────────┘                                                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  r restore note | esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

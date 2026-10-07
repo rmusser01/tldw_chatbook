@@ -246,7 +246,9 @@ async def test_picking_a_status_filters_the_items_list():
         await pilot.pause()
         await pilot.pause()
 
-        displayed = screen.query_one("#watchlists-items-pane", ArticleListPane).displayed_items()
+        displayed = screen.query_one(
+            "#watchlists-items-pane", ArticleListPane
+        ).displayed_items()
         assert [row["id"] for row in displayed] == ["1"]
 
 
@@ -519,7 +521,9 @@ async def test_a_borderless_compact_select_has_a_visible_focus_cue(select_id):
         await pilot.pause()
         await _wait_for_selector(screen, pilot, select_id, timeout=5.0)
         select = screen.query_one(select_id, Select)
-        assert not select.disabled, "focus contrast must be measured on a focusable control"
+        assert not select.disabled, (
+            "focus contrast must be measured on a focusable control"
+        )
 
         rest = _rendered_background(screen, select.region)
         select.focus()

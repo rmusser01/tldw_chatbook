@@ -106,9 +106,7 @@ def test_provider_picker_searches_display_name_and_provider_id():
     )
 
     by_name = _all_options(build_provider_picker_groups(_catalog(), "", "anthro"))
-    by_id = _all_options(
-        build_provider_picker_groups(_catalog(), "", "local_ollama")
-    )
+    by_id = _all_options(build_provider_picker_groups(_catalog(), "", "local_ollama"))
 
     assert [option.provider_id for option in by_name if option.provider_id] == [
         "anthropic"

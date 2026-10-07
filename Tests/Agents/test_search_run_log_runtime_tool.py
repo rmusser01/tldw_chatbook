@@ -382,7 +382,9 @@ def test_sensitive_large_result_has_no_recoverable_run_log_handle(
     assert "full result is recorded" not in truncated
     assert "search_run_log(from_record=" not in truncated
 
-    run_dir = next(path for path in (tmp_path / ".agent-runs").iterdir() if path.is_dir())
+    run_dir = next(
+        path for path in (tmp_path / ".agent-runs").iterdir() if path.is_dir()
+    )
     records = [
         record
         for segment in sorted(run_dir.glob("logs.*.txt"))
@@ -549,7 +551,9 @@ def real_search_run_log(wired, monkeypatch):
     monkeypatch.setattr(agent_service_module, "run_agent_loop", spy_run_agent_loop)
 
     service = AgentService(
-        db, registry, chat_call=lambda **kw: {"choices": [{"message": {"content": "ok"}}]}
+        db,
+        registry,
+        chat_call=lambda **kw: {"choices": [{"message": {"content": "ok"}}]},
     )
     service.run_turn(
         conversation_id="c1",

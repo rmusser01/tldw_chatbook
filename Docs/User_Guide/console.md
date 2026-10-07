@@ -35,8 +35,10 @@ This page is the orientation tour; the details live on the child pages below:
 Top to bottom:
 
 - **Header** — the title "Console", the subtitle "— Chat, source handoffs,
-  live runs, and control actions.", and a status badge that reads **Ready**,
-  **Running**, or **Blocked** depending on the active session.
+  live runs, and control actions.", and a status badge with the active
+  chat's readiness word (see **Readiness words** below), or **Running** while
+  a reply is generating. Below 84 columns, where the word does not fit, the
+  badge reads **Ready** or **Blocked**.
 - **Control bar** — one row of buttons: **New tab**, **Settings**,
   **Context rail**, **Search Library**, **Help**. (**Save as Chatbook**
   lives in the composer's **Menu** button, left of the draft.)
@@ -72,7 +74,7 @@ Top to bottom:
   **Sources**, the retrieval scope row ("Scope: everything" until you
   narrow it), a run status line, groups such as **Run**, **Tools**,
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
-  (ask Library sources before sending), and the **Session Settings**
+  (ask Library sources before sending), and the **Chat settings**
   summary.
 - **Staged-evidence strip** — appears at the top of the control deck,
   directly under the conversation pane and above the status chip strip,
@@ -99,9 +101,10 @@ Top to bottom:
 - **Composer row** — a slim one-row bar (it grows with your draft, up to
   eight rows, and shrinks back as the draft empties) marked by a one-column edge on its left that brightens and
   thickens while the composer has focus — the "Composer ▾" collapse toggle, the draft area
-  ("Ask, command, or paste task..."), then **Send**, **Mic**, **Attach**,
-  and **Save**; a **Stop** button appears between Send and Mic while a
-  reply is streaming. **Send** is genuinely disabled whenever a send can't
+  ("Ask, command, or paste task..."), then **Send** and **Dictate** (Attach
+  and Save live behind **Menu**); while a reply is streaming Send reads
+  **Queue** and a **Stop** button appears at the right end of the row
+  (**Ctrl+G** also stops it). **Send** is genuinely disabled whenever a send can't
   go through — nothing typed yet, setup incomplete, or a reply still
   streaming — and the reason shows inline next to it (e.g. "Send blocked —
   choose a model to continue ›"), so you never have to hover to find out
@@ -264,9 +267,60 @@ unlocks after setup". Behind the card, the workbench dims under a still
 field of scattered snow glyphs — a purely decorative backdrop that holds
 one frame (it re-scatters only when the window resizes) and costs nothing
 while the card waits. Its button follows the current step (**Set up
-provider**, then **Choose model**) and opens the Console Settings modal.
+provider**, then **Choose model**) and opens **Chat settings**.
 The composer stays locked until a provider and model are configured; once
-they are, the empty transcript reads "Ready — type a message to begin."
+they are, the empty transcript names what is connected, for example
+"Setup complete — OpenAI · gpt-4.1-mini. Ready — type a message to begin."
+(a model saved as a file path, as llama.cpp models often are, shows its file
+name). That line is the arrival receipt: it shows until your first-ever send,
+and nothing about it is sent to the model.
+
+**Arriving from setup.** Finishing first-run setup with **Start chatting**
+opens one chat on the saved provider and model, with no notice. Notices that
+do appear in Console are drawn below the nav tabs, header and control rows
+and the chat tab strip, so they never cover the tab bar, the voice controls,
+the readiness badge or the New tab and Temporary buttons.
+"A Console turn completed while hidden" appears only when the turn finished
+while Console was not on screen, or in a tab you were not viewing. A dialog
+open over Console (Switch model, Rename, the command palette) does not count
+as hidden.
+
+**Readiness words.** Every model surface — the header's status badge, the
+Model section's status line, this card's current step, the
+Switch model rows, Chat settings and the Settings test result — says the
+same one of four things for the same connection:
+
+| Word | Means |
+|---|---|
+| **Ready · not tested** | Nothing blocks a send, and nothing has been checked this session. |
+| **Ready · reachable 14:01** | A local, URL or custom endpoint answered its model listing at that local time. |
+| **Ready · verified 14:01** | The provider accepted a cloud key in an authenticated model listing, or a paid generation test of this model succeeded, at that time. A test of one model never verifies another, and a listing alone never means generation was tested. |
+| **Not ready · \<reason\>** | A setup blocker or a known failure, such as "no key", "key rejected", "refused :9099", "timed out" or "no model". A setup blocker is named before a failed test: with no model chosen, a refused server still reads "no model". |
+
+The words carry the state; colour only repeats it (the Model section line
+turns red when Not ready). A provider whose model list is public, such as
+OpenRouter, stays "Ready · not tested" after its list loads, because the list
+proves nothing about your key.
+
+A known connection failure blocks sending too. When a connection test of
+this chat's server — **Test connection & list models** in Chat settings, or
+**Test Provider** in Settings — was refused or timed out, the Console reads,
+for example, "Not ready · refused :9099" (the header badge, the Model
+section, the Chat settings rows and this card's "Reconnect the
+provider server" step), and the composer reads "Send blocked — retry the
+connection to continue". **Retry connection** tests that same server again
+in place; it opens no settings. If the server now answers, the chat is Ready and Send
+unlocks; if not, a "still unreachable" notice says so. A cloud provider's
+key check (Settings **t**) that timed out or could not connect is the
+exception: the Console never contacts a cloud provider itself, so **Retry
+connection** opens **Settings ▸ Providers & Models** at that provider and
+says "Press t to test \<provider\> again". Every test sends the
+API key a message would use, so a local server started with a key (vLLM's
+`--api-key`, for example) is tested with it, and "key rejected" means that
+key was refused (a 401). A 403 from any model listing, local or cloud, means
+only that the key may not list models: it reads "Ready · not tested" and
+never blocks sending. Test results last for this session only, and a test of a
+different endpoint or key never changes this chat's readiness.
 
 A second action, **Write a note in Library**, stays available beside it for
 as long as the card is showing — it needs no provider, and opens Library's
@@ -297,7 +351,7 @@ composer-level strip below shows once setup completes.
 | Control | What it does |
 |---|---|
 | **New tab** | Creates a Console tab — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
-| **Settings** | Opens the "Console Settings" modal (provider, model, tools, and generation). |
+| **Settings** | Opens **Chat settings** (provider, model, generation, and context and memory). |
 | **Context rail** | Opens the "Console context" rail (source staging is done from Library) — see [Context & RAG](console/context-and-rag.md). |
 | **Search Library** | Runs a user-initiated **Manual Search Library** request before sending; it remains available regardless of the conversation's automatic or assistant policy — see [Context & RAG](console/context-and-rag.md#per-conversation-library-controls). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
@@ -341,7 +395,7 @@ fails without playing a truncated file.
 | **Sessions** section | Names the active chat. Hovering it shows the durable conversation id. |
 | **Workspaces** section | Shows every named workspace with its associated conversations in a native Tree. Its compact strip keeps **Switch**, **New**, and **RAG** together; **Switch** is also the route to Default. Starred conversations sort first within their workspace. |
 | **Conversations** section | Independently searches, starts, and resumes only Default and unassigned conversations; favourited entries sort first and are marked beside the title. Each row carries an **\*** that opens its action menu — Favourite, Change status, Archive, Rename, and More ▸ Delete. See [Context & RAG](console/context-and-rag.md#workspaces-and-conversation-ownership). |
-| **Model** section | Read-only Temperature / Max tokens / system-prompt lines plus a **Configure** button that opens Console Settings. The active provider and model are read from the status bar, which shows them at every width. |
+| **Model** section | Read-only Temperature / Max tokens / Streaming (On or Off) lines, the chat's readiness word (red only when Not ready), the system-prompt line and **Change  Alt+M**, which opens Switch model. The rows follow the chat through Apply, a new chat and switching chats. The active provider and model are read from the status bar, which shows them at every width. |
 | **Agent** section | Live run status and the full run log — see [Agent runs & tools](console/agent-runs-and-tools.md). |
 | **Details** section | Storage, sync, file tools, server, and handoff status for the workspace. |
 | **Character** section | Appears only when the character-avatar preference is on. Its complete portrait is centered and keeps its aspect ratio; it only scales down to fit and is never stretched, cropped, or enlarged merely to fill the 35-row body. |
@@ -350,8 +404,8 @@ fails without playing a truncated file.
 
 | Chip | What it shows |
 |---|---|
-| **Provider** / **Model** | The active provider and model for this session. |
-| **Assistant** / **Library** | The active assistant; the Library chip summarizes the two independent conversation controls as **Auto: Never / Automatic** and **Assistant: Blocked / Allowed**. Open it to edit those controls and see whether allowed assistant tools use **Direct / RAG** mode. |
+| **Provider** / **Model** | The active provider and model for this session. The provider shows its display name — "llama.cpp", "OpenAI", or a custom endpoint's own name — never its config key; a long name is shortened with "…" and shows in full when the chip has focus. |
+| **Assistant** / **Library** | The active assistant; the Library chip summarizes the two independent conversation controls in plain words, **Auto off/on · Agent access off/on**, for example **Library · Auto off · Agent access off** (its editor labels them **Auto: Never / Automatic** and **Assistant: Blocked / Allowed**). Open it to edit those controls and see whether allowed assistant tools use **Direct / RAG** mode. |
 | **Sources** / **Tools** | Staged source count (e.g. "Sources: 0"); tool readiness (e.g. "Tools: 10 ready" — hidden until tools are counted). |
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |
 | **Scope** | Appears when retrieval is narrowed ("Scope: N"); Enter or Space opens the scope picker. |
@@ -412,54 +466,343 @@ during a run); **Esc** expands it and returns the caret to your draft.
 
 ### Session settings & model selection
 
-The **Console Settings** modal is the one place provider, model, and
-generation settings live. Open it from the control bar's **Settings**
-button, the Model section's **Configure** button in the left rail, or the
-**Session Settings** action in the Inspector. Inside:
+**Chat settings** is the one place provider, model, and generation settings
+for one chat live. Open it with **Ctrl+O** from anywhere in
+Console, `/settings`, the palette's "Console: Chat settings…", the control
+bar's **Settings** button, or the action on the Inspector's **Chat
+settings** card. Its title names the chat and counts your unsaved edits ("Chat
+settings · Refactor plan · 2 unsaved edits"), and the line under the tabs
+says what it changes: "Applies to this chat only · saved with the
+conversation · defaults live in Settings ▸ Providers & Models (F4)". It is
+150 columns by 22 rows, and the **Model and generation**
+view puts tuning first, so at 211x44 the whole view fits without scrolling:
 
-- A readiness line up top (e.g. "custom is ready. No API key is required.").
-- **Provider and model** — Provider and Model selects, **Custom model** for
-  a name the list doesn't offer, **Discover models** to list what a Base
-  URL serves, and the **Base URL** field for local/self-hosted endpoints.
-- **Sampling** (Temperature, Top P, Min P, Top K, Max tokens, Seed, and
-  related knobs), then **Provider-specific**, **Context**, and **Identity**.
-  The modal still shows every sampling field, but a field the selected
-  provider's request does not carry is dropped: for Anthropic, Min P, Seed,
-  Presence and Frequency are accepted without error, never sent, and not
-  written by **Save as model default**. A value saved for such a field earlier
-  stays in `config.toml` untouched.
-- Footer: **Cancel** / **Save as default** / **Save**, under the note "Save
-  applies to this session only. Save as default also writes provider +
-  streaming defaults to config."
+- **Model**: the chat's model and its provider's name, where the pair comes
+  from (*this chat*, or *edited \** once you change it here), the readiness
+  word and the context window (e.g. "claude-sonnet-4-5 · Anthropic  this chat
+  Ready · not tested · 200k context"), then **Change  Alt+M**. A long model
+  id shows whole; only an id wider than the row is shortened in the middle,
+  keeping its start and its end (a GGUF file's quant), and the provider's
+  name is never cut. Below 100 columns the row shows only the pair and
+  Change; the context window still reads in **Request estimate**. Change is
+  the only way to change the model: it opens **Switch model** (below) in pick
+  mode over Chat settings, listing the same provider·model pairs, plus any
+  models a listing here found. **Enter**
+  picks a pair and returns to Chat settings with the draft moved to that
+  exact provider and model; nothing is applied until **Apply**. **Esc** returns
+  with nothing changed and focus on Change. Pick mode shows no values or
+  default actions and cannot pick a NEEDS SETUP row; to use a model the list
+  does not have, type its id in **Find** and pick the **TYPED MODEL ID** row.
+  **Alt+M** works from anywhere in Chat settings, even in a text field; on
+  macOS it needs the Option key set to send Meta, so the **Change** button is
+  there for every keyboard.
+- The core fields: **Temperature**, **Max tokens**, **Streaming** (On or Off)
+  and the reasoning or thinking controls the model takes.
+- Then four closed disclosures, each title one row: **Sampling** (Top P, Min P, Top K,
+  Seed, Presence penalty, Frequency penalty), **Connection**, **Request
+  estimate** and **Your name in this chat**. **Enter** on a title opens it.
+  Each closed title already shows its value:
+  - **Connection** names the server the chat sends to, where the key comes
+    from, and where to change it, for example "Connection ·
+    api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in
+    Settings ▸ Providers & Models". The key part reads *key from env
+    \<variable\>*, *key saved*, *unsaved key* (typed here, not saved yet),
+    *key missing* or *no key needed* (*Claude
+    subscription* for Anthropic's subscription sign-in, and *key not
+    checked* while another problem, such as a missing endpoint, comes
+    first); the key itself is never shown, and neither is a user name or
+    password written into the server address. A very long server name is shortened with "…" so
+    the title stays one row. Typing a new **Endpoint** updates it at once.
+  - **Request estimate** shows the estimate, for example "Request estimate ·
+    10 / 200,000 tokens".
+  - **Your name in this chat** shows the name this chat uses, or the global
+    name with "(global default)" when the field is blank.
+
+  Opened, **Connection** holds the **Endpoint** field (only for providers
+  that take a server address; other providers show no Endpoint label),
+  **Configure credential…** when a key is missing, **Test connection & list
+  models**, the paid generation test with its confirmation step, and the
+  readiness detail. It has no provider or model picker: a provider is never
+  chosen without a model. A models listing reports what the server serves
+  ("2 models listed") but never picks a model, even when it lists only one;
+  **Change** does, and pick mode then lists the served models too. When the chat is not ready (a missing key, an endpoint to
+  set, no model), Chat settings opens with **Connection** already open and
+  the fix focused (**Change** when the model is missing). Help that points at
+  Settings names **F4**, the key that opens it.
+
+Every field row reads the same way: the label, the value, a word saying
+where the value comes from, and one line of help. The words are the ones
+**Switch model** uses: *edited \** (changed in this open), *this chat*,
+*model default*, *Console Behavior*, *provider* and *built-in*. A blank field
+says what a blank sends: "blank = provider default" (nothing is sent, so the
+provider's own default applies), and its word reads *provider*; a blank
+dropdown, such as **Reasoning effort**, shows *default*. A blank **Temperature** or **Top P** shows
+its range instead, because Apply needs a value while the provider accepts the
+field. Labels match Settings, for
+example **Thinking budget**, and **Budget strategy** and **When limit nears**
+under Context.
+
+Fields the selected provider does not accept are hidden, not shown dimmed,
+and the **Sampling** title says so on its one row. When their names fit it
+names them, for example "Sampling · hidden for llama.cpp: Reasoning summary,
+Verbosity, Thinking (this provider does not accept them)"; otherwise it
+counts them, for Anthropic
+"Sampling · Anthropic does not accept 7 fields (open to list them)". Opened,
+**Sampling** lists every hidden field above its rows: "Anthropic does not
+accept: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort,
+Reasoning summary, Verbosity." A saved endpoint is judged
+as the server type it was saved with, so a llama.cpp endpoint hides what
+llama.cpp does not accept. Choosing another model updates the hidden fields,
+the title and the list at once. A hidden field takes no focus,
+is never sent, is cleared from the chat by **Apply**, and is not written by
+**Save as model default**; a value saved for it earlier stays in
+`config.toml` untouched. A cleared **Top P** (Custom OpenAI-compatible #2
+does not accept it) reads *provider* in the chat's settings summary. A reasoning or thinking control whose support for
+this model is not known stays visible, and its help line starts with "Support
+not verified for this model."
+
+Focus opens on **Temperature**. **Tab** walks the core fields, the four
+disclosure titles and the footer to **Apply to this chat**, never into
+a closed disclosure; **Shift+Tab** from Temperature reaches **Change**, then
+the view tabs. A focus target that a credential round trip cannot restore
+lands on **Change**.
+The **Context and memory** view keeps its taller frame and scrolls.
+Switching views opens the other view at its top, however far the one you
+left was scrolled, so **Context and memory** starts at **Model capacity**
+with **Budget strategy** focused, and **Model and generation** starts at the
+**Model** row with **Temperature** focused. A chat that is not ready opens on
+its fix instead, as it does when Chat settings opens: **Change** when no
+model is chosen, or the open **Connection** disclosure's fix (such as
+**Configure credential…**) below the tuning rows. Pressing the tab of the
+view already shown does nothing.
+
+The footer reads, left to right: the Esc hint (below), **Use saved
+defaults**, **Save as model default**, **Default for new chats (Ctrl+N)** and
+**Apply to this chat (Ctrl+Enter)**. Each key works from any field. Only
+**Save as model default** and **Default for new chats** write
+`config.toml`; **Apply to this chat** changes this chat alone and writes no
+configuration. **Save as model default** shows only while the draft differs
+from the saved defaults, the same test that dims **Use saved defaults**, so
+the footer never offers a save beside **Matches saved defaults**. While the
+unsaved-changes prompt shows, **Alt+M** and **Ctrl+N** do nothing. The **Context and memory** view has a **Cancel** button in
+place of the default actions. The line above the footer that names where a
+default goes ("Used by future conversations for Anthropic.") shows only
+beside **Save as model default**, so the **Context and memory** view never
+shows it.
+
+**Use saved defaults** is how a chat that already holds work picks up
+defaults you saved later (a chat nobody has used yet follows them on its
+own). It replaces the draft with exactly what a new chat on the same
+provider and model would start with: the model's saved defaults, then the
+provider's saved Console defaults, then Console Behavior, then the provider's
+settings. Any unapplied edit to a generation field or the endpoint is
+replaced (an edit to **Your name in this chat** is kept), every
+field that now differs from the chat reads *edited \**, and the provider and
+model stay as they are. Nothing changes until you **Apply to this chat**.
+While the draft already equals those defaults, the button is dimmed and reads
+**Matches saved defaults**.
+
+The modal is a dense form: every field, dropdown and button in it (the
+**Model and generation** / **Context and memory** tabs included) is one row
+tall, with its label on the same row. A thin bar at a field's left edge marks
+it as editable; the focused field's bar turns thick, its row fills with the
+focus colour and its value turns bold. The bars and the modal's frame are
+drawn at 3:1 or more against the background in every theme, so they stay
+visible. In an open dropdown or the model list, the highlighted choice is a
+solid bar in the theme's primary text colour with its label in the panel
+colour, and a focused **Apply to this chat** keeps its colour instead of
+dimming; a focused plain button always stands out from the panel at least as much as it does unfocused. Each field is as wide as the value it
+holds, not as wide as the window: a number gets 12 columns, a dropdown is as
+wide as its longest choice, and text is capped by what it holds (your name in
+this chat 32, an endpoint URL 64). The fields keep
+their width on a wider terminal. The reasoning and thinking dropdowns
+(**Reasoning effort**, **Reasoning summary**, **Verbosity**, **Thinking**)
+show their choice, or "default" when none is set. A value saved earlier that
+the dropdown does not offer is not dropped silently: "Saved value is
+unavailable. Choose one of: …" appears beside the dropdown in the error
+colour, and saving waits until you pick a choice. When the form is taller
+than the window,
+"▼ more — scroll for the rest" sits under it while anything is left below and
+disappears once you have scrolled to the bottom; scroll back up and it
+returns.
+
+Closing never throws edits away without asking. At its left, the
+footer reads "Esc close" while nothing is edited, and "Esc close (asks: 2
+unsaved)" once something is, counting edits in both tabs and any carried in
+from the **Alt+M** popover. Changing a value back to what the chat already
+uses is not an edit. Clearing **Temperature** or **Top P** is one. A chat
+whose **Streaming** follows its default shows the value it inherits and where
+it comes from; picking On or Off pins it for this chat, which counts as an
+edit even when it matches the inherited value. Switching model can return it
+to following its default, which counts too.
+With edits, **Esc**, a click outside the modal, and
+the Context view's **Cancel** open a prompt that names the edited fields ("2 unsaved edits to
+this chat: Temperature, Max tokens.") and offers **Apply to this chat**
+(Enter), **Discard** (d) and **Keep editing** (Esc). Keep editing puts you
+back in the field you were editing. Apply goes through the same path as the
+footer's **Apply to this chat** button, so it writes nothing to
+`config.toml`; if a value is invalid, the modal stays open with the error
+summary. When Apply is unavailable (a run is active, say), the prompt says
+so, shows **Apply to this chat** dimmed, and starts on **Keep editing**. A
+pending memory reset or a running compaction still asks first, and the
+footer says so ("Esc close (asks: memory reset)", "Esc close (asks:
+compaction running)"); once you answer that, the unsaved prompt follows.
+**Ctrl+Q** stops at the same three, naming each one that applies. With
+unapplied edits it asks **Discard changes and quit?** (**Keep editing**
+leaves the modal as it was). With only a pending memory reset or a running
+compaction nothing you typed is lost, so it asks **Quit now?** instead:
+**Quit anyway** keeps the reset (Undo is no longer available) or abandons the
+compaction, and **Stay** returns to the modal.
 
 Need another server beyond the built-in providers? **New endpoint…**, next
-to **Base URL**, creates a named custom endpoint without leaving the modal:
+to **Endpoint**, creates a named custom endpoint without leaving the modal:
 pick a template (blank OpenAI-compatible, any provider, or an existing named
 entry), adjust family, URL, and models, name it, and **Create**. The entry
-is saved to `config.toml` immediately and becomes selectable here, so unlike
-a typed-in URL it never trips the "Endpoint not saved" block, and
-conversations using it survive restart. Renaming, editing, and deletion
-(with a guard that detaches conversations first) live in **F9 ▸ Providers &
+is saved to `config.toml` immediately. **Create** then lists the models the
+new server serves (the **Connection** status line reads "Listing the models
+<name> serves…" meanwhile; if the listing fails, pick mode still opens) and
+opens Switch model's pick mode with the entry's name
+in **Find**, offering those models beside the ones you named: pick one (or
+type a model id after the name) and the chat moves to that pair, after
+which the new server's connection is tested; **Esc** keeps the chat's pair.
+The `/endpoint` command opens Chat settings with this flow on top and lands
+the entry the same way. Unlike a typed-in URL, an entry never trips the "Endpoint not
+saved" block, and conversations using it survive restart. Renaming, editing, and deletion
+(with a guard that detaches conversations first) live in **F4 ▸ Providers &
 Models ▸ Custom endpoints**.
 
-For a faster switch, **Alt+M** opens the quick **Model** popover —
-provider, model, and temperature without the full modal.
+For a faster switch, **Alt+M** opens **Switch model**, a 140-column list of
+provider·model pairs; every row is a pair, so you never pick a provider
+without a model. Model ids are never shortened: on a very long id, the
+row's notes and readiness words give way first. The Provider and Model chips, the rail's **Change  Alt+M**,
+the palette's "Console: Switch model…" and `/model` open it too. `/model
+<query>` (for example `/model son`) opens it with the query already in
+**Find** and the best match highlighted; nothing applies until you press
+**Enter**. Focus starts in **Find** and the rows are grouped:
 
-Switching the provider, here or in the full modal, picks that provider's
-own model: its `model`, `api_model` or `default_model` in
-`[api_settings.<provider>]`, or, for a custom endpoint, the first model
-listed in that endpoint's entry. Your default model (`[chat_defaults]
-model`) only comes along when you switch to your default provider. A
-provider with no configured model gets no model, and Console asks you to
-choose one. In the popover, the model field shows its "Choose or search
-models" placeholder, **Apply to this chat** answers "Choose a model.", and
-**Defaults…** says "Unavailable: choose a model first." It never borrows
-another provider's model.
+- **PREVIOUS**, highlighted when the list opens, so **Alt+M** then **Enter**
+  swaps back to the model you used before.
+- **RECENT**, your recently used pairs, with **● CURRENT** on this chat's
+  pair and when each was last used.
+- **READY PROVIDERS**, the first three models of each provider with no known
+  blocker, then an "… N more" row (Enter on it puts the provider's name in
+  Find).
+- **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
+  on one never applies it: it closes the list and opens **Settings ▸
+  Providers & Models** at that provider, with its key or endpoint field in
+  focus. Keys are only ever entered in Settings. A local server that refused
+  or timed out is listed first and reads "start it; rechecked on open": the
+  fix is outside the app, so **Enter** on it only repeats that hint (the
+  group's heading says "Enter opens the fix or explains it"). A cloud
+  provider whose key check timed out reads "Enter: open Settings" instead,
+  since only **t** there checks it again.
+- **NOT RUNNING**, one line naming the local servers you never set up that
+  refused: a provider still at its shipped settings (such as TabbyAPI on
+  `localhost:8080`) that is not this chat's, the default's or a recent
+  chat's provider. They are checked like any other local server, so one
+  that is running reads "Ready · reachable" under READY PROVIDERS instead.
+  Change a provider's settings or use it, and its refusal is a NEEDS SETUP
+  row again.
+
+Each row shows the model, the provider's name, its context size (`~` marks
+an estimate), readiness and last use. Readiness comes from your
+configuration plus any connection test of that provider's connection this
+session, in the same words as the rest of the Console: "Ready · not tested",
+"Ready · reachable 14:01" once a local server's model listing answered,
+"Ready · verified 14:01" once a cloud key was accepted, or "Not ready · no
+key" (or another reason, such as "refused :9099" after a refused test).
+Opening the list also checks, in the background, each local server it lists
+that needs no key and runs on this computer or a private-network address
+(llama.cpp, Ollama, vLLM and the like): at most three at a time, each with
+the same short timeout as **Test connection**, and a result under 10 seconds
+old is reused. The list opens and takes keys at once; the words change as
+the answers come in, and a stopped server's "refused" reaches this chat's
+status at once, under the open list. A server on a carrier-grade NAT address
+(100.64.0.0/10, as some VPNs use) counts as public and is not checked. Cloud providers, a server on a public address or host name, and
+any endpoint that would send a key are never contacted automatically.
+Typing filters every provider's saved and cached models in memory and
+highlights the best match; it never starts a model listing or a network
+call. A model id that no list has appears under **TYPED MODEL ID**
+for this chat's provider; type a provider's name first ("Ollama qwen3:32b")
+to pair the id with that provider. A provider whose list is still loading,
+empty or unavailable says so in its own row. Legacy alias providers (such
+as "llama.cpp (legacy alias)") only appear when a chat uses them.
+
+Up and Down move the highlight while you type, and from the values too.
+Under the list, "Values for <model> · <provider>" names the highlighted pair,
+and the row below it shows that pair's **Temperature**, **Max tokens** and
+**Streaming** (On or Off), each one row tall. These three are exactly what
+the default actions save; Thinking and every other setting stay in Chat
+settings. Next to each value is a word saying where it comes from:
+
+| Word | The value comes from |
+|---|---|
+| `edited *` | an edit you made here, not yet applied |
+| `this chat` | this chat's own setting, different from its defaults |
+| `model default` | the model's saved defaults (`[api_settings.<provider>.model_defaults.<model>]`) |
+| `Console Behavior` | the global fallbacks in **Settings ▸ Console Behavior** (`[chat_defaults]`) |
+| `provider` | a setting for the whole provider: Console's saved provider defaults, a custom endpoint's own parameters, or the provider's `[api_settings]` table |
+| `built-in` | nothing is set; tldw_chatbook's own default applies (a blank Max tokens means no cap) |
+
+**Tab** from Find moves to Temperature with its value selected, so you can
+type over it; Tab again does the same for Max tokens. So switching to a
+Sonnet model with Temperature 0.9 and Max tokens 8192 is **Alt+M**, `son`,
+**Tab**, `0.9`, **Tab**, `8192`, **Enter**. Once you edit a value or Tab
+into the values, the highlight stays on that pair while the list finishes
+filling in, except on a **TYPED MODEL ID** row: a listed model that matches
+better and arrives later takes the highlight, and your edits move with it.
+Typing in Find again picks the best match for the new text. If
+you edit a pair, move to another and come back, your edits for the first
+pair are still there.
+
+The keys, printed under the values, work while you type in Find:
+
+- **Enter** applies the highlighted pair and its values to this chat only
+  ("Applies to: this chat only"), then closes and returns you to the
+  composer; nothing is written to `config.toml`.
+- **Ctrl+N** makes the highlighted pair the default for new chats, with its
+  Temperature, Max tokens and Streaming. **Save as model default** (no key;
+  Shift+Tab from Find reaches it) saves those three as the model's defaults.
+  Both also apply the pair to this chat. A blank Max tokens removes the
+  model's saved cap.
+- **Ctrl+O** opens Chat settings on the highlighted pair with your
+  unapplied edits, without applying or discarding them.
+- **Esc** closes without changing anything. If you edited a value, it asks
+  first: "Enter apply · d discard · Esc keep editing". **Ctrl+Q** with edited
+  values asks **Discard changes and quit?** (**Keep editing** returns to the
+  popover).
+
+Context and compaction settings live in Chat settings only; Apply here
+keeps the chat's compaction setting as it is.
+
+Switch model keeps no history of its own. Its **RECENT** group is built
+from chats you already have: every open Console chat, temporary chats
+included, and your 50 most recently changed saved chats in the global
+scope. A workspace chat's model appears there only while that chat is
+open, and a model you just applied to a chat counts as used now. A saved chat whose stored settings are damaged, or were written by a
+newer version of tldw_chatbook, is left out. The list opens straight away
+and RECENT fills in a moment later. **PREVIOUS** is the model you last
+switched away from in this chat with Switch model, remembered while the
+chat stays open; before that, it is the most recent other model in RECENT.
+
+Switching the provider in the full modal picks that provider's own model:
+its `model`, `api_model` or `default_model` in `[api_settings.<provider>]`,
+or, for a custom endpoint, the first model listed in that endpoint's entry.
+Your default model (`[chat_defaults] model`) only comes along when you switch
+to your default provider. A provider with no configured model gets no model,
+and Console asks you to choose one. It never borrows another provider's
+model. In Switch model a chat with no model has no **● CURRENT** row, and
+**Enter** with nothing to apply answers "Choose a model: type to search,
+then Enter."
 
 Focusing the **Provider** or **Model** field, by Tab or by a click, keeps
 its current value on screen, selected, and opens the full list below it;
 the first key you type replaces the value and filters the list, and
 **Escape** puts the value back.
+In the model list, the model the field holds says **● CURRENT** after its
+name and stays listed even when more models match than the list shows;
+**Down** from the field highlights it first. When your filter hides it,
+**Down** highlights the first match.
 The line under the model field counts the list — "1 model available. Type
 to filter." or "12 models available. Type to filter." — and when more models
 match than the 20 rows the list shows, it says so: "Showing 20 of 57
@@ -601,17 +944,31 @@ The default test suite makes no paid request.
 #### Inference clouds in Console
 
 **Together**, **Fireworks**, **Cerebras**, **SambaNova**, **NVIDIA NIM**,
-**DeepInfra**, **Nebius Token Factory**, **Novita AI**, and **MiniMax** run
+**DeepInfra**, **Nebius Token Factory**, **Novita AI**, **MiniMax**, and the
+gateways, hosts, and model makers listed in the Settings guide (Vercel AI
+Gateway, ZenMux, Kilo, SiliconFlow, Baseten, GMI Cloud, Ollama Cloud, Upstage,
+Arcee AI, Baidu Qianfan, Nous Research, Venice, and Meta, plus Azure
+OpenAI, W&B Inference, Cloudflare Workers AI, OpenCode Zen, and Command Code)
+run
 on the ordinary streaming Console path — set the provider's API key (for
 example `TOGETHER_API_KEY` or `NVIDIA_API_KEY`) in Settings and pick a model.
 Chatbook function tools use the standard approval and execution loop for the
 models that support them, and **Discover models** reuses the chat credential
 (authenticated `GET {base}/models`) to fill the provider's empty model list.
-Fireworks keeps R1-family reasoning private — reasoning never appears in the
-transcript, which is provider behavior, not dropped output. Streamed NVIDIA
+Fireworks reasoning is kept private — it never appears in the transcript.
+Most of these presets take no reasoning-effort setting, so the settings modal
+hides that control for them. For NVIDIA NIM's Qwen3.5 models, **Reasoning
+effort** **None** turns thinking off. Fireworks has no **Minimal** level and
+sends it as **Low**. When a provider answers 404, the error says to check the model
+name and that the key can use it: several providers answer an unknown model,
+or a model the key cannot reach, with 404 rather than an auth error. Streamed NVIDIA
 NIM replies carry no token counts (NVIDIA does not report streamed usage).
 Setup details, env vars, and per-provider notes live in
 [Settings — Inference clouds](settings.md#inference-clouds).
+**Xiaomi MiMo**, **Tencent TokenHub** (Hy4), **ByteDance Seed (BytePlus)**, and
+**StepFun** work the same way; see
+[Settings — Model makers' own APIs](settings.md#model-makers-own-apis) for
+their env vars and region notes. StepFun runs without function tools.
 
 ### Leaving Console during a run
 
@@ -634,10 +991,10 @@ and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-b
 
 1. **Set up a provider from the Get started card.** Click **Set up
    provider**, pick a provider in "Provider and model" (for a local server,
-   enter its Base URL, then **Discover models**), pick a model, and press
+   enter its Endpoint, then **Discover models**), pick a model, and press
    **Save**. The card's steps tick off and the composer unlocks.
-2. **Switch model for just this session.** Press **Alt+M**, choose the
-   provider/model, and confirm — or open **Settings** and press **Save**
+2. **Switch model for just this session.** Press **Alt+M**, type part of
+   the model's name, and press **Enter** — or open **Settings** and press **Save**
    (not "Save as default"). Other tabs and future launches are unaffected.
 3. **Make today's provider the default.** Open **Settings**, configure
    provider and model, and press **Save as default** — the next launch
@@ -662,8 +1019,10 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | n / p (Inspector focused) | Move to the next / previous named Inspector section, without wrapping or taking over editable input |
 | Ctrl+K | Open the "Switch Session" conversation finder |
 | Ctrl+T | New Console tab |
+| Ctrl+G | Stop this tab's run (only while one is running; shown in the footer then) |
 | Alt+1 … Alt+9 | Jump to Console tab 1–9 |
-| Alt+M | Quick "Model" popover |
+| Alt+M | Switch model (provider·model pairs; Enter applies to this chat, Tab edits Temperature and Max tokens, Ctrl+N default for new chats, Ctrl+O Chat settings); `/model <query>` opens it with Find filled in |
+| Ctrl+O | Chat settings: every setting for this chat |
 | Alt+C | Open or close the Context (left) rail |
 | Alt+I | Open or close the Inspector (right) rail |
 | Alt+W | "Change Workspace" switcher |
@@ -676,7 +1035,18 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 While Console is the active screen, the command palette (**Ctrl+P**) also
 gains "Console: …" entries for these same actions. Slash commands
 (`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/steer`,
-`/redirect`, `/emergency-stop`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
+`/redirect`, `/stop`, `/emergency-stop`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
+
+**A slash command stays with its chat.** Commands run in the background, so
+the Console keeps answering while one works — looking up a saved prompt,
+running `/doctor`'s checks, checking a `/stream-video` URL. A command belongs
+to the chat you sent it from. If you switch chats before it finishes, a
+command that would change a chat (`/system <name>`, `/prompt <name>`) does
+nothing and says so in a warning; send it again from the chat you meant. A
+command that only reports (`/doctor`, `/skills`,
+`/fewer-permission-prompts`, a failed `/stream-video`) posts its answer in
+the chat you sent it from. Anything you type while a command runs stays in
+the composer.
 
 **Steering a running turn.** `/steer <guidance>` delivers text into the
 *currently running* agent turn — it is read before the next model call, after
@@ -689,7 +1059,9 @@ the 4,000-character steering cap.
 
 **Redirecting a running turn.** When the current response is already going
 wrong, `/redirect <correction>` — or the **Redirect** button that appears next
-to **Stop** while a run is active (it sends whatever is typed in the composer)
+to **Stop** while a run is active where the composer row has room for it (it
+sends whatever is typed in the composer; **Ctrl+P → Console: Redirect this
+tab's run** does the same at any width)
 — cuts off the in-flight model response and re-runs the turn: completed tool
 results from the turn are kept, the partial text you watched stream stays as
 context, and your correction lands as a plain user message. Contrast with
@@ -706,7 +1078,8 @@ finish untouched. The stop is durable (it survives a restart) and
 fail-safe: if its state can't be read, the app treats it as stopped rather
 than proceeding. Any attempted send while it's active is refused with a
 plain notice and how to clear it; `/emergency-stop clear` resumes normal
-operation immediately, no restart needed.
+operation immediately, no restart needed. To end just this tab's in-flight
+run, use **Stop**, **Ctrl+G**, or `/stop` instead.
 
 ## Related settings & docs
 
@@ -733,6 +1106,36 @@ operation immediately, no restart needed.
 
 - **Status chips look truncated.** They ellipsize to fit the row — hover a
   chip for its full text.
+- **The status strip shows no "Context" figure.** While the model's context
+  window is unknown the cost chip leaves the context share out (hover it for
+  why). It only matters if a send is refused, and then the refusal names the
+  fix — see [When a message doesn't fit the model](console/chat-basics.md#when-a-message-doesnt-fit-the-model).
+- **A small local model gets a plain request.** The assistant's tool list
+  is sized against the context window the send itself uses. When a
+  self-hosted server's window is only a guess (no catalog entry, and the
+  server didn't report one), it is planned as 4,096 tokens; when the tools
+  don't fit, the request carries just your system prompt (with it off,
+  "You are a helpful assistant."), any workspace note, and the conversation,
+  with no tool instructions. A
+  llama.cpp server started with `-c 4096` therefore still answers a first
+  "hi". A model with a known, large window keeps its tools, and so does a
+  cloud model the catalog doesn't list yet (its provider's window is used).
+- **The first reply from a large local model takes minutes.** Loading a
+  model and reading the prompt can take a while on CPU. A self-hosted
+  provider gets 300 seconds for the *first* token
+  (`[chat_defaults] first_token_timeout_seconds`, or
+  `TLDW_FIRST_TOKEN_TIMEOUT_SECONDS`); gaps between later tokens keep the
+  90-second stall window (`stream_stall_timeout_seconds`). After 15 seconds
+  with no answer the reply line reads "Waiting for a reply · 42s · model may
+  be loading" (a cloud model's line has no loading hint). The
+  composer's **Stop** (Ctrl+G) ends the wait. If the wait runs out, the
+  failure says the model may still be loading and names that setting, or
+  suggests a smaller model. A cloud model's first token gets the 90-second
+  window unless you set `first_token_timeout_seconds`; if it runs out, the
+  failure says the provider hasn't started answering and suggests Retry or
+  that same setting. Console stops waiting at once, but a local server may
+  keep reading the abandoned prompt for up to 30 seconds more, until its
+  connection times out.
 - **There's no Tools chip before the first send.** Tools are counted lazily,
   so the chip stays hidden until your first send in the session; it then
   reads e.g. "Tools: 10 ready".
@@ -744,8 +1147,8 @@ operation immediately, no restart needed.
   opens Console directly.
 - **Alt+M does nothing.** Some terminal/multiplexer setups deliver Alt
   chords as a separate Esc + letter, which Console reads as Escape then a
-  typed character. The same popover is always reachable via **Ctrl+P** →
-  "Console: Change model…".
+  typed character. Switch model is always reachable via `/model` or
+  **Ctrl+P** → "Console: Switch model…".
 
 —
 *Verified against working tree — 2026-09-04 (TASK-31429, Context-rail colour
