@@ -18696,13 +18696,17 @@ DELETE FROM keywords
 
         # Message-content substring matching stays a LIKE (substring
         # semantics, mid-word included, are the Library contract) but the
-        # subquery is deliberately UNCORRELATED, mirroring the Console seam
-        # (see _conversation_search_filter): one bounded pass over
-        # ``messages`` per search -- shared by the COUNT, the page query,
-        # and the per-row hit_N projections via this branches list --
-        # instead of a per-candidate correlated scan (task-249's rule:
-        # never a leading-wildcard LIKE inside a correlated EXISTS; ~70 s
-        # for a common term at 150k messages on the correlated form).
+        # subquery is deliberately UNCORRELATED (TASK-34414): one bounded
+        # pass over ``messages`` per search -- shared by the COUNT, the
+        # page query, and the per-row hit_N projections via this branches
+        # list -- instead of a per-candidate correlated scan. Rule: never a
+        # leading-wildcard LIKE inside a correlated EXISTS. Precedent:
+        # task-33261/PERF-02 eliminated the correlated-EXISTS shape on the
+        # sibling search_conversations_page seam (see
+        # _conversation_search_filter); its ~70 s at 150k messages measured
+        # the correlated FTS-MATCH EXISTS there, not this LIKE form. This
+        # branch's own numbers: 8.77 ms -> 3.29/5.99 ms per no-match
+        # search at 50 conversations x 50 messages.
         branches = [
             "LOWER(title) = LOWER(?)",
             "title LIKE ? ESCAPE '\\'",
