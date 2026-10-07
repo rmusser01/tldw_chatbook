@@ -174,3 +174,103 @@ The first follow-up integrated run passed 16 cases but exposed one remount Cance
 The final affected batch passed **18/18** (15 runtime, two mounted and the original eager Allow-all control); both new regressions fail meaningfully before their respective corrections. This adds two distinct passing controls to the previous 71, rather than a fresh rerun of all 73. Existing unrelated baseline failures and static/module-size limits remain as recorded above. Independent source review confirmed both causes and the minimal fixes; final self-review and scoped Ruff pass, with the runtime's 38 existing formatter transformations unchanged. No deadline or original mounted assertion changed.
 
 All four follow-up runs, including both REDs and the 16-pass/one-failure intermediate batch, retired their contained Jobs, native identities, pipes/monitors and private profiles normally. Diagnostic overflow and lookup races were zero in these four runs; this does not revise earlier recorded races or establish general production cleanup. Source fingerprints match. Evidence: checks/hook-review-eager-factory-{red,green}.*, checks/hook-review-remount-token-red.*, checks/hook-review-followup-final.*, and followup-{static,audit}.json in the retained evidence directories. No timing or full sweep was run. Immediate rendered feedback and subsecond adapter entry remain unqualified/unmet; the received-intent admission work is next under ADR-222.
+
+
+## Guard-level preparation continuation, 2026-10-07
+
+At candidate `7d150a5cf5`, the existing original-function observer completed
+three actual file-backed saved turns in 10.040486 / 9.150090 / 8.538632 seconds
+from Send action to immediate adapter entry. All three replies/traces completed;
+source hashes were unchanged, the monitoring slot retired, and overflow and
+unfinished admission entries were zero. The contained run retired normally in
+68.703 seconds and removed its private profile. This 60-target observer is a
+diagnostic, not a matched performance acceptance run.
+
+Its six separate recovery-guard pre-yield entries total 1.103263 / 1.056454 /
+1.089280 seconds per Send. Configuration capture spans are 1.0033 / 1.1197 /
+1.3124 seconds; tool-provider composition is .9007 / .8057 / .9851 seconds.
+Run-log binding is .9040 / .7897 / .1196 seconds. Inclusive spans overlap and
+must not be summed into hypothetical savings. Request serialization remains
+small; the measured remaining issue is repeated application preparation.
+
+TASK-34563.7 now also covers sharing control-record/registry data across the
+related sources within one guard's finite admission. Its original-body RED
+(`activation-guard-preparation-red`) performs two independent nested admissions
+on the exact retained original lease. Both guarded bodies and lease checks
+succeed, but each admission rereads control records and registry twice and
+opens 216 native handles. The intended 1/1 observation assertion fails on
+unchanged product source. The 6.969-second contained run retired normally,
+with zero forced retirement, identity overflow or lookup races. This is count
+evidence; it does not establish the whole-Send target.
+
+Raw receipts remain under
+`.superpowers/sdd/2026-10-06-console-shared-tool-preparation/native-pairs/agent-preparation-spans-current-1.*`
+and `checks/activation-guard-preparation-red.*`.
+
+### Guard-level integrated verification
+
+The guard now lazily shares one original control observation per bootstrap root
+inside its existing synchronous admission walk. Source leases remain separate;
+every source and owner projection still runs in order. A normal helper completes
+all observations and final source/selector/lease checks before execution state
+is published. No observation or prepared permission survives the guarded yield.
+Custom resolve/admit/finalize callbacks retain the ordinary route.
+
+Review caught a mixed-route omission: an empty-owner source admitted through the
+ordinary fallback was absent from the final witness list. The new regression
+retired that exact second lease as the original shared observation completed;
+it reproduced entry into the guarded body before correction. The corrected
+route records and rechecks successful fallback leases with the shared sources.
+Two independent final source reviews found no further actionable issues.
+
+Final integration (`activation-guard-final`) passed **65 targeted cases** in
+201.61 seconds (207.172 seconds including the diagnostic driver). This includes
+17 new guard controls, original finite activation/identity controls, six stock
+nested-agent controls, and ten original provider/MCP/RAG native controls. Real
+control-record/registry reads fell from 2/2 to 1/1 per entry; native opens fell
+from 216 to 145 in both fresh nested entries. Two distinct enrolled files also
+use one observation while retaining their separate leases.
+
+The existing nested-agent observer now observes the extracted original
+permission projection under the actual guard ancestry. Its fault injection
+occurs on a positive projection return before completed admission, not after an
+allowed guard yield. Original provider/publication, source-count and physical
+cleanup assertions remain the outcome oracle; the new completion controls
+separately mutate sources and leases at observation retirement.
+
+All 65 cases pass on the final source. Ruff, formatting and whitespace checks
+pass for all four changed Python files. The contained Job was empty at normal
+parent exit, its native identity and monitor/pipes retired, and the private
+profile was removed without force. The bounded historical PID recorder filled
+its 16-entry capacity (862 overflow events and one lookup race); this is an
+explicit diagnostic-history limitation, not a complete process-history claim.
+The independent contained-Job emptiness proof and individual native ownership
+assertions passed. No deadlines or recorder capacity were widened and no full
+suite was run. Whole-Send timing remains a separate acceptance result below.
+
+### Guard continuation whole-Send result
+
+The unchanged 60-target diagnostic (`activation-guard-spans-final-1`) completed
+three actual saved Sends in **14.716631 / 8.966272 / 12.691052 seconds** to
+adapter entry. The six finite guard entries total .718731 / .544679 / .709525
+seconds, versus 1.103263 / 1.056454 / 1.089280 before this continuation. Counts
+and guard attribution improved; the overall target remains unmet and these raw
+samples do not demonstrate an overall latency gain.
+
+Remaining spans include configuration capture 1.531 / 1.245 / 1.924 seconds,
+provider composition 1.504 / .802 / 1.338 seconds, and run-log binding 1.686 /
+1.001 / .253 seconds. Initial controller hook admission costs .728 / .532 /
+.908 seconds, hook preparation .719 / .670 / .957 seconds, and the postcommit
+fresh hook check 1.550 / .522 / .772 seconds. These inclusive measurements
+overlap; they are not an additive savings estimate. Send 3 used the older UI
+preparation route before custody, requiring an exact fallback-boundary check.
+
+All replies and linked traces completed, with zero remaining dispatch
+checkpoints. Send heartbeat maxima were 420 / 148 / 374 ms and typing max was
+1.174 seconds; universal immediate feedback remains unqualified. The 96.235-
+second diagnostic retained identical source manifests, current function
+bindings, zero event overflow/unfinished admission entries, and retired its
+monitor. Its contained Job, native identity and pipes/monitor retired normally;
+private profile was removed, with zero identity overflow or lookup races.
+No full sweep was run. Work continues on the remaining measured preparation
+and the observed early-receipt fallback under ADR-222.

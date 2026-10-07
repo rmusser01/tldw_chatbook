@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -245,23 +245,32 @@ def _activation_preparation_current() -> bool:
     )
 
 
+def _execution_permission_from_records(
+    owners, path, selected, root, names, records, registry
+):
+    """Evaluate every source and owner against one finite control observation."""
+    if path is not None and not _source_scope_admitted_from_records(
+        names or (), path, records, registry
+    ):
+        return False
+    for owner in owners:
+        _identifier(owner)
+        # The startup projection can inspect enrolled roots; never share its verdict.
+        if not bootstrap._startup_permission_from_records(
+            selected, root, records[0], records[1], registry
+        )[0] or not _activation_permission_from_records(
+            owner, selected, root, names, names is None, records, registry
+        ):
+            return False
+    return True
+
+
 def _prepare_execution_permission(owners, path, lease, selected, root, names) -> bool:
     """Retire one checked control observation before returning admission data."""
     with bootstrap._control_observation(root) as (records, registry):
-        allowed = path is None or _source_scope_admitted_from_records(
-            names or (), path, records, registry
+        allowed = _execution_permission_from_records(
+            owners, path, selected, root, names, records, registry
         )
-        if allowed:
-            for owner in owners:
-                _identifier(owner)
-                # This projection can check enrolled roots: keep it per owner.
-                if not bootstrap._startup_permission_from_records(
-                    selected, root, records[0], records[1], registry
-                )[0] or not _activation_permission_from_records(
-                    owner, selected, root, names, names is None, records, registry
-                ):
-                    allowed = False
-                    break
     # Complete native observation before checking the final source selection.
     if (
         selected != bootstrap.effective_config_path()
@@ -270,6 +279,92 @@ def _prepare_execution_permission(owners, path, lease, selected, root, names) ->
     ):
         raise ValueError("execution_preparation_source_changed")
     return allowed
+
+
+def _execution_preparation_current(scope) -> bool:
+    """Qualify the directly consumed public scope before sharing its read inputs."""
+    factory, code, body, body_code, defaults, keywords, closure = (
+        _EXECUTION_SCOPE_ORIGINAL
+    )
+    return (
+        scope is factory
+        and execution_scope is factory
+        and factory.__code__ is code
+        and factory.__wrapped__ is body
+        and factory.__defaults__ is None
+        and factory.__kwdefaults__ is None
+        and factory.__closure__ is closure
+        and len(closure) == 1
+        and closure[0].cell_contents is body
+        and body.__code__ is body_code
+        and body.__defaults__ is defaults
+        and body.__kwdefaults__ is keywords
+        and type(keywords) is dict  # noqa: E721 -- exact wrapper defaults only.
+        and tuple(dict.items(keywords)) == (("retained", None),)
+        and _activation_preparation_current()
+    )
+
+
+@contextmanager
+def _execution_preparation(ordinary):
+    """Share only pre-yield control data; never an allowed decision or lease."""
+    from .storage_admission import StorageLease
+
+    observations, admitted = {}, []
+    with ExitStack() as scopes:
+
+        def admit(owners, path, lease):
+            # Keep unsupported inputs on execution_scope's original route.
+            if not (
+                type(owners) is tuple  # noqa: E721 -- custom owner collections use the ordinary route.
+                and 0 < len(owners) <= _MAX_SHARED_ACTIVATION_OWNERS
+                and all(
+                    type(owner) is str  # noqa: E721 -- no custom identifier callbacks in shared reads.
+                    and 0 < len(owner) <= 256
+                    and "\0" not in owner
+                    for owner in owners
+                )
+            ):
+                selected = bootstrap.effective_config_path()
+                allowed = ordinary(owners, path, lease)
+                if allowed:
+                    root, names = lease.execution_context(path)
+                    admitted.append((lease, path, selected, root, names))
+                return allowed
+            if not _execution_preparation_current(execution_scope):
+                raise ValueError("execution_preparation_source_changed")
+            selected = bootstrap.effective_config_path()
+            if type(lease) is not StorageLease:
+                raise ValueError("execution_lease_invalid")
+            root, names = lease.execution_context(path)
+            if selected != bootstrap.effective_config_path():
+                return False
+            if root not in observations:
+                observations[root] = scopes.enter_context(
+                    bootstrap._control_observation(root)
+                )
+            records, registry = observations[root]
+            allowed = _execution_permission_from_records(
+                owners, path, selected, root, names, records, registry
+            )
+            admitted.append((lease, path, selected, root, names))
+            return allowed
+
+        yield admit
+    # Complete every root observation before checking any accepted result.
+    for lease, path, selected, root, names in admitted:
+        if selected != bootstrap.effective_config_path() or lease.execution_context(
+            path
+        ) != (root, names):
+            raise ValueError("execution_preparation_source_changed")
+    if admitted and (
+        any(
+            selected != bootstrap.effective_config_path()
+            for _, _, selected, _, _ in admitted
+        )
+        or not _execution_preparation_current(execution_scope)
+    ):
+        raise ValueError("execution_preparation_source_changed")
 
 
 @contextmanager
@@ -350,7 +445,7 @@ class _Approval(BaseModel):
 
 
 def _identifier(value: str) -> str:
-    if type(value) is not str or not 0 < len(value) <= 256 or "\0" in value:
+    if type(value) is not str or not 0 < len(value) <= 256 or "\0" in value:  # noqa: E721 -- activation identifiers are plain strings.
         raise ValueError("activation_identifier_invalid")
     return value
 
@@ -615,6 +710,18 @@ _ACTIVATION_PREPARATION_CALLBACKS = tuple(
         "_activation_permission_from_records",
         "_identifier",
         "_prepare_execution_permission",
+        "_execution_permission_from_records",
     )
     for function in (globals()[name],)
+)
+
+
+_EXECUTION_SCOPE_ORIGINAL = (
+    execution_scope,
+    execution_scope.__code__,
+    execution_scope.__wrapped__,
+    execution_scope.__wrapped__.__code__,
+    execution_scope.__wrapped__.__defaults__,
+    execution_scope.__wrapped__.__kwdefaults__,
+    execution_scope.__closure__,
 )

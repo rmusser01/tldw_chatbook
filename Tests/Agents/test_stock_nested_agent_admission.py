@@ -130,13 +130,16 @@ scope_body=scope_factory.__dict__['__wrapped__']
 assert type(scope_factory) is FunctionType and type(scope_body) is FunctionType
 assert dict(zip(scope_factory.__code__.co_freevars,scope_factory.__closure__))['func'].cell_contents is scope_body
 assert admission_runtime.execution_scope is scope_factory
+permission_body=scope_source._execution_permission_from_records
+admit_sources=admission_runtime.RecoveryAdmissionGuard._admit_sources
+assert type(permission_body) is FunctionType and type(admit_sources) is FunctionType
 execution_factory=admission_runtime.RecoveryAdmissionGuard.execution
 execution_body=execution_factory.__dict__['__wrapped__']
 assert dict(zip(execution_factory.__code__.co_freevars,execution_factory.__closure__))['func'].cell_contents is execution_body
 turn_anchor=service_source._SCOPED_RUN_TURN_ANCHOR
 turn_wrapper,turn_body=turn_anchor[2:4]
 assert AgentService.run_turn is turn_wrapper and turn_wrapper.__dict__['__wrapped__'] is turn_body
-records=tuple(record(value) for value in (scope_factory,scope_body,execution_factory,execution_body,
+records=tuple(record(value) for value in (scope_factory,scope_body,permission_body,admit_sources,execution_factory,execution_body,
         activation.execution,activation.guarded,activation.worker_guard,turn_wrapper,turn_body,
         run_log.capture_scoped_log_source,run_log.scoped_log_source,run_log.RunLogWriter.bind,
         run_log.RunLogWriter._bind_under_scope,storage.acquire_storage))
@@ -189,6 +192,11 @@ def observed(code,offset,value=None):
         assert guard is not None and guard.f_locals.get('self') is activation._guard
         assert guard.f_locals.get('service') is service
         assert guard.f_globals is vars(admission_runtime)
+        assert frame.f_code is permission_body.__code__ and frame.f_globals is vars(scope_source)
+        assert scope_source._execution_permission_from_records is permission_body
+        admission=nearest(frame.f_back,admit_sources.__code__)
+        assert admission is not None and admission.f_locals.get('self') is activation._guard
+        assert admission.f_globals is vars(admission_runtime)
         if value is None:
             owners,path=frame.f_locals['owners'],frame.f_locals['path']
             key=tag(owners,path)
@@ -207,21 +215,18 @@ def observed(code,offset,value=None):
                 else:pause=storage._begin_local_pause()
                 faults.append(route)
             key=tag(frame.f_locals['owners'],frame.f_locals['path'])
-            rows.append(dict(key=key,phase='yield',allowed=value))
+            rows.append(dict(key=key,phase='return',allowed=value))
     except BaseException as error:
         invalid.append(type(error).__name__)
 def started(code,offset):observed(code,offset)
-def yielded(code,offset,value):observed(code,offset,value)
-def returned(code,offset,value):
-    if code is opener.__code__:observed(code,offset,value)
+def returned(code,offset,value):observed(code,offset,value)
 monitor=sys.monitoring
 tool=next(value for value in range(6) if monitor.get_tool(value) is None)
 monitor.use_tool_id(tool,'stock-run-turn-source-count')
 try:
     monitor.register_callback(tool,monitor.events.PY_START,started)
-    monitor.register_callback(tool,monitor.events.PY_YIELD,yielded)
     monitor.register_callback(tool,monitor.events.PY_RETURN,returned)
-    monitor.set_local_events(tool,scope_body.__code__,monitor.events.PY_START|monitor.events.PY_YIELD)
+    monitor.set_local_events(tool,permission_body.__code__,monitor.events.PY_START|monitor.events.PY_RETURN)
     monitor.set_local_events(tool,opener.__code__,monitor.events.PY_RETURN)
     assert monitor.get_events(tool)==0
     @activation.worker_guard(service)
@@ -243,10 +248,9 @@ try:
 finally:
     armed=False
     try:
-        monitor.set_local_events(tool,scope_body.__code__,0)
+        monitor.set_local_events(tool,permission_body.__code__,0)
         monitor.set_local_events(tool,opener.__code__,0)
         monitor.register_callback(tool,monitor.events.PY_START,None)
-        monitor.register_callback(tool,monitor.events.PY_YIELD,None)
         monitor.register_callback(tool,monitor.events.PY_RETURN,None)
         assert monitor.get_events(tool)==0
     finally:
@@ -263,6 +267,8 @@ assert all(current(row) for row in records) and current(opener_record)
 assert all(path.read_bytes()==raw for path,raw in source_bytes.items())
 assert all(module.__file__==item[0] and module.__spec__ is item[1] and module.__spec__.origin==item[2] for module,item in origins.items())
 assert admission_runtime.execution_scope is scope_factory and scope_source.execution_scope is scope_factory
+assert scope_source._execution_permission_from_records is permission_body
+assert admission_runtime.RecoveryAdmissionGuard._admit_sources is admit_sources
 assert AgentService.run_turn is turn_wrapper and service_source._SCOPED_RUN_TURN_ANCHOR is turn_anchor
 assert not foreign_dispatches
 if route in {'stock','custom-selector'}:
@@ -294,7 +300,8 @@ receipt=dict(route=route,source_current=True,physical_cleanup_checked=True,
     sql_handles=len(new_sql),counts=[dict(owners=key[0],path_basename=Path(key[1]).name,
     path_sha256=hashlib.sha256(key[1].encode()).hexdigest(),count=value) for key,value in counts.items()],
     scope_starts=sum(counts.values()),distinct_scope_keys=len(counts),faults=faults,
-    yielded_allowed=[row['allowed'] for row in rows if row['phase']=='yield'],
+    observed_boundary='_execution_permission_from_records',
+    returned_allowed=[row['allowed'] for row in rows if row['phase']=='return'],
     guard_callbacks_replaced=False,global_events=0,tool_retired=True,invalid=invalid,
     source_hashes={str(path):hashlib.sha256(raw).hexdigest() for path,raw in source_bytes.items()})
 (base/'nested-agent-admission-receipt.json').write_text(json.dumps(receipt,indent=2)+'\n',encoding='utf-8')

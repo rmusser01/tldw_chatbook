@@ -50,3 +50,45 @@ Original RED: one owner performs 3 control-record / 2 registry reads (138 native
 Root integrated the two source files after the original count RED, mechanical extraction checks and independent source review. Final checks after native observation completion revalidate selector, exact retained lease selection and direct callback inputs. Shared eligibility is bounded to 1..64 ordinary owner strings; larger/custom/empty inputs preserve the old route. Final integrated scope: 129 passing cases, two original POSIX skips and two explicit existing Windows exclusions. The three MCP/RAG fixture failures reproduced unchanged and passed after test-only Windows TOML path encoding corrections. No guard, deadline or approval requirement changed.
 
 The final observer-free app sample completed three linked replies/traces with no pending checkpoints in 10.304/9.710/8.964 seconds to adapter entry. This proves neither a matched latency gain nor the subsecond/100ms targets. Source hashes and all final contained native retirement receipts are current and normal. Pre-existing lint/format findings, the original DACL fixture residue and platform gaps are recorded in the [phase-attribution report](../../Development/2026-10-06-console-send-phase-attribution.md). No push, merge or full-suite run.
+
+
+## Guard-level continuation (2026-10-07)
+
+The original 60-target `agent-preparation-spans-current-1` observer at
+`7d150a5cf5` records six independent guard admissions per Send, with first-yield
+costs totaling 1.10, 1.06 and 1.09 seconds. The observer is diagnostic and does
+not establish a whole-Send speed improvement. Each admission still invokes
+separate control observations for its related source paths. Extend this task
+under the same ADR-222; AC4 records the additional outcome.
+
+Preserve acquisition and refusal order. A private finite activation preparation
+scope may lazily share the existing checked control observation per bootstrap
+root while the recovery guard walks its original sources. Each source retains
+its actual lease selection, source-scope decision and every startup/owner
+approval. Complete all control observations, then recheck every participating
+lease and selector before the guard publishes execution state or yields to its
+body. No observation survives that boundary, a nested admission, another actor
+or a later call. Direct execution_scope and custom callbacks retain their
+ordinary route; unsupported batch inputs cannot grant authority.
+
+Ownership remains disjoint: shared-preparation source lane owns activation.py
+and admission_runtime.py; baseline lane owns only the new
+Tests/Backup_Recovery/test_activation_guard_preparation.py; integration lane
+reviews call order, compatibility and tests; root owns final integration,
+sequential native runs and this plan/report/task. Root records original 2/2
+control-read RED before source edits, then runs the new controls together with
+original activation, guard and relevant agent/MCP/RAG entry controls. A final
+whole-Send run reports raw timing and retirement separately from read counts.
+
+### Guard continuation outcome
+
+Root took product ownership after the shared lane's read-only analysis, with no
+concurrent source edits. Baseline owned the 17 new guard cases; integration
+owned the narrow original observer translation and final review. Final root
+integration passed all 65 selected cases after both lanes were frozen. The
+mixed fallback regression reproduced a final-lease-check omission before its
+correction. All observations retire before all successful source witnesses are
+rechecked; the normal helper ends before guard yield. Independent reviews and
+scoped lint/format/whitespace checks pass. The phase-attribution report retains
+actual 2/2 to 1/1 read counts, 216 to 145 native opens, failed-run history and the
+bounded PID-history limitation. ADR-222 remains the governing decision.
