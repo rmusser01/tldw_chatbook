@@ -1,8 +1,9 @@
 ---
 id: TASK-34422
 title: Buddy modal fingerprint-gated polling
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:41
+updated_date: 2026-10-07 09:55
 ---
 
 ## Description
