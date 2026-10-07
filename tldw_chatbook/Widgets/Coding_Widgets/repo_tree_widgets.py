@@ -132,6 +132,16 @@ class TreeNode(Widget):
         self.selected = False
         self.children_loaded = False
         self.is_loading = False
+        # Direct handle to the row checkbox, captured at mount time (B20) so
+        # selection cascades never need DOM queries.
+        self.checkbox: Optional[Checkbox] = None
+
+    def on_mount(self) -> None:
+        """Capture the row checkbox handle (B20)."""
+        try:
+            self.checkbox = self.query_one(".tree-checkbox", Checkbox)
+        except Exception:
+            self.checkbox = None
 
     def compose(self) -> ComposeResult:
         """Compose the tree node UI."""
@@ -292,6 +302,10 @@ class TreeView(VerticalScroll):
 
         super().__init__(**kwargs)
         self.nodes: Dict[str, TreeNode] = {}
+        # Direct-children index: directory path -> its direct child paths
+        # (B20). Built as nodes are created; selection cascades walk this
+        # instead of scanning every node with a prefix match.
+        self._children_by_dir: Dict[str, List[str]] = {}
         self.selection: Set[str] = set()
         self.on_selection_change = on_selection_change
         self.on_node_expanded = on_node_expanded
@@ -313,6 +327,7 @@ class TreeView(VerticalScroll):
         # Clear existing content
         await container.remove_children()
         self.nodes.clear()
+        self._children_by_dir.clear()
         self.selection.clear()
 
         if not tree_data:
@@ -360,6 +375,7 @@ class TreeView(VerticalScroll):
             )
 
             self.nodes[path] = node
+            self._register_child(parent_path, path)
             await parent_container.mount(node)
 
             # If item has children and is expanded, add them
@@ -395,6 +411,7 @@ class TreeView(VerticalScroll):
             )
 
             self.nodes[child_path] = child_node
+            self._register_child(path, child_path)
             child_nodes.append(child_node)
 
         # Insert children after the parent node
@@ -411,6 +428,27 @@ class TreeView(VerticalScroll):
         except Exception:
             pass
 
+    def _register_child(self, parent_path: str, child_path: str) -> None:
+        """Record a direct child under its directory in the child index (B20)."""
+        if not parent_path:
+            return
+        children = self._children_by_dir.setdefault(parent_path, [])
+        if child_path not in children:
+            children.append(child_path)
+
+    def _iter_descendants(self, path: str):
+        """Yield every live descendant path of a directory via the child index.
+
+        Stale entries left behind by ``collapse_node`` are skipped, matching
+        the old scan of ``self.nodes`` for the ``path + "/"`` prefix.
+        """
+        stack = list(self._children_by_dir.get(path, ()))
+        while stack:
+            child_path = stack.pop()
+            if child_path in self.nodes:
+                yield child_path
+                stack.extend(self._children_by_dir.get(child_path, ()))
+
     async def collapse_node(self, path: str) -> None:
         """Collapse a node and remove its children."""
         node = self.nodes.get(path)
@@ -418,12 +456,7 @@ class TreeView(VerticalScroll):
             return
 
         # Find all child nodes to remove
-        self.query_one("#tree-container", Container)
-        nodes_to_remove = []
-
-        for child_path, child_node in self.nodes.items():
-            if child_path.startswith(path + "/"):
-                nodes_to_remove.append(child_node)
+        nodes_to_remove = [self.nodes[p] for p in self._iter_descendants(path)]
 
         # Remove child nodes
         for child_node in nodes_to_remove:
@@ -442,30 +475,22 @@ class TreeView(VerticalScroll):
         node = self.nodes.get(path)
         if node:
             node.selected = selected
-            # Update checkbox if it exists
-            try:
-                checkbox = node.query_one(f"#select-{path}", Checkbox)
-                checkbox.value = selected
-            except Exception:
-                pass
+            # Update checkbox via the stored handle (B20: no DOM query)
+            if node.checkbox is not None:
+                node.checkbox.value = selected
 
-        # If it's a directory, cascade to children
+        # If it's a directory, cascade to children via the child index (B20)
         if node and node.is_directory:
-            for child_path, child_node in self.nodes.items():
-                if child_path.startswith(path + "/"):
-                    child_node.selected = selected
-                    if selected:
-                        self.selection.add(child_path)
-                    else:
-                        self.selection.discard(child_path)
-                    # Update child checkbox
-                    try:
-                        child_checkbox = child_node.query_one(
-                            f"#select-{child_path}", Checkbox
-                        )
-                        child_checkbox.value = selected
-                    except Exception:
-                        pass
+            for child_path in self._iter_descendants(path):
+                child_node = self.nodes[child_path]
+                child_node.selected = selected
+                if selected:
+                    self.selection.add(child_path)
+                else:
+                    self.selection.discard(child_path)
+                # Update child checkbox via its stored handle
+                if child_node.checkbox is not None:
+                    child_node.checkbox.value = selected
 
         # Update parent selection state if needed
         self._update_parent_selection_state(path)
@@ -547,12 +572,11 @@ class TreeView(VerticalScroll):
         if not parent_node or not parent_node.is_directory:
             return
 
-        # Check all children of this parent
+        # Check all children of this parent (direct children via the index)
         children_paths = [
             path
-            for path in self.nodes.keys()
-            if path.startswith(parent_path + "/")
-            and path.count("/") == parent_path.count("/") + 1
+            for path in self._children_by_dir.get(parent_path, ())
+            if path in self.nodes
         ]
 
         if not children_paths:
@@ -576,12 +600,9 @@ class TreeView(VerticalScroll):
             parent_node.selected = False
             self.selection.discard(parent_path)
 
-        # Update parent checkbox
-        try:
-            parent_checkbox = parent_node.query_one(f"#select-{parent_path}", Checkbox)
-            parent_checkbox.value = parent_node.selected
-        except Exception:
-            pass
+        # Update parent checkbox via the stored handle (B20: no DOM query)
+        if parent_node.checkbox is not None:
+            parent_node.checkbox.value = parent_node.selected
 
         # Recursively update grandparent
         self._update_parent_selection_state(parent_path)

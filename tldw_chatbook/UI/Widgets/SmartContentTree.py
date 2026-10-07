@@ -39,6 +39,10 @@ class ContentNodeData:
     metadata: Optional[Dict[str, Any]] = None
     selectable: bool = True
     loaded: bool = True
+    # Precomputed lowercase-searchable text (B18): built once when the node
+    # is added to the tree so filtering never re-joins title/subtitle/metadata
+    # per keystroke. Left None by callers; the tree fills it in at load time.
+    search_text: Optional[str] = None
 
 
 class SelectionMode(Enum):
@@ -59,6 +63,9 @@ class ContentSelectionChanged(Message):
 
 class SmartContentTree(Container):
     """Enhanced tree widget with search and filtering capabilities."""
+
+    # Debounce window for search-as-you-type filter passes (seconds).
+    SEARCH_DEBOUNCE_SECONDS = 0.3
 
     # Reactive properties
     search_query = reactive("")
@@ -94,6 +101,9 @@ class SmartContentTree(Container):
         self.all_nodes: List[TreeNode] = []
         self.content_nodes: Dict[str, TreeNode] = {}  # id -> node mapping
         self.original_labels: Dict[TreeNode, str] = {}  # Store original labels
+
+        # Debounce timer handle for search-as-you-type filter passes (B18).
+        self._search_debounce_timer = None
 
     def compose(self) -> ComposeResult:
         """Compose the tree UI."""
@@ -173,68 +183,108 @@ class SmartContentTree(Container):
         # Stats
         yield Static("0 items selected", id="tree-stats", classes="tree-stats")
 
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
         """Called when widget is mounted."""
-        # Load initial content if callback provided
+        # Load initial content off the UI thread (B18): the callback may hit
+        # databases or the filesystem, so it runs in a thread worker and the
+        # population hops back via call_from_thread.
         if self.load_content_callback:
-            await self.load_all_content()
+            self.run_worker(
+                self._load_content_worker, exclusive=True, thread=True
+            )
+
+    def _load_content_worker(self) -> None:
+        """Worker: run the load callback off the UI thread (B18)."""
+        try:
+            content_data = self.load_content_callback()
+        except Exception as e:
+            logger.error(f"Error loading content: {e}")
+            self.app.call_from_thread(self._report_load_failure, e)
+            return
+        self.app.call_from_thread(self._populate_tree, content_data)
+
+    def _report_load_failure(self, error: Exception) -> None:
+        """Surface a load failure on the UI thread."""
+        self.notify(f"Error loading content: {str(error)}", severity="error")
 
     async def load_all_content(self) -> None:
-        """Load all content into the tree."""
+        """Load all content into the tree (legacy async entry point)."""
         if not self.load_content_callback:
             return
 
         try:
-            content_data = self.load_content_callback()
-            tree = self.query_one("#content-tree", Tree)
-            tree.clear()
-            self.all_nodes.clear()
-            self.content_nodes.clear()
-            self.original_labels.clear()
-
-            root = tree.root
-
-            # Create category nodes
-            category_nodes = {
-                ContentType.CONVERSATION: root.add("💬 Conversations", expand=True),
-                ContentType.NOTE: root.add("📝 Notes", expand=True),
-                ContentType.CHARACTER: root.add("👤 Characters", expand=True),
-                ContentType.MEDIA: root.add("🎬 Media", expand=False),
-                ContentType.PROMPT: root.add("💡 Prompts", expand=False),
-                ContentType.KEPT_BRIEFING: root.add("📰 Kept Briefings", expand=False),
-            }
-
-            # Add content nodes
-            for content_type, items in content_data.items():
-                parent_node = category_nodes.get(content_type)
-                if not parent_node:
-                    continue
-
-                for item in items:
-                    label = item.title
-                    if item.subtitle:
-                        label += f" ({item.subtitle})"
-
-                    node = parent_node.add(label)
-                    node.data = item
-
-                    # Store references
-                    self.all_nodes.append(node)
-                    self.content_nodes[item.id] = node
-                    self.original_labels[node] = label
-
-                    # Restore selection state
-                    if item.id in self.selected_content.get(item.type, set()):
-                        self._mark_node_selected(node, True)
-
-            # Update counts
-            total_items = sum(len(items) for items in content_data.values())
-            self.filtered_count = total_items
-            self._update_stats()
-
+            self._populate_tree(self.load_content_callback())
         except Exception as e:
             logger.error(f"Error loading content: {e}")
             self.notify(f"Error loading content: {str(e)}", severity="error")
+
+    @staticmethod
+    def _build_search_text(item: ContentNodeData) -> str:
+        """Build the searchable haystack for a node payload.
+
+        Byte-parity with the historical per-keystroke join: the title and
+        subtitle are lowercased, metadata values are joined verbatim (the
+        query is lowercased, so verbatim uppercase metadata never matched
+        before either).
+        """
+        searchable_text = f"{item.title} {item.subtitle or ''}".lower()
+        if item.metadata:
+            searchable_text += " " + " ".join(
+                str(v) for v in item.metadata.values()
+            )
+        return searchable_text
+
+    def _populate_tree(self, content_data: Dict[ContentType, List[ContentNodeData]]) -> None:
+        """Populate the tree from loaded content data (runs on the UI thread)."""
+        tree = self.query_one("#content-tree", Tree)
+        tree.clear()
+        self.all_nodes.clear()
+        self.content_nodes.clear()
+        self.original_labels.clear()
+
+        root = tree.root
+
+        # Create category nodes
+        category_nodes = {
+            ContentType.CONVERSATION: root.add("💬 Conversations", expand=True),
+            ContentType.NOTE: root.add("📝 Notes", expand=True),
+            ContentType.CHARACTER: root.add("👤 Characters", expand=True),
+            ContentType.MEDIA: root.add("🎬 Media", expand=False),
+            ContentType.PROMPT: root.add("💡 Prompts", expand=False),
+            ContentType.KEPT_BRIEFING: root.add("📰 Kept Briefings", expand=False),
+        }
+
+        # Add content nodes
+        for content_type, items in content_data.items():
+            parent_node = category_nodes.get(content_type)
+            if not parent_node:
+                continue
+
+            for item in items:
+                label = item.title
+                if item.subtitle:
+                    label += f" ({item.subtitle})"
+
+                # Precompute the searchable text once per node (B18).
+                if item.search_text is None:
+                    item.search_text = self._build_search_text(item)
+
+                node = parent_node.add(label)
+                node.data = item
+
+                # Store references
+                self.all_nodes.append(node)
+                self.content_nodes[item.id] = node
+                self.original_labels[node] = label
+
+                # Restore selection state
+                if item.id in self.selected_content.get(item.type, set()):
+                    self._mark_node_selected(node, True)
+
+        # Update counts
+        total_items = sum(len(items) for items in content_data.values())
+        self.filtered_count = total_items
+        self._update_stats()
 
     async def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         """Handle tree node selection."""
@@ -270,7 +320,7 @@ class SmartContentTree(Container):
         button_id = event.button.id
 
         if button_id == "apply-filter":
-            await self._apply_filters()
+            self._apply_filters()
         elif button_id == "select-all":
             self._bulk_select(SelectionMode.ALL)
         elif button_id == "select-none":
@@ -295,50 +345,60 @@ class SmartContentTree(Container):
         content_type = type_map.get(checkbox_id)
         if content_type:
             self.category_filters[content_type] = event.value
-            await self._apply_filters()
+            self._apply_filters()
 
-    async def on_input_changed(self, event: Input.Changed) -> None:
-        """Handle search input changes."""
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Handle search input changes (debounced -- one sweep per settled query)."""
         if event.input.id == "content-search":
-            self.search_query = event.value.lower()
-            # Auto-apply filters on search change
-            await self._apply_filters()
+            query = event.value.lower()
+            if self._search_debounce_timer is not None:
+                self._search_debounce_timer.stop()
+            self._search_debounce_timer = self.set_timer(
+                self.SEARCH_DEBOUNCE_SECONDS,
+                lambda: self._apply_search_query(query),
+            )
 
-    async def _apply_filters(self) -> None:
-        """Apply search and category filters to the tree."""
+    def _apply_search_query(self, query: str) -> None:
+        """Apply the settled search query with a single filter pass (B18)."""
+        self._search_debounce_timer = None
+        self.search_query = query
+        self._apply_filters()
+
+    def _apply_filters(self) -> None:
+        """Apply search and category filters to the tree.
+
+        Reads the per-node precomputed ``search_text`` (B18) and only writes
+        ``node.display`` when visibility actually changes.
+        """
         visible_count = 0
+        query = self.search_query
 
         for node in self.all_nodes:
             if not hasattr(node, "data") or not node.data:
                 continue
 
             item = node.data
+            visible = self.category_filters.get(item.type, True)
 
-            # Check category filter
-            if not self.category_filters.get(item.type, True):
-                node.display = False
-                continue
+            # Check search query against the precomputed haystack.
+            if visible and query:
+                search_text = item.search_text
+                if search_text is None:
+                    # Node added outside _populate_tree: build once lazily.
+                    search_text = item.search_text = self._build_search_text(item)
+                if query not in search_text:
+                    visible = False
 
-            # Check search query
-            if self.search_query:
-                searchable_text = f"{item.title} {item.subtitle or ''}".lower()
-                if item.metadata:
-                    # Include metadata in search
-                    searchable_text += " " + " ".join(
-                        str(v) for v in item.metadata.values()
-                    )
+            # Only touch display when visibility actually changes.
+            if getattr(node, "display", None) is not visible:
+                node.display = visible
 
-                if self.search_query not in searchable_text:
-                    node.display = False
-                    continue
+            if visible:
+                visible_count += 1
 
-            # Node passes all filters
-            node.display = True
-            visible_count += 1
-
-            # Ensure parent is expanded if node is visible
-            if node.parent and hasattr(node.parent, "expand"):
-                node.parent.expand()
+                # Ensure parent is expanded if node is visible
+                if node.parent and hasattr(node.parent, "expand"):
+                    node.parent.expand()
 
         self.filtered_count = visible_count
         self._update_stats()

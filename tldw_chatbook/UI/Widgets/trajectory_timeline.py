@@ -25,6 +25,7 @@ from rich.text import Text
 from textual.binding import Binding
 from textual.events import MouseEvent
 from textual.message import Message
+from textual.timer import Timer
 from textual.widget import Widget
 
 from tldw_chatbook.Chat.trajectory import (
@@ -50,6 +51,10 @@ __all__ = [
 LANE_COUNT = 4
 LANE_NAMES = ("Input", "Model", "Tools", "Agents")
 LANE_LABEL_WIDTH = max(map(len, LANE_NAMES)) + 1
+
+#: B21: cadence for coalesced mid-drag strip repaints (~30 fps). Module
+#: constant per repo convention; no new config key.
+DRAG_REFRESH_SECONDS = 0.033
 
 #: Total rendered lines: LANE_COUNT lane rows + an axis row + the caption.
 STRIP_HEIGHT = LANE_COUNT + 2
@@ -414,6 +419,15 @@ class TrajectoryTimeline(Widget):
         #: TASK-21134: set while a mid-drag brush emission is coalescing.
         #: See ``_set_brush``.
         self._brush_emit_pending = False
+        #: B21: mid-drag repaint coalescing -- one ``refresh`` per ~33 ms.
+        self._drag_refresh_timer: Timer | None = None
+        #: B21: per-lane precomputed record lists (parallel to timed order)
+        #: and the key->record map, rebuilt by ``set_snapshot`` so a frame
+        #: never scans ``model.timed_records``.
+        self._lane_records: tuple[tuple[TrajectoryRecord, ...], ...] = tuple(
+            () for _ in range(LANE_COUNT)
+        )
+        self._record_by_key: dict[str, TrajectoryRecord] = {}
 
     # -- state --------------------------------------------------------------
 
@@ -467,6 +481,7 @@ class TrajectoryTimeline(Widget):
         old_anchor = self._range_anchor
         records = [record for turn in snapshot.turns for record in turn.records]
         self._model = TimelineModel(records, record_keys=record_keys)
+        self._rebuild_render_index()
         domain = self._model.domain
         keys = {self._model.record_key(record) for record in self._model.timed_records}
         if domain is None:
@@ -490,9 +505,31 @@ class TrajectoryTimeline(Widget):
         self._selected = old_selected if old_selected in keys else None
         self._range_anchor = old_anchor if old_anchor in keys else None
         self._drag_x = None
+        self._cancel_drag_refresh()
         self.remove_class("h-1", "h-4", "h-6")
         self.add_class("h-6" if self._model.has_data else "h-1")
         self.refresh()
+
+    def _rebuild_render_index(self) -> None:
+        """Precompute the per-lane record lists and the key->record map (B21).
+
+        ``render``/``_lane_line`` consume only these, so a frame never
+        re-scans ``model.timed_records`` per lane or per boundary. Lane
+        lists preserve ``timed_records`` order and the map keeps the
+        first record for a key (matching the old ``next(...)`` lookup).
+        """
+        lane_buckets: list[list[TrajectoryRecord]] = [
+            [] for _ in range(LANE_COUNT)
+        ]
+        record_by_key: dict[str, TrajectoryRecord] = {}
+        for record, lane in zip(
+            self._model.timed_records, self._model.lanes
+        ):
+            if 0 <= lane < LANE_COUNT:
+                lane_buckets[lane].append(record)
+            record_by_key.setdefault(self._model.record_key(record), record)
+        self._lane_records = tuple(tuple(bucket) for bucket in lane_buckets)
+        self._record_by_key = record_by_key
 
     # -- rendering ----------------------------------------------------------
 
@@ -526,9 +563,8 @@ class TrajectoryTimeline(Widget):
                 continue
             col = int(TimelineModel.fraction(boundary.time, window) * width)
             cells[min(max(col, 0), width - 1)] = (TURN_BOUNDARY_CHAR, _CAPTION_STYLE)
-        for record, record_lane in zip(model.timed_records, model.lanes):
-            if record_lane != lane:
-                continue
+        # B21: only this lane's records are visited (precomputed order).
+        for record in self._lane_records[lane]:
             cols = self._record_columns(record, width, window)
             if cols is None:
                 continue
@@ -544,14 +580,8 @@ class TrajectoryTimeline(Widget):
                 continue
             col = int(TimelineModel.fraction(boundary.time, window) * width)
             col = min(max(col, 0), width - 1)
-            record = next(
-                (
-                    item
-                    for item in model.timed_records
-                    if model.record_key(item) == boundary.record_key
-                ),
-                None,
-            )
+            # B21: O(1) key lookup replaces the linear next(...) scan.
+            record = self._record_by_key.get(boundary.record_key)
             if (
                 record is not None
                 and model.interval(record)[0] == model.interval(record)[1]
@@ -657,7 +687,13 @@ class TrajectoryTimeline(Widget):
         if self._brush == brush:
             return
         self._brush = brush
-        self.refresh()
+        if self._drag_x is not None:
+            # B21: mid-drag, coalesce repaints to at most one per ~33 ms --
+            # the brush state above still tracks the mouse on every move,
+            # only the strip repaint is batched.
+            self._schedule_drag_refresh()
+        else:
+            self.refresh()
         if not emit:
             return
         if self._drag_x is not None:
@@ -681,6 +717,26 @@ class TrajectoryTimeline(Widget):
             return
         self._brush_emit_pending = True
         self.call_after_refresh(self._flush_brush_emit)
+
+    def _schedule_drag_refresh(self) -> None:
+        """Queue one coalesced mid-drag strip repaint (~33 ms cadence, B21)."""
+        if self._drag_refresh_timer is not None:
+            return
+        self._drag_refresh_timer = self.set_timer(
+            DRAG_REFRESH_SECONDS, self._flush_drag_refresh
+        )
+
+    def _flush_drag_refresh(self) -> None:
+        """Repaint the strip once for the batched drag moves."""
+        self._drag_refresh_timer = None
+        if self.is_mounted:
+            self.refresh()
+
+    def _cancel_drag_refresh(self) -> None:
+        """Drop a pending drag repaint (the gesture is ending)."""
+        if self._drag_refresh_timer is not None:
+            self._drag_refresh_timer.stop()
+            self._drag_refresh_timer = None
 
     def _flush_brush_emit(self) -> None:
         """Emit the brush the drag has reached, if one is still pending."""
@@ -773,6 +829,9 @@ class TrajectoryTimeline(Widget):
             return
         self.release_mouse()
         start_x, self._drag_x = self._drag_x, None
+        # B21: the gesture is ending -- drop any pending coalesced repaint
+        # so the final brush below repaints synchronously.
+        self._cancel_drag_refresh()
         if not self._drag_moved:
             # A bar click is only selection INTENT. The host may reject it
             # under search/structured filters, or accept it and atomically
