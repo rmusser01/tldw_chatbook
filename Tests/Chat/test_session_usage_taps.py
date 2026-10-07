@@ -311,7 +311,11 @@ def test_responses_stream_records_completed_usage_once():
     assert snap.calls == 1
 
 
-def test_gateway_sse_usage_records_exactly_once():
+def test_gateway_sse_relay_does_not_double_record():
+    """SSE lines the gateway RELAYS (which may come from provider generators
+    that already recorded inside themselves) feed the console signal but
+    NOT the session ledger; gateway-native HTTP records at its own sites.
+    """
     from tldw_chatbook.Chat.console_provider_gateway import _content_from_sse_data
 
     class _Signals:
@@ -334,9 +338,31 @@ def test_gateway_sse_usage_records_exactly_once():
     )
     _content_from_sse_data(line, signals=signals)
     snap = session_usage().snapshot()
-    assert snap.exact_tokens == 6
-    assert snap.calls == 1  # ledger and console signal each saw it once
-    assert len(signals.payloads) == 1
+    assert snap.calls == 0  # no ledger double-record on relayed lines
+    assert len(signals.payloads) == 1  # console signal unaffected
+
+
+def test_legacy_line_stream_records_usage_on_exhaustion():
+    """groq/deepseek/mistral/openrouter streaming returns LegacyLineStream
+    BEFORE their `_log_usage_metrics` funnel; the shim's natural exhaustion
+    is the only place those streams record (cancelled streams skip it).
+    """
+    from unittest.mock import MagicMock
+
+    from tldw_chatbook.LLM_Calls.legacy_line_stream import LegacyLineStream
+
+    stream = MagicMock()
+    stream.__next__.side_effect = StopIteration
+    stream.terminal_turn.usage = {
+        "prompt_tokens": 8,
+        "completion_tokens": 7,
+        "total_tokens": 15,
+    }
+    lines = list(LegacyLineStream(stream))
+    assert lines == ["data: [DONE]\n\n"]
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 15
+    assert snap.calls == 1
 
 
 @pytest.mark.parametrize(

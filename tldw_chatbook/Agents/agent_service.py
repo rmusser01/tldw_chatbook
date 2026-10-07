@@ -1728,7 +1728,6 @@ def _budget_weighted_tokens(resp, *, provider: str, model: str) -> int | None:
     flat = _usage_total_tokens(resp)
     try:
         from tldw_chatbook.Chat.provider_usage import ProviderUsage
-        from tldw_chatbook.Chat.session_usage import session_usage
         from tldw_chatbook.LLM_Calls.pricing_catalog import get_pricing_catalog
     except Exception:  # noqa: BLE001 -- accounting must never break a run
         return flat
@@ -1742,10 +1741,6 @@ def _budget_weighted_tokens(resp, *, provider: str, model: str) -> int | None:
         return flat
     if usage is None:
         return flat
-    # Session ledger boundary tap (issue #365): sub-agent fleets run their
-    # own HTTP, so this response did not flow through any provider-function
-    # tap. `record_exact` never raises.
-    session_usage().record_exact(usage)
     # `_usage_total_tokens` only understands the OpenAI shape
     # (`total_tokens`, or `prompt_tokens`+`completion_tokens`), and returns
     # None for Anthropic's native block (`input_tokens`/

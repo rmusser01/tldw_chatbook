@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 
+from tldw_chatbook.Chat.session_usage import session_usage
 from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatStream, HostedChatTurn
 
 _DONE_SENTINEL = "data: [DONE]\n\n"
@@ -43,6 +44,19 @@ class LegacyLineStream(Iterator[str]):
             event = next(self._stream)
         except StopIteration:
             self._sentinel_sent = True
+            # Session ledger boundary tap (issue #365): the terminal turn's
+            # usage is final only at natural exhaustion; groq/deepseek/
+            # mistral/openrouter streaming returns this shim BEFORE their
+            # `_log_usage_metrics` funnel, so this is the only place those
+            # streams record. A consumer Stop (close without exhaustion)
+            # skips this -- cancelled streams undercount by policy.
+            # `record_provider_payload` never raises.
+            try:
+                usage = self._stream.terminal_turn.usage
+            except Exception:
+                usage = None
+            if usage:
+                session_usage().record_provider_payload(usage)
             return _DONE_SENTINEL
         return f"data: {json.dumps(event)}\n"
 
