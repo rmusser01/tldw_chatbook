@@ -2508,3 +2508,8 @@ claimed. The [portable report and manifest](../../Docs/superpowers/qa/2026-10-06
 bind raw setup/failure history, exact source snapshots, measurement scope and
 unchanged baseline static diagnostics. These targeted checks do not renew the
 original completed PR budgets or certify broader platform/capture coverage.
+
+
+### Finite Change Review transcript reads (2026-10-07)
+
+The existing async transcript refresh awaits one stock marker read through the existing finite preparation-read owner. Both original anchor/snapshot queries share the captured AgentRuns database and one counted worker interval. The original public synchronous/custom/memory route remains available. Runtime disposal observes physical read retirement; repeated cancellation cannot abandon the worker. The worker closes only its newly acquired exact connection after leaving the counted interval, preserving a borrowed connection or a foreign replacement. The loop rechecks Runtime, coordinator, bridge, database, selected conversation and publication revision before caching; stale results publish nothing and the next existing refresh retries. No new scheduler, timer, permission cache, or performance-limit change is introduced.

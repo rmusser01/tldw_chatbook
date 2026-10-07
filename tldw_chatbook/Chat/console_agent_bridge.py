@@ -10590,39 +10590,9 @@ class ConsoleAgentBridge:
         self, conversation_id: str
     ) -> list[tuple[str | None, list[ConsoleChatMessage]]]:
         """Return anchored blocks containing only durable Change Review rows."""
-        database = self._db
-        original, code, defaults = _CHANGE_REVIEW_LIST_RUNS_SOURCE
-        reader = database.list_runs
-        if (
-            type(database) is AgentRunsDB
-            and getattr(reader, "__func__", None) is original
-            and original.__code__ is code
-            and original.__defaults__ is defaults
-        ):
-            records = database.list_change_review_run_anchors(conversation_id)
-        else:
-            # Preserve the existing callback contract for custom DB adapters.
-            records = [
-                record
-                for record in reader(conversation_id, include_superseded=False)
-                if record["agent_kind"] == AGENT_KIND_PRIMARY
-            ]
-            records.reverse()
-        snapshots: dict[str, list[dict]] = {}
-        try:
-            for row in self._db.change_snapshots_for_conversation(conversation_id):
-                snapshots.setdefault(str(row["run_id"]), []).append(row)
-        except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
-            snapshots = {}
-        return [
-            (
-                record.get("assistant_message_id"),
-                self._change_review_marker_block(
-                    record, snapshots.get(str(record.get("id")), ())
-                ),
-            )
-            for record in records
-        ]
+        return _read_change_review_markers(
+            self._db, conversation_id, self._change_review_marker_block
+        )
 
     def resume_marker_messages(
         self,
@@ -11787,3 +11757,75 @@ _SUBAGENT_BADGE_COUNT_CALLBACK = (
     _badge_count_getattr_static(ConsoleAgentBridge, "__dict__"),
 )
 del _badge_count_getattr_static
+
+
+def _read_change_review_markers(
+    database, conversation_id, render, *, require_current=None
+):
+    """Read one captured database, preserving public ordering and error handling."""
+    if require_current is not None:
+        require_current()
+    original, code, defaults = _CHANGE_REVIEW_LIST_RUNS_SOURCE
+    reader = database.list_runs
+    if (
+        type(database) is AgentRunsDB
+        and getattr(reader, "__func__", None) is original
+        and original.__code__ is code
+        and original.__defaults__ is defaults
+    ):
+        records = database.list_change_review_run_anchors(conversation_id)
+    else:
+        # Preserve the existing callback contract for custom DB adapters.
+        records = [
+            record
+            for record in reader(conversation_id, include_superseded=False)
+            if record["agent_kind"] == AGENT_KIND_PRIMARY
+        ]
+        records.reverse()
+    if require_current is not None:
+        require_current()
+    snapshots: dict[str, list[dict]] = {}
+    try:
+        for row in database.change_snapshots_for_conversation(conversation_id):
+            snapshots.setdefault(str(row["run_id"]), []).append(row)
+    except Exception:  # noqa: BLE001 -- transcript refresh must degrade safely
+        snapshots = {}
+    if require_current is not None:
+        require_current()
+    return [
+        (
+            record.get("assistant_message_id"),
+            render(record, snapshots.get(str(record.get("id")), ())),
+        )
+        for record in records
+    ]
+
+
+_CHANGE_REVIEW_MARKER_SOURCES = tuple(
+    (
+        name,
+        vars(ConsoleAgentBridge)[name],
+        (
+            (
+                function,
+                function.__code__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+            ),
+        ),
+    )
+    for name in ("change_review_marker_messages", "_change_review_marker_block")
+    for descriptor in (vars(ConsoleAgentBridge)[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)
+
+_CHANGE_REVIEW_MARKER_HELPER_SOURCE = (
+    _read_change_review_markers,
+    _read_change_review_markers.__code__,
+    _read_change_review_markers.__defaults__,
+    _read_change_review_markers.__kwdefaults__,
+    tuple(_read_change_review_markers.__kwdefaults__.items()),
+)

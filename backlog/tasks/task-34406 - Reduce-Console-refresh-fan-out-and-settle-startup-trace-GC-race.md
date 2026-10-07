@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-07 18:42'
+updated_date: '2026-10-07 19:21'
 labels: []
 dependencies: []
 ---
@@ -62,6 +62,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #42 Change Review transcript marker reads preserve primary-run order, assistant anchors and durable snapshot contents without fetching or decoding unrelated legacy/child step logs; existing custom database callbacks retain their preceding contract.
 - [x] #43 Character picker reads on the exact retained file-backed Characters database retire their newly opened worker connection before publishing or propagating cancellation; original profile-selection fences and borrowed, memory and custom behavior remain. Actual handles and registered resource ownership are checked, without weakening the original global storage drain.
 - [x] #44 The original real Hook wiring fixture retires its creator-owned runs database and newly acquired default Workspace connection before returning, while retaining all original behavior assertions and preserving previously borrowed connections.
+- [x] #45 The original real-Git marker rendering fixture retires its creator-owned run database and newly acquired default tool-registry handle while preserving borrowers, so the original subsequent global history drain passes unchanged.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -410,6 +411,10 @@ Original Hook fixture cleanup investigation: run only test_run_reply_wraps_the_r
 Hook fixture confirmed: unchanged original test passes but leaves exactly two registered MainThread native resources, AgentRunsDB runs.db and the default file-tools WorkspaceDB; both survive session finish with zero active operations. Scope cleanup with ExitStack around the original fixture body. Register db.close immediately after its own successful construction. For an existing stock default registry, enter the established operation_owned_connection context to preserve an existing borrower. If this test lazily constructs the default registry, close only its newly created stock database on this same thread at exit. Do not reset the global registry, mutate leases, alter any behavior assertion or weaken global drain. Re-run unchanged original case with the same passive witness and require zero new retained resources.
 
 Pending-close diagnosis: preserve the existing prepared_close_database_not_retired exception and original deadline; attach its already-collected scalar resource census as an exception note so the private-profile failure report retains the owning thread and exact unsettled resource counts. Current CI truncates the preceding stdout before these facts. No production behavior or cleanup acceptance changes. ADR required: no; ADR path: N/A; reason: failure-only test diagnostics.
+
+AC20 current-source refinement: the transcript caller is already async, so await one finite marker read there before capturing current messages instead of adding a detached scheduler or timer. First qualify the original current narrow anchor SELECT using passive monitoring and a bounded native hold: the same loop must progress while that exact reader is held. The old list_runs gate predates the accepted narrow-query change and is excluded. Keep public synchronous/custom projection behavior. Stock capture binds the actual Runtime/bridge/database/CID/revision and original readers; both queries use the same captured database and worker connection. Existing preparation-read ownership handles repeated cancellation and Runtime disposal. Publication rechecks current loop ownership; owned A retires while borrowed/foreign B remains intact. ADR required: existing ADR126 amendment before product code; no new ADR. Acceptance retains original query semantics, native guard and performance budgets.
+
+Marker integration prerequisites: three unchanged detached transcript tests require bootstrap_profile at collection because their imports bind the original config source. Declare only those markers. The original real-Git marker test creates an AgentRunsDB and uses the lazy file-tools registry but never retires those creator-owned resources; the following unchanged global history drain now exposes that leak. Add the same exact creator/borrowed lifetime scope already verified in the Hook fixture, preserving all original statements and assertions. ADR required: no new ADR; existing ADR126 ownership applies.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -935,3 +940,17 @@ The original supported-host and real-App resume controls both reached exit while
 ## Skill builder physical custody verification checkpoint
 
 Original normal1 passed while cancel and repeated-cancel2 failed with the exact builder Future still running after the waiter finished and its singleflight lock released. The existing async ensure now retains its original to_thread callback in one standard Task, drains repeated cancellation before releasing that lock, preserves original cancellation/callback error priority and retains an injected winner. A proposed create_task variant exposed a separate positively reproduced pure eager-factory refusal gap; it was never installed. Direct Task construction avoids adding an internal custom-factory callback that the original direct await never invoked. Two independent reviews ran all ten selected-body controls against immutablec7a811/795727. All three unchanged actual original Native routes now pass in16.890 seconds after formatter-only changes to the method with current sources, exact Future/callback retirement, preserved cancellation/result, zero final resource counts and original global drain; contained process cleanup is normal with zero overflow/races. The regression test and changed method pass targeted lint/format; the composed module retains an unrelated existing E721 outside this method. Only ensure_local_skill_trust_service is staged from the shared service module, excluding pending Collections work. Existing ADR126 finite callback custody applies. AC29 stays open for stock owner/source selection, mount/resume/command shutdown integration and original cold UI/whole performance qualification.
+
+
+## Finite marker preparation checkpoint
+
+- Original narrow SQL regression: the native connection/lease and actual query were held briefly. Rendering remained correct, but the caller loop made no progress. A preceding fixture run used the wrong assistant anchor and is excluded.
+- With finite preparation: the unchanged native hold allows loop progress and the exact acquired handle, registration and lease retire before completion.
+- All 11 native controls pass: normal completion, cancellation, repeated cancellation, chat/revision changes, Runtime disposal, borrowed transactions, concurrent refresh coalescing, foreign cache replacement, database replacement and original-reader default drift.
+- Six existing custom/query controls and the original real-Git byte-identical rendering test pass. The original rendering fixture now closes its creator-owned runs database and newly acquired default registry handle while preserving borrowers.
+- Final affected integration: 10 passed in 42.78 seconds (52.5-second contained driver): original real-Git rendering, three original transcript repaint controls and all six original history-lifetime controls. The original global history drain passes unchanged. The three detached transcript tests declare their existing collection-bound bootstrap-profile prerequisite; their bodies are unchanged.
+- Sources and HEAD remained unchanged during every accepted run. New modules pass Ruff and formatting; edited modules introduce no lint findings. The platform workflow includes all 11 native marker controls.
+
+The new worker controls have been verified locally on Windows. The previous seven query/rendering cases passed on Windows, macOS and Linux; cross-platform verification of this new asynchronous boundary remains pending CI. These are functional ownership and responsiveness results, not acceptance of whole Send/startup latency. The broader task and draft PR remain in progress.
+
+Evidence details: `Docs/Development/2026-10-07-console-marker-preparation-verification.md`. Existing ADR-126 amended before implementation. AC20 remains open for combined original performance acceptance; AC45 has its unchanged subsequent history drain verified.

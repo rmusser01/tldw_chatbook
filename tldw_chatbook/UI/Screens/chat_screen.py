@@ -18157,6 +18157,13 @@ class ChatScreen(BaseAppScreen):
 
     async def _sync_native_console_transcript(self) -> None:
         """Render native Console messages in the native transcript."""
+        from ..Console_Modules.transcript import ConsoleChangeReviewProjection
+
+        if type(self._change_review_projection) is ConsoleChangeReviewProjection:
+            if not await self._change_review_projection.prepare():
+                return
+            if getattr(self, "_console_torn_down", False):
+                return
         try:
             transcript = self.query_one("#console-native-transcript", ConsoleTranscript)
         except QueryError:

@@ -3645,3 +3645,41 @@ _CONVERSATION_SUBAGENT_COUNT_CALLBACK = (
     _badge_count_getattr_static(AgentRunsDB, "__dict__"),
 )
 del _badge_count_getattr_static
+
+
+# Original readers selected by the optional finite marker presentation path.
+_CHANGE_REVIEW_READ_SOURCES = tuple(
+    (
+        name,
+        vars(AgentRunsDB)[name],
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+            )
+            for function in (
+                outer,
+                *((outer.__wrapped__,) if hasattr(outer, "__wrapped__") else ()),
+                *(
+                    (outer.__wrapped__.__wrapped__,)
+                    if hasattr(outer, "__wrapped__")
+                    and hasattr(outer.__wrapped__, "__wrapped__")
+                    else ()
+                ),
+            )
+        ),
+    )
+    for name in (
+        "list_runs",
+        "list_change_review_run_anchors",
+        "change_snapshots_for_conversation",
+        "connection",
+        "_held_connection",
+        "_get_connection",
+        "close",
+    )
+    for outer in (vars(AgentRunsDB)[name],)
+)
