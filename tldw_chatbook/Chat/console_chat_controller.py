@@ -904,7 +904,7 @@ class ProjectInstructionBindingRecovery(RuntimeError):
 class ConsolePendingDecisionProjection:
     """One active-session FIFO head, with its body hidden from repr."""
 
-    decision_type: Literal["approval", "skill_install", "skill_script"]
+    decision_type: Literal["approval", "skill_install", "skill_script", "hook_review"]
     session_id: str
     decision_id: str
     remaining_active_seconds: float | None
@@ -4066,6 +4066,16 @@ class ConsoleChatController:
         from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 
         self._interrupt_host = InterruptRoundHost(
+            read_hook_review_owner=lambda: (
+                self._hook_permissions_accessor()
+                if self._hook_permissions_accessor is not None
+                else None
+            ),
+            read_hook_review_shutdown=lambda session_id: (
+                self._disposed
+                or self._shutdown_requested.is_set()
+                or session_id in self._session_close_generations
+            ),
             read_controller__active_assistant_message_ids=lambda: (
                 self._active_assistant_message_ids
             ),
@@ -15240,6 +15250,7 @@ class ConsoleChatController:
         it is signalling -- there is deliberately no active-session
         fallback here, unlike ``_set_run_state``.
         """
+        self._interrupt_host.cancel_hook_reviews(session_id)
         if getattr(self, "_ordinary_native_commits", None):
             with self._active_submit_tasks_lock:
                 for owner in self._ordinary_native_commits.values():
@@ -15560,7 +15571,9 @@ class ConsoleChatController:
         *,
         round_state: dict[str, Any],
         payload: dict[str, Any],
-        decision_type: Literal["approval", "skill_install", "skill_script"],
+        decision_type: Literal[
+            "approval", "skill_install", "skill_script", "hook_review"
+        ],
         decision_id: str,
         timeout_seconds: float,
         retained_store: dict[str, dict[str, Any]] | None,
@@ -15697,7 +15710,9 @@ class ConsoleChatController:
 
     def _announce_hidden_decision(
         self,
-        decision_type: Literal["approval", "skill_install", "skill_script"],
+        decision_type: Literal[
+            "approval", "skill_install", "skill_script", "hook_review"
+        ],
         session_id: str,
         decision_id: str,
     ) -> None:
@@ -18599,6 +18614,11 @@ class ConsoleChatController:
             stopped; False (a no-op) when it did not.
         """
         session_id = self.store.active_session_id or ""
+        review_stopped = (
+            self._interrupt_host.pending_round_count(session_id, kind="hook_review") > 0
+        )
+        if review_stopped:
+            self._signal_stop(session_id=session_id)
         native_tasks = self._ordinary_native_commit_tasks(session_id)
         if native_tasks:
             with self._active_submit_tasks_lock:
@@ -18625,13 +18645,13 @@ class ConsoleChatController:
             return True
         repair_session = self._active_citation_repair_sessions.get(session_id)
         if repair_session is not None and repair_session.selection_committed:
-            return False
+            return review_stopped
         if repair_session is not None and repair_session.phase in {
             "checking",
             "repair_streaming",
         }:
             if self._active_assistant_message_ids.get(session_id) is None:
-                return False
+                return review_stopped
             repair_session.cancel_reason = "user" if record_user_stop else "shutdown"
             self.prompt_queue_coordinator.pause_for_stop(session_id)
             self._signal_stop(session_id=session_id)
@@ -18643,14 +18663,14 @@ class ConsoleChatController:
         if self.run_state.status is not ConsoleRunStatus.STREAMING:
             assistant_message_id = self._active_streaming_assistant_message_id()
             if assistant_message_id is None:
-                return False
+                return review_stopped
         else:
             assistant_message_id = (
                 self._active_assistant_message_ids.get(session_id)
                 or self._active_streaming_assistant_message_id()
             )
         if assistant_message_id is None:
-            return False
+            return review_stopped
         self.prompt_queue_coordinator.pause_for_stop(session_id)
         self._signal_stop(session_id=session_id)
         if assistant_message_id in self._pending_dispatch_transitions:
@@ -18831,6 +18851,7 @@ class ConsoleChatController:
         self._chat_start.dispose()
         self._fleet_wake.dispose()
         self._shutdown_requested.set()
+        self._interrupt_host.cancel_hook_reviews()
         unreachable_preparations = self._detach_closed_submit_tasks()
         for preparation_id in unreachable_preparations:
             self._cleanup_unreachable_preparation(preparation_id)

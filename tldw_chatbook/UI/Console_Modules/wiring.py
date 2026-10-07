@@ -145,7 +145,22 @@ async def request_console_hooks_review(
     waiting: bool,
     cancel: Callable[[], None],
 ) -> "HookReviewResult":
-    """Open the existing modal with the current screen and permission owner."""
+    """Route an initial Send to runtime custody; keep manual review local."""
+    if waiting:
+        from uuid import uuid4
+
+        from tldw_chatbook.Chat.console_hook_review import HookReviewResult
+
+        identity = screen._hooks.pending_send_identity
+        if identity is None:
+            return HookReviewResult("cancel")
+        session_id, generation = identity
+        runtime = screen._console_runtime()
+        screen._ensure_console_chat_controller()
+        return await runtime.request_initial_hook_review(
+            session_id, str(uuid4()), generation, snapshot
+        )
+
     from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
         request_hook_review,
     )

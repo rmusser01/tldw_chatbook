@@ -373,6 +373,7 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
 
 
 #: Shared decision-kind keys for pending-round registries and UI copy.
+CONSOLE_PENDING_HOOK_REVIEW_KIND = "hook_review"
 CONSOLE_PENDING_APPROVAL_KIND = "approval"
 CONSOLE_PENDING_QUESTION_KIND = "question"
 CONSOLE_PENDING_SKILL_INSTALL_KIND = "skill_install"

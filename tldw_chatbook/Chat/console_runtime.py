@@ -115,6 +115,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import functools
 import inspect
 import os
@@ -125,7 +126,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, RLock, get_ident
 from types import MethodType
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping
 from uuid import uuid4
 
 from loguru import logger
@@ -162,7 +163,11 @@ from tldw_chatbook.config import coerce_bool_setting, runtime_capture_policy
 from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from tldw_chatbook.Agents.hook_permissions import HookPermissions
+    from tldw_chatbook.Agents.hook_permissions import (
+        HookPermissions,
+        HookReviewSnapshot,
+    )
+    from tldw_chatbook.Chat.console_hook_review import HookReviewResult
     from tldw_chatbook.Agents.run_hooks import RunHooksEngine
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -4576,6 +4581,222 @@ class ConsoleRuntime:
                 self._hook_permissions = HookPermissions()
             return self._hook_permissions
 
+    async def request_initial_hook_review(
+        self,
+        session_id: str,
+        request_id: str,
+        generation: int,
+        snapshot: HookReviewSnapshot,
+        *,
+        waiting_for_send: bool = True,
+    ) -> HookReviewResult:
+        """Await one resident review without transferring cancellation to its answer."""
+        self._raise_if_disposed_or_session_fenced(session_id)
+        controller = self.ensure_chat_controller()
+        answer = controller._interrupt_host.begin_hook_review(
+            session_id,
+            request_id,
+            generation,
+            snapshot,
+            waiting_for_send=waiting_for_send,
+            owner=self.ensure_hook_permissions(),
+            loop=asyncio.get_running_loop(),
+        )
+        return await asyncio.shield(answer)
+
+    def _hook_review_presentation_current(
+        self,
+        review_id: str,
+        generation: int,
+        token: object,
+    ) -> bool:
+        view = self.view
+        if self._disposed or view is None:
+            return False
+        # The owning modal suspends the Console and clears reconciliation.
+        # Its current token and attachment still identify an answerable review.
+        try:
+            projection = view.app.screen._console_hook_review_projection
+        except (AttributeError, RuntimeError):
+            return False
+        return bool(
+            projection is not None
+            and projection.review_id == review_id
+            and projection.generation == generation
+            and projection.presentation_token is token
+            and projection.attachment_generation == self._attached_generation
+        )
+
+    @staticmethod
+    async def _await_hook_review_work(task):
+        """Retain the original finite producer through repeated waiter cancellation."""
+        cancelled = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as error:
+                cancelled = error
+            except BaseException:
+                break
+        if cancelled is not None:
+            if not task.cancelled():
+                task.exception()
+            raise cancelled
+        return task.result()
+
+    async def _execute_hook_review_operation(self, host, operation, expected, keys):
+        snapshot = None
+        error = None
+        producer = None
+        try:
+            self._raise_if_disposed_or_session_fenced(operation.session_id)
+            if self.ensure_hook_permissions() is not operation.owner:
+                raise RuntimeError("Hook review owner changed.")
+            if expected is not operation.expected:
+                raise RuntimeError("Hook review snapshot changed.")
+            owner = operation.owner
+            if operation.purpose == "approve":
+                call = functools.partial(owner.approve, expected, keys)
+            elif operation.purpose == "revoke":
+                call = functools.partial(owner.revoke, expected, keys[0])
+            elif operation.purpose == "disable":
+                call = functools.partial(owner.disable, expected, keys[0])
+            elif operation.purpose == "recover":
+                call = owner.recover
+            elif operation.purpose == "reset":
+                call = functools.partial(owner.reset_invalid_state, expected)
+            elif operation.purpose == "verify":
+                call = owner.snapshot
+            else:
+                raise ValueError("Unknown hook review action.")
+            submit_resolved = threading.Event()
+            submitted = False
+
+            def invoke():
+                # A queued item may survive executor thread-start failure.
+                submit_resolved.wait()
+                return call() if submitted else None
+
+            try:
+                context = contextvars.copy_context()
+                producer = asyncio.get_running_loop().run_in_executor(
+                    None, context.run, invoke
+                )
+                submitted = True
+            finally:
+                submit_resolved.set()
+            # Keep the native Future private: cancelling all Tasks must not
+            # turn cancellation of a to_thread wrapper into physical retirement.
+            snapshot = await self._await_hook_review_work(producer)
+            return snapshot
+        except BaseException as failure:
+            error = failure
+            raise
+        finally:
+            # Waiter cancellation cannot change the actual native write outcome.
+            if producer is not None and producer.done() and not producer.cancelled():
+                error = producer.exception()
+                if error is None:
+                    snapshot = producer.result()
+            host.finish_hook_review_operation(operation, snapshot, error=error)
+
+    def _start_hook_review_operation(self, host, operation, expected, keys):
+        coroutine = self._execute_hook_review_operation(host, operation, expected, keys)
+        try:
+            task = asyncio.create_task(coroutine)
+        except BaseException as error:
+            coroutine.close()
+            host.finish_hook_review_operation(operation, None, error=error)
+            raise
+        operation.task = task
+
+        def finished(driver):
+            if driver.cancelled():
+                # Cancellation before the first step never enters its finally.
+                # An entered driver drains native work before becoming done.
+                host.finish_hook_review_operation(
+                    operation, None, error=asyncio.CancelledError()
+                )
+            self._consume_task_outcome(driver)
+
+        task.add_done_callback(finished)
+        return task
+
+    async def apply_hook_review_action(
+        self,
+        review_id: str,
+        generation: int,
+        action: Literal["approve", "revoke", "disable", "recover", "reset"],
+        expected: HookReviewSnapshot,
+        keys: tuple[str, ...] = (),
+        *,
+        presentation_token: object,
+    ) -> HookReviewSnapshot:
+        """Issue one checked consent action under the resident operation owner."""
+        if action not in {"approve", "revoke", "disable", "recover", "reset"}:
+            raise ValueError("Unknown hook review action.")
+        if (action in {"revoke", "disable"} and len(keys) != 1) or (
+            action in {"recover", "reset"} and keys
+        ):
+            raise ValueError("Invalid hook review selection.")
+        if not self._hook_review_presentation_current(
+            review_id, generation, presentation_token
+        ):
+            raise RuntimeError("Hook review presentation changed.")
+        host = self._chat_controller._interrupt_host
+        operation = host.begin_hook_review_operation(
+            review_id, generation, presentation_token, action
+        )
+        if operation is None:
+            raise RuntimeError("Hook review changed or is busy.")
+        task = self._start_hook_review_operation(host, operation, expected, keys)
+        return await self._await_hook_review_work(task)
+
+    def resolve_initial_hook_review(
+        self,
+        review_id: str,
+        generation: int,
+        result: HookReviewResult,
+        *,
+        presentation_token: object,
+    ) -> bool:
+        """Treat Ready as a fresh verification intent; other answers settle exactly."""
+        if not self._hook_review_presentation_current(
+            review_id, generation, presentation_token
+        ):
+            return False
+        host = self._chat_controller._interrupt_host
+        if result.kind == "ready":
+            operation = host.begin_hook_review_operation(
+                review_id, generation, presentation_token, "verify"
+            )
+            if operation is None:
+                return False
+            self._start_hook_review_operation(host, operation, operation.expected, ())
+            return True
+        return host.resolve_hook_review(
+            review_id, generation, result, presentation_token=presentation_token
+        )
+
+    async def _drain_hook_review_operations(self, session_id=None) -> bool:
+        controller = self._chat_controller
+        if controller is None:
+            return False
+        cancelled = False
+        while completions := controller._interrupt_host.hook_review_retirements(
+            session_id
+        ):
+            for completion in completions:
+                try:
+                    await self._await_hook_review_work(completion)
+                except asyncio.CancelledError:
+                    if completion.cancelled():
+                        raise RuntimeError(
+                            "Hook review retirement signal was cancelled."
+                        ) from None
+                    cancelled = True
+        return cancelled
+
     def ensure_run_hooks(self) -> RunHooksEngine | None:
         """Build one engine whose launch authority reads saved config."""
         with self._run_hooks_lock:
@@ -4643,6 +4864,26 @@ class ConsoleRuntime:
                 derive = getattr(controller, "pending_decision_projection", None)
                 if callable(derive):
                     projection = derive(session_id)
+        try:
+            app = self.view.app
+            visible_hook_review = any(
+                getattr(screen, "_console_hook_review_projection", None) is not None
+                for screen in getattr(app, "screen_stack", (app.screen,))
+            )
+        except (AttributeError, RuntimeError):
+            visible_hook_review = None
+        if (
+            getattr(projection, "decision_type", None) == "hook_review"
+            or visible_hook_review
+        ):
+            from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
+                project_runtime_hook_review,
+            )
+
+            hook_mounted = project_runtime_hook_review(self, projection)
+            if hook_mounted is not None:
+                self.recompute_console_attention()
+                return hook_mounted
         view = self.view if self.has_answerable_view() else None
         provider = getattr(view, "console_view_hooks", None)
         hooks = provider() if callable(provider) else {}
@@ -4947,6 +5188,13 @@ class ConsoleRuntime:
                 self._bind_view_hooks()
                 return self._attached_generation
             if previous is not view:
+                if (
+                    self._chat_controller is not None
+                    and self._attached_generation is not None
+                ):
+                    self._chat_controller._interrupt_host.release_hook_review_attachment(
+                        self._attached_generation
+                    )
                 self._pause_project_instruction_generation(self._attached_generation)
             self._attachment_generation += 1
             generation = self._attachment_generation
@@ -5008,6 +5256,10 @@ class ConsoleRuntime:
             if session_id and callable(pause):
                 pause(session_id, None)
             self._pause_project_instruction_generation(self._attached_generation)
+            if controller is not None and self._attached_generation is not None:
+                controller._interrupt_host.release_hook_review_attachment(
+                    self._attached_generation
+                )
             self._clear_view_hooks()
             self.view = None
             self._attached_generation = None
@@ -5231,6 +5483,7 @@ class ConsoleRuntime:
         cancel_requested |= await self._drain_ordinary_native_commits(
             controller, session_id
         )
+        cancel_requested |= await self._drain_hook_review_operations(session_id)
         pending = {task for task in pending if not task.done()}
         fleet_fenced = callable(getattr(bridge, "fence_fleet", None))
         fleet_drain_succeeded = not fleet_fenced and fleet_waiter is None
@@ -5353,6 +5606,8 @@ class ConsoleRuntime:
                 self._hook_permissions.close()
             if engine is not None:
                 engine.close()
+        if self._chat_controller is not None:
+            self._chat_controller._interrupt_host.cancel_hook_reviews()
         if self._worktree_recovery is not None:
             self._worktree_recovery.begin_close()
         if self._voice_process_supervisor is not None:
@@ -5401,6 +5656,7 @@ class ConsoleRuntime:
         finally:
             if controller is not None:
                 await self._drain_ordinary_native_commits(controller)
+                await self._drain_hook_review_operations()
 
     async def _dispose_owned(
         self,
@@ -5448,6 +5704,8 @@ class ConsoleRuntime:
                 self._hook_permissions.close()
             if engine is not None:
                 engine.close()
+        if self._chat_controller is not None:
+            self._chat_controller._interrupt_host.cancel_hook_reviews()
         if self._voice_process_supervisor is not None:
             self._voice_process_supervisor.begin_close()
         if self._worktree_recovery is not None:
@@ -5650,6 +5908,7 @@ class ConsoleRuntime:
             await asyncio.shield(voice_cleanup)
         if controller is not None:
             await self._drain_ordinary_native_commits(controller)
+            await self._drain_hook_review_operations()
         await self.close_hooks_v2()
         for turn_id in tuple(self._turn_custody):
             self._release_custody(turn_id)

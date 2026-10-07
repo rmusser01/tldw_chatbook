@@ -6,9 +6,11 @@ import asyncio
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from types import MethodType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from textual.worker import NoActiveWorker, get_current_worker
+
+from tldw_chatbook.Chat.console_hook_review import HookReviewResult as HookReviewResult
 
 from tldw_chatbook.UI.Console_Modules.prompt_queue import (
     ConsolePromptDispatchResult,
@@ -21,12 +23,6 @@ if TYPE_CHECKING:
         HookPermissions,
         HookReviewSnapshot,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class HookReviewResult:
-    kind: Literal["ready", "cancel", "settings"]
-    snapshot: HookReviewSnapshot | None = None
 
 
 def same_captured_draft(
@@ -143,10 +139,17 @@ class ConsoleHooksController:
         self._generation = 0
         self._busy = False
         self._send_in_progress = False
+        self._pending_send_identity: tuple[str, int] | None = None
         self._refresh_deferred = False
         self._refresh_sequence = 0
         self._refresh_flight: _HookRefreshFlight | None = None
         self.review_open = False
+
+    @property
+    def pending_send_identity(self) -> tuple[str, int] | None:
+        """Return the pinned Send identity only while its generation is current."""
+        identity = self._pending_send_identity
+        return identity if identity and identity[1] == self._generation else None
 
     async def _request_review(self, snapshot, waiting):
         self.review_open = True
@@ -248,7 +251,10 @@ class ConsoleHooksController:
                 if self._refresh_flight is flight and flight.producer.done():
                     self._refresh_flight = None
 
-    def _finish_send(self) -> None:
+    def _finish_send(self, session_id: str, generation: int) -> None:
+        if self._pending_send_identity != (session_id, generation):
+            return
+        self._pending_send_identity = None
         self._send_in_progress = False
         self._busy = False
         if self._refresh_deferred:
@@ -300,6 +306,7 @@ class ConsoleHooksController:
         self._send_in_progress = True
         self._generation += 1
         generation = self._generation
+        self._pending_send_identity = (session_id, generation)
         owns_busy = True
         try:
             if (
@@ -347,7 +354,7 @@ class ConsoleHooksController:
             )
         finally:
             if owns_busy:
-                self._finish_send()
+                self._finish_send(session_id, generation)
 
     def _captured_send_current(
         self, owner, reader, generation, session_id, stash
@@ -440,7 +447,7 @@ class ConsoleHooksController:
                 diagnostic.outcome = result.status.value
                 return result
         finally:
-            self._finish_send()
+            self._finish_send(session_id, generation)
 
     async def _continue_in_worker(
         self,
@@ -465,7 +472,7 @@ class ConsoleHooksController:
                 diagnostic.outcome = result.status.value
                 return result
         finally:
-            self._finish_send()
+            self._finish_send(session_id, generation)
 
     async def _continue(
         self,
