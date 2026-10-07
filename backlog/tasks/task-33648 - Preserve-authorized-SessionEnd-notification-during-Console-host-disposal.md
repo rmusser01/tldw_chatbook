@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 18:48'
-updated_date: '2026-10-07 01:10'
+updated_date: '2026-10-07 01:45'
 labels:
   - console
   - hooks
@@ -40,4 +40,6 @@ Reason: preserve a narrow, already authorized host-issued teardown delivery whil
 2. Add a real saved/granted SessionEnd process regression that fails during disposal, alongside exact-session-close and changed/revoked-definition controls.
 3. Implement only the shared bounded teardown authority fix; retain ordinary post-disposal refusal and the original notification/physical-cleanup deadlines.
 4. Verify targeted lifecycle/permission/cleanup tests, including cancellation, and independent scoped review. Record real process settlement and preserved limits before checking criteria.
+
+Prospective mixed-projection correction after independent source review: reproduce disposal with a real installed/activated native plugin and saved/granted standalone hook. Reuse the exact original host event and engine execution through a minimal private per-delivery projection witness; require callback object identity, active/non-cancelled membership and fixed deadline, with fresh binding/finally reset and no external callback under the memory lock. Preserve public same/copied/ambient-context replay refusal and all existing grant/plugin/effect/model guards. Keep earlier Changes-required package and exact-base inherited teardown evidence; obtain a new frozen source review before closure.
 <!-- SECTION:PLAN:END -->

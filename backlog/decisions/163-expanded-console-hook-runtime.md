@@ -520,6 +520,11 @@ deadline; event labels, public teardown booleans, copied events and ordinary cal
 cannot acquire it. Repeated sealing or disposal cannot issue another notification
 or extend the window. Managed-plugin authority and ordinary MCP dispatch retain
 their existing boundaries.
+Trusted per-handler projection retains the exact original host event and issued
+execution through a private delivery-local witness. The callback must be the
+exact projected object of that still-active delivery; a public replay creates
+its own witness and cannot borrow ambient delivery state. Parallel handlers
+keep separate projection witnesses, and retirement or cancellation fences them.
 
 The standalone command still needs its original exact saved definition and grant.
 At actual process creation, the existing permission owner reads canonical config
