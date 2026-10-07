@@ -719,7 +719,14 @@ class DatabaseNoteSessionCoordinator:
             session_generation = snapshot.session_generation
             expected_version = snapshot.version
             draft_revision = snapshot.draft_revision
-            if self._recovery is not None and not await self._retain_current_draft():
+            retained = self._recovery is None or await self._retain_current_draft()
+            current = self._snapshot
+            if current is None or current.session_generation != session_generation:
+                return NoteSaveOutcome(NoteSaveOutcomeKind.STALE, note_id=note_id)
+            if current.draft_revision != draft_revision:
+                continue
+            snapshot = current
+            if not retained:
                 return NoteSaveOutcome(
                     NoteSaveOutcomeKind.FAILED,
                     note_id=note_id,
@@ -967,6 +974,13 @@ class DatabaseNoteSessionCoordinator:
                     return self._finish_conflict_failure(
                         operation, "Local draft discard failed — retry Reload."
                     )
+                if not self._conflict_operation_is_current(operation):
+                    self._finish_conflict_operation(operation)
+                    return ConflictOutcome(
+                        ConflictOutcomeKind.STALE, action, note_id=operation.note_id
+                    )
+                if self._snapshot.draft_revision != operation.draft_revision:
+                    return self._reload_draft_changed(operation)
                 self._close_session()
                 return ConflictOutcome(
                     ConflictOutcomeKind.MISSING,
@@ -1000,10 +1014,12 @@ class DatabaseNoteSessionCoordinator:
                 return self._finish_conflict_failure(
                     operation, "Local draft discard failed — retry Reload."
                 )
-            if (
-                self._snapshot is None
-                or self._snapshot.draft_revision != current.draft_revision
-            ):
+            if not self._conflict_operation_is_current(operation):
+                self._finish_conflict_operation(operation)
+                return ConflictOutcome(
+                    ConflictOutcomeKind.STALE, action, note_id=operation.note_id
+                )
+            if self._snapshot.draft_revision != current.draft_revision:
                 return self._reload_draft_changed(operation)
             self._recovery_base_version = detail.version
             revision = current.draft_revision + 1

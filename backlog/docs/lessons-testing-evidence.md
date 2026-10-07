@@ -19693,3 +19693,15 @@ process performs the actual first URLMonitor check. Do not reset admission or
 participants, increase the timeout, or call the setup timeout a product privacy
 failure. Retained evidence: restored-first-fetch-1 four admission timeouts;
 restored-first-fetch-4 four passing native restored-fetch cases with Dreams off.
+
+## F5 draft recovery: pause storage and requests before trusting currentness
+
+Task-34652 / task-13516 F5 review found that new recovery awaits reused captured
+snapshots after typing or changing sessions, and browser queue completion read
+note B's live editor while acknowledging note A. Immediate storage/API mocks had
+missed those windows. Fix-round deferred-owner controls produced seven C failures
+and five browser failures: generation/revision loss, A-to-B completion, overlapping
+ordinary-save/queue POST and PUT, and mode-baseline errors. Pause the actual
+coordinator's storage boundary or hook's request, edit or navigate while paused,
+then release it and assert both the editor identity/revision and queued source.
+Checking only the acknowledgement status would have missed the cross-note write.

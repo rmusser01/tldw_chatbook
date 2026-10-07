@@ -13,7 +13,7 @@ labels:
 - structured-editing
 documentation:
 - /Users/macbook-dev/.codex/worktrees/structured-document-editing/tldw_chatbook/Docs/superpowers/plans/2026-09-27-structured-document-editing.md
-updated_date: 2026-10-07 07:26
+updated_date: 2026-10-07 07:56
 ---
 
 ## Description
@@ -51,6 +51,7 @@ Reason: implement approved scoped durable-draft recovery and serialized-language
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Implemented exact language-bearing Library drafts and private durable recovery through the existing runtime-owned device-state store (schema v3), with captured local database/principal/global scope, matching acknowledgement cleanup, and navigation/authority fences. ADR-194 amended before storage changes. Targeted C covering run: 310 passed; final real port/authority selection: 8 passed; amended conflict recovery session suite: 49 passed. Immutable-base Ruff/Bandit comparison adds no findings. Task remains In Progress for controller review; full commands, static comparison and limitations are in the F5 implementation report.
+F5 fix round 1: deferred recovery awaits now revalidate session generation and revision before save or conflict reload can replace state. Deferred controls reproduced 7 failures before the fix; final amended session suite passed 57 tests. Added incident-backed lessons-testing-evidence entry. Scoped Ruff/Bandit unchanged against fix base 8313c43cc7; changed Python ranges pass Black. Remains In Progress pending independent controller review.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 

@@ -1258,3 +1258,99 @@ async def test_recovered_conflict_keeps_original_base_after_another_edit(tmp_pat
     assert reopened.snapshot.in_conflict
     assert (await recovery.load(scope, "n-1"))[1] == 1
     store.close()
+
+
+class DeferredDraftRecovery:
+    """Pause only the storage boundary under test, without replacing the owner."""
+
+    def __init__(self):
+        self.pause_save = False
+        self.pause_ack = False
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def load(self, scope, note_id):
+        return None
+
+    async def save(self, scope, draft, base_version):
+        if self.pause_save:
+            self.entered.set()
+            await self.release.wait()
+
+    async def acknowledge(self, scope, note_id, revision):
+        if self.pause_ack:
+            self.entered.set()
+            await self.release.wait()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial_body", ["pending", ""])
+@pytest.mark.parametrize("switch_session", [False, True])
+async def test_save_revalidates_after_deferred_retention(initial_body, switch_session):
+    recovery = DeferredDraftRecovery()
+    port = FakeDatabaseNotePort()
+    owner = DatabaseNoteSessionCoordinator(
+        port, recovery=recovery, recovery_scope="scope"
+    )
+    await owner.open_session("n-1")
+    owner.mutate(body=initial_body)
+    await owner._retain_current_draft()
+    recovery.pause_save = True
+    port.save_replies.append(DatabaseNotePortSaveReply.saved(version=2))
+    saving = asyncio.create_task(owner.request_save(explicit=True))
+    await asyncio.wait_for(recovery.entered.wait(), 1)
+    if switch_session:
+        assert owner.close_session()
+        port.load_replies.append(DatabaseNotePortLoadReply.loaded(_detail("n-2")))
+        await owner.open_session("n-2")
+    else:
+        owner.mutate(body="newer <>&", content_language="yaml")
+    recovery.release.set()
+    outcome = await saving
+    if switch_session:
+        assert outcome.kind is NoteSaveOutcomeKind.STALE
+        assert owner.snapshot.note_id == "n-2"
+        assert port.save_calls == []
+    else:
+        assert outcome.kind is NoteSaveOutcomeKind.SAVED
+        assert owner.snapshot.body == "newer <>&"
+        assert port.save_calls[0][2].content_language == "yaml"
+        assert port.save_calls[0][2].body == "newer <>&"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", [False, True])
+@pytest.mark.parametrize("switch_session", [False, True])
+async def test_reload_revalidates_after_deferred_acknowledgement(
+    missing, switch_session
+):
+    recovery = DeferredDraftRecovery()
+    port = FakeDatabaseNotePort()
+    owner = DatabaseNoteSessionCoordinator(
+        port, recovery=recovery, recovery_scope="scope"
+    )
+    await owner.open_session("n-1")
+    await _seed_conflict(owner, port)
+    port.load_replies.append(
+        DatabaseNotePortLoadReply.missing()
+        if missing
+        else DatabaseNotePortLoadReply.loaded(_detail(version=2))
+    )
+    recovery.pause_ack = True
+    reloading = asyncio.create_task(owner.resolve_conflict(ConflictAction.RELOAD))
+    await asyncio.wait_for(recovery.entered.wait(), 1)
+    if switch_session:
+        assert owner.close_session()
+        port.load_replies.append(DatabaseNotePortLoadReply.loaded(_detail("n-2")))
+        await owner.open_session("n-2")
+    owner.mutate(body="newer <>&", content_language="yaml")
+    recovery.release.set()
+    outcome = await reloading
+    assert outcome.kind is (
+        ConflictOutcomeKind.STALE
+        if switch_session
+        else ConflictOutcomeKind.DRAFT_CHANGED
+    )
+    assert owner.snapshot.note_id == ("n-2" if switch_session else "n-1")
+    assert owner.snapshot.body == "newer <>&"
+    await owner._retain_current_draft()
