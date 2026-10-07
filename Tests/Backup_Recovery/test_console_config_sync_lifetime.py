@@ -5,7 +5,9 @@ import pytest
 from Tests.Backup_Recovery.test_bound_config_companions import _SCRIPT
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
 
-_SYNC = _SCRIPT.split("assert config.get_cli_setting")[0] + r'''
+_SYNC = (
+    _SCRIPT.split("assert config.get_cli_setting")[0]
+    + r"""
 import sys,time
 from types import SimpleNamespace,MethodType
 from textual.css.query import NoMatches
@@ -147,11 +149,24 @@ assert getattr(raw._local,'operation',None) is None
 assert all(operation not in raw._states for operation in operations)
 assert not list(parent.glob('*.tmp'))
 print('retired and reopened')
-'''
+"""
+)
 
 
 @pytest.mark.parametrize(
-    "case", ["current", "unbound", "error", "config_error", "preexisting_error", "cleanup_error", "pause_before", "pause_inside", "selector_inside", "database"]
+    "case",
+    [
+        "current",
+        "unbound",
+        "error",
+        "config_error",
+        "preexisting_error",
+        "cleanup_error",
+        "pause_before",
+        "pause_inside",
+        "selector_inside",
+        "database",
+    ],
 )
 def test_console_control_refresh_keeps_native_config_lifetime(tmp_path, case):
     script = _SYNC
@@ -162,7 +177,104 @@ def test_console_control_refresh_keeps_native_config_lifetime(tmp_path, case):
     _run(tmp_path, case, "config-sync", script=script, timeout=40)
 
 
-_NATIVE_RETRY = _SYNC.split("if case=='pause_before':")[0] + r'''
+_BUSY_RETRY = (
+    _SYNC.split("if case=='pause_before':")[0]
+    + r"""
+import threading
+rebuild=config._settings_rebuild_lock();file_lock=config._config_file_lock()
+held=threading.Event();release=threading.Event();expired=threading.Event();errors=[]
+blocked=rebuild if '-rebuild' in case else file_lock
+def holder():
+ try:
+  with blocked:
+   held.set()
+   assert release.wait(5),'test holder was not released'
+ except BaseException as error:errors.append(error)
+owner=threading.Thread(target=holder)
+def watchdog():
+ expired.set();release.set()
+timer=threading.Timer(2,watchdog)
+screen._sync_console_settings_summary=lambda:None
+refresh=screen._sync_console_rail_and_controls if case.startswith('rail') else lambda:screen._sync_console_control_bar('stale rail')
+before=config._CONFIG_PERSISTENCE_ERROR
+try:
+ owner.start();assert held.wait(3)
+ timer.start()
+ started=time.monotonic()
+ result=refresh()
+ print('busy refresh returned',result,'after',time.monotonic()-started,'seconds',flush=True)
+ assert result is False and not expired.is_set(),'Console blocked on a busy native config lock'
+ assert not release.is_set() and owner.is_alive()
+ for _ in range(5):assert refresh() is False
+ assert not rendered and not operations
+ assert len(scheduled)==1 and scheduled[0][0]>0
+ assert not rebuild._is_owned() and not file_lock._is_owned()
+ assert not storage._pending_acquisitions and not storage._raw_operations
+ assert raw._runtime_operation() is None and config._CONFIG_PERSISTENCE_ERROR==before
+ if blocked is file_lock:
+  available=[]
+  def probe_partial_release():
+   acquired=rebuild.acquire(timeout=.5)
+   available.append(acquired)
+   if acquired:rebuild.release()
+  probe=threading.Thread(target=probe_partial_release)
+  probe.start();probe.join(1)
+  assert not probe.is_alive() and available==[True],'partial REBUILD acquisition leaked'
+finally:
+ timer.cancel();release.set();owner.join(3)
+ if timer.ident is not None:timer.join(3)
+ assert not owner.is_alive() and not errors
+assert config.save_setting_to_cli_config('general','users_name','fresh after contention')
+fresh=[]
+original_render=screen._sync_console_control_bar_under_config
+def render_fresh(rail_state=None):
+ fresh.append(rail_state)
+ return original_render(rail_state)
+screen._sync_console_control_bar_under_config=render_fresh
+if case.endswith('-drift'):
+ os.environ['TLDW_CONFIG_PATH']=str(home/'other.toml')
+ try:
+  delay,callback=scheduled.pop()
+  try:callback()
+  except bootstrap.RecoveryRequired:pass
+  else:raise AssertionError('deferred refresh bypassed changed source')
+  assert not rendered and not operations and not fresh
+ finally:os.environ['TLDW_CONFIG_PATH']=str(selected)
+ assert screen._sync_console_control_bar()
+else:
+ delay,callback=scheduled.pop();callback()
+assert rendered==[('fresh after contention','fresh after contention')] and fresh==[None]
+assert not scheduled and not screen._console_control_bar_sync_scheduled
+assert operations[0] is not None and all(value is operations[0] for value in operations)
+assert not rebuild._is_owned() and not file_lock._is_owned()
+assert not storage._pending_acquisitions and not storage._raw_operations
+assert raw._runtime_operation() is None and all(value not in raw._states for value in operations)
+assert config._CONFIG_PERSISTENCE_ERROR==before
+storage._shutdown()
+print('retired and reopened')
+"""
+)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "control-rebuild",
+        "control-file",
+        "rail-rebuild",
+        "rail-file",
+        "control-file-drift",
+        "rail-file-drift",
+    ],
+)
+def test_console_busy_config_locks_defer_both_refresh_callers(tmp_path, case):
+    """Real held locks defer publication; the installed retry rechecks its source."""
+    _run(tmp_path, case, "config-sync", script=_BUSY_RETRY, timeout=40)
+
+
+_NATIVE_RETRY = (
+    _SYNC.split("if case=='pause_before':")[0]
+    + r"""
 import threading
 from tldw_chatbook.Backup_Recovery.admission import Admission,AdmissionCancelled
 storage.admit_startup()
@@ -232,10 +344,13 @@ finally:
  storage._shutdown()
 assert not errors
 print('retired and reopened')
-'''
+"""
+)
 
 
-@pytest.mark.parametrize("case", ["native-canceled", "native-duplicates", "native-local-pause"])
+@pytest.mark.parametrize(
+    "case", ["native-canceled", "native-duplicates", "native-local-pause"]
+)
 def test_console_refresh_retries_after_native_pause_without_stale_state(tmp_path, case):
     _run(tmp_path, case, "config-sync", script=_NATIVE_RETRY, timeout=40)
 
@@ -244,11 +359,16 @@ def test_console_body_pause_error_is_not_mistaken_for_entry_deferral(tmp_path):
     script = _SYNC.replace(
         "fail=ValueError('synthetic refresh failure')",
         "fail=bootstrap.RecoveryRequired('storage_locally_paused')",
-    ).replace("assert not storage._raw_operations\n", "assert not scheduled\nassert not storage._raw_operations\n")
+    ).replace(
+        "assert not storage._raw_operations\n",
+        "assert not scheduled\nassert not storage._raw_operations\n",
+    )
     _run(tmp_path, "error", "config-sync", script=script, timeout=40)
 
 
-_SCREEN_RETRY = _NATIVE_RETRY.split("try:\n screen._sync_console_control_bar('stale")[0] + r'''
+_SCREEN_RETRY = (
+    _NATIVE_RETRY.split("try:\n screen._sync_console_control_bar('stale")[0]
+    + r"""
 import asyncio
 from textual.app import App
 from textual.screen import Screen
@@ -298,7 +418,8 @@ finally:
  storage._shutdown()
 assert not errors and not storage._raw_operations
 print('retired and reopened')
-'''
+"""
+)
 
 
 @pytest.mark.parametrize("case", ["timer-retry", "timer-teardown"])
@@ -306,7 +427,9 @@ def test_console_native_retry_uses_one_screen_owned_timer(tmp_path, case):
     _run(tmp_path, case, "config-sync", script=_SCREEN_RETRY, timeout=40)
 
 
-_WORKER_RETRY = _NATIVE_RETRY.split("try:\n screen._sync_console_control_bar('stale")[0] + r'''
+_WORKER_RETRY = (
+    _NATIVE_RETRY.split("try:\n screen._sync_console_control_bar('stale")[0]
+    + r"""
 import asyncio
 from contextlib import nullcontext
 async def no_async():pass
@@ -314,7 +437,7 @@ def no_sync(*args,**kwargs):pass
 screen._console_sync_in_progress=False;screen._console_sync_requested=False
 screen._console_chat_store=None
 screen._message=SimpleNamespace(reconcile_console_speech_context=no_sync)
-screen._session=SimpleNamespace(_sync_console_session_draft=no_sync)
+screen._session=SimpleNamespace(_sync_console_session_draft=no_sync,schedule_manual_read_acknowledgement=no_sync)
 screen._retrieval=SimpleNamespace(
  _warm_console_effective_scope_cache_if_stale=no_async,
  _refresh_active_dictionaries_summary_if_scope_changed=no_async,
@@ -384,11 +507,21 @@ finally:
  storage._shutdown()
 assert not errors and not storage._raw_operations
 print('retired and reopened')
-'''
+"""
+)
 
 
 @pytest.mark.parametrize(
-    "case", ["native-worker", "native-worker-real-pause", "native-worker-inprogress", "native-worker-teardown", "native-worker-external"]
+    "case",
+    [
+        "native-worker",
+        "native-worker-real-pause",
+        "native-worker-inprogress",
+        "native-worker-teardown",
+        "native-worker-external",
+    ],
 )
-def test_console_native_worker_defers_later_native_reads_with_its_refresh(tmp_path, case):
+def test_console_native_worker_defers_later_native_reads_with_its_refresh(
+    tmp_path, case
+):
     _run(tmp_path, case, "config-sync", script=_WORKER_RETRY, timeout=40)

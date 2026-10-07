@@ -1,0 +1,75 @@
+"""Call-through observation and bounded original transcript-publication delay."""
+
+import asyncio
+import time
+
+import pytest
+
+
+def pytest_addoption(parser):
+    parser.addoption("--resend-probe-mode", choices=("observe", "hold"), default="observe")
+
+
+@pytest.fixture(autouse=True)
+def observe_refused_echo(request, monkeypatch):
+    if request.node.name != "test_console_r_resends_a_refused_echo_as_one_message":
+        return
+
+    from Tests.UI import test_console_turn_resend_ui as test_module
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
+
+    origin = time.monotonic()
+    held = False
+    original_sync = ChatScreen._sync_native_console_transcript
+    original_select = ConsoleTranscript.select_message
+    original_wait = test_module._wait_for_text
+
+    def observe(label, transcript, message_id):
+        message = transcript._message_by_id(message_id)
+        screen = transcript.screen
+        print(
+            "RESEND_PROBE", label, round(time.monotonic() - origin, 3),
+            "model_present", message is not None,
+            "model_status", getattr(message, "status", None),
+            "selected", transcript.selected_message_id == message_id,
+            "run_status", screen._current_console_run_status_value(),
+            "sync_in_progress", screen._console_sync_in_progress,
+            flush=True,
+        )
+
+    async def sync(screen):
+        nonlocal held
+        rows = screen._message._native_console_messages()
+        echo = next((row for row in rows if row.role is ConsoleMessageRole.USER and row.status == "failed"), None)
+        transcripts = list(screen.query(ConsoleTranscript))
+        if echo is not None and transcripts:
+            transcript = transcripts[0]
+            observe("before-publication", transcript, echo.id)
+            if not held and request.config.getoption("--resend-probe-mode") == "hold":
+                held = True
+                print("RESEND_PROBE bounded original publication hold 0.25s", flush=True)
+                await asyncio.sleep(0.25)
+        result = await original_sync(screen)
+        if echo is not None and transcripts:
+            observe("after-publication", transcripts[0], echo.id)
+        return result
+
+    def select(transcript, message_id):
+        observe("before-select", transcript, message_id)
+        result = original_select(transcript, message_id)
+        observe("after-select", transcript, message_id)
+        return result
+
+    async def wait(scope, pilot, expected, **kwargs):
+        result = await original_wait(scope, pilot, expected, **kwargs)
+        if expected == "llama.cpp unavailable":
+            screen = scope if isinstance(scope, ChatScreen) else scope.screen
+            echo = next(row for row in screen._message._native_console_messages() if row.role is ConsoleMessageRole.USER)
+            observe("refusal-text-observed", screen.query_one(ConsoleTranscript), echo.id)
+        return result
+
+    monkeypatch.setattr(ChatScreen, "_sync_native_console_transcript", sync)
+    monkeypatch.setattr(ConsoleTranscript, "select_message", select)
+    monkeypatch.setattr(test_module, "_wait_for_text", wait)

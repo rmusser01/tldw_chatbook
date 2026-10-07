@@ -15998,6 +15998,13 @@ focus-and-paint predicate observes the eventual UI without forcing a scroll or
 weakening the content assertion. The gated mount case and all eight continuity
 cases pass with these readiness changes.
 
+PR3034 (TASK-34415, 2026-10-07) exposed the same shutdown race in the unchanged
+MCP mount smoke: loading flags cleared before the rail's queued replacement
+finished. A 200ms hold on the second source Select composition reproduced the
+CI `SelectOverlay` exception; waiting for the rail replacement and expected rows
+passed the identical hold, with the original ten-second bound and assertions.
+A cleared service-loading flag is not a settled descendant subtree.
+
 ## Returned focus can stay outside the viewport (TASK-32632, 2026-09-15)
 
 The Prompt Collections journey returned from its manager with Manage collections
@@ -18643,6 +18650,16 @@ to conceal a small but real contribution.
 The held Stop fixture separately expired its 5s first-chunk precondition during provider validation. An observation-only private-profile plugin recorded actual dispatch at 9.578s and first yield 4.6ms later, with normal durable commit and cleanup. Giving only preparation a 15s bound preserves all subsequent 5s action checks; wake entry uses the same preparation bound while its paint, ledger and timer checks retain 8s.
 
 **What to do.** Wait for the actual asynchronous state a test needs, and distinguish preparation from the action being measured. A negative control must reach valid admission and streaming before its intended publication assertion fails; an earlier setup failure is not evidence that the oracle catches the bug. Keep production deadlines, profile admission, caps and authority unchanged.
+
+**PR #3034 / TASK-34415, 2026-10-07.** UI4's legacy approval journey saw a live
+worker/card and count builder one, but Inspector zero after one idle pause.
+Holding the real native REBUILD RLock on a separate thread reproduced that
+exact assertion: refresh returned False and scheduled its incumbent replay.
+The same probe passed after the test used its existing bounded settle helper
+for the actual Inspector count and rendered approval text. Production and all
+ownership/Files assertions stayed unchanged. Private-child FD warnings remained
+in RED, GREEN and ordinary runs; a green wrapper parent hides those warnings
+and is not warning-free child evidence.
 
 
 ## Immutable recovery candidates must be staged from a live WAL source

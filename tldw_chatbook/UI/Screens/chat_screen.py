@@ -340,7 +340,6 @@ from ...Chat.console_session_settings import (
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
     _estimate_tokens_locally,
-    _summary_row_value,
     build_console_context_estimate,
     build_console_rail_system_line,
     build_default_console_session_settings,
@@ -14753,19 +14752,6 @@ class ChatScreen(BaseAppScreen):
         return widget
 
     @staticmethod
-    def _collapse_console_hidden_control_bar(
-        widget: ConsoleControlBar,
-    ) -> ConsoleControlBar:
-        """Keep the legacy Console control seam mounted without layout cost."""
-        widget.styles.display = "none"
-        widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
-        widget.set_styles(height=None)
-        widget.add_class("h-0")
-        widget.styles.min_height = 0
-        widget.styles.max_height = 0
-        return widget
-
-    @staticmethod
     def _compact_console_workbench_widget(widget: Any, height: int = 1) -> Any:
         """Keep Console Workbench primitives visible without shrinking the grid."""
         widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
@@ -15037,7 +15023,8 @@ class ChatScreen(BaseAppScreen):
         return build_console_setup_card_state(
             readiness=readiness,
             provider_label=readiness.provider_display_name or "Provider",
-            has_model=_has_selected_text(model), model=str(model or ""),
+            has_model=_has_selected_text(model),
+            model=str(model or ""),
             first_send_completed=self._console_first_send_completed(),
             has_messages=self._message._active_console_transcript_has_messages(),
             guidance_dismissed=self._console_guidance_dismissed,
@@ -18959,6 +18946,7 @@ class ChatScreen(BaseAppScreen):
         if parse.kind == KIND_COMMAND:  # Never on this pump (TASK-33622.16).
             self._console_unknown_send_armed = None
             from ..Console_Modules.command_handoff import run_console_command
+
             run_console_command(self, parse, session_id, stash or draft)
             return False
 
@@ -19984,6 +19972,7 @@ class ChatScreen(BaseAppScreen):
             text = format_permission_prompt_report(report)
         # Into the chat it was sent from, not the one showing now (TASK-33622.16).
         from ..Console_Modules.command_handoff import append_command_output
+
         await append_command_output(self._append_native_console_system_message, text)
 
     @on(Input.Changed, "#console-command-input")
@@ -21413,22 +21402,6 @@ class ChatScreen(BaseAppScreen):
             message_id, direction=direction
         )
 
-    def _get_shell_bar(self):
-        """Get the mounted combined chat shell bar.
-
-        ``ChatWindowEnhanced`` is retired (``self.chat_window`` is
-        permanently ``None``), so this always returns ``None`` now; kept as
-        a stable seam for its remaining live callers' fallback branches.
-        """
-        return None
-
-    def _get_compact_model_bar(self) -> Optional[CompactModelBar]:
-        """Get the native Console compact control bar."""
-        try:
-            return self.query_one("#console-compact-model-bar", CompactModelBar)
-        except QueryError:
-            return None
-
     def _request_console_control_bar_sync(self, *, delayed: bool = False) -> None:
         """Coalesce control-bar syncs into one trailing run (task-3010).
 
@@ -21524,58 +21497,28 @@ class ChatScreen(BaseAppScreen):
             True after rendering; False when entry was deferred and a fresh
             coalesced replay owns the unfinished refresh.
         """
-        return self._run_console_config_sync(
-            lambda: self._sync_console_control_bar_under_config(rail_state)
+        from ..Console_Modules.config_sync import run_console_config_sync
+
+        return run_console_config_sync(
+            lambda: self._sync_console_control_bar_under_config(rail_state),
+            maintenance_paused=getattr(self, "_console_sync_maintenance_paused", False),
+            defer=lambda: self._request_console_control_bar_sync(delayed=True),
         )
 
     def _sync_console_rail_and_controls(self) -> bool:
         """Share current config across the tick's synchronous projections."""
+        from ..Console_Modules.config_sync import run_console_config_sync
 
         def sync() -> None:
             rail_state = self._current_console_rail_state()
             self._sync_console_settings_summary()
             self._sync_console_control_bar_under_config(rail_state)
 
-        return self._run_console_config_sync(sync)
-
-    def _run_console_config_sync(self, sync: Callable[[], None]) -> bool:
-        """Render synchronously, or defer entry to the existing coalesced retry."""
-        from tldw_chatbook import config
-        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-        from tldw_chatbook.Backup_Recovery.config_participants import operation
-
-        if getattr(self, "_console_sync_maintenance_paused", False):
-            self._request_console_control_bar_sync(delayed=True)
-            return False
-        # Nested readers still check the current source; keep its native
-        # lifetime continuous for this synchronous refresh, never an await.
-        failure: BaseException | None = None
-        entered = False
-        try:
-            with operation(config):
-                entered = True
-                try:
-                    sync()
-                except BaseException as error:  # noqa: BLE001 - re-raised after native owner exit.
-                    # A UI error must not mark config persistence as failed.
-                    # Nested config failures retain their own failure state.
-                    failure = error
-        except BaseException as error:
-            if (
-                not entered
-                and type(error) is RecoveryRequired
-                and error.args == ("storage_locally_paused",)
-            ):
-                # Native intent can precede the local monitor. Recompute on
-                # one trailing timer even if that intent is canceled unseen.
-                self._request_console_control_bar_sync(delayed=True)
-                return False
-            if failure is not None and error is not failure:
-                raise error from failure
-            raise
-        if failure is not None:
-            raise failure
-        return True
+        return run_console_config_sync(
+            sync,
+            maintenance_paused=getattr(self, "_console_sync_maintenance_paused", False),
+            defer=lambda: self._request_console_control_bar_sync(delayed=True),
+        )
 
     def _sync_console_control_bar_under_config(
         self, rail_state: ConsoleRailState | None = None
@@ -23346,7 +23289,10 @@ class ChatScreen(BaseAppScreen):
                 f"Unable to sync compact controls into Console session settings: {e}"
             )
 
-        compact_bar = self._get_compact_model_bar()
+        try:
+            compact_bar = self.query_one("#console-compact-model-bar", CompactModelBar)
+        except QueryError:
+            compact_bar = None
         if compact_bar:
             compact_bar.sync_from_sidebar(**updates)
         else:
