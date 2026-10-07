@@ -8611,6 +8611,68 @@ class MediaDatabase:
     # ============================= End of Embedding-related Functions ===================================================
 
     # ============================= Chat UI Functions for Search ===================================================
+    def fetch_content_prefixes_for_media_batch(
+        self, media_ids: List[int], prefix_chars: int = 500
+    ) -> Dict[int, str]:
+        """
+        Fetches a bounded content prefix for a batch of media IDs.
+
+        TASK-407: ``search_media_db``'s broad row deliberately omits
+        ``content`` (a single transcript can be megabytes), which left the
+        RAG media leg building ``SearchResult(content="")`` for every hit --
+        and the pipeline's content-prefix dedup key then collapsed ALL
+        unscoped media results into one. This batched SQL-side ``substr``
+        fetch hands that leg a distinct, bounded snippet per media ID
+        without ever hauling a full document off disk.
+
+        Args:
+            media_ids: List of media IDs (already vetted by a prior search's
+                deleted/trash filtering) to fetch content prefixes for.
+            prefix_chars: Maximum number of characters per prefix. Callers
+                sizing for ``deduplicate_results``' 200-char key should stay
+                comfortably above 200 so distinct documents keep distinct
+                keys.
+
+        Returns:
+            A dictionary mapping each media ID that carries non-empty
+            content to its content prefix. IDs whose content is NULL or
+            empty are omitted (the caller's title fallback covers them).
+
+        Raises:
+            ValueError: If ``prefix_chars`` is not a positive integer.
+            DatabaseError: If a database error occurs.
+        """
+        if not media_ids:
+            return {}
+        if (
+            not isinstance(prefix_chars, int)
+            or isinstance(prefix_chars, bool)
+            or prefix_chars < 1
+        ):
+            raise ValueError("prefix_chars must be a positive integer")
+
+        placeholders = ",".join("?" * len(media_ids))
+        query = f"""
+            SELECT id, substr(content, 1, ?) AS content_prefix
+            FROM Media
+            WHERE id IN ({placeholders})
+        """
+        params: Tuple[Any, ...] = (prefix_chars, *media_ids)
+        try:
+            cursor = self.execute_query(query, params)
+            return {
+                row["id"]: row["content_prefix"]
+                for row in cursor.fetchall()
+                if row["content_prefix"]
+            }
+        except sqlite3.Error as e:
+            logger.opt(exception=True).error(
+                f"Error fetching content prefixes for media batch: {e}"
+            )
+            raise DatabaseError(
+                f"Failed to fetch content prefixes for media batch: {e}"
+            ) from e
+
     def fetch_keywords_for_media_batch(
         self, media_ids: List[int]
     ) -> Dict[int, List[str]]:
