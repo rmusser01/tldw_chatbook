@@ -221,6 +221,10 @@ class EvalsDB:
 
         self.client_id = client_id
         self._local = threading.local()
+        # Memo for run_group_cell_failure_counts(); None means "stale, re-scan".
+        # Invalidated by every eval_results writer (store_result is the only
+        # one). Per-instance, naturally bounded by the run-group count.
+        self._rg_failure_counts: Dict[str, Tuple[int, int]] | None = None
 
         # Initialize database schema
         try:
@@ -1885,6 +1889,10 @@ class EvalsDB:
         start_time = time.time()
         result_id = str(uuid.uuid4())
 
+        # A new eval_results row invalidates the memoized run-group failure
+        # counts (store_result is the only production writer of that table).
+        self._rg_failure_counts = None
+
         # Log DB operation start
         log_counter(
             "eval_db_operation_started",
@@ -2035,9 +2043,17 @@ class EvalsDB:
         Returns:
             ``{run_group_id: (total_cells, errored_cells)}``. A run group
             with zero stored cells (nothing captured yet) has no entry
-            here at all -- callers should treat a missing key as
-            ``(0, 0)``, never as "all failed".
+        here at all -- callers should treat a missing key as
+        ``(0, 0)``, never as "all failed".
+
+        The result is memoized on the instance (the rail composes on every
+        selection change but the underlying ``eval_results`` rows only
+        change through ``store_result``) and invalidated by every
+        ``eval_results`` writer, so counts are never stale after a
+        mutation.
         """
+        if self._rg_failure_counts is not None:
+            return self._rg_failure_counts
         with self.connection() as conn:
             cursor = conn.execute(
                 """
@@ -2054,10 +2070,20 @@ class EvalsDB:
             GROUP BY r.run_group_id
             """
             )
-            return {
+            counts = {
                 row["group_id"]: (row["total_cells"], row["errored_cells"])
                 for row in cursor.fetchall()
             }
+            self._rg_failure_counts = counts
+            return counts
+
+    def invalidate_run_group_failure_cache(self) -> None:
+        """Drop the memoized ``run_group_cell_failure_counts`` result.
+
+        Public hook for any path that mutates ``eval_results`` outside
+        ``store_result``; the next failure-count call re-scans.
+        """
+        self._rg_failure_counts = None
 
     def get_run_results(
         self, run_id: str, limit: int = 1000, offset: int = 0
