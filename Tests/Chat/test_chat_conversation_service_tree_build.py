@@ -439,7 +439,13 @@ def test_tree_build_query_count_is_independent_of_message_count(db):
         "statement count grew with conversation size: "
         f"{len(small_statements)} @40 msgs vs {len(large_statements)} @120 msgs"
     )
-    assert len(_message_selects(large_statements)) <= 2, (
+    # Task 7 (wave 4): the single full-conversation tree fetch became a
+    # bounded three-statement read -- root COUNT, root page, and the
+    # recursive-CTE subtree (the CTE starts with WITH, so this SELECT-only
+    # filter sees the first two). The statement count stays O(1) in the
+    # conversation size; the per-page ROW count is what task 7 bounds
+    # (see test_conversation_tree_bounded_reads.py).
+    assert len(_message_selects(large_statements)) <= 3, (
         "expected O(1) message reads per tree build, got: "
         + "\n".join(_message_selects(large_statements))
     )

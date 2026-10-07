@@ -241,6 +241,58 @@ class FakeDB:
         )
         return self.tree_rows.get((conversation_id, order_by_timestamp), [])
 
+    def get_message_tree_rows_for_conversation_page(
+        self,
+        conversation_id,
+        *,
+        root_offset=0,
+        root_limit=50,
+        order_desc=False,
+        include_deleted_conversation=False,
+    ):
+        """Fake of the paged tree read: slice the root window, keep subtree.
+
+        Mirrors the real DB's bounded read for the fake's flat fixtures:
+        partition the unbounded rows, slice the requested root page, and
+        return the page's roots plus every descendant reachable through
+        ``parent_message_id`` links, with the live root count.
+        """
+        self.calls.append(
+            (
+                "get_message_tree_rows_for_conversation_page",
+                (conversation_id,),
+                {
+                    "root_offset": root_offset,
+                    "root_limit": root_limit,
+                    "order_desc": order_desc,
+                    "include_deleted_conversation": include_deleted_conversation,
+                },
+            )
+        )
+        rows = self.tree_rows.get(
+            (conversation_id, "DESC" if order_desc else "ASC"), []
+        )
+        root_rows = [r for r in rows if r.get("parent_message_id") is None]
+        children_by_parent = {}
+        for row in rows:
+            parent_id = row.get("parent_message_id")
+            if parent_id is not None:
+                children_by_parent.setdefault(parent_id, []).append(row)
+        effective_offset = max(0, root_offset)
+        page = (
+            root_rows[effective_offset:]
+            if root_limit < 0
+            else root_rows[effective_offset : effective_offset + root_limit]
+        )
+        subtree = list(page)
+        stack = list(page)
+        while stack:
+            node = stack.pop()
+            for child in children_by_parent.get(node["id"], ()):
+                subtree.append(child)
+                stack.append(child)
+        return subtree, len(root_rows)
+
     def get_message_images_by_ids(self, message_ids):
         self.calls.append(("get_message_images_by_ids", (tuple(message_ids),), {}))
         return {

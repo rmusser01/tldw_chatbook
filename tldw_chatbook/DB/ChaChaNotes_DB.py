@@ -11962,6 +11962,178 @@ DELETE FROM keywords
         cursor = self.execute_query(query, (conversation_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_message_tree_rows_for_conversation_page(
+        self,
+        conversation_id: str,
+        *,
+        root_offset: int = 0,
+        root_limit: int = 50,
+        order_desc: bool = False,
+        include_deleted_conversation: bool = False,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Fetch one root page of a conversation's message tree, plus subtree.
+
+        Task 7 (wave 4): the bounded companion to
+        ``get_message_tree_rows_for_conversation``. The tree window
+        ``ChatConversationService.get_conversation_tree`` asks for is ONE
+        page of ``root_limit`` root threads, so this reads only that
+        page's roots and their descendants instead of every live row of
+        the conversation. Three statements, ONE transaction (a consistent
+        snapshot across count, page, and subtree):
+
+        (a) the live root count -- the same predicate the service's old
+            ``len(root_rows)`` computed from the full fetch;
+        (b) the root page, ``LIMIT ?/OFFSET ?`` on the same ordering the
+            service's old Python slice consumed (``m.timestamp`` in the
+            requested direction; the trailing ``m.rowid`` tiebreaker
+            makes explicit the order the unbounded query's
+            ``idx_msgs_conv_ts`` scan already produces for equal
+            timestamps). SQLite's LIMIT/OFFSET semantics reproduce the
+            slicing semantics the service replicated in Python: a
+            negative OFFSET is treated as 0, a negative LIMIT as no
+            limit at all;
+        (c) the page's descendants via ONE recursive CTE seeded with the
+            page's root ids (direct children of the page roots in the
+            anchor, parent-link closure in the recursive arm). The
+            recursion is confined to ``conversation_id`` and live rows,
+            so a row whose parent lives in ANOTHER conversation -- which
+            the old full-fetch assembly keyed but never visited -- stays
+            unfetched, exactly as it stayed unrendered. No
+            ``conversations`` join is needed here: the seeds come from
+            statement (b), which already enforced it, and dead
+            conversations seed nothing.
+
+        The root criterion is the one the service assembly uses:
+        ``parent_message_id IS NULL`` (a NULL parent makes a root; a
+        parent id absent from the fetch does NOT). The unary ``+`` before
+        ``m.parent_message_id`` mirrors ``get_root_message_rows_page``:
+        it keeps the planner on ``idx_msgs_conv_ts`` and off
+        ``idx_msgs_parent``, which holds every conversation's parentless
+        rows.
+
+        Column set, ``has_image`` BLOB exclusion, and per-parent child
+        order (timestamp order within each parent's bucket, a stable
+        partition of one ordered fetch) are identical to the unbounded
+        variant; callers hydrate images via
+        ``get_message_images_by_ids`` as before. Callers that genuinely
+        need the full tree regardless of roots (the fork path's
+        ``get_messages_for_conversation`` cap) keep using the unbounded
+        reads explicitly.
+
+        Args:
+            conversation_id: The conversation UUID.
+            root_offset: The root page offset; negative values are
+                treated as 0 by SQLite, matching the old Python clamp.
+            root_limit: The root page size; a negative value means "no
+                limit" in SQLite, matching the old Python slice. The
+                page's root ids seed the CTE IN-list, so a page must
+                stay below the host's bound-variable limit (32766 on
+                the bundled SQLite; the largest production page -- the
+                resume/fork full-tree cap -- is 10_000).
+            order_desc: ``True`` for newest-first roots and children
+                (the unbounded variant's ``order_by_timestamp='DESC'``).
+            include_deleted_conversation: Include rows whose parent
+                conversation is soft-deleted.
+
+        Returns:
+            ``(rows, total_root_count)``: the page's root rows in page
+            order followed by their descendants in timestamp order
+            (same per-row shape as the unbounded variant), and the
+            conversation's live root count.
+
+        Raises:
+            CharactersRAGDBError: If SQLite fails.
+        """
+        direction = "DESC" if order_desc else "ASC"
+        conversation_filter = (
+            "" if include_deleted_conversation else "AND c.deleted = 0"
+        )
+        count_query = f"""
+            SELECT COUNT(*)
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND m.deleted = 0
+              AND +m.parent_message_id IS NULL
+              {conversation_filter}
+        """
+        page_query = f"""
+            SELECT m.id, m.conversation_id, m.parent_message_id, m.sender,
+                   m.content,
+                   (m.image_data IS NOT NULL) AS has_image, m.image_mime_type,
+                   m.timestamp, m.ranking, m.last_modified,
+                   m.version, m.client_id, m.deleted, m.feedback, m.role,
+                   m.variant_of, m.variant_number, m.is_selected_variant,
+                   m.total_variants, m.usage_json, m.metadata_json,
+                   m.provider_continuation_json, m.thinking_blocks_json,
+                   m.assistant_generation_state
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND m.deleted = 0
+              AND +m.parent_message_id IS NULL
+              {conversation_filter}
+            ORDER BY m.timestamp {direction}, m.rowid {direction}
+            LIMIT ? OFFSET ?
+        """
+        try:
+            with self.transaction() as conn:
+                count_row = conn.execute(
+                    count_query, (conversation_id,)
+                ).fetchone()
+                total_roots = int(count_row[0]) if count_row else 0
+                root_rows = [
+                    dict(row)
+                    for row in conn.execute(
+                        page_query,
+                        (conversation_id, root_limit, root_offset),
+                    ).fetchall()
+                ]
+                if not root_rows:
+                    return [], total_roots
+                page_root_ids = [row["id"] for row in root_rows]
+                placeholders = ",".join("?" for _ in page_root_ids)
+                descendants_query = f"""
+                    WITH RECURSIVE descendants(id) AS (
+                        SELECT ch.id
+                        FROM messages ch
+                        WHERE ch.conversation_id = ?
+                          AND ch.deleted = 0
+                          AND ch.parent_message_id IN ({placeholders})
+                        UNION ALL
+                        SELECT gc.id
+                        FROM messages gc
+                        JOIN descendants d ON gc.parent_message_id = d.id
+                        WHERE gc.conversation_id = ?
+                          AND gc.deleted = 0
+                    )
+                    SELECT m.id, m.conversation_id, m.parent_message_id, m.sender,
+                           m.content,
+                           (m.image_data IS NOT NULL) AS has_image,
+                           m.image_mime_type,
+                           m.timestamp, m.ranking, m.last_modified,
+                           m.version, m.client_id, m.deleted, m.feedback, m.role,
+                           m.variant_of, m.variant_number, m.is_selected_variant,
+                           m.total_variants, m.usage_json, m.metadata_json,
+                           m.provider_continuation_json, m.thinking_blocks_json,
+                           m.assistant_generation_state
+                    FROM descendants d
+                    JOIN messages m ON m.id = d.id
+                    ORDER BY m.timestamp {direction}, m.rowid {direction}
+                """
+                descendant_rows = [
+                    dict(row)
+                    for row in conn.execute(
+                        descendants_query,
+                        (conversation_id, *page_root_ids, conversation_id),
+                    ).fetchall()
+                ]
+        except sqlite3.Error as exc:
+            raise CharactersRAGDBError(
+                "Failed to read paged message tree rows."
+            ) from exc
+        return root_rows + descendant_rows, total_roots
+
     def get_root_message_rows_page(
         self,
         conversation_id: str,

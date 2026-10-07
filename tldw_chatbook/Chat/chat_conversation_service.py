@@ -13,7 +13,7 @@ from tldw_chatbook.Chat.console_appearance import (
     merge_console_conversation_appearance,
     parse_console_conversation_appearance,
 )
-from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL
+from tldw_chatbook.DB.ChaChaNotes_DB import CONVERSATION_SCOPE_ALL, InputError
 
 _ASSISTANT_AUTHORITY_UNSET = cast(str | None, object())
 _SQLITE_INTEGER_MAX = (1 << 63) - 1
@@ -1179,14 +1179,23 @@ class ChatConversationService:
                 "depth_cap": depth_cap,
             }
 
-        # TASK-22206: ONE conversation-scoped query (no BLOB hydration),
-        # then a purely in-memory, iterative tree assembly. The old shape
-        # issued one get_messages_for_conversation_by_parent_ids call per
-        # node -- each a full-conversation scan under the production query
-        # plan (sqlite_stat1 absent) -- and recursed once per message.
-        rows = self.db.get_message_tree_rows_for_conversation(
+        # TASK-22206 kept ONE conversation-scoped query (no BLOB
+        # hydration) and an iterative in-memory assembly; task 7 (wave 4)
+        # bounds that read to the requested root window: the DB pushes the
+        # root LIMIT/OFFSET down (same ordering this assembly consumed,
+        # negative offset clamped and negative limit meaning "no limit" --
+        # native SQLite semantics) and returns the page's roots plus their
+        # descendants via one recursive CTE, with the live root count --
+        # the same predicate (conversation-scoped, live rows, live
+        # conversation, parent_id IS NULL) the old len(root_rows) computed
+        # from the full fetch.
+        if order_by_timestamp.upper() not in ("ASC", "DESC"):
+            raise InputError("order_by_timestamp must be 'ASC' or 'DESC'.")
+        rows, total_root_threads = self.db.get_message_tree_rows_for_conversation_page(
             conversation_id,
-            order_by_timestamp=order_by_timestamp,
+            root_offset=root_offset,
+            root_limit=root_limit,
+            order_desc=order_by_timestamp.upper() == "DESC",
             include_deleted_conversation=False,
         )
         children_by_parent: dict[Any, list[Mapping[str, Any]]] = {}
@@ -1197,18 +1206,9 @@ class ChatConversationService:
                 root_rows.append(row)
             else:
                 children_by_parent.setdefault(parent_id, []).append(row)
-        # Same predicate the old COUNT query used, computed from the same
-        # fetch (conversation-scoped, live rows, live conversation).
-        total_root_threads = len(root_rows)
-        # Replicate SQL LIMIT/OFFSET semantics for non-positive inputs:
-        # a negative OFFSET is 0, a negative LIMIT means "no limit".
-        effective_offset = max(0, root_offset)
-        if root_limit < 0:
-            paged_root_rows = root_rows[effective_offset:]
-        else:
-            paged_root_rows = root_rows[
-                effective_offset : effective_offset + root_limit
-            ]
+        # Every parentless row in the fetch is a page root (the fetch is
+        # the page's subtree), so the page needs no further slicing.
+        paged_root_rows = root_rows
 
         root_threads, image_pending = self._build_message_tree(
             paged_root_rows,
