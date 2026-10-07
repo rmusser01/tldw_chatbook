@@ -19096,3 +19096,27 @@ every time a test re-patches the factory — the root `Tests/conftest.py`
 autouse fixture covers test boundaries, not phases inside a test — and read
 config through guarded fragments that degrade instead of raising when the
 bootstrap is unreconciled.
+
+## A piped pytest run reports the pipe's exit code, not the suite's
+
+**TASK-34427, 2026-10-07.** Characterizing the pre-change baseline for a
+risky migration, the "before" runs were launched as
+`pytest Tests/ChaChaNotesDB/ -q | grep -E "passed|failed" | tail -3` in a
+background shell. Both notifications reported `exit code 0`, which read as
+a green baseline — but the code was `tail`'s: the suite itself had 10
+failures (cascade/parity/census drift), invisible because grep only passed
+through the warning lines it matched. The false green was only caught
+halfway through the task, when a "new" census failure turned out to list
+16 indexes that predated the change; a temporary `git worktree` at the
+base commit (never `git stash` in a shared checkout) proved the suite was
+already red there, and the real baseline had to be re-captured.
+
+**What to do.** When a background/baseline pytest run is filtered through
+a pipe, capture the summary from the stream (`-rf` failure names to a
+file, or read the output file) instead of trusting the pipeline's exit
+code — `set -o pipefail` exists but the background runner reports the last
+command's status regardless. For before/after characterization, save the
+sorted `^FAILED` lists from both runs and `diff` them; identical failure
+LISTS are the evidence, not identical exit codes, and the first suspicion
+of a "new" failure should be tested against the base commit in a throwaway
+worktree before it gets chased as a regression.

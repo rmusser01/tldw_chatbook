@@ -75,11 +75,15 @@ UPDATE conversations
 - Ordering-preserving: `julianday()` is monotonic in its input instant, so
   post-migration raw text order equals pre-migration `julianday()` order. A
   golden-ordering test pins this on a mixed-format fixture.
-- The normalization `UPDATE` runs with `conversations_sync_update` dropped and
-  recreated verbatim (the v70→v71 precedent): a bare UPDATE would fire the
-  trigger and enqueue a spurious `sync_log` "update" event per conversation —
-  a storage-format change is not a content change. The FTS mirror triggers
-  fire but re-insert identical titles (net zero).
+- The normalization `UPDATE` runs with TWO conversations triggers dropped and
+  recreated verbatim (the v70→v71 precedent): `conversations_sync_update`
+  (a bare UPDATE would enqueue a spurious `sync_log` "update" event per
+  conversation — a storage-format change is not a content change) and
+  `character_conversation_search_conversations_au` (a bare UPDATE would bump
+  the search-projection revision and stamp CURRENT_TIMESTAMP dirty rows —
+  the searchable content did not change, and the wall-clock stamps would
+  make the migration non-deterministic). The FTS mirror triggers fire but
+  re-insert identical titles (net zero).
 
 Scope of normalization: ONLY `conversations.last_modified` and
 `flashcards.next_review` — the columns the three families filter/order on.
@@ -166,6 +170,20 @@ mixed (audit result; readers of those columns keep ADR-173's tolerant rules).
 - `character_cards` gets its first expression index; the index census
   (`Tests/ChaChaNotesDB/test_index_census.py`) is updated as the deliberate
   schema-review act that file demands.
+- **Backup/Recovery wiring (the fleet v78 precedent, followed exactly).** The
+  restore validator compares a candidate's whole `sqlite_schema` catalog
+  against frozen installed catalogs and migrates under a set-authorizer
+  connection. This change extends that machinery the way the v77→v78 fleet
+  bump did: `CHACHANOTES_V79_SCHEMAS` (+`CORE_SCHEMAS` head at 79, dictionary
+  variant rebased, full v78 lineage accepted at version 78 with a
+  `(78, 79)` stamp step), the shared-file Subscriptions hybrid tier
+  (`_SUBSCRIPTIONS_SARGABLE_SCHEMAS`, stamp 79), the canvas frozen-catalog
+  list, and a `sargable_migration` authorizer branch admitting exactly the
+  events the installed `.sql` statements produce (normalization UPDATEs,
+  two indexes + their internal REINDEX, the recreated sync trigger, and the
+  trigger-sourced FTS/search-projection/sync-journal writes the UPDATEs
+  compile). `Tests/DB/test_chachanotes_v79_sargable_migration.py` pins the
+  restricted migration, the foreign-DDL rollback, and the stamp acceptance.
 
 ## Alternatives considered
 
