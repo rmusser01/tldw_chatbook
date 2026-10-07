@@ -289,8 +289,9 @@ class LibraryLocalRagSearchService:
                 keyword search to the scope's media/note id allowlists and
                 excludes the conversations and prompts seams entirely
                 (neither is part of the scope vocabulary, spec D5), and
-                restricts semantic search via one store query per
-                allowlisted source type, merged by score.
+                restricts semantic search via ONE engine search carrying the
+                union of per-source-type allowlists, merged by score inside
+                the engine (review-B B2).
             **kwargs: Backend options. `top_k` caps the result count per
                 source (default 5). `include_citations` is used in `rag`
                 mode only.
@@ -861,13 +862,15 @@ class LibraryLocalRagSearchService:
             scope: Optional resolved RAG retrieval scope (rag-scope
                 narrowing, task-6). `None` or an unscoped scope performs
                 today's single unrestricted store query (no
-                `metadata_allowlist` at all). A scoped value runs one store
-                query per source_type present in the scope's allowlist --
-                a flat `metadata_allowlist` cannot express an OR across
-                source types, see `rag_scope.build_semantic_allowlists` --
-                and merges the per-type results by score, descending,
-                before trimming to `top_k` (mirrors
-                `pipeline_functions_simple.search_semantic`'s merge).
+                `metadata_allowlist` at all). A scoped value passes the
+                WHOLE union of per-source-type AND-groups
+                (`rag_scope.build_semantic_allowlists`) to ONE engine
+                search -- a flat `metadata_allowlist` cannot express an OR
+                across source types, and the engine's
+                `_semantic_search_scoped` runs the per-entry store queries
+                and merges by score, descending, before trimming to
+                `top_k` (review-B B2; the caller used to loop one search
+                per entry itself).
             rag_service: Already-resolved runtime, passed by `_search_rag`
                 so profile resolution and the search share one instance.
                 `None` resolves it here, keeping this method self-contained.
@@ -894,19 +897,18 @@ class LibraryLocalRagSearchService:
                 include_citations=include_citations,
             )
         else:
-            per_type_results: list[Any] = []
-            for allowlist in allowlists:
-                per_type_results.extend(
-                    await rag_service.search(
-                        query=query,
-                        top_k=top_k,
-                        search_type="semantic",
-                        include_citations=include_citations,
-                        metadata_allowlist=allowlist,
-                    )
-                )
-            per_type_results.sort(key=_raw_semantic_score, reverse=True)
-            raw_results = per_type_results[:top_k]
+            # Review-B B2: ONE search call carrying the WHOLE union -- the
+            # engine's `_semantic_search_scoped` runs the per-entry store
+            # queries and merges by score itself, exactly as `_search_hybrid`
+            # already hands it the union. The old caller-side loop issued one
+            # search (one query embedding, one full search round) per entry.
+            raw_results = await rag_service.search(
+                query=query,
+                top_k=top_k,
+                search_type="semantic",
+                include_citations=include_citations,
+                metadata_allowlist=allowlists,
+            )
 
         rows = _filtered_semantic_rows(raw_results, source_types)
         if not raw_results and await self._semantic_index_is_empty(rag_service):
@@ -988,9 +990,8 @@ class LibraryLocalRagSearchService:
                 translated by `build_semantic_allowlists` into the union of
                 per-source-type AND-groups the engine expects (a flat dict
                 cannot express "media in A OR note in B") and passed as ONE
-                `metadata_allowlist` -- unlike `_search_semantic`, which
-                predates the engine's multi-entry support and still issues
-                one store query per entry itself. Both legs honor it.
+                `metadata_allowlist` -- `_search_semantic` does the same
+                since review-B B2. Both legs honor it.
             rag_service: The resolved runtime.
 
         Returns:
@@ -1646,19 +1647,6 @@ def _coerce_score(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _raw_semantic_score(item: Any) -> float:
-    """Sortable score for a raw (pre-``_semantic_row``) semantic result item.
-
-    Mirrors ``_coerce_score``'s dual Mapping/attribute handling so the
-    per-type merge (``_search_semantic``) can sort mixed-shape results from
-    ``rag_service.search`` without first normalizing every item.
-    """
-    value = (
-        item.get("score") if isinstance(item, Mapping) else getattr(item, "score", None)
-    )
-    return _coerce_score(value) or float("-inf")
 
 
 async def _empty_scoped_seam() -> tuple[SeamState, list[dict[str, Any]]]:

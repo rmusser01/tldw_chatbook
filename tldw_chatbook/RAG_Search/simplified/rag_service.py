@@ -129,6 +129,18 @@ DEFAULT_BATCH_SIZE = _rag_service_config.get(
     "batch_size", 32
 )  # This one matches the rag.embedding.batch_size
 
+# Review-B B1: presentation bounds for the conversations keyword sub-leg's
+# content assembly (``_chacha_conversations_fts``). The sub-leg renders every
+# FTS-matching message of every matching conversation as one ``sender:
+# content`` line; a single long conversation could materialize thousands of
+# lines per search only for prompt assembly to truncate them. These caps
+# bound what is FETCHED and ASSEMBLED -- a retrieval-presentation bound, not
+# a recall change: the FTS matching set, the conversations returned, and
+# their oldest-first message order are unchanged. Plain module constants on
+# purpose (no new config keys in this PR).
+_MAX_CONV_MESSAGES_PER_CONVERSATION = 80
+_MAX_CONV_MESSAGES_TOTAL = 400
+
 
 def _metadata_filter_value_matches(actual: Any, expected: Any) -> bool:
     """Match exact values plus the existing single-key ``$in`` form."""
@@ -2412,6 +2424,21 @@ class RAGService:
         joining them in Python makes the order a property of the query,
         not of the planner.
 
+        Review-B B1 bounds what this assembly FETCHES, in two layers. A
+        window function (``ROW_NUMBER() OVER (PARTITION BY conversation_id
+        ORDER BY timestamp ASC, rowid ASC)``) keeps at most
+        ``_MAX_CONV_MESSAGES_PER_CONVERSATION`` oldest messages per
+        conversation inside SQLite itself -- previously every matching
+        message of every matching conversation crossed into Python, so one
+        long conversation dominated the leg's cost -- and the assembled
+        per-conversation line lists are then truncated to
+        ``_MAX_CONV_MESSAGES_TOTAL`` overall, filling conversations in this
+        sub-leg's existing top-k order. Both are presentation bounds for
+        prompt assembly, not a recall change: the FTS matching set is
+        unchanged, and within the bound the messages are still the OLDEST
+        matches in the ORM's own ``timestamp ASC`` (rowid tie-break) order,
+        so a conversation document still reads chronologically.
+
         Args:
             conn: Read-only ChaChaNotes connection.
             escaped_query: A per-token-quoted FTS5 MATCH expression.
@@ -2464,27 +2491,54 @@ class RAGService:
             placeholders = ",".join("?" * len(conversations))
             messages_sql = f"""
             SELECT
-                m.conversation_id AS conversation_id,
-                COALESCE(m.sender, 'unknown') || ': '
-                    || COALESCE(m.content, '') AS line
-            FROM messages_fts fts
-            JOIN messages m ON fts.rowid = m.rowid
-            WHERE fts.messages_fts MATCH ?
-              AND m.deleted = 0
-              AND m.conversation_id IN ({placeholders})
-            ORDER BY m.timestamp ASC, m.rowid ASC
+                conversation_id,
+                line
+            FROM (
+                SELECT
+                    m.conversation_id AS conversation_id,
+                    COALESCE(m.sender, 'unknown') || ': '
+                        || COALESCE(m.content, '') AS line,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY m.conversation_id
+                        ORDER BY m.timestamp ASC, m.rowid ASC
+                    ) AS rn
+                FROM messages_fts fts
+                JOIN messages m ON fts.rowid = m.rowid
+                WHERE fts.messages_fts MATCH ?
+                  AND m.deleted = 0
+                  AND m.conversation_id IN ({placeholders})
+            )
+            WHERE rn <= ?
+            ORDER BY conversation_id, rn
             """
             lines: Dict[Any, List[str]] = {}
-            params = [escaped_query, *(row["id"] for row in conversations)]
+            params = [
+                escaped_query,
+                *(row["id"] for row in conversations),
+                _MAX_CONV_MESSAGES_PER_CONVERSATION,
+            ]
             with closing(conn.execute(messages_sql, params)) as cursor:
                 for row in cursor:
                     lines.setdefault(row["conversation_id"], []).append(row["line"])
+
+            # Second bound layer: at most _MAX_CONV_MESSAGES_TOTAL lines
+            # overall, filling conversations in their existing top-k
+            # (best_rank) order so the best conversations keep their window.
+            # Presentation bound for prompt assembly; FTS recall unchanged.
+            bounded: Dict[Any, List[str]] = {}
+            remaining = _MAX_CONV_MESSAGES_TOTAL
+            for row in conversations:
+                if remaining <= 0:
+                    break
+                taken = lines.get(row["id"], ())[:remaining]
+                bounded[row["id"]] = taken
+                remaining -= len(taken)
 
             return [
                 {
                     "id": row["id"],
                     "title": row["title"],
-                    "content": "\n".join(lines.get(row["id"], ())),
+                    "content": "\n".join(bounded.get(row["id"], ())),
                 }
                 for row in conversations
             ]
@@ -3321,7 +3375,17 @@ class RAGService:
         # Find citations from the query's own tokens (see the docstring).
         full_content = item.get("content", "")
         tokens = self._fts5_query_tokens(query)
-        spans = self._keyword_citation_spans(full_content, tokens)
+        if source_type == SOURCE_TYPE_CONVERSATION:
+            # Review-B B1: a conversation row's document can assemble
+            # hundreds of messages, but only the first 1000 chars are ever
+            # cited (the ``[:1000]`` preview above). Bound the token regex
+            # scan to exactly that preview -- scanning the rest cost O(full
+            # document) per row and its spans could never be shown.
+            spans = self._keyword_citation_spans(
+                full_content, tokens, text_limit=len(content)
+            )
+        else:
+            spans = self._keyword_citation_spans(full_content, tokens)
 
         # Cap the spans, preferring coverage: a span evidencing a token no
         # earlier span did comes first, so a two-token query whose first
@@ -4060,7 +4124,9 @@ class RAGService:
 
     @staticmethod
     def _keyword_citation_spans(
-        content: str, tokens: List[str]
+        content: str,
+        tokens: List[str],
+        text_limit: Optional[int] = None,
     ) -> List[Tuple[int, int, frozenset]]:
         """Locate the citation spans for a keyword hit, from the query's tokens.
 
@@ -4091,17 +4157,29 @@ class RAGService:
         Args:
             content: The document text the offsets must index.
             tokens: ``_fts5_query_tokens(query)`` for the same query.
+            text_limit: Optional scan bound (review-B B1). When set, only
+                ``content[:text_limit]`` is searched, so the per-token regex
+                never walks text the caller will not cite against -- the
+                conversation-content caller passes its ``[:1000]`` preview
+                length, since conversation documents can assemble hundreds
+                of messages while the preview is all that is shown. A token
+                match straddling the bound is not reported. ``None`` (the
+                default) scans the whole text, exactly as before this
+                parameter existed.
 
         Returns:
             Merged, non-overlapping ``(start, end, token_indices)`` spans in
             document order, where ``token_indices`` is the set of ``tokens``
             positions the span evidences. Empty when no token appears in the
-            content -- a real case, since a row can match on an indexed
-            column the caller never sees (``media_fts`` indexes the title
-            too).
+            scanned content -- a real case, since a row can match on an
+            indexed column the caller never sees (``media_fts`` indexes the
+            title too).
         """
         if not content or not tokens:
             return []
+
+        if text_limit is not None:
+            content = content[:text_limit]
 
         raw_spans: List[Tuple[int, int, int]] = []
         for index, token in enumerate(tokens):

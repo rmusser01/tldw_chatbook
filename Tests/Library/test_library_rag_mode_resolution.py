@@ -374,12 +374,12 @@ async def test_scoped_selection_with_no_servable_source_still_diverts():
 
     assert [call["search_type"] for call in rag.calls] == ["semantic"]
     assert _NOTE_HYBRID_NO_KEYWORD_SOURCES in _route_notes(result)
-    # `_search_semantic` predates the engine's multi-entry support and still
-    # issues one store query per AND-group, so each call carries ONE mapping.
-    assert rag.calls[0]["metadata_allowlist"] == {
-        "source_type": {SOURCE_TYPE_MEDIA},
-        "source_id": {"media-1"},
-    }
+    # Review-B B2: `_search_semantic` passes the WHOLE union in one call,
+    # same as `_search_hybrid` -- recorded as the tuple the engine
+    # materializes it into (one AND-group per source type).
+    assert rag.calls[0]["metadata_allowlist"] == (
+        {"source_type": {SOURCE_TYPE_MEDIA}, "source_id": {"media-1"}},
+    )
     # An unknown selection drops every semantic row in the post-filter, so
     # this lands on the scoped path's own zero-results outcome -- labeled
     # semantic, which is what actually ran.

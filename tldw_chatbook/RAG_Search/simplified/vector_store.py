@@ -22,6 +22,7 @@ except ImportError:
 import json
 import time
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional, Protocol, Sequence, Union
@@ -1039,8 +1040,23 @@ class InMemoryVectorStore:
         self.documents: List[str] = []
         self.metadata: List[dict] = []
 
-        # Track access order for LRU eviction
-        self._access_order: List[str] = []
+        # Track access order for LRU eviction. Review-B B3: an OrderedDict
+        # (front = least recently used) replaces the plain list, so an LRU
+        # touch is O(1) `move_to_end` instead of an O(n) `list.remove`.
+        self._access_order: "OrderedDict[str, None]" = OrderedDict()
+        # Review-B B3: id -> index into the parallel lists above, so the
+        # dedupe check and in-place replace in `add` are dict lookups
+        # instead of O(n) `in`/`index` scans. Rebuilt wherever the parallel
+        # lists shift (eviction, delete_document).
+        self._index_by_id: Dict[str, int] = {}
+        # Review-B B3: cached (n, d) float32 matrix over `self.embeddings`
+        # plus per-row norms, so a cosine search is ONE matmul over
+        # pre-normalized rows instead of a per-vector Python loop that
+        # recomputed the query norm for every candidate. Appended on add;
+        # invalidated (and rebuilt lazily on the next search) wherever the
+        # row set shifts -- replace, eviction, delete_document, clear.
+        self._matrix: Optional["np.ndarray"] = None
+        self._row_norms: Optional["np.ndarray"] = None
 
         # Collection support (for compatibility) with access tracking
         self._collections: Dict[str, Dict[str, Any]] = {}
@@ -1180,18 +1196,22 @@ class InMemoryVectorStore:
                             f"All embeddings must have the same dimension."
                         )
 
-        # Add documents, updating existing ones
+        # Add documents, updating existing ones. Review-B B3: the dedupe
+        # check is a dict lookup (was an O(n) `in` scan + O(n) `index`).
+        new_rows: List[Union[np.ndarray, List[float]]] = []
         for i, id_val in enumerate(ids):
-            if id_val in self.ids:
+            idx = self._index_by_id.get(id_val)
+            if idx is not None:
                 # Update existing
-                idx = self.ids.index(id_val)
                 self.embeddings[idx] = embeddings[i]
                 self.documents[idx] = documents[i]
                 self.metadata[idx] = metadata[i]
-                # Update access order
-                if id_val in self._access_order:
-                    self._access_order.remove(id_val)
-                self._access_order.append(id_val)
+                # Update access order (O(1) move, was a list remove+append)
+                self._access_order.move_to_end(id_val)
+                # A replaced row invalidates the cached matrix (its norms
+                # are stale); rebuilt lazily on the next search.
+                self._matrix = None
+                self._row_norms = None
             else:
                 # Check if we need to evict due to document limit
                 if len(self.ids) >= self.max_documents:
@@ -1203,27 +1223,88 @@ class InMemoryVectorStore:
                 self.embeddings.append(embeddings[i])
                 self.documents.append(documents[i])
                 self.metadata.append(metadata[i])
-                self._access_order.append(id_val)
+                self._index_by_id[id_val] = len(self.ids) - 1
+                self._access_order[id_val] = None
+                new_rows.append(embeddings[i])
+
+        # Review-B B3: append the new rows to the cached matrix in ONE
+        # step per `add` call (a batched index never pays per-vector
+        # numpy calls). An invalidated matrix stays None and is rebuilt
+        # lazily by the next search.
+        if new_rows and self._matrix is not None and NUMPY_AVAILABLE:
+            try:
+                stacked = np.vstack(
+                    [
+                        self._matrix,
+                        np.asarray(new_rows, dtype=np.float32).reshape(
+                            len(new_rows), -1
+                        ),
+                    ]
+                )
+                self._matrix = stacked
+                self._row_norms = np.linalg.norm(stacked, axis=1)
+            except (ValueError, TypeError):
+                # Ragged rows (should be impossible past the dimension
+                # check above): fall back to a full lazy rebuild.
+                self._matrix = None
+                self._row_norms = None
 
         self._add_count += len(ids)
         logger.debug(
             f"Added {len(ids)} documents to in-memory store (current size: {len(self.ids)})"
         )
 
+    def _default_collection_cosine_cache(self):
+        """Return the cached ``(matrix, row_norms)`` for cosine searches.
+
+        Review-B B3. The cache is appended on ``add`` and invalidated on
+        any structural change (replace, eviction, ``delete_document``,
+        ``clear``); this helper rebuilds it lazily from the parallel lists
+        when invalid. Returns ``(None, None)`` when there is nothing to
+        search (keeps the caller on the plain empty-return path).
+
+        Returns:
+            Tuple of the (n, d) float32 matrix over ``self.embeddings`` and
+            the (n,) float32 row norms, or ``(None, None)`` when empty.
+        """
+        n = len(self.ids)
+        if n == 0:
+            return None, None
+        if (
+            self._matrix is not None
+            and self._row_norms is not None
+            and self._matrix.shape[0] == n
+        ):
+            return self._matrix, self._row_norms
+        rows = [
+            np.asarray(emb, dtype=np.float32).reshape(1, -1)
+            for emb in self.embeddings
+        ]
+        matrix = np.vstack(rows)
+        self._matrix = matrix
+        self._row_norms = np.linalg.norm(matrix, axis=1)
+        return self._matrix, self._row_norms
+
     def _evict_lru(self) -> None:
         """Evict the least recently used document."""
         if not self._access_order:
             return
 
-        # Get the least recently used ID
-        lru_id = self._access_order.pop(0)
-
-        # Remove from storage
-        idx = self.ids.index(lru_id)
+        # Review-B B3: the OrderedDict's front IS the LRU entry -- no list
+        # scan to find it. Removing the row still shifts the parallel lists
+        # after `idx`, so the id index is repaired for the tail (the same
+        # O(n) the old `.index`+`.pop` pair cost) and the matrix cache is
+        # invalidated for a lazy rebuild.
+        lru_id, _ = self._access_order.popitem(last=False)
+        idx = self._index_by_id.pop(lru_id)
         self.ids.pop(idx)
         self.embeddings.pop(idx)
         self.documents.pop(idx)
         self.metadata.pop(idx)
+        for shifted in range(idx, len(self.ids)):
+            self._index_by_id[self.ids[shifted]] = shifted
+        self._matrix = None
+        self._row_norms = None
 
         self._eviction_count += 1
         logger.debug(
@@ -1408,12 +1489,64 @@ class InMemoryVectorStore:
         # Compute similarities, skipping candidates outside the allowlist
         # *before* ranking so a narrow scope can't be starved out by
         # higher-similarity out-of-scope candidates being truncated first.
-        similarities = []
-        for i, emb in enumerate(embeddings):
-            if not _passes_metadata_allowlist(metadata[i], metadata_allowlist):
-                continue
-            similarity = self._compute_similarity(query_embedding, emb)
-            similarities.append((i, similarity))
+        #
+        # Review-B B3 fast path: for the numpy cosine metric over the
+        # default collection, one matmul over the cached matrix replaces
+        # the per-vector Python loop (which recomputed the QUERY norm for
+        # every candidate). The math is the same cosine the per-vector
+        # helper computes: rows pre-normalized by their cached norms, the
+        # query normalized once, zero vectors scoring 0.0, results clamped
+        # to [-1, 1]. Every other metric (l2/ip) and the no-numpy fallback
+        # keep the per-vector loop below, unchanged.
+        fast_path = (
+            NUMPY_AVAILABLE
+            and self.distance_metric == "cosine"
+            and collection_name is None
+        )
+        if fast_path:
+            matrix, row_norms = self._default_collection_cosine_cache()
+            if matrix is not None:
+                query_vec = np.asarray(query_embedding, dtype=np.float32).reshape(-1)
+                if query_vec.shape[0] != matrix.shape[1]:
+                    # Dimension mismatch falls through to the per-vector
+                    # helper so its error surfaces exactly as before.
+                    fast_path = False
+                else:
+                    query_norm = float(np.linalg.norm(query_vec))
+                    if metadata_allowlist is not None:
+                        allowed = [
+                            i
+                            for i in range(matrix.shape[0])
+                            if _passes_metadata_allowlist(
+                                metadata[i], metadata_allowlist
+                            )
+                        ]
+                    else:
+                        allowed = list(range(matrix.shape[0]))
+                    if query_norm < 1e-6:
+                        # Zero query vector: no meaningful similarity to
+                        # anything (the per-vector helper returns 0.0).
+                        similarities = [(i, 0.0) for i in allowed]
+                    elif not allowed:
+                        similarities = []
+                    else:
+                        indices = np.asarray(allowed, dtype=np.intp)
+                        unit_query = query_vec / query_norm
+                        sims = matrix[indices] @ unit_query
+                        norms = row_norms[indices]
+                        # Zero-norm rows score 0.0, mirroring the
+                        # per-vector helper's zero-vector guard.
+                        sims = np.where(norms < 1e-6, 0.0, sims / norms)
+                        sims = np.clip(sims, -1.0, 1.0)
+                        similarities = list(zip(allowed, (float(s) for s in sims)))
+
+        if not fast_path:
+            similarities = []
+            for i, emb in enumerate(embeddings):
+                if not _passes_metadata_allowlist(metadata[i], metadata_allowlist):
+                    continue
+                similarity = self._compute_similarity(query_embedding, emb)
+                similarities.append((i, similarity))
 
         # Sort by similarity (descending)
         similarities.sort(key=lambda x: x[1], reverse=True)
@@ -1425,9 +1558,7 @@ class InMemoryVectorStore:
             # Update access order for LRU
             id_val = ids[idx]
             if collection_name is None:
-                if id_val in self._access_order:
-                    self._access_order.remove(id_val)
-                self._access_order.append(id_val)
+                self._access_order.move_to_end(id_val)
 
             # Normalize score to [0, 1] range for consistency
             if self.distance_metric == "cosine":
@@ -1558,9 +1689,17 @@ class InMemoryVectorStore:
         self.embeddings = [self.embeddings[i] for i in keep_indices]
         self.documents = [self.documents[i] for i in keep_indices]
         self.metadata = [self.metadata[i] for i in keep_indices]
-        self._access_order = [
-            id_val for id_val in self._access_order if id_val not in removed_ids
-        ]
+        # Review-B B3: the row set shifted wholesale -- rebuild the id
+        # index and the OrderedDict LRU together with the lists, and drop
+        # the matrix cache (rebuilt lazily on the next search).
+        self._index_by_id = {id_val: i for i, id_val in enumerate(self.ids)}
+        self._access_order = OrderedDict(
+            (id_val, None)
+            for id_val in self._access_order
+            if id_val not in removed_ids
+        )
+        self._matrix = None
+        self._row_norms = None
         logger.debug(
             f"Deleted {len(removed_ids)} chunks for document {doc_id} from in-memory store"
         )
@@ -1573,6 +1712,9 @@ class InMemoryVectorStore:
         self.documents.clear()
         self.metadata.clear()
         self._access_order.clear()
+        self._index_by_id.clear()
+        self._matrix = None
+        self._row_norms = None
         self._eviction_count = 0
         self._memory_pressure_evictions = 0
         logger.info("Cleared in-memory vector store")

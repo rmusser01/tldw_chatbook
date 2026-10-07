@@ -466,20 +466,23 @@ async def search_semantic(
         scope: Optional resolved RAG retrieval scope (rag-scope narrowing,
             task-4). ``None`` or an unscoped scope performs today's single
             unrestricted store query (no ``metadata_allowlist`` at all). A
-            scoped value runs one store query per source_type present in
-            the scope's allowlist -- a flat ``metadata_allowlist`` cannot
-            express an OR across source types, see
-            ``rag_scope.build_semantic_allowlists`` -- and merges the
-            per-type results by score, descending, before trimming to
-            ``limit``. Composes with ``filter_metadata``/``kwargs`` (AND):
-            both may be forwarded to the same store call. ``scope.state ==
-            "empty"`` fails this leg CLOSED -- returns ``[]`` without ever
-            resolving/calling the RAG service -- rather than falling
-            through to an unrestricted search (defense-in-depth, PR #734
-            review; callers are expected to short-circuit EMPTY before ever
-            reaching a leg); that refusal is recorded under
-            ``SCOPE_DIAGNOSTICS_KEY`` (not ``SEMANTIC_DIAGNOSTICS_KEY``) in
-            ``diagnostics``, matching every other leg's EMPTY-scope shape.
+            scoped value passes the WHOLE union of per-source-type
+            AND-groups (``rag_scope.build_semantic_allowlists``) to ONE
+            store search -- a flat ``metadata_allowlist`` cannot express an
+            OR across source types, and the engine's
+            ``_semantic_search_scoped`` runs the per-entry store queries,
+            merging the results by score, descending, before trimming to
+            ``limit`` (review-B B2; the caller used to loop one search per
+            entry itself). Composes with ``filter_metadata``/``kwargs``
+            (AND): both may be forwarded to the same store call.
+            ``scope.state == "empty"`` fails this leg CLOSED -- returns
+            ``[]`` without ever resolving/calling the RAG service -- rather
+            than falling through to an unrestricted search
+            (defense-in-depth, PR #734 review; callers are expected to
+            short-circuit EMPTY before ever reaching a leg); that refusal is
+            recorded under ``SCOPE_DIAGNOSTICS_KEY`` (not
+            ``SEMANTIC_DIAGNOSTICS_KEY``) in ``diagnostics``, matching every
+            other leg's EMPTY-scope shape.
         **kwargs: Extra kwargs forwarded verbatim to ``rag_service.search``
             (call sites whitelist these; see pipeline_builder_simple).
 
@@ -523,21 +526,20 @@ async def search_semantic(
                 **kwargs,
             )
         else:
-            # Scoped: one store query per source_type, merged by score.
-            per_type_results = []
-            for allowlist in allowlists:
-                per_type_results.extend(
-                    await rag_service.search(
-                        query=query,
-                        search_type="semantic",
-                        top_k=limit,
-                        include_citations=True,
-                        metadata_allowlist=allowlist,
-                        **kwargs,
-                    )
-                )
-            per_type_results.sort(key=lambda r: r.score, reverse=True)
-            rag_results = per_type_results[:limit]
+            # Scoped: ONE store search over the whole union allowlist
+            # (review-B B2). The engine's `_semantic_search_scoped` runs the
+            # per-entry store queries and merges by score, descending, then
+            # trims to top_k -- the same merge this caller used to run in
+            # Python after issuing one full search (one query embedding)
+            # per entry.
+            rag_results = await rag_service.search(
+                query=query,
+                search_type="semantic",
+                top_k=limit,
+                include_citations=True,
+                metadata_allowlist=allowlists,
+                **kwargs,
+            )
     except Exception:
         logger.opt(exception=True).error(
             "Semantic search raised; recording search_error state."
