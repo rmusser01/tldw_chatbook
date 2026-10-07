@@ -1,8 +1,9 @@
 ---
 id: TASK-34425
 title: Structural sharing for ReaderItemSnapshot pages
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:42
+updated_date: 2026-10-07 12:54
 ---
 
 ## Description
