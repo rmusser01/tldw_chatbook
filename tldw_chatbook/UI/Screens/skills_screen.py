@@ -939,7 +939,12 @@ class SkillsScreen(BaseAppScreen):
                                 "Use",
                                 id=f"skills-select-local-{index}",
                                 classes="skills-select-local",
-                                tooltip=f"Use {name} as the Console skill target.",
+                                # escape_markup: `tooltip` renders through the
+                                # markup-parsing Tooltip Static (TASK-1513) --
+                                # `name` is the user-named skill directory, so
+                                # a stray `[/]` would raise MarkupError.
+                                tooltip=f"Use {escape_markup(name)} as the "
+                                "Console skill target.",
                             )
                         attach_label = "Attach local Skills to Console"
                         attach_disabled = not (

@@ -1540,8 +1540,12 @@ class LibrarySkillsListCanvas(PostRecomposeCallback, VerticalScroll):
         if self.import_review_name:
             # task-422: the success copy says "re-review it in the trust
             # panel" -- this is the direct path there.
+            # escape_markup: `Button(label=...)` parses its label as Textual
+            # markup (TASK-1513); `import_review_name` is the imported
+            # skill's filename-derived name, so a stray `[/]` in it would
+            # raise MarkupError the moment this row composes.
             yield Button(
-                f'Review "{self.import_review_name}"…',
+                f'Review "{escape_markup(self.import_review_name)}"…',
                 id="library-skills-import-review",
                 classes="library-canvas-action",
                 compact=True,
