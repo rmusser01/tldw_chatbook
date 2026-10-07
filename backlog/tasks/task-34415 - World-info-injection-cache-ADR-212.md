@@ -1,8 +1,9 @@
 ---
 id: TASK-34415
 title: World-info injection cache ADR-212
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:40
+updated_date: 2026-10-07 03:43
 ---
 
 ## Description

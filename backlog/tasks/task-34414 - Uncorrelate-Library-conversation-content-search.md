@@ -1,9 +1,9 @@
 ---
 id: TASK-34414
 title: Uncorrelate Library conversation content search
-status: In Progress
+status: Done
 created_date: 2026-10-07 02:40
-updated_date: 2026-10-07 03:17
+updated_date: 2026-10-07 03:43
 ---
 
 ## Description
@@ -26,9 +26,8 @@ See Docs/superpowers/plans/2026-10-06-nonconsole-efficiency-remediation.md Task 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
-
+Replaced the correlated content-LIKE EXISTS branch in search_library_conversations_page with the uncorrelated id IN (SELECT m.conversation_id FROM messages ...) shape proven on the Console seam (_conversation_search_filter). Parameter order and branch index 2 unchanged; COUNT/page/hit projections inherit via the shared branches list. Equivalence proven against a golden baseline captured on unmodified code (title exact/substring, message mid-word substring 'indo', FTS token, keyword, no-match, multi-branch hit projections) — 155 tests green across 3 files. Evidence: EQP changed CORRELATED SCALAR SUBQUERY -> LIST SUBQUERY + bloom filter; 50x50 no-match 8.77ms -> 3.29/5.99ms; the sibling seam's ~70s/150k figure (task-33261/PERF-02, FTS-MATCH variant) cited with correct attribution. Files: DB/ChaChaNotes_DB.py, Tests/ChaChaNotesDB/test_library_conversation_search.py. Report: .superpowers/sdd/task-2-report.md
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
