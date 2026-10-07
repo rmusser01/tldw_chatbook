@@ -1,8 +1,9 @@
 ---
 id: TASK-34429
 title: Bounded concurrency for pairwise reranker recursion
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:43
+updated_date: 2026-10-07 20:39
 ---
 
 ## Description
