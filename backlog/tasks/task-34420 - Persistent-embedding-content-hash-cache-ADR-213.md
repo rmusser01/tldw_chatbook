@@ -1,8 +1,9 @@
 ---
 id: TASK-34420
 title: Persistent embedding content-hash cache ADR-213
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:41
+updated_date: 2026-10-07 08:55
 ---
 
 ## Description
