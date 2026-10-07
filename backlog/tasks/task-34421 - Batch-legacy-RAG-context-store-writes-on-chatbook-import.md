@@ -1,8 +1,9 @@
 ---
 id: TASK-34421
 title: Batch legacy RAG-context store writes on chatbook import
-status: To Do
+status: In Progress
 created_date: 2026-10-07 02:41
+updated_date: 2026-10-07 09:25
 ---
 
 ## Description
