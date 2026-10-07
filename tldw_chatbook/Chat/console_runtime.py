@@ -5126,6 +5126,33 @@ class ConsoleRuntime:
             if not completed:
                 owner.abort_session_close(token)
 
+    async def _drain_ordinary_native_commits(self, controller, session_id=None) -> bool:
+        """Keep only exact native save lifetimes past the surrounding grace."""
+        read = getattr(controller, "_ordinary_native_commit_retirements", None)
+        if not callable(read):
+            return False
+        tasks = getattr(controller, "_ordinary_native_commit_tasks", None)
+        if callable(tasks) and asyncio.current_task() in tasks(session_id):
+            raise RuntimeError("An ordinary save cannot finalize its own runtime.")
+        cancelled = False
+        while True:
+            completions = read(session_id)
+            if not completions:
+                return cancelled
+            for completion in completions:
+                while not completion.done():
+                    try:
+                        await asyncio.shield(completion)
+                    except asyncio.CancelledError:
+                        task = asyncio.current_task()
+                        if task is not None and task.cancelling():
+                            cancelled = True
+                        elif completion.cancelled():
+                            raise RuntimeError(
+                                "Native save retirement signal was cancelled."
+                            ) from None
+                completion.result()
+
     async def _close_session_after_voice_drain(
         self,
         session_id: str,
@@ -5201,6 +5228,10 @@ class ConsoleRuntime:
         for task in pending:
             task.cancel()
             task.add_done_callback(self._consume_task_outcome)
+        cancel_requested |= await self._drain_ordinary_native_commits(
+            controller, session_id
+        )
+        pending = {task for task in pending if not task.done()}
         fleet_fenced = callable(getattr(bridge, "fence_fleet", None))
         fleet_drain_succeeded = not fleet_fenced and fleet_waiter is None
         if (
@@ -5364,6 +5395,19 @@ class ConsoleRuntime:
         refuses work through its permanently-set cancellation Event, which
         is exactly the right answer at exit.
         """
+        controller = self._chat_controller
+        try:
+            await self._dispose_owned(timeout_seconds=timeout_seconds)
+        finally:
+            if controller is not None:
+                await self._drain_ordinary_native_commits(controller)
+
+    async def _dispose_owned(
+        self,
+        *,
+        timeout_seconds: float,
+    ) -> None:
+        """Run the existing teardown once under its original shared deadline."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, float(timeout_seconds))
 
@@ -5576,10 +5620,23 @@ class ConsoleRuntime:
                         name="console-dispose-controller",
                     )
                 )
-        pending = await self._bounded_wait(
-            drain_tasks,
-            timeout_seconds=remaining_seconds(),
-        )
+        native_cancel_requested = False
+        while True:
+            try:
+                pending = await self._bounded_wait(
+                    drain_tasks,
+                    timeout_seconds=remaining_seconds(),
+                )
+                break
+            except asyncio.CancelledError:
+                native_tasks = getattr(
+                    controller, "_ordinary_native_commit_tasks", None
+                )
+                if not native_cancel_requested and (
+                    not callable(native_tasks) or not native_tasks()
+                ):
+                    raise
+                native_cancel_requested = True
         if voice_cleanup in pending:
             logger.warning("Console runtime: voice cleanup remains pending at dispose.")
         for task in pending:
@@ -5591,6 +5648,8 @@ class ConsoleRuntime:
             # The child budget cannot end UI-owned provider/TTS/claimed work.
             # Keep its original owner loop and store until actual custody settles.
             await asyncio.shield(voice_cleanup)
+        if controller is not None:
+            await self._drain_ordinary_native_commits(controller)
         await self.close_hooks_v2()
         for turn_id in tuple(self._turn_custody):
             self._release_custody(turn_id)

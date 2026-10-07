@@ -3280,6 +3280,26 @@ class ConsoleProviderGatewayProtocol(Protocol):
         """Stream response chunks for provider messages."""
 
 
+@dataclass(slots=True, eq=False)
+class _OrdinaryNativeCommitOwner:
+    """Lifetime of one issued save; existing store state retains authority."""
+
+    store: ConsoleChatStore = field(repr=False)
+    persistence: Any = field(repr=False)
+    database: Any = field(repr=False)
+    session: ConsoleChatSession = field(repr=False)
+    acceptance: ConsoleDurableTurnAcceptance = field(repr=False)
+    task: asyncio.Task[Any] = field(repr=False)
+    retired: asyncio.Future[None] = field(repr=False)
+    caller_cancelled: bool = False
+    explicit_stop: bool = False
+    commit_error: BaseException | None = field(default=None, repr=False)
+
+
+class _OrdinaryNativeCommitOwnerChanged(RuntimeError):
+    """An issued original save must not publish into a successor owner."""
+
+
 @dataclass(slots=True)
 class ConsoleCitationRepairSession:
     contract: CitationRepairContract | None
@@ -4095,6 +4115,7 @@ class ConsoleChatController:
         # Held after skills / retrieval / hooks already ran (rare, late check):
         # the resumed pass must not append their notes and events again.
         self._compaction_hold_after_effects: set[str] = set()
+        self._ordinary_native_commits: dict[str, _OrdinaryNativeCommitOwner] = {}
         self._durable_postcommit_continuations: dict[
             str, _DurablePostcommitContinuation
         ] = {}
@@ -8765,9 +8786,280 @@ class ConsoleChatController:
             ):
                 self.store.discard_uncommitted_durable_preparation(preparation_id)
 
+    def _ordinary_native_commit_tasks(
+        self, session_id: str | None = None
+    ) -> tuple[asyncio.Task[Any], ...]:
+        """Return exact save owners which must retire before storage teardown."""
+        if not getattr(self, "_ordinary_native_commits", None):
+            return ()
+        with self._active_submit_tasks_lock:
+            return tuple(
+                dict.fromkeys(
+                    owner.task
+                    for owner in self._ordinary_native_commits.values()
+                    if session_id is None or owner.session.id == session_id
+                )
+            )
+
+    def _ordinary_native_commit_retirements(
+        self, session_id: str | None = None
+    ) -> tuple[asyncio.Future[None], ...]:
+        """Observe only the exact native lifetime, independent of provider work."""
+        if not getattr(self, "_ordinary_native_commits", None):
+            return ()
+        with self._active_submit_tasks_lock:
+            return tuple(
+                owner.retired
+                for owner in self._ordinary_native_commits.values()
+                if session_id is None or owner.session.id == session_id
+            )
+
+    def _ordinary_native_commit_owner(self, preparation_id: str):
+        if not getattr(self, "_ordinary_native_commits", None):
+            return None
+        with self._active_submit_tasks_lock:
+            return self._ordinary_native_commits.get(preparation_id)
+
+    def _register_ordinary_native_commit(self, session, acceptance):
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("An ordinary save requires its submit owner.")
+        store = self.store
+        persistence = store.persistence
+        owner = _OrdinaryNativeCommitOwner(
+            store,
+            persistence,
+            getattr(persistence, "db", None),
+            session,
+            acceptance,
+            task,
+            asyncio.get_running_loop().create_future(),
+        )
+        with self._active_submit_tasks_lock:
+            if acceptance.preparation_id in self._ordinary_native_commits:
+                raise RuntimeError("An ordinary save is already owned.")
+            store._retain_native_commit_owner(acceptance.preparation_id, owner)
+            self._ordinary_native_commits[acceptance.preparation_id] = owner
+        return owner
+
+    def _release_ordinary_native_commit(self, owner):
+        if owner is None:
+            return
+        preparation_id = owner.acceptance.preparation_id
+        with self._active_submit_tasks_lock:
+            if self._ordinary_native_commits.get(preparation_id) is not owner:
+                return
+            owner.store._release_native_commit_owner(preparation_id, owner)
+            self._ordinary_native_commits.pop(preparation_id)
+            if not owner.retired.done():
+                owner.retired.set_result(None)
+
+    def _ordinary_native_commit_current(self, owner):
+        return (
+            self.store is owner.store
+            and owner.store.persistence is owner.persistence
+            and getattr(owner.persistence, "db", None) is owner.database
+            and next(
+                (row for row in owner.store.sessions() if row.id == owner.session.id),
+                None,
+            )
+            is owner.session
+        )
+
+    def _retain_original_native_commit_recovery(self, owner, commit=None):
+        """Keep actual original acceptance without touching successor state."""
+        preparation_id = owner.acceptance.preparation_id
+        store = owner.store
+        fingerprint = store.durable_acceptance_fingerprint_for(preparation_id)
+        if commit is None and fingerprint is not None:
+            commit = store.durable_turn_commit_for(
+                preparation_id, fingerprint=fingerprint
+            )
+        if commit is not None and (
+            store.persistence is owner.persistence
+            and getattr(owner.persistence, "db", None) is owner.database
+            and any(row is owner.session for row in store.sessions())
+        ):
+            try:
+                store.publish_durable_turn_identity(owner.session.id, commit)
+                store.publish_durable_recovery_owner(owner.session.id, commit)
+            except Exception as error:
+                logger.warning(
+                    "Original saved turn retained (exception_type={})",
+                    type(error).__name__,
+                )
+        return ConsoleSubmitResult(
+            commit is not None,
+            False,
+            "Saved turn retained for recovery."
+            if commit is not None
+            else "Prepared turn owner changed; draft kept.",
+            session_id=owner.session.id,
+            user_message_id=commit.user_message_id
+            if commit is not None
+            else owner.acceptance.user_message_id,
+            assistant_message_id=commit.assistant_message_id
+            if commit is not None
+            else None,
+            terminal_status=ConsoleRunStatus.BLOCKED,
+            preparation_id=preparation_id,
+            provider_started=False,
+        )
+
+    async def _settle_cancelled_native_commit(self, owner, continuation):
+        """Settle an exact ACCEPTED owner without crossing provider dispatch."""
+        from .console_native_commit import settle_accepted_durable_turn_owned
+
+        commit = continuation.commit
+        session_id = continuation.session_id
+        explicit = owner.explicit_stop or self._accepted_cancellation_was_requested(
+            session_id
+        )
+        terminal = "stopped" if explicit else "failed"
+        content = (
+            "Response stopped."
+            if explicit
+            else "Accepted turn failed before provider dispatch."
+        )
+        completion = await settle_accepted_durable_turn_owned(
+            owner.store,
+            continuation.preparation_id,
+            fingerprint=continuation.fingerprint,
+            terminal_state=terminal,
+            content=content,
+            persistence=owner.persistence,
+            database=owner.database,
+        )
+        owner.caller_cancelled |= completion.caller_cancelled
+        settled = completion.settled and completion.error is None
+        if not settled:
+            # A callback or owned connection cleanup can raise AFTER the real
+            # terminal write. Reconcile existing original state, never replay it.
+            try:
+                with owner.store.durable_preparation_lock:
+                    if (
+                        owner.store.durable_acceptance_fingerprint_for(
+                            continuation.preparation_id
+                        )
+                        == continuation.fingerprint
+                        and owner.store.durable_turn_commit_for(
+                            continuation.preparation_id,
+                            fingerprint=continuation.fingerprint,
+                        )
+                        is commit
+                    ):
+                        assistant = owner.store.get_message(commit.assistant_message_id)
+                        recovery = owner.store.dispatch_recovery_for_session(session_id)
+                        settled = (
+                            assistant.id == commit.assistant_message_id
+                            and assistant.persisted_message_id
+                            == commit.assistant_message_id
+                            and assistant.parent_message_id == commit.user_message_id
+                            and assistant.role is ConsoleMessageRole.ASSISTANT
+                            and assistant.status == terminal
+                            and assistant.assistant_generation_state == terminal
+                            and assistant.content == content
+                            and (
+                                recovery is None
+                                or recovery.assistant_message_id
+                                != commit.assistant_message_id
+                            )
+                        )
+            except Exception as error:
+                logger.warning(
+                    "Accepted turn settlement reconciliation failed (exception_type={})",
+                    type(error).__name__,
+                )
+        if not self._ordinary_native_commit_current(owner):
+            if not settled:
+                return self._retain_original_native_commit_recovery(owner, commit)
+            # The original terminal write completed. Do not resurrect its
+            # deleted ACCEPTED checkpoint or publish into a replacement store.
+            return ConsoleSubmitResult(
+                True,
+                False,
+                content,
+                session_id=session_id,
+                user_message_id=commit.user_message_id,
+                assistant_message_id=commit.assistant_message_id,
+                terminal_status=ConsoleRunStatus.STOPPED
+                if explicit
+                else ConsoleRunStatus.FAILED,
+                origin=continuation.origin,
+                queue_entry_id=continuation.queue_entry_id,
+                committed_context_epoch=continuation.committed_context_epoch,
+                preparation_id=continuation.preparation_id,
+                provider_started=False,
+            )
+        if completion.error is not None:
+            logger.warning(
+                "Accepted turn settlement failed (exception_type={})",
+                type(completion.error).__name__,
+            )
+        if not settled:
+            owner.store.mark_dispatch_recovery_needed(
+                session_id, commit.assistant_message_id
+            )
+            self._set_run_state(
+                ConsoleRunState.blocked("Accepted turn is retained for recovery."),
+                session_id=session_id,
+            )
+            return ConsoleSubmitResult(
+                True,
+                False,
+                "Accepted turn is retained for recovery.",
+                session_id=session_id,
+                user_message_id=commit.user_message_id,
+                assistant_message_id=commit.assistant_message_id,
+                terminal_status=ConsoleRunStatus.BLOCKED,
+                origin=continuation.origin,
+                queue_entry_id=continuation.queue_entry_id,
+                committed_context_epoch=continuation.committed_context_epoch,
+                preparation_id=continuation.preparation_id,
+                provider_started=False,
+            )
+        self._set_run_state(
+            ConsoleRunState(
+                ConsoleRunStatus.STOPPED if explicit else ConsoleRunStatus.FAILED,
+                content,
+            ),
+            session_id=session_id,
+        )
+        self._release_ordinary_native_commit(owner)
+        self._settle_accepted_preparation(continuation.preparation_id)
+        with owner.store.durable_preparation_lock:
+            current = self._durable_postcommit_continuations.get(
+                continuation.preparation_id
+            )
+            if current is continuation:
+                self._durable_postcommit_continuations.pop(continuation.preparation_id)
+                self._release_retired_prepared_evidence(continuation)
+                owner.store.retire_durable_acceptance(
+                    continuation.preparation_id, continuation.fingerprint
+                )
+        owner.store.release_durable_postcommit_activity(continuation.preparation_id)
+        return ConsoleSubmitResult(
+            True,
+            False,
+            content,
+            session_id=session_id,
+            user_message_id=commit.user_message_id,
+            assistant_message_id=commit.assistant_message_id,
+            terminal_status=ConsoleRunStatus.STOPPED
+            if explicit
+            else ConsoleRunStatus.FAILED,
+            origin=continuation.origin,
+            queue_entry_id=continuation.queue_entry_id,
+            committed_context_epoch=continuation.committed_context_epoch,
+            preparation_id=continuation.preparation_id,
+            provider_started=False,
+        )
+
     def _abandon_preparation(self, preparation_id: str) -> None:
         """Cancel and remove one exact preaccept preparation without a wedge."""
 
+        if self._ordinary_native_commit_owner(preparation_id) is not None:
+            return
         preparation = self._preparation_by_id(preparation_id)
         if preparation is None:
             return
@@ -11649,14 +11941,20 @@ class ConsoleChatController:
     ) -> Any:
         """Run one preparation-keyed effect and mark it only after success."""
 
-        effects = self.store.durable_postcommit_effects_for(
+        native_owner = self._ordinary_native_commit_owner(preparation_id)
+        if native_owner is not None and not self._ordinary_native_commit_current(
+            native_owner
+        ):
+            raise _OrdinaryNativeCommitOwnerChanged()
+        effect_store = native_owner.store if native_owner is not None else self.store
+        effects = effect_store.durable_postcommit_effects_for(
             preparation_id, fingerprint=fingerprint
         )
         if effects is None:
             raise RuntimeError("Durable postcommit effects are unavailable.")
         if effect_name in effects.completed:
             return None
-        if not self.store.claim_durable_postcommit_effect(
+        if not effect_store.claim_durable_postcommit_effect(
             preparation_id, effect_name, fingerprint=fingerprint
         ):
             raise RuntimeError("Durable postcommit effect is already in flight.")
@@ -11664,12 +11962,18 @@ class ConsoleChatController:
             result = callback()
             if inspect.isawaitable(result):
                 result = await result
+            if native_owner is not None and not self._ordinary_native_commit_current(
+                native_owner
+            ):
+                raise _OrdinaryNativeCommitOwnerChanged()
         except BaseException:
             # TASK-22587: releasing the claim must never REPLACE the failure
             # that sent us here. Bookkeeping is strictly less informative than
             # the original exception, and this arm also runs for CancelledError.
             try:
-                self.store.abandon_durable_postcommit_effect(
+                (
+                    effect_store if native_owner is not None else self.store
+                ).abandon_durable_postcommit_effect(
                     preparation_id, effect_name, fingerprint=fingerprint
                 )
             except Exception as release_exc:
@@ -11681,7 +11985,9 @@ class ConsoleChatController:
                 )
             raise
         try:
-            self.store.complete_durable_postcommit_effect(
+            (
+                effect_store if native_owner is not None else self.store
+            ).complete_durable_postcommit_effect(
                 preparation_id, effect_name, fingerprint=fingerprint
             )
         except ConsoleDurableAcceptanceRetired:
@@ -12421,221 +12727,300 @@ class ConsoleChatController:
         )
         from .console_send_diagnostics import record_send_stage
 
-        if chat_start_authorization is not None:
-            if not await self._chat_start.accept(chat_start_authorization):
+        native_owner = (
+            self._register_ordinary_native_commit(session, acceptance)
+            if chat_start_authorization is None
+            else None
+        )
+        try:
+            if chat_start_authorization is not None:
+                if not await self._chat_start.accept(chat_start_authorization):
+                    return ConsoleSubmitResult(
+                        False,
+                        False,
+                        "Background start was withdrawn.",
+                        session_id=session.id,
+                    )
+            elif not await self.store.drain_agent_handoff(session.id):
+                return ConsoleSubmitResult(
+                    False, False, "Draft custody is unconfirmed.", session_id=session.id
+                )
+            record_send_stage("durable_commit")
+            try:
+                # TASK-22205: the ~10-statement BEGIN IMMEDIATE turn commit runs
+                # off the event loop; the await is the dispatch-ordering barrier.
+                if chat_start_authorization is not None:
+                    # Capture the exact store/database before the first await. Stop
+                    # may cancel its awaiter, but cannot detach this physical owner.
+                    from tldw_chatbook.DB.base_db import run_owned_db_call
+
+                    owned_store = chat_start_authorization.store
+                    owned_database = owned_store.persistence.db
+
+                    async def commit_owned_start():
+                        if getattr(owned_database, "is_memory_db", False):
+                            return owned_store.commit_durable_turn(acceptance)
+                        return await run_owned_db_call(
+                            owned_database, owned_store.commit_durable_turn, acceptance
+                        )
+
+                    chat_start_authorization.commit_worker = asyncio.create_task(
+                        commit_owned_start()
+                    )
+                    commit = await asyncio.shield(
+                        chat_start_authorization.commit_worker
+                    )
+                else:
+                    from .console_native_commit import commit_durable_turn_owned
+
+                    if not self._ordinary_native_commit_current(native_owner):
+                        return self._retain_original_native_commit_recovery(
+                            native_owner
+                        )
+                    completion = await commit_durable_turn_owned(
+                        native_owner.store, acceptance
+                    )
+                    native_owner.caller_cancelled = (
+                        completion.caller_cancelled or native_owner.explicit_stop
+                    )
+                    native_owner.commit_error = completion.error
+                    commit = completion.commit
+                    if completion.error is not None:
+                        fingerprint = (
+                            native_owner.store.durable_acceptance_fingerprint_for(
+                                preparation.preparation_id
+                            )
+                        )
+                        recovered = (
+                            native_owner.store.durable_turn_commit_for(
+                                preparation.preparation_id, fingerprint=fingerprint
+                            )
+                            if fingerprint is not None
+                            else None
+                        )
+                        if recovered is None:
+                            raise completion.error
+                        commit = recovered
+                    if commit is None:
+                        raise RuntimeError(
+                            "The ordinary save returned no committed owner."
+                        )
+                    if not self._ordinary_native_commit_current(native_owner):
+                        if custody_acceptance_hook is not None:
+                            custody_acceptance_hook()
+                        return self._retain_original_native_commit_recovery(
+                            native_owner, commit
+                        )
+            except Exception as exc:  # noqa: BLE001 -- a failed commit is a retry, not a crash
+                record_send_stage("durable_commit", "failed", error=exc)
+                from tldw_chatbook.Agents.hooks_v2.continuations import (
+                    ContinuationAdmissionRefused,
+                )
+
+                if (
+                    native_owner is not None
+                    and not self._ordinary_native_commit_current(native_owner)
+                ):
+                    return self._retain_original_native_commit_recovery(native_owner)
+                if isinstance(exc, ContinuationAdmissionRefused):
+                    self._release_ordinary_native_commit(native_owner)
+                    # This exception originated inside the rolled-back transaction.
+                    # A generic persistence failure has no such certainty.
+                    cleanup_owner = self._preparation_by_id(preparation.preparation_id)
+                    owned_echo = bool(
+                        cleanup_owner is not None
+                        and cleanup_owner.session_id == session.id
+                        and cleanup_owner.transient_user_message_id == echoed_user.id
+                        and cleanup_owner.state is ConsoleTurnPreparationState.PAUSED
+                    )
+                    before_cleanup = self.store.conversation_context_epoch(session.id)
+                    self._abandon_preparation(preparation.preparation_id)
+                    try:
+                        self.store.get_message(echoed_user.id)
+                        echo_removed = False
+                    except KeyError:
+                        echo_removed = True
+                    if (
+                        owned_echo
+                        and echo_removed
+                        and self._preparation_by_id(preparation.preparation_id) is None
+                    ):
+                        self.prompt_queue_coordinator.acknowledge_machine_rollback(
+                            session.id,
+                            queue_entry_id,
+                            before_cleanup,
+                            self.store.conversation_context_epoch(session.id),
+                        )
+                    return self._block(
+                        session.id, "Hook continuation is no longer current."
+                    )
+
+                # TASK-22251: the user-facing copy stays deliberately generic, but
+                # something must record WHICH failure occurred. `commit_durable_turn`
+                # is a multi-step transaction -- conversation create, Library-policy
+                # write, workspace validation, checkpoint insert -- and swallowing
+                # the exception collapsed every one of them into a single sentence.
+                # Two distinct causes ("Workspace registry is required for workspace
+                # conversations" and "Unknown workspace: <id>") were previously
+                # indistinguishable, and each needed a temporary print inside this
+                # method to identify. Type only, never the message: an exception
+                # string here can carry conversation or workspace identifiers.
+                logger.warning(
+                    "Durable turn commit failed; turn refused (exception_type={})",
+                    type(exc).__name__,
+                )
                 return ConsoleSubmitResult(
                     False,
                     False,
-                    "Background start was withdrawn.",
+                    "Couldn't save the prepared turn. Retry or cancel.",
                     session_id=session.id,
+                    user_message_id=echoed_user.id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                    preparation_id=preparation.preparation_id,
                 )
-        elif not await self.store.drain_agent_handoff(session.id):
-            return ConsoleSubmitResult(
-                False, False, "Draft custody is unconfirmed.", session_id=session.id
-            )
-        record_send_stage("durable_commit")
-        try:
-            # TASK-22205: the ~10-statement BEGIN IMMEDIATE turn commit runs
-            # off the event loop; the await is the dispatch-ordering barrier.
+            if chat_start_authorization is not None and (
+                not self._chat_start.authorizes(chat_start_authorization, session.id)
+                or self._agent_bridge is not chat_start_authorization.bridge
+                or self._fleet_wake.runtime_owner_id
+                != chat_start_authorization.runtime_owner_id
+            ):
+                raise PermissionError("chat start commit owner changed")
+            if acceptance.handoff_draft_revision is not None:
+                self.store.publish_agent_handoff_consumed(
+                    session.id, acceptance.handoff_draft_revision
+                )
             if chat_start_authorization is not None:
-                # Capture the exact store/database before the first await. Stop
-                # may cancel its awaiter, but cannot detach this physical owner.
-                from tldw_chatbook.DB.base_db import run_owned_db_call
-
-                owned_store = chat_start_authorization.store
-                owned_database = owned_store.persistence.db
-
-                async def commit_owned_start():
-                    if getattr(owned_database, "is_memory_db", False):
-                        return owned_store.commit_durable_turn(acceptance)
-                    return await run_owned_db_call(
-                        owned_database, owned_store.commit_durable_turn, acceptance
-                    )
-
-                chat_start_authorization.commit_worker = asyncio.create_task(
-                    commit_owned_start()
+                await self._chat_start.confirm_receipt(
+                    chat_start_authorization, commit.checkpoint
                 )
-                commit = await asyncio.shield(chat_start_authorization.commit_worker)
-            else:
-                commit = await self._run_durable_db_call(
-                    self.store.commit_durable_turn, acceptance
-                )
-        except Exception as exc:  # noqa: BLE001 -- a failed commit is a retry, not a crash
-            record_send_stage("durable_commit", "failed", error=exc)
-            from tldw_chatbook.Agents.hooks_v2.continuations import (
-                ContinuationAdmissionRefused,
-            )
-
-            if isinstance(exc, ContinuationAdmissionRefused):
-                # This exception originated inside the rolled-back transaction.
-                # A generic persistence failure has no such certainty.
-                cleanup_owner = self._preparation_by_id(preparation.preparation_id)
-                owned_echo = bool(
-                    cleanup_owner is not None
-                    and cleanup_owner.session_id == session.id
-                    and cleanup_owner.transient_user_message_id == echoed_user.id
-                    and cleanup_owner.state is ConsoleTurnPreparationState.PAUSED
-                )
-                before_cleanup = self.store.conversation_context_epoch(session.id)
-                self._abandon_preparation(preparation.preparation_id)
-                try:
-                    self.store.get_message(echoed_user.id)
-                    echo_removed = False
-                except KeyError:
-                    echo_removed = True
-                if (
-                    owned_echo
-                    and echo_removed
-                    and self._preparation_by_id(preparation.preparation_id) is None
-                ):
-                    self.prompt_queue_coordinator.acknowledge_machine_rollback(
-                        session.id,
-                        queue_entry_id,
-                        before_cleanup,
-                        self.store.conversation_context_epoch(session.id),
-                    )
-                return self._block(
-                    session.id, "Hook continuation is no longer current."
-                )
-
-            # TASK-22251: the user-facing copy stays deliberately generic, but
-            # something must record WHICH failure occurred. `commit_durable_turn`
-            # is a multi-step transaction -- conversation create, Library-policy
-            # write, workspace validation, checkpoint insert -- and swallowing
-            # the exception collapsed every one of them into a single sentence.
-            # Two distinct causes ("Workspace registry is required for workspace
-            # conversations" and "Unknown workspace: <id>") were previously
-            # indistinguishable, and each needed a temporary print inside this
-            # method to identify. Type only, never the message: an exception
-            # string here can carry conversation or workspace identifiers.
-            logger.warning(
-                "Durable turn commit failed; turn refused (exception_type={})",
-                type(exc).__name__,
-            )
-            return ConsoleSubmitResult(
-                False,
-                False,
-                "Couldn't save the prepared turn. Retry or cancel.",
-                session_id=session.id,
-                user_message_id=echoed_user.id,
-                origin=origin,
-                queue_entry_id=queue_entry_id,
-                preparation_id=preparation.preparation_id,
-            )
-        if chat_start_authorization is not None and (
-            not self._chat_start.authorizes(chat_start_authorization, session.id)
-            or self._agent_bridge is not chat_start_authorization.bridge
-            or self._fleet_wake.runtime_owner_id
-            != chat_start_authorization.runtime_owner_id
-        ):
-            raise PermissionError("chat start commit owner changed")
-        if acceptance.handoff_draft_revision is not None:
-            self.store.publish_agent_handoff_consumed(
-                session.id, acceptance.handoff_draft_revision
-            )
-        if chat_start_authorization is not None:
-            await self._chat_start.confirm_receipt(
-                chat_start_authorization, commit.checkpoint
-            )
-        # The durable turn now exists even if later publication needs recovery.
-        # Arm once here; replaying postcommit effects must not rearm a settled turn.
-        self._arm_run_hooks_stop(session.id)
-        if custody_acceptance_hook is not None:
-            custody_acceptance_hook()
-        record_send_stage("durable_commit", "succeeded")
-        fingerprint = self.store.durable_acceptance_fingerprint_for(
-            preparation.preparation_id
-        )
-        if fingerprint is None:
-            raise RuntimeError("Durable acceptance fingerprint is unavailable.")
-        citation_repair_session = (
-            ConsoleCitationRepairSession(
-                contract=citation_repair_contract,
-                resolution=resolution,
-            )
-            if citation_repair_contract is not None
-            else None
-        )
-        continuation = _DurablePostcommitContinuation(
-            preparation_id=preparation.preparation_id,
-            fingerprint=fingerprint,
-            session_id=session.id,
-            origin=origin,
-            queue_entry_id=queue_entry_id,
-            hook_continuation=acceptance.continuation_receipt is not None,
-            clean_draft=preparation.executed_draft,
-            commit=commit,
-            echoed_user_id=echoed_user.id,
-            resolution=resolution,
-            provider_messages=provider_messages,
-            trace_source_messages=trace_source_messages,
-            trace_capture_mode=preparation.capture_mode,
-            trace_request=None,
-            prefill=prefill,
-            prefill_from_one_shot=prefill_from_one_shot,
-            one_shot_prefill_revision=one_shot_prefill_revision,
-            skill_bindings=skill_bindings,
-            skill_bundle_block=skill_bundle_block,
-            citation_repair_session=citation_repair_session,
-            turn_context=turn_context,
-            prepared=prepared_continuation,
-            committed_context_epoch=committed_context_epoch,
-            stream_signals=self._admit_capture_policy(
-                session.id,
-                origin,
-                frozen_capture_enabled=(
-                    preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
-                ),
-                frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
-                frozen_pii_ruleset_revision_id=(preparation.pii_ruleset_revision_id),
-                frozen_next_trace_privacy_revision=(
-                    preparation.next_trace_privacy_revision
-                ),
-            ),
-            terminal_citation_finalizer=terminal_citation_finalizer,
-            hook_context=hook_context,
-        )
-        with self.store.durable_preparation_lock:
-            self.store.validate_durable_acceptance_fingerprint(fingerprint)
-            existing = self._durable_postcommit_continuations.get(
+            # The durable turn now exists even if later publication needs recovery.
+            # Arm once here; replaying postcommit effects must not rearm a settled turn.
+            self._arm_run_hooks_stop(session.id)
+            if custody_acceptance_hook is not None:
+                custody_acceptance_hook()
+            record_send_stage("durable_commit", "succeeded")
+            fingerprint = self.store.durable_acceptance_fingerprint_for(
                 preparation.preparation_id
             )
-            if existing is not None and existing.fingerprint != fingerprint:
-                raise RuntimeError("Durable continuation owner changed.")
-            self._durable_postcommit_continuations[preparation.preparation_id] = (
-                continuation
+            if fingerprint is None:
+                raise RuntimeError("Durable acceptance fingerprint is unavailable.")
+            citation_repair_session = (
+                ConsoleCitationRepairSession(
+                    contract=citation_repair_contract,
+                    resolution=resolution,
+                )
+                if citation_repair_contract is not None
+                else None
             )
-        try:
-            trace_request = self._build_durable_trace_request(
-                preparation=preparation,
-                resolution=resolution,
-                provider_messages=self._provider_messages_with_prefill(
-                    provider_messages,
-                    prefill,
-                ),
-                trace_source_messages=trace_source_messages,
+            continuation = _DurablePostcommitContinuation(
+                preparation_id=preparation.preparation_id,
+                fingerprint=fingerprint,
+                session_id=session.id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+                hook_continuation=acceptance.continuation_receipt is not None,
+                clean_draft=preparation.executed_draft,
+                commit=commit,
                 echoed_user_id=echoed_user.id,
-                committed_user_id=commit.user_message_id,
-                route=(
-                    ConsoleRequestRoute.DIRECT_PREFILL
-                    if prefill
-                    else ConsoleRequestRoute.FRESH
+                resolution=resolution,
+                provider_messages=provider_messages,
+                trace_source_messages=trace_source_messages,
+                trace_capture_mode=preparation.capture_mode,
+                trace_request=None,
+                prefill=prefill,
+                prefill_from_one_shot=prefill_from_one_shot,
+                one_shot_prefill_revision=one_shot_prefill_revision,
+                skill_bindings=skill_bindings,
+                skill_bundle_block=skill_bundle_block,
+                citation_repair_session=citation_repair_session,
+                turn_context=turn_context,
+                prepared=prepared_continuation,
+                committed_context_epoch=committed_context_epoch,
+                stream_signals=self._admit_capture_policy(
+                    session.id,
+                    origin,
+                    frozen_capture_enabled=(
+                        preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                    ),
+                    frozen_pii_redaction_enabled=preparation.pii_redaction_enabled,
+                    frozen_pii_ruleset_revision_id=(
+                        preparation.pii_ruleset_revision_id
+                    ),
+                    frozen_next_trace_privacy_revision=(
+                        preparation.next_trace_privacy_revision
+                    ),
                 ),
+                terminal_citation_finalizer=terminal_citation_finalizer,
+                hook_context=hook_context,
             )
-        except Exception as exc:
-            return self._handle_durable_trace_provenance_failure(continuation, exc)
-        if trace_request is not None:
             with self.store.durable_preparation_lock:
-                current = self._durable_postcommit_continuations.get(
+                self.store.validate_durable_acceptance_fingerprint(fingerprint)
+                existing = self._durable_postcommit_continuations.get(
                     preparation.preparation_id
                 )
-                if current is not continuation:
+                if existing is not None and existing.fingerprint != fingerprint:
                     raise RuntimeError("Durable continuation owner changed.")
-                continuation = replace(continuation, trace_request=trace_request)
                 self._durable_postcommit_continuations[preparation.preparation_id] = (
                     continuation
                 )
-        return await self.resume_durable_postcommit(preparation.preparation_id)
+            try:
+                trace_request = self._build_durable_trace_request(
+                    preparation=preparation,
+                    resolution=resolution,
+                    provider_messages=self._provider_messages_with_prefill(
+                        provider_messages,
+                        prefill,
+                    ),
+                    trace_source_messages=trace_source_messages,
+                    echoed_user_id=echoed_user.id,
+                    committed_user_id=commit.user_message_id,
+                    route=(
+                        ConsoleRequestRoute.DIRECT_PREFILL
+                        if prefill
+                        else ConsoleRequestRoute.FRESH
+                    ),
+                )
+            except Exception as exc:
+                preserve_cancelled_composer = False
+                if native_owner is not None:
+                    if not self._ordinary_native_commit_current(native_owner):
+                        return self._retain_original_native_commit_recovery(
+                            native_owner, commit
+                        )
+                    preserve_cancelled_composer = (
+                        native_owner.caller_cancelled
+                        or native_owner.commit_error is not None
+                    )
+                    # Physical save and its retained continuation are complete;
+                    # the existing trace handler must be able to retire them.
+                    self._release_ordinary_native_commit(native_owner)
+                result = self._handle_durable_trace_provenance_failure(
+                    continuation, exc
+                )
+                return (
+                    replace(result, should_clear_draft=False)
+                    if preserve_cancelled_composer
+                    else result
+                )
+            if trace_request is not None:
+                with self.store.durable_preparation_lock:
+                    current = self._durable_postcommit_continuations.get(
+                        preparation.preparation_id
+                    )
+                    if current is not continuation:
+                        raise RuntimeError("Durable continuation owner changed.")
+                    continuation = replace(continuation, trace_request=trace_request)
+                    self._durable_postcommit_continuations[
+                        preparation.preparation_id
+                    ] = continuation
+            if native_owner is not None and native_owner.commit_error is not None:
+                return await self.resume_durable_postcommit(
+                    preparation.preparation_id, continue_to_provider=False
+                )
+            return await self.resume_durable_postcommit(preparation.preparation_id)
+        finally:
+            self._release_ordinary_native_commit(native_owner)
 
     def _postcommit_stopped_by_close(
         self,
@@ -12695,6 +13080,15 @@ class ConsoleChatController:
         settle the still-accepted durable owner atomically.
         """
 
+        native_owner = self._ordinary_native_commit_owner(preparation_id)
+        if native_owner is not None and not self._ordinary_native_commit_current(
+            native_owner
+        ):
+            return self._retain_original_native_commit_recovery(native_owner)
+        preserve_cancelled_composer = bool(
+            native_owner is not None
+            and (native_owner.caller_cancelled or native_owner.commit_error is not None)
+        )
         with self.store.durable_preparation_lock:
             continuation = self._durable_postcommit_continuations.get(preparation_id)
             if continuation is not None:
@@ -12827,6 +13221,7 @@ class ConsoleChatController:
             )
             if (
                 live_session is not None
+                and not preserve_cancelled_composer
                 and continuation.origin is not ConsoleSubmissionOrigin.AGENT_CHAT_START
                 and not (
                     continuation.prepared and continuation.prepared.preserve_composer
@@ -12894,6 +13289,7 @@ class ConsoleChatController:
                 )
             if (
                 continuation.origin is ConsoleSubmissionOrigin.MANUAL
+                and not preserve_cancelled_composer
                 and not (
                     continuation.prepared and continuation.prepared.preserve_composer
                 )
@@ -13006,6 +13402,11 @@ class ConsoleChatController:
                 if not any(row.id == session_id for row in self.store.sessions()):
                     return
                 await self.store.reconcile_durable_turn_settings(session_id, commit)
+                if (
+                    native_owner is not None
+                    and not self._ordinary_native_commit_current(native_owner)
+                ):
+                    raise _OrdinaryNativeCommitOwnerChanged()
                 if not any(row.id == session_id for row in self.store.sessions()):
                     return
                 await self.store.reconcile_durable_turn_roleplay_context(
@@ -13061,6 +13462,17 @@ class ConsoleChatController:
                 publish_preparation,
                 fingerprint=fingerprint,
             )
+            if native_owner is not None:
+                if not self._ordinary_native_commit_current(native_owner):
+                    return self._retain_original_native_commit_recovery(
+                        native_owner, commit
+                    )
+                if native_owner.caller_cancelled:
+                    return await self._settle_cancelled_native_commit(
+                        native_owner, continuation
+                    )
+                self._release_ordinary_native_commit(native_owner)
+                native_owner = None
             if not continue_to_provider:
                 self._restore_dispatch_recovery_after_settlement_failure(
                     session_id,
@@ -13177,6 +13589,8 @@ class ConsoleChatController:
                 ),
                 fingerprint=fingerprint,
             )
+        except _OrdinaryNativeCommitOwnerChanged:
+            return self._retain_original_native_commit_recovery(native_owner, commit)
         except ConsoleDurableAcceptanceRetired:
             # TASK-22587: the user closed the chat mid-sequence. Every REMAINING
             # effect validates against a preparation that no longer exists, so
@@ -13210,6 +13624,30 @@ class ConsoleChatController:
                 provider_started=True,
             )
         except BaseException as exc:
+            if native_owner is not None:
+                if not self._ordinary_native_commit_current(native_owner):
+                    return self._retain_original_native_commit_recovery(
+                        native_owner, commit
+                    )
+                native_owner.caller_cancelled |= isinstance(exc, asyncio.CancelledError)
+                self.store.publish_durable_recovery_owner(session_id, commit)
+                self._restore_dispatch_recovery_after_settlement_failure(
+                    session_id, commit.assistant_message_id
+                )
+                return ConsoleSubmitResult(
+                    True,
+                    False,
+                    "Accepted turn is retained for recovery.",
+                    session_id=session_id,
+                    user_message_id=commit.user_message_id,
+                    assistant_message_id=commit.assistant_message_id,
+                    terminal_status=ConsoleRunStatus.BLOCKED,
+                    origin=continuation.origin,
+                    queue_entry_id=continuation.queue_entry_id,
+                    committed_context_epoch=continuation.committed_context_epoch,
+                    preparation_id=preparation_id,
+                    provider_started=False,
+                )
             if isinstance(exc, asyncio.CancelledError):
                 if not any(row.id == session_id for row in self.store.sessions()):
                     return self._session_closed_result(session_id=session_id)
@@ -14762,13 +15200,20 @@ class ConsoleChatController:
                 continue
             self._signal_stop(session_id=session_id)
             self._cancel_task_on_owner_loop(submit_task)
-        if preparation is not None:
+        if (
+            preparation is not None
+            and self._ordinary_native_commit_owner(preparation.preparation_id) is None
+        ):
             self._preparation_outcomes.pop(preparation.preparation_id, None)
             self._prepared_send_continuations.pop(preparation.preparation_id, None)
         previous_active_id = self.store.active_session_id
         if previous_active_id == session_id:
             self.set_answerable_decision(session_id, None)
         self._cancel_pending_decisions_for_session(session_id)
+        with self._active_submit_tasks_lock:
+            native_preparation_ids = frozenset(
+                getattr(self, "_ordinary_native_commits", {})
+            )
         with self.store.durable_preparation_lock:
             durable_continuations = tuple(
                 continuation
@@ -14776,6 +15221,8 @@ class ConsoleChatController:
                 if continuation.session_id == session_id
             )
             for continuation in durable_continuations:
+                if continuation.preparation_id in native_preparation_ids:
+                    continue
                 self._durable_postcommit_continuations.pop(
                     continuation.preparation_id, None
                 )
@@ -14804,6 +15251,8 @@ class ConsoleChatController:
     ) -> ConsoleChatSession | None:
         """Delete a session only after its runtime-owned work was drained."""
 
+        if self._ordinary_native_commit_tasks(ticket.session_id):
+            raise RuntimeError("An ordinary save still owns this session.")
         state = self._session_close_states.pop(ticket.close_id, None)
         if state is None or state[0] != ticket:
             raise RuntimeError("Console session close ticket is stale.")
@@ -15023,6 +15472,11 @@ class ConsoleChatController:
         it is signalling -- there is deliberately no active-session
         fallback here, unlike ``_set_run_state``.
         """
+        if getattr(self, "_ordinary_native_commits", None):
+            with self._active_submit_tasks_lock:
+                for owner in self._ordinary_native_commits.values():
+                    if owner.session.id == session_id:
+                        owner.explicit_stop = True
         self._chat_start.withdraw_prepared(session_id, "source_or_target_stopped")
         with self._pending_chat_create_lock:
             for token, record in tuple(self._chat_creation_records.items()):
@@ -18377,6 +18831,17 @@ class ConsoleChatController:
             stopped; False (a no-op) when it did not.
         """
         session_id = self.store.active_session_id or ""
+        native_tasks = self._ordinary_native_commit_tasks(session_id)
+        if native_tasks:
+            with self._active_submit_tasks_lock:
+                for owner in self._ordinary_native_commits.values():
+                    if owner.session.id == session_id:
+                        owner.explicit_stop = True
+            self._signal_stop(session_id=session_id)
+            for task in native_tasks:
+                if task is not asyncio.current_task():
+                    task.cancel()
+            return True
         if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
             self._signal_stop(session_id=session_id)
             return True

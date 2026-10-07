@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     )
 
     from .console_conversation_hydration import ConsoleConversationHydrationData
+    from .console_native_commit import _ConsoleNativeBinding
     from .console_session_settings import ConsoleAssistantStartup
 
 from tldw_chatbook.Agents.agent_models import (
@@ -1914,6 +1915,8 @@ class ConsoleChatStore:
         ] = {}
         self._durable_effects_in_flight: set[tuple[str, str]] = set()
         self._durable_commit_in_flight: dict[str, _ConsoleDurableCommitReservation] = {}
+        # Exact controller custody token only; this is not admission state.
+        self._native_commit_owners_by_preparation: dict[str, object] = {}
         self._durable_fingerprint_by_preparation: dict[
             str, ConsoleDurableAcceptanceFingerprint
         ] = {}
@@ -3778,6 +3781,177 @@ class ConsoleChatStore:
         self._bump_payload_revision(session_id)
         return self._snapshot(message)
 
+    def _retain_native_commit_owner(self, preparation_id: str, owner: object) -> None:
+        """Protect queued cleanup with the controller's exact custody token."""
+        if owner is None:
+            raise TypeError("native commit owner must not be None")
+        with self._preparation_lock:
+            preparation = self._preparations_by_id.get(preparation_id)
+            if preparation is None or preparation.session_id not in self._sessions:
+                raise RuntimeError("Durable preparation is unavailable.")
+            current = self._native_commit_owners_by_preparation.get(preparation_id)
+            if current is owner:
+                return
+            if current is not None:
+                raise RuntimeError("Durable native commit owner changed.")
+            self._native_commit_owners_by_preparation[preparation_id] = owner
+
+    def _release_native_commit_owner(self, preparation_id: str, owner: object) -> bool:
+        """Release cleanup protection only for this same retired operation."""
+        with self._preparation_lock:
+            if (
+                owner is None
+                or self._native_commit_owners_by_preparation.get(preparation_id)
+                is not owner
+            ):
+                return False
+            self._native_commit_owners_by_preparation.pop(preparation_id)
+            return True
+
+    def settle_accepted_durable_turn(
+        self,
+        preparation_id: str,
+        *,
+        fingerprint: ConsoleDurableAcceptanceFingerprint,
+        terminal_state: str,
+        content: str,
+        metadata_json: str | None = None,
+    ) -> bool:
+        """Settle one live durable acceptance cancelled before provider entry.
+
+        Args:
+            preparation_id: Exact preparation retaining this committed turn.
+            fingerprint: Original app-lifetime acceptance owner.
+            terminal_state: Only stopped or failed; dispatch is never invented.
+            content: Assistant terminal content.
+            metadata_json: Optional terminal metadata object.
+
+        Returns:
+            True only after the existing atomic assistant/checkpoint settlement.
+            A refused or failed claim preserves its recovery owner.
+        """
+        if not isinstance(fingerprint, ConsoleDurableAcceptanceFingerprint):
+            raise TypeError("fingerprint must be ConsoleDurableAcceptanceFingerprint")
+        if terminal_state not in {"stopped", "failed"}:
+            raise ValueError("Accepted turns may only settle as stopped or failed.")
+        if preparation_id != fingerprint.preparation_id:
+            return False
+        from .console_native_commit import _ConsoleNativeBinding, _native_commit_binding
+
+        binding = _native_commit_binding.get()
+        if binding is not None and binding.store is self:
+            if binding.turn_owner != fingerprint:
+                return False
+        else:
+            persistence = self.persistence
+            binding = _ConsoleNativeBinding(
+                self, fingerprint, persistence, getattr(persistence, "db", None)
+            )
+        session_id = fingerprint.session_id
+        assistant_id = fingerprint.assistant_message_id
+        with self._generation_owner_scope(assistant_id):
+            with self._preparation_lock:
+                if (
+                    self.persistence is not binding.persistence
+                    or getattr(binding.persistence, "db", None) is not binding.database
+                ):
+                    return False
+                commit = self._durable_commit_by_preparation.get(preparation_id)
+                preparation = self._preparations_by_id.get(preparation_id)
+                session = self._sessions.get(session_id)
+                current = self._dispatch_recoveries_by_session.get(session_id)
+                if (
+                    self._durable_fingerprint_by_preparation.get(preparation_id)
+                    != fingerprint
+                    or commit is None
+                    or preparation is None
+                    or session is None
+                    or self._preparations_by_session.get(session_id) is not preparation
+                    or preparation.session_id != session_id
+                    or preparation.state is not ConsoleTurnPreparationState.ACCEPTED
+                    or preparation.attempt_id != fingerprint.attempt_id
+                    or preparation.origin != fingerprint.origin
+                    or preparation.queue_entry_id != fingerprint.queue_entry_id
+                    or commit.identity.conversation_id != fingerprint.conversation_id
+                    or session.persisted_conversation_id != fingerprint.conversation_id
+                    or commit.user_message_id != fingerprint.user_message_id
+                    or commit.assistant_message_id != assistant_id
+                    or current is None
+                    or current.kind is not ConsoleDispatchRecoveryKind.ACCEPTED
+                    or current.in_flight
+                    or not current.runtime_active
+                    or current.recovery_needed
+                    or current.preparation_id != preparation_id
+                    or current.conversation_id != fingerprint.conversation_id
+                    or current.assistant_message_id != assistant_id
+                    or current.checkpoint != commit.checkpoint
+                    or commit.checkpoint.state
+                    is not ConsoleDispatchCheckpointState.ACCEPTED
+                    or commit.checkpoint.user_message_version
+                    != commit.user_message_version
+                    or commit.checkpoint.assistant_message_version
+                    != commit.assistant_message_version
+                    or assistant_id in self._generation_attempt_tokens
+                    or session_id in self._dispatch_recovery_generation_tokens
+                ):
+                    return False
+                nodes = self._nodes_by_session.get(session_id, {})
+                user = nodes.get(fingerprint.user_message_id)
+                assistant = nodes.get(assistant_id)
+                if (
+                    user is None
+                    or assistant is None
+                    or user.role is not ConsoleMessageRole.USER
+                    or assistant.role is not ConsoleMessageRole.ASSISTANT
+                    or user.persisted_message_id != fingerprint.user_message_id
+                    or assistant.persisted_message_id != assistant_id
+                    or self._message_session_index.get(user.id) != session_id
+                    or self._message_session_index.get(assistant.id) != session_id
+                    or assistant.content
+                ):
+                    return False
+                self._dispatch_recovery_message_baselines[session_id] = self._snapshot(
+                    assistant
+                )
+                claimed = current.with_in_flight(True)
+                self._dispatch_recoveries_by_session[session_id] = claimed
+            settled = False
+            try:
+                settled = self._settle_dispatch_recovery(
+                    session_id,
+                    assistant_message_id=assistant_id,
+                    terminal_state=terminal_state,
+                    content=content,
+                    metadata_json=metadata_json,
+                    _native_binding=binding,
+                )
+                return settled
+            finally:
+                if not settled:
+                    # Release only our exact claim, never a replacement owner.
+                    with self._preparation_lock:
+                        if (
+                            self._dispatch_recoveries_by_session.get(session_id)
+                            is claimed
+                        ):
+                            self._release_dispatch_recovery_action(
+                                session_id, assistant_id
+                            )
+                            restored = self._dispatch_recoveries_by_session[session_id]
+                            self._dispatch_recoveries_by_session[session_id] = (
+                                restored.with_runtime_truth(
+                                    runtime_active=False, recovery_needed=True
+                                )
+                            )
+                            if (
+                                restored.checkpoint is not None
+                                and restored.checkpoint.origin == "queued"
+                                and restored.checkpoint.queue_entry_id is not None
+                            ):
+                                self._dispatch_recovery_queue_hydration_pending.add(
+                                    session_id
+                                )
+
     def settle_dispatch_recovery(
         self,
         session_id: str,
@@ -3818,6 +3992,7 @@ class ConsoleChatStore:
         provider_continuation: ProviderContinuationCheckpoint | None = None,
         contributions: Sequence[ConsolePromotionTransactionContribution] = (),
         on_durable_commit: Callable[[], object] | None = None,
+        _native_binding: _ConsoleNativeBinding | None = None,
     ) -> bool:
         """Settle dispatch state while holding its generation owner."""
 
@@ -3884,8 +4059,13 @@ class ConsoleChatStore:
             self._pending_terminal_receipts.pop(message.id, None)
         committed_message_version: int | None = None
         if not ephemeral:
+            persistence = (
+                _native_binding.persistence
+                if _native_binding is not None
+                else self.persistence
+            )
             repository = getattr(
-                self.persistence,
+                persistence,
                 "console_dispatch_repository",
                 None,
             )
@@ -3897,6 +4077,13 @@ class ConsoleChatStore:
                     )
                 return False
             try:
+                if _native_binding is not None and (
+                    _native_binding.store is not self
+                    or self.persistence is not _native_binding.persistence
+                    or getattr(_native_binding.persistence, "db", None)
+                    is not _native_binding.database
+                ):
+                    raise RuntimeError("Durable Console persistence owner changed.")
                 result = repository.settle_with_assistant(
                     ConsoleAssistantSettlement(
                         assistant_message_id=assistant_message_id,
@@ -5032,6 +5219,14 @@ class ConsoleChatStore:
         Returns:
             The session activated after closing, or ``None`` when no sessions remain.
         """
+        with self._preparation_lock:
+            if any(
+                preparation.session_id == session_id
+                for preparation_id, preparation in self._preparations_by_id.items()
+                if preparation_id in self._native_commit_owners_by_preparation
+                or preparation_id in self._durable_commit_in_flight
+            ):
+                raise RuntimeError("Durable acceptance commit is still owned.")
         with self._first_persistence_lock:
             return self._close_session_locked(session_id)
 
@@ -5456,6 +5651,11 @@ class ConsoleChatStore:
             new_attempt_id=None,
         )
         with self._preparation_lock:
+            if (
+                preparation_id in self._native_commit_owners_by_preparation
+                or preparation_id in self._durable_commit_in_flight
+            ):
+                return None
             current = self._preparations_by_session.get(session_id)
             if current is None:
                 return None
@@ -5496,6 +5696,11 @@ class ConsoleChatStore:
         """Remove one exact terminal or abandoned volatile preparation."""
 
         with self._preparation_lock:
+            if (
+                preparation_id in self._native_commit_owners_by_preparation
+                or preparation_id in self._durable_commit_in_flight
+            ):
+                return None
             current = self._preparations_by_session.get(session_id)
             if (
                 current is None
@@ -6122,6 +6327,22 @@ class ConsoleChatStore:
 
         if not isinstance(acceptance, ConsoleDurableTurnAcceptance):
             raise TypeError("acceptance must be ConsoleDurableTurnAcceptance")
+        from .console_native_commit import _native_commit_binding
+
+        binding = _native_commit_binding.get()
+        if binding is not None and binding.store is self:
+            if binding.turn_owner is not acceptance:
+                raise RuntimeError("Durable Console acceptance owner changed.")
+            persistence = binding.persistence
+            database = binding.database
+            if (
+                self.persistence is not persistence
+                or getattr(persistence, "db", None) is not database
+            ):
+                raise RuntimeError("Durable Console persistence owner changed.")
+        else:
+            persistence = self.persistence
+            database = getattr(persistence, "db", None)
         reservation: _ConsoleDurableCommitReservation | None = None
         fingerprint: ConsoleDurableAcceptanceFingerprint | None = None
         try:
@@ -6353,7 +6574,7 @@ class ConsoleChatStore:
                 self._durable_fingerprint_by_preparation[acceptance.preparation_id] = (
                     fingerprint
                 )
-            durable_commit = getattr(self.persistence, "commit_durable_turn", None)
+            durable_commit = getattr(persistence, "commit_durable_turn", None)
             if not callable(durable_commit):
                 raise RuntimeError("Durable Console persistence is unavailable.")
             context_kwarg_supported = self._persistence_accepts_kwarg(
@@ -6368,6 +6589,11 @@ class ConsoleChatStore:
                 durable_commit, "project_context_json"
             )
             project_json = encode_project_context_json(project_state)
+            if (
+                self.persistence is not persistence
+                or getattr(persistence, "db", None) is not database
+            ):
+                raise RuntimeError("Durable Console persistence owner changed.")
             checkpoint = durable_commit(
                 acceptance=acceptance,
                 policy_candidate=policy_candidate,
@@ -6439,6 +6665,11 @@ class ConsoleChatStore:
             if first_persist and (  # a folder re-chosen mid-commit, or no kwarg
                 not project_stored or session.project_instruction_state != project_state
             ):
+                if (
+                    self.persistence is not persistence
+                    or getattr(persistence, "db", None) is not database
+                ):
+                    raise RuntimeError("Durable Console persistence owner changed.")
                 self._persist_project_instruction_state(session)
             return commit
         except Exception:
@@ -6638,6 +6869,11 @@ class ConsoleChatStore:
                     # the tombstone proves this is the SAME acceptance.
                     return
                 raise RuntimeError("Durable acceptance fingerprint changed.")
+            if (
+                preparation_id in self._durable_commit_in_flight
+                or preparation_id in self._native_commit_owners_by_preparation
+            ):
+                raise RuntimeError("Durable acceptance commit is still owned.")
             effects = self._durable_effects_by_preparation.get(preparation_id)
             preparation = self._preparations_by_id.get(preparation_id)
             session_id = (
@@ -6743,6 +6979,11 @@ class ConsoleChatStore:
         with self._preparation_lock:
             if preparation_id in self._durable_commit_by_preparation:
                 raise RuntimeError("Committed durable acceptance cannot be discarded.")
+            if (
+                preparation_id in self._durable_commit_in_flight
+                or preparation_id in self._native_commit_owners_by_preparation
+            ):
+                raise RuntimeError("Durable acceptance commit is still owned.")
             # ponytail: bounded by live sessions; keep cleanup independent of
             # preparation indexes because controller drop removes those first.
             for session_id, reservation in tuple(
@@ -10506,8 +10747,16 @@ class ConsoleChatStore:
         conversation_id = session.persisted_conversation_id or committed
         if session.ephemeral or conversation_id is None:
             return
+        from .console_native_commit import _native_commit_binding
+
+        binding = _native_commit_binding.get()
+        persistence = (
+            binding.persistence
+            if binding is not None and binding.store is self
+            else self.persistence
+        )
         with suppress(Exception):  # incl. AttributeError: no persistence or setter
-            self.persistence.set_conversation_console_project_context(
+            persistence.set_conversation_console_project_context(
                 conversation_id=conversation_id,
                 project_context_json=encode_project_context_json(
                     session.project_instruction_state
@@ -10786,6 +11035,12 @@ class ConsoleChatStore:
             self._end_app_runtime_after_voice_fence()
 
     def _end_app_runtime_after_voice_fence(self) -> None:
+        with self._preparation_lock:
+            if (
+                self._native_commit_owners_by_preparation
+                or self._durable_commit_in_flight
+            ):
+                raise RuntimeError("Durable acceptance commit is still owned.")
         if self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.close_runtime()
         if (

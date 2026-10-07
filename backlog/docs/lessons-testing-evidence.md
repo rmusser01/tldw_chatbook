@@ -18741,3 +18741,8 @@ TASK-34563.6, 2026-10-06: the first run-log consolidation qualified the containm
 ## Invalid Windows fixture paths can hide the intended gate (TASK-34563.7, 2026-10-06)
 
 Three final MCP/RAG admission checks failed with `config_directory_selection_unavailable` before reaching their permission/pause/cancel bodies. The identical checks on unchanged source failed too; the earlier log showed `TOMLDecodeError: Invalid hex value`. Their hand-built TOML contained an unescaped Windows `C:\Users` path. Using the existing `json.dumps(str(path), ensure_ascii=False)` convention for the two selected fixture values made all three original checks pass. Preserve the first parse error and compare unchanged fixtures before attributing a later fail-closed selection error to an admission refactor. Do not relax the production gate to repair test configuration.
+
+
+## A hook continuation wait can be unreachable on the host (TASK-34563.8, 2026-10-07)
+
+Two original continuation tests waited 30 seconds for a machine acceptance that never arrived, on both the candidate and unchanged pre-change source. The stock hook command executor deliberately returns `unsupported_platform` on Windows before launch; the tests required that command to emit the continuation proposal. This was an unreachable producer, not a slow commit. A focused host-boundary control parsed one declared Stop result while retaining the real lifecycle, scheduler, live authority, one-use gate and SQLite rollback; actual revocation and physical owner retirement passed. Keep command execution qualification separate, preserve the production refusal and original deadlines, and prove the intended producer reached the boundary before interpreting a timeout.
