@@ -18631,6 +18631,7 @@ class ChatScreen(BaseAppScreen):
                     await read_snapshot.warm(controller, store.active_session_id)
                 if self._sync_console_rail_and_controls() is False:
                     self._console_control_bar_replay_whole_sync = True
+                    self._request_console_control_bar_sync(delayed=True)
                     return
                 # Settings failures may arrive after Apply has returned:
                 # ordinary first persistence and temporary-chat promotion
@@ -18656,9 +18657,19 @@ class ChatScreen(BaseAppScreen):
                 self._sync_console_workspace_context()
                 project_instruction_ui.sync_project_instruction_status_for_screen(self)
                 await self._sync_native_console_transcript()
-                self._sync_console_rail_visibility_if_changed(
-                    self._current_console_rail_state()
-                )
+                # Transcript publication suspends, so settings ownership must
+                # be checked again before deriving and publishing the rail.
+                if (
+                    self._run_console_config_sync(
+                        lambda: self._sync_console_rail_visibility_if_changed(
+                            self._current_console_rail_state()
+                        )
+                    )
+                    is False
+                ):
+                    self._console_control_bar_replay_whole_sync = True
+                    self._request_console_control_bar_sync(delayed=True)
+                    return
             self._dispatch_console_rail_preference_prune()
             self._session.schedule_manual_read_acknowledgement()
         except Exception:
