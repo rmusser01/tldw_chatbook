@@ -545,10 +545,6 @@ from ..Library_Modules.library_snapshot_cache import (
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
-from ..Navigation.surface_swap_guard import (
-    SurfaceSwapSelfAwaitError,
-    log_refused_surface_swap,
-)
 from ..destination_recovery import (
     DestinationRecoveryState,
     load_failure_callout,
@@ -12520,6 +12516,12 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             None.
         """
+        # Deferred import (ADR-097 boot census and pre-import payload have no headroom).
+        from ..Navigation.surface_swap_guard import (
+            SurfaceSwapSelfAwaitError,
+            log_refused_surface_swap,
+        )
+
         if not self.is_mounted:
             # Parity with the retired unconditional refresh: an unmounted
             # screen simply records the recompose request for mount time.
@@ -12715,6 +12717,9 @@ class LibraryScreen(BaseAppScreen):
         self, generation: int, route_key: tuple[object, ...]
     ) -> LibraryEntryReconcileResult:
         """Project one current snapshot into the mounted rail and canvas."""
+        # Deferred import (ADR-097 boot census and pre-import payload have no headroom).
+        from ..Navigation.surface_swap_guard import SurfaceSwapSelfAwaitError
+
         pending = (generation, route_key)
         if not self.is_attached:
             return self._supersede_library_entry_reconcile(generation, route_key)

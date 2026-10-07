@@ -48,7 +48,6 @@ from tldw_chatbook.Widgets.Library import (
     LibraryRail,
 )
 
-from ..Navigation.surface_swap_guard import ensure_surface_swap_not_self_awaited
 from .canvas_sync import _sync_library_canvas
 from .screen_constants import (
     LIBRARY_CANVAS_KIND_NOTES,
@@ -216,6 +215,9 @@ async def _apply_library_notes_source_strip(
     screen: "LibraryScreen", canvas_kind: str
 ) -> None:
     """Mount or remove the Notes source strip to match the destination."""
+    # Deferred import (ADR-097 boot census and pre-import payload have no headroom).
+    from ..Navigation.surface_swap_guard import ensure_surface_swap_not_self_awaited
+
     mounted = screen.query("#library-notes-source-strip")
     needed = canvas_kind in LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS
     if needed and not mounted:
@@ -255,6 +257,9 @@ async def _adopt_library_browse_canvas(
         the ONLY signal that the caller must. Swallowing it (Qodo #7) let a
         failed return-switch report success and keep showing stale content.
     """
+    # Deferred import (ADR-097 boot census and pre-import payload have no headroom).
+    from ..Navigation.surface_swap_guard import ensure_surface_swap_not_self_awaited
+
     list_canvas_id = _ROUTE_LIST_CANVAS_ID[route]
     resident = next(
         (child for child in canvas_host.children if child.id == list_canvas_id),

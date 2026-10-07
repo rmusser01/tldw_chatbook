@@ -15,7 +15,6 @@ from textual.containers import Container
 from textual.widgets import Static
 
 from .main_navigation import MainNavigationBar
-from .surface_swap_guard import ensure_surface_swap_not_self_awaited
 
 if TYPE_CHECKING:
     from textual.widget import Widget
@@ -413,6 +412,11 @@ class BaseAppScreen(Screen):
                 screen's children.
         """
         if self.is_attached and not self._pruning:
+            # Imported here, not at module top: this module is resident at
+            # ``_ui_ready`` and the ADR-097 ui-ready module census has no
+            # headroom; the guard is only needed once a screen recomposes.
+            from .surface_swap_guard import ensure_surface_swap_not_self_awaited
+
             # The same set ``Widget.recompose`` removes; an unattached or
             # pruning screen removes nothing and returns at once.
             ensure_surface_swap_not_self_awaited(
@@ -469,6 +473,8 @@ class BaseAppScreen(Screen):
             SurfaceSwapSelfAwaitError: If awaited on the message pump of a
                 widget below one of those children.
         """
+        from .surface_swap_guard import ensure_surface_swap_not_self_awaited
+
         outgoing = tuple(parent.children)
         ensure_surface_swap_not_self_awaited(
             outgoing, seam=f"{type(self).__name__} child swap of {parent!r}"
