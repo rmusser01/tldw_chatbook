@@ -3,11 +3,11 @@ id: TASK-33560
 title: >-
   PERF-08 part 2: event-driven maintenance probe, warm MCP store reads,
   raw-participant stamp caches
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 20:29'
-updated_date: '2026-10-07 03:23'
+updated_date: '2026-10-07 03:28'
 labels:
   - performance
   - backup-recovery
@@ -27,7 +27,7 @@ Split out of PERF-08 (TASK-33267). Part 1 reuses confirmed admission evidence in
 <!-- AC:BEGIN -->
 - [x] #1 The maintenance monitor no longer probes at 10 Hz, and the change to backup pause latency is measured and approved by the owner
 - [x] #2 Warm guarded MCP store reads skip the admission handshake, with the same oracle and completeness tests as acquire_storage
-- [ ] #3 raw_participants' pause probe, pin walk and companion_guard scope reuse stamp-validated evidence, and the reuse-vs-derivation oracle still matches under every mutation
+- [x] #3 raw_participants' pause probe, pin walk and companion_guard scope reuse stamp-validated evidence, and the reuse-vs-derivation oracle still matches under every mutation
 - [x] #4 Idle open() calls per second fall by at least a further 50% on the boot/idle probe
 <!-- AC:END -->
 
@@ -65,6 +65,8 @@ Portable source/evidence/scripts/static/failed-history: Docs/superpowers/qa/2026
 Limits/history: first35.06%after failedAC4; unbound/alias/collection/setup attempts, abandoned extra root optimization RED, earlier FD fixture failures, all raw/XML/cache/foreign temporary cleanup warnings retained. Related selection stays NON-GREEN6PASS1defaultFalse-seedFAIL; attempted real persisted RMW finish exposes unchanged post-pause nested binding refusal. No nested permission-RMW finish/cause/bypass/resource certificate or unrelated source fix. Static exactly22inherited signatures, noNEW; new test/probe and changed production ranges lint/format clean, whitespacePASS. No broad clean-suite/native non-macOS/full capture/restore/provider/transport qualification. Native root, SQLite parent and activation authority stay fresh. Task scope stops at the measured target.
 
 Independent source Ready/no actionable findings: QA independent-review.json (SHA c444b42070663677855ce7167d8736b35568e21b38b3b192901a725102a07a87). Separate combined composition/doc review Ready/no extra targeted check: composition-review.json (SHA e75c2c2114d5b3bb8e2cab410b7c9871b30ad677928ffd4da364c3cc3e89b6ba). All source/evidence activity settled before CLI closure; no source edit after approval.
+
+PR3037 authorized preserving integration: prospectiveplan dee6077a165275459136d7a2ba559f20f0ff6391 before exactdev518277133cc1281e446387b06d59dc54fea9b727 merge ebb84e496fe3a3d6cd1bdfdcd819e321efe1f99c. Approved source/tests/QA remain byte-exact; full31128 tree entries authenticate both sides. Fresh incoming58PASS/FES0/XML181.650s and separate affected-boundaries17PASS/FES0/XML110.583s; NEVER SUM. Independent hook/runtime and storage immutable integration reviews Ready/no actionable findings. Portable raw/XML/reviews/tree receipt: Docs/superpowers/qa/2026-10-06-pr3037-integration. Both selections preserve27lateforeignrm_rf warnings; no cleanup. Existing ADR126/163/197/097 preserved; no new decision. Historical67.64561% paired measurement is not a merged-app measurement because incoming established-store demand changes. Earlier NON-GREEN/resource/cause/platform/provider/style limits remain; no original budgets or full sweep replay. ReopenedAC3 closed only after reviews and targeted evidence settled. Hosted current-head gates and actual protected merge remain pending at this local closure.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

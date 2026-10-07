@@ -1,11 +1,11 @@
 ---
 id: TASK-33648
 title: Preserve authorized SessionEnd notification during Console host disposal
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 18:48'
-updated_date: '2026-10-07 03:23'
+updated_date: '2026-10-07 03:28'
 labels:
   - console
   - hooks
@@ -27,7 +27,7 @@ An independently reproduced expanded-hooks limitation suppresses a granted stand
 <!-- AC:BEGIN -->
 - [x] #1 Actual saved and granted v2 configuration emits the intended SessionEnd notification once during host disposal, with a successful exact-session-close control.
 - [x] #2 Changed or revoked definitions and ordinary post-disposal tool or model calls remain refused; no general authority is reopened.
-- [ ] #3 Real process, ticket and physical cleanup settle through cancellation, with targeted negative controls and canonical ADR assessment.
+- [x] #3 Real process, ticket and physical cleanup settle through cancellation, with targeted negative controls and canonical ADR assessment.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -56,4 +56,6 @@ Final affected selection: 62 PASS, F/E/S0, XML62.277s (wall64.635s), including e
 Limits: related selection remains NON-GREEN (179 passed bodies + one mounted executor teardown error), reproduced on complete exact6feb base with the same300s timeout. No unique cause/broad suite/aggregate FD/non-macOS certificate. Sandbox-only root-identity setup failure, earlier RED/setup/skip/cache/temp warnings retained; no cleanup/cap workaround. Runtime retains30 inherited lint signatures/format debt, zeroNEW; other5 changed files lint/format clean. Replay tests dynamically supply the existing continuation context; replacing inherited new delivery tuple is verified by source trace. No permission owner, plugin/MCP/model/effect authority or cleanup allowance is widened.
 
 Generalizable mixed-projector incident and required real-owner regression pattern recorded in backlog/docs/lessons-hook-teardown.md; corrected-source hashes remain unchanged.
+
+PR3037 authorized preserving integration: prospectiveplan dee6077a165275459136d7a2ba559f20f0ff6391 before exactdev518277133cc1281e446387b06d59dc54fea9b727 merge ebb84e496fe3a3d6cd1bdfdcd819e321efe1f99c. Approved source/tests/QA remain byte-exact; full31128 tree entries authenticate both sides. Fresh incoming58PASS/FES0/XML181.650s and separate affected-boundaries17PASS/FES0/XML110.583s; NEVER SUM. Independent hook/runtime and storage immutable integration reviews Ready/no actionable findings. Portable raw/XML/reviews/tree receipt: Docs/superpowers/qa/2026-10-06-pr3037-integration. Both selections preserve27lateforeignrm_rf warnings; no cleanup. Existing ADR126/163/197/097 preserved; no new decision. Historical67.64561% paired measurement is not a merged-app measurement because incoming established-store demand changes. Earlier NON-GREEN/resource/cause/platform/provider/style limits remain; no original budgets or full sweep replay. ReopenedAC3 closed only after reviews and targeted evidence settled. Hosted current-head gates and actual protected merge remain pending at this local closure.
 <!-- SECTION:NOTES:END -->

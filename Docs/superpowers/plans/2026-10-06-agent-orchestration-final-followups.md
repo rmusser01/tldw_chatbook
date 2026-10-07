@@ -95,9 +95,11 @@ Final implementation checkpoint: all four task criteria are checked through CLI 
 
 User authorized updating against current dev and merging PR3037. Original reviewed/published head is 8d88ababdf83701174fac753283cbd44153262ad. Exact incoming dev is 518277133cc1281e446387b06d59dc54fea9b727 (eleven commits after6feb). Live protection requires strict current-base status, enforced admins and resolved conversations; linear history is not required. Auto-merge is off.
 
-- [ ] Commit this prospective checkpoint after reopening only TASK33648/33560 AC3 verification through CLI.
-- [ ] Merge exact incoming dev into the feature branch, preserving reviewed commits and exact old source/evidence rather than rewriting them. Review Console failed-attempt/retry and established-store read composition.
-- [ ] Run only the bounded integration controls, preserve raw/XML and all inherited limitations, authenticate unchanged owned source/evidence, and obtain independent immutable integration reviews. The prior67.64561% paired measurement remains a historical checkpoint, not a new merged-app measurement.
-- [ ] Close the reopened criteria through CLI with evidence, publish one clean preserving update, and verify actual remote/GitHub head.
-- [ ] Await current-head PR Fast Lane, all four UI shards, latency and Derived artifacts plus clear current review conversations; read live protection/actual refs and perform normal protected head-matched merge.
-- [ ] Verify actual GitHub MERGED state, merge parents/tree and current concurrency before reporting completion. Preserve pinned worktree and all prior raw evidence. No automation operation.
+- [x] Commit this prospective checkpoint after reopening only TASK33648/33560 AC3 verification through CLI.
+- [x] Merge exact incoming dev into the feature branch, preserving reviewed commits and exact old source/evidence rather than rewriting them. Review Console failed-attempt/retry and established-store read composition.
+- [x] Run only the bounded integration controls, preserve raw/XML and all inherited limitations, authenticate unchanged owned source/evidence, and obtain independent immutable integration reviews. The prior67.64561% paired measurement remains a historical checkpoint, not a new merged-app measurement.
+- [x] Close the reopened criteria through CLI with evidence and prepare one clean preserving publication. Actual remote/GitHub identity is recorded after push.
+Merge condition: await current-head PR Fast Lane, all four UI shards, latency and Derived artifacts plus clear current review conversations; read live protection/actual refs and perform normal protected head-matched merge.
+Completion condition: verify actual GitHub MERGED state, merge parents/tree and current concurrency before reporting completion. Preserve pinned worktree and all prior raw evidence. No automation operation.
+
+Local integration checkpoint: preserving tree authenticated; separate58PASS/181.650XML and17PASS/110.583XML, bothF/E/S0; two independent immutable integration reviews Ready/no actionable findings. All four tasks Done viaCLI, history retained. Portable evidence is in Docs/superpowers/qa/2026-10-06-pr3037-integration. Current hosted CI and actual merge are intentionally pending until publication; no app/test change after source approval.
