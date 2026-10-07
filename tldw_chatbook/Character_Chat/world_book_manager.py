@@ -631,6 +631,39 @@ class WorldBookManager:
 
             return entries
 
+    def count_entries_for_books(self, book_ids: List[int]) -> Dict[str, int]:
+        """
+        Count entries per world book in ONE grouped query.
+
+        Answers exactly what ``len(get_world_book_entries(book_id))``
+        answered per book -- same filter (every entry row of the book,
+        enabled or not; entries carry no soft-delete flag) -- so callers
+        like the personas lore render can replace their per-book entry
+        reads (task 19c).
+
+        Args:
+            book_ids: Book ids to count. Duplicates are ignored; ids with
+                no entries answer 0.
+
+        Returns:
+            Dict mapping ``str(book_id)`` to that book's entry count; every
+            requested id is present in the result.
+        """
+        unique_ids = list(dict.fromkeys(int(book_id) for book_id in book_ids))
+        if not unique_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in unique_ids)
+        query = (
+            "SELECT world_book_id, COUNT(*) FROM world_book_entries "
+            f"WHERE world_book_id IN ({placeholders}) GROUP BY world_book_id"
+        )
+        counts: Dict[str, int] = {str(book_id): 0 for book_id in unique_ids}
+        with self.db.transaction() as cursor:
+            cursor.execute(query, unique_ids)
+            for book_id, count in cursor.fetchall():
+                counts[str(book_id)] = count
+        return counts
+
     def update_world_book_entry(self, entry_id: int, **kwargs) -> bool:
         """
         Update a world book entry.

@@ -4377,10 +4377,16 @@ class PersonasScreen(BaseAppScreen):
 
     @staticmethod
     def _list_world_books_with_counts(manager: Any) -> list[dict]:
-        """Sync helper run off-thread: list_world_books() plus a per-book entry count."""
+        """Sync helper run off-thread: list_world_books() plus batched entry counts.
+
+        Task 19c: one ``count_entries_for_books`` GROUP BY replaces the
+        per-book ``get_world_book_entries`` reads (full entry rows fetched
+        per book just to take ``len()``) the lore render used to issue.
+        """
         books = manager.list_world_books(True)
+        counts = manager.count_entries_for_books([book["id"] for book in books])
         for book in books:
-            book["entry_count"] = len(manager.get_world_book_entries(book["id"]))
+            book["entry_count"] = counts.get(str(book["id"]), 0)
         return books
 
     async def _render_lore_rows(self, query: str = "") -> None:

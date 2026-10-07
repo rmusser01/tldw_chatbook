@@ -15642,3 +15642,41 @@ async def test_independent_buddy_actions_use_shared_coordinator_without_persona_
         assert (
             str(screen.query_one("#personas-buddy-use", Button).label) == "Manage Buddy"
         )
+
+
+def test_list_world_books_with_counts_reads_entries_once_for_all_books():
+    """Task 19c (perf): lore listing counts entries with one batched query.
+
+    The lore render used to call ``get_world_book_entries`` once per book per
+    render (N+1 reads of full entry rows just to take ``len()``). The helper
+    must instead make exactly ONE ``count_entries_for_books`` call covering
+    every listed book and never read per-book entries.
+    """
+
+    class SpyLoreManager:
+        def __init__(self, books: list[dict]) -> None:
+            self.books = books
+            self.count_calls: list[tuple[int, ...]] = []
+            self.entries_calls: list[int] = []
+
+        def list_world_books(self, include_disabled: bool) -> list[dict]:
+            assert include_disabled is True
+            return self.books
+
+        def get_world_book_entries(self, book_id: int) -> list[dict]:
+            self.entries_calls.append(book_id)
+            return [{"id": index} for index in range(3)]
+
+        def count_entries_for_books(self, book_ids) -> dict[str, int]:
+            self.count_calls.append(tuple(book_ids))
+            return {str(book_id): 3 for book_id in book_ids}
+
+    books = [{"id": index, "name": f"Book {index}", "enabled": True} for index in range(1, 11)]
+    spy = SpyLoreManager(books)
+
+    result = PersonasScreen._list_world_books_with_counts(spy)
+
+    assert len(spy.count_calls) == 1
+    assert spy.count_calls[0] == tuple(range(1, 11))
+    assert spy.entries_calls == []
+    assert [book["entry_count"] for book in result] == [3] * 10
