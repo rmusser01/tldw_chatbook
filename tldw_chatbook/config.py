@@ -5671,7 +5671,7 @@ recovery_capacity_bytes = 268435456  # Device-private lasting-sync recovery capa
 # Lasting-sync change watcher: base poll interval, and the cap it backs off to
 # while roots are quiet (backed-off sleeps are jittered by up to +/-50%).
 sync_watcher_interval_seconds = 1.0
-sync_watcher_max_interval_seconds = 10.0
+sync_watcher_max_interval_seconds = 30.0
 
 # Auto-save settings
 auto_save_enabled = true             # Enable auto-save feature
@@ -10998,7 +10998,7 @@ def get_notes_sync_recovery_capacity_bytes(
 
 
 NOTES_SYNC_WATCHER_INTERVAL_SECONDS_DEFAULT = 1.0
-NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT = 10.0
+NOTES_SYNC_WATCHER_MAX_INTERVAL_SECONDS_DEFAULT = 30.0
 _NOTES_SYNC_WATCHER_INTERVAL_CEILING_SECONDS = 3600.0
 
 
@@ -11010,7 +11010,7 @@ def get_notes_sync_watcher_intervals(
     TASK-21112: the lasting-sync watcher polls at the base interval and backs
     off toward the max while roots are quiet. Read from
     ``[notes] sync_watcher_interval_seconds`` (default 1.0) and
-    ``[notes] sync_watcher_max_interval_seconds`` (default 10.0; backed-off
+    ``[notes] sync_watcher_max_interval_seconds`` (default 30.0; backed-off
     sleeps are jittered by up to +/-50 percent around it).
 
     Args:

@@ -228,6 +228,34 @@ def _log_bounded_failure(stage: str, error: BaseException) -> None:
     )
 
 
+def identity_digest_index(
+    discovered: Mapping[str, NotesSyncFileSnapshot],
+) -> dict[str, list[NotesSyncFileSnapshot]]:
+    """Group discovered files by their stable identity digest.
+
+    The rename fallback in :meth:`_ProductionRuntimeAdapter.observe_root`
+    used to re-hash every discovered file once per path-missed binding --
+    O(missed bindings x files) SHA-256 computations per pass, on the event
+    loop. The index is built once per pass instead: each file's digest is
+    computed exactly once. A digest mapping to two or more files (e.g.
+    hardlinks) keeps every entry, so the caller can refuse ambiguous
+    identities exactly as the previous linear scan did.
+
+    Args:
+        discovered: Discovered file snapshots keyed by relative path.
+
+    Returns:
+        A mapping of each ``stable_identity_digest`` value to every
+        discovered snapshot carrying it, in discovery order.
+    """
+    index: dict[str, list[NotesSyncFileSnapshot]] = {}
+    for item in discovered.values():
+        index.setdefault(
+            NotesSyncExecutor.stable_identity_digest(item), []
+        ).append(item)
+    return index
+
+
 class NotesSyncRootRefused(RuntimeError):
     """A named lasting-root refusal that carries its own machine-readable cause.
 
@@ -1073,17 +1101,41 @@ class _ProductionRuntimeAdapter:
 
         note_observations = await asyncio.to_thread(observe_notes)
         claimed_paths: set[str] = set()
+        # The rename fallback below used to re-hash every discovered file
+        # once per path miss -- O(missed bindings x files) SHA-256 per pass,
+        # on the event loop. Each file's identity is now hashed exactly once
+        # per pass: the index is built on the first miss, and the memo here
+        # serves every later read (matched-file identities further down and
+        # the unbound candidates after this loop).
+        identity_index: dict[str, list[NotesSyncFileSnapshot]] | None = None
+        identity_by_relative_path: dict[str, str] = {}
+
+        def identity_digest_of(file: NotesSyncFileSnapshot) -> str:
+            digest = identity_by_relative_path.get(file.observation.relative_path)
+            if digest is None:
+                digest = NotesSyncExecutor.stable_identity_digest(file)
+                identity_by_relative_path[file.observation.relative_path] = digest
+            return digest
+
         for binding in bindings:
             note = note_observations[binding.binding_id]
             file = discovered.get(binding.normalized_relative_path)
+            identity_resolved = False
             if file is None:
-                identity_matches = tuple(
-                    item
-                    for item in discovered.values()
-                    if NotesSyncExecutor.stable_identity_digest(item)
-                    == binding.stable_identity_digest
-                )
-                file = identity_matches[0] if len(identity_matches) == 1 else None
+                if identity_index is None:
+                    identity_index = identity_digest_index(discovered)
+                    for digest, items in identity_index.items():
+                        for item in items:
+                            identity_by_relative_path[
+                                item.observation.relative_path
+                            ] = digest
+                matches = identity_index.get(binding.stable_identity_digest, ())
+                # Only a UNIQUE identity resolves: zero matches, or two or
+                # more files sharing one digest (e.g. hardlinks), refused
+                # exactly as the linear scan's len(identity_matches) == 1
+                # guard did.
+                identity_resolved = len(matches) == 1
+                file = matches[0] if identity_resolved else None
             if file is not None:
                 claimed_paths.add(file.observation.relative_path)
             file_digest = file.observation.content_digest if file else None
@@ -1097,9 +1149,14 @@ class _ProductionRuntimeAdapter:
                 represented = represented_digest(note.content, binding.serialization)
                 if represented == binding.content_digest:
                     note_digest = represented
-            file_identity = (
-                NotesSyncExecutor.stable_identity_digest(file) if file else None
-            )
+            if file is None:
+                file_identity = None
+            elif identity_resolved:
+                # The fallback matched on this exact digest; reuse it rather
+                # than hashing the matched file a second time.
+                file_identity = binding.stable_identity_digest
+            else:
+                file_identity = identity_digest_of(file)
             observed.append(
                 BindingObservation(
                     binding_id=binding.binding_id,
@@ -1161,7 +1218,7 @@ class _ProductionRuntimeAdapter:
             note_id = hashlib.sha256(
                 f"note\0{root.root_id}\0{relative_path}".encode("utf-8")
             ).hexdigest()
-            identity_digest = NotesSyncExecutor.stable_identity_digest(file)
+            identity_digest = identity_digest_of(file)
             # A discovered file has no recorded convention yet: its own
             # observation is the record (TASK-34000.48).
             candidate_profile = proven_profile(
@@ -1213,7 +1270,12 @@ class _ProductionRuntimeAdapter:
             ),
             obsidian_mode=self.obsidian_mode(root.root_id),
         )
-        token = plan_reconciliation(request).observation_token
+        # The full plan used to be classified here per pass only to read
+        # `observation_token`; the token is derived from the request alone
+        # (that is exactly what plan_reconciliation stores on the plan), so
+        # hash the request and leave the one real planning call to the pass
+        # that consumes it.
+        token = _observation_token(request)
         # task-32534 AC#4: SEED the watcher's change baseline, never advance
         # it. This pass used to overwrite it, so a manual Check right after a
         # disk edit consumed the change -- `changed_root_ids` then saw no
@@ -2429,7 +2491,9 @@ class NotesSyncRuntimeOwner:
         observations = await self._adapter.observe_root(root)
         plan: ReconciliationPlan | None = None
         try:
-            plan = plan_reconciliation(observations)
+            # B11: planning is pure CPU over the whole binding set -- keep it
+            # off the event loop like every other stage of the pass.
+            plan = await asyncio.to_thread(plan_reconciliation, observations)
             self._require_authority(root.root_id, "plan")
             if observations.root_id != root.root_id:
                 raise RuntimeError("root_observation_mismatch")
@@ -2570,7 +2634,8 @@ class NotesSyncRuntimeOwner:
         observations = await self._adapter.observe_root(root)
         plan: ReconciliationPlan | None = None
         try:
-            plan = plan_reconciliation(observations)
+            # B11: keep the pass's single planning call off the event loop.
+            plan = await asyncio.to_thread(plan_reconciliation, observations)
             self._require_authority(root.root_id, "plan")
             if observations.root_id != root.root_id:
                 raise RuntimeError("root_observation_mismatch")
@@ -2791,8 +2856,12 @@ class NotesSyncRuntimeOwner:
                 raise RuntimeError("root_authority_mismatch")
             self._require_authority(root_id, "plan")
             observations = await self._adapter.observe_root(root)
-            observed_token = _observation_token(observations)
-            plan = plan_reconciliation(observations)
+            # B11: derive the release token from the observations themselves
+            # (a plan that lies about its own token must still release the
+            # bundle its observations registered) and keep both the hashing
+            # and the pass's planning off the event loop.
+            observed_token = await asyncio.to_thread(_observation_token, observations)
+            plan = await asyncio.to_thread(plan_reconciliation, observations)
             self._require_authority(root_id, "plan")
             if observations.root_id != root_id or plan.root_id != root_id:
                 raise RuntimeError("root_observation_mismatch")
@@ -2869,8 +2938,12 @@ class NotesSyncRuntimeOwner:
                 raise RuntimeError("root_authority_mismatch")
             self._require_authority(root_id, "plan")
             observations = await self._adapter.observe_root(root)
-            observed_token = _observation_token(observations)
-            plan = plan_reconciliation(observations)
+            # B11: derive the release token from the observations themselves
+            # (a plan that lies about its own token must still release the
+            # bundle its observations registered) and keep both the hashing
+            # and the pass's planning off the event loop.
+            observed_token = await asyncio.to_thread(_observation_token, observations)
+            plan = await asyncio.to_thread(plan_reconciliation, observations)
             self._require_authority(root_id, "plan")
             if observations.root_id != root_id or plan.root_id != root_id:
                 raise RuntimeError("root_observation_mismatch")
@@ -2976,8 +3049,12 @@ class NotesSyncRuntimeOwner:
                 raise RuntimeError("sync_root_not_active")
             self._require_authority(root_id, "plan")
             observations = await self._adapter.observe_root(root)
-            observed_token = _observation_token(observations)
-            plan = plan_reconciliation(observations)
+            # B11: derive the release token from the observations themselves
+            # (a plan that lies about its own token must still release the
+            # bundle its observations registered) and keep both the hashing
+            # and the pass's planning off the event loop.
+            observed_token = await asyncio.to_thread(_observation_token, observations)
+            plan = await asyncio.to_thread(plan_reconciliation, observations)
             self._require_authority(root_id, "plan")
             if observations.root_id != root_id or plan.root_id != root_id:
                 raise RuntimeError("root_observation_mismatch")
@@ -3059,10 +3136,16 @@ class NotesSyncRuntimeOwner:
                     raise ValueError("review_not_executable")
                 self._require_authority(root_id, "plan")
                 observations = await self._adapter.observe_root(root)
-                observed_token = _observation_token(observations)
+                # B11: release token straight from the observations (never
+                # from a plan that could lie about it), planning off-loop.
+                observed_token = await asyncio.to_thread(
+                    _observation_token, observations
+                )
                 plan: ReconciliationPlan | None = None
                 try:
-                    plan = plan_reconciliation(observations)
+                    plan = await asyncio.to_thread(
+                        plan_reconciliation, observations
+                    )
                     self._require_authority(root_id, "plan")
                     if observations.root_id != root_id or plan.root_id != root_id:
                         raise RuntimeError("root_observation_mismatch")

@@ -3219,7 +3219,7 @@ def test_builder_defaults_keep_the_watcher_base_and_cap(tmp_path: Path) -> None:
     watcher = owner._watcher_factory(lambda _root_id: None)
 
     assert watcher._interval == 1.0
-    assert watcher._max_interval == 10.0
+    assert watcher._max_interval == 30.0
 
 
 def _refusing_owner(tmp_path: Path):
