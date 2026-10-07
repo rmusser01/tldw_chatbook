@@ -1257,3 +1257,28 @@ file: deletions you did not intend mean the edit replaced something.
 Incident: during the non-console efficiency remediation branch (2026-10-06/07, 21 tasks via dispatched implementers), two separate implementers ran `git stash` inside the `/tmp/tldw-dev-review` worktree — the first popped the user's `stash@{0}` (restored correctly, verified against the 45-entry stack), the second pushed-and-popped `--keep-index` (verified intact). Both near-misses were caught only because the controller independently re-counted the stash stack afterward. `git stash` operates on the REPO-GLOBAL stash stack, shared across every worktree and the main checkout — a pop in a worktree can silently consume (or reorder) the user's own stashes from an unrelated branch.
 
 Rule: in any linked worktree, never `git stash`. To set work aside, commit to a scratch branch or leave files dirty. Controllers dispatching implementers into worktrees should carry this rule as a hard constraint in every dispatch prompt.
+## A /tmp baseline-swap backup is a snapshot — restoring it silently reverts every edit made after the backup (TASK-407, 2026-10-06)
+
+**Incident.** To A/B a test failure without touching the shared stash, the
+prescribed file-swap was used: `cp` the two modified files to
+`/tmp/wave5-g2-backup/`, `git checkout HEAD --` them, run the baseline, then
+`cp` them back. The backup was taken BEFORE a second edit (the dedup-key
+half of the fix) landed in the same files. Three later A/B rounds each
+restored the stale backup over the newer edit; nothing warned, `git status`
+was clean once the clobbered tree was committed, and the commit MESSAGE
+still described the lost change. Only the final pre-push rerun of the pin
+suite caught it (the cross-source dedup pin went red against the committed
+tree); the fix needed a follow-up commit (`f079f808d9`) and the interim
+"verified green" runs had all predated the first swap.
+
+**What to do.** Re-copy the files to the backup immediately before EACH
+`git checkout HEAD --` round (a backup is only valid for the swap it was
+taken for), or — better — once the change is validated, COMMIT it and do
+baseline A/Bs against the parent commit (`git worktree add --detach
+<dir> <base-sha>`), so the working tree is never the restore source. And
+after any restore-from-backup, `git diff` the restored files against what
+the tests last validated, not just against HEAD. A commit message is
+evidence of intent, never evidence of content: before pushing, rerun the
+task's own pin suite against the COMMITTED tree (`git stash`-free:
+`git checkout <sha> -- <files>` in a scratch worktree, or just rerun on the
+pushed candidate).

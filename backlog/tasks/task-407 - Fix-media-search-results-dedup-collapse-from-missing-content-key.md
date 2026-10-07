@@ -101,3 +101,15 @@ helper method); no schema, sync, boundary, or contract change.
 Files: `tldw_chatbook/RAG_Search/pipeline_functions_simple.py`,
 `tldw_chatbook/DB/Client_Media_DB_v2.py`,
 `Tests/RAG/test_pipeline_media_dedup.py` (new).
+
+Post-commit correction (2026-10-06): the first TASK-407 commit
+(`4934bd262f`) silently lost the dedup-key half of the fix — a baseline
+A/B file-swap had restored `pipeline_functions_simple.py` from a /tmp
+backup taken BEFORE the dedup edit, and the clobbered file was committed.
+Caught by the final pre-push rerun of the pin suite (the cross-source
+survival test went red against the committed tree); restored in
+`f079f808d9` and re-verified: `test_pipeline_media_dedup.py` 7 passed;
+scope-enforcement + fusion + citation suites 243 passed with only the 4
+pre-existing `TestActiveConsoleSessionRealGlue` reds (identical at base).
+Incident recorded in `backlog/docs/lessons-backlog-hygiene.md`
+("stale /tmp backup" entry).
