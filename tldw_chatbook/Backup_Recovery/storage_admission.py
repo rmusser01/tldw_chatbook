@@ -1265,8 +1265,16 @@ def _metadata_evidence(hold, paths=(), *, registry=None, records=None):
             for p, s in evidence.posture
         ):
             return None
+        # Selector evidence has already validated these exact absent ancestor
+        # creation intents. Preserve their absence through this second snapshot:
+        # appearance here refuses reuse, and later appearance changes the stamp.
+        absent_intents = {
+            dependency
+            for dependency, stamp in base.content
+            if stamp is None and dependency != selector
+        }
         if any(
-            stamp is None
+            stamp is not None if dependency in absent_intents else stamp is None
             for dependency, stamp in evidence.content
             if dependency != selector
         ):
