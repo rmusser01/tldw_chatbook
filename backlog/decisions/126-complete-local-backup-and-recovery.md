@@ -2364,6 +2364,22 @@ Explicit captured work references last until actual retirement; disposal
 refuses late publication. This refines existing ADR-085 view/App ownership and
 ADR-126 finite custody; no permission cache or new storage authority is added.
 
+### TASK-34406: retained Character picker reads own their finite callback
+
+An exact file-backed Characters database selected by the Character context
+picker retains the same identity checks before and after its read. Its finite
+worker must retire a newly acquired connection on that same worker before the
+selection publishes. An already borrowed connection or transaction remains
+owned by its caller. Cancelling the selection, including repeated cancellation,
+must await the actual read and its cleanup before propagating cancellation.
+
+Use the existing owned database callback for this retained stock route. Custom
+and memory databases and the unbound picker route keep their preceding APIs.
+This completes the existing finite ownership contract; it changes no storage
+authority, profile check, timeout or global cleanup policy. Tests hold the
+original card reader with its actual SQLite handle and observe both completion
+and cancellation, including a borrowed transaction.
+
 ### TASK-34406: default prompt-history selection starts in its actual worker
 
 Constructing the app-shared default PromptHistory is IO-free. An omitted path

@@ -100,6 +100,7 @@ async def test_removed_browser_does_not_wait_for_held_controller_refresh():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("churn", ["before", "during", "none"])
+@pytest.mark.bootstrap_profile
 async def test_start_keeps_exact_profile_through_picker_fetch(tmp_path, churn):
     from Tests.UI.test_console_character_controller import (
         _controller as picker_controller,

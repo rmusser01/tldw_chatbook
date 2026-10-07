@@ -109,6 +109,8 @@ on:
       - 'Tests/MCP/test_console_snapshot_source_contracts.py'
       - 'Tests/Backup_Recovery/test_console_settings_worker_lifetime.py'
       - 'Tests/UI/test_character_context_async_ownership.py'
+      - 'Tests/UI/test_console_character_picker_native_lifetime.py'
+      - 'tldw_chatbook/UI/Console_Modules/character.py'
       - 'Tests/UI/test_console_character_context.py'
       - 'Tests/UI/test_console_agent_controller.py'
       - 'Tests/UI/test_console_native_send_pump.py'
@@ -205,6 +207,16 @@ jobs:
           name: change-review-marker-reads-${{ matrix.os }}
           path: ${{ runner.temp }}/change-review-marker-reads.xml
           if-no-files-found: error
+      - name: Verify retained Character picker native lifetime and profile selection
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_character_picker_native_lifetime.py Tests/UI/test_character_context_async_ownership.py::test_start_keeps_exact_profile_through_picker_fetch -q --timeout=180 --junitxml=${{ runner.temp }}/character-picker-lifetimes.xml
+      - name: Retain focused Character picker evidence before longer controls
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: character-picker-lifetimes-${{ matrix.os }}
+          path: ${{ runner.temp }}/character-picker-lifetimes.xml
+          if-no-files-found: error
       - name: Verify original browser and annotation native callback lifetimes
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_browser_worker_native_lifetime.py Tests/UI/test_console_annotation_preview_native_lifetime.py -q --timeout=300 --junitxml=${{ runner.temp }}/query-lifetimes.xml
@@ -241,6 +253,7 @@ jobs:
             ${{ runner.temp }}/query-lifetimes.xml
             ${{ runner.temp }}/trace-maintenance-lifetimes.xml
             ${{ runner.temp }}/change-review-marker-reads.xml
+            ${{ runner.temp }}/character-picker-lifetimes.xml
             ${{ runner.temp }}/workspace-query-lifetimes.xml
             ${{ runner.temp }}/workspace-provisioning.xml
             ${{ runner.temp }}/mounted-restores.xml
