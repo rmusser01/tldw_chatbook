@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-29 20:29'
-updated_date: '2026-10-07 01:10'
+updated_date: '2026-10-07 01:25'
 labels:
   - performance
   - backup-recovery
@@ -41,6 +41,8 @@ Reason: extend the existing process-local, stamp-validated allowed-evidence reus
 2. Specify the smallest shared reuse path and complete mutation dependencies under ADR-126; document any required amendment before implementation.
 3. Add failing warm-path and reuse-versus-full-derivation controls, then implement cache reuse with per-call gates, complete stamps, settle margin, epoch invalidation, exact physical pins and unchanged fallback reasons.
 4. Measure a further >=50% reduction in actual idle opens and owner-approved pause latency without changing work, caps or census ceilings. Run targeted security/completeness/cleanup checks and independent review; close only after all criteria are evidenced.
+
+Reviewed concrete reuse design (2026-10-06): independent preflight Ready after explicitly including every consulted historical path-token chain. Use the current hold-owned _Evidence at Backup_Recovery/generation_witnesses._witnesses for its entire positive source-scope/paired-generation derivation; at Admission.pause_requested for parsed registry/groups only; at raw parent pin proof with a fresh independently owned descriptor; and at config companion metadata under its actual retained registry lock. Complete dependencies cover registry/control records/selector/all relevant current and historical roots/activation generation/required.json, with defensive result copies and fresh lease context. Preserve native contention results, selector/member inode/foreign overlap checks, existing counts, epoch/settle and exact full-derivation fallback. History reads retain migration write authority and validated fresh temporary children. Unknown historical/alias inputs remain fresh rather than guessing completeness. Establish paired actual boot/settled-idle baseline before source edits; microbenchmarks alone do not satisfy AC4. Add omitted-history dependency, mutation, publication race, native contention and physical-FD/uncertainty controls before implementation; measured >=50% actual idle reduction and original owner-approved 1Hz pause response remain completion requirements.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

@@ -30,7 +30,7 @@
 - [x] Put the task In Progress and record the prospective Backlog plan.
 - [x] Reproduce with real saved/granted config and actual controller Send: exact close passes; both host-disposal paths refuse authority and fail the real marker assertion.
 - [x] Record the bounded policy prospectively in ADR-163/197.
-- [ ] Review the design: retain the lifecycle's exact SessionEnd event and existing engine-issued execution state; carry that witness through current worker context. Public teardown calls, copied events and even replay of the same event must not acquire the original state.
+- [x] Review the design: retain the lifecycle's exact SessionEnd event and existing engine-issued execution state; carry that witness through current worker context. Public teardown calls, copied events and even replay of the same event must not acquire the original state.
 - [ ] Implement the smallest shared fix. Only the effect-free standalone command may use the private teardown launch guard; canonical config, profile/section, fingerprint and exact grant epoch are re-read under existing launch locks. Ordinary targets remain closed; managed-plugin/MCP/model authority remains unchanged.
 - [ ] Verify once-only process execution, late revoke/reapproval/definition/missing-store refusal, forged deliveries, cancelled disposal and actual process/ticket/reap settlement under the original three-second notification and cleanup allowance.
 - [ ] Obtain independent scoped source review, append evidence/limits, then check all criteria through CLI.
@@ -51,12 +51,12 @@
 **ADR path:** `backlog/decisions/126-complete-local-backup-and-recovery.md`.
 **Reason:** its current amendment authorizes acquire_storage reuse, whereas additional positive witness, pause-group, raw-pin and companion metadata derivations need explicit complete-dependency qualification.
 
-**Files:** minimal shared owners in `tldw_chatbook/Backup_Recovery/{storage_admission,admission,raw_participants,config_participants}.py` and MCP recovery witness owner if required; scoped Backup_Recovery mutation/completeness tests and a task-owned boot/idle probe.
+**Files:** minimal shared owners in `tldw_chatbook/Backup_Recovery/{storage_admission,admission,raw_participants,config_participants}.py` and `tldw_chatbook/Backup_Recovery/generation_witnesses.py`; scoped Backup_Recovery mutation/completeness tests and a task-owned boot/idle probe.
 
 - [x] Put the task In Progress with a prospective plan; preserve the already owner-approved 1.0-second monitor cadence.
 - [x] Measure actual native work before source changes: real warm MCP reads and native pause calls, separately from whole-app idle measurement. Existing original audit probe scripts are unavailable; do not substitute old PR budgets.
-- [ ] Finish the whole positive recovery-witness trace and record the minimum concrete cache design in the governing ADR before source edits.
-- [ ] Review the design. Prefer existing hold-owned `_Evidence`, complete posture/content stamps, PID/epoch/names and one-second settle. Every gate/lock, pause, active-operation/source-selection and physical-resource check remains per-call. A mismatch runs the exact original derivation and reason codes.
+- [x] Finish the whole positive recovery-witness trace and record the minimum concrete cache design in the governing ADR before source edits.
+- [x] Review the design. Prefer existing hold-owned `_Evidence`, complete posture/content stamps, PID/epoch/names and one-second settle. Every gate/lock, pause, active-operation/source-selection and physical-resource check remains per-call. A mismatch runs the exact original derivation and reason codes.
 - [ ] Add meaningful RED controls for skipped warm handshakes and pause/raw/companion reuse, with full-derivation mutation oracles and dependency-completeness traces. History migration/sanitization retains write admission and collision-safe fresh temporary members.
 - [ ] Implement only proven shared positive derivation reuse. Do not cache a pause verdict, replace a live FD owner, follow unchecked path components or infer authority from absence/pending state.
 - [ ] Compare paired actual boot/idle workloads under unchanged production cadence and work; require a further >=50% reduction in open calls. Measure actual backup pause latency against the existing owner-approved cadence.
@@ -77,3 +77,5 @@
 - [ ] Complete both source fixes and review the combined branch for composition regressions.
 - [ ] Validate only modified functionality, task/ADR hygiene, whitespace and scoped static analysis; distinguish inherited debt from new findings.
 - [ ] Create a reviewable PR with current evidence and practical limits. Follow protected head-matched integration only when authorized and all fresh gates qualify; do not claim a merge while only queued/armed.
+
+Preflight record: TASK-33648 design Ready with original execution-state authenticity and ordinary closed-owner refusal retained. TASK-33560 design Ready after adding all consulted historical path chains and fresh fallback for unqualifiable historical/alias dependencies; omitted-history dependency qualification is mandatory. Microbenchmark counts remain separate from the forthcoming actual-app idle measurement.

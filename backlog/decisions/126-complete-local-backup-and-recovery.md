@@ -1147,3 +1147,80 @@ and 8: excluded from portable export by default, and captured in local rollback
 archives through a typed owner adapter. Under decision 9, isolated restore remaps the
 persisted `credential_scope_id`, so a restored profile never reads or overwrites
 another profile's keys.
+
+### TASK-33560 proposed amendment — ordinary raw and witness evidence reuse (2026-10-06)
+
+Status: **Proposed; independent preflight precedes production changes.** This
+extends the owner-approved PERF-07/PERF-08 stamp model above. The already approved
+one-second maintenance probe interval remains unchanged; no new polling or
+pause-latency tradeoff is proposed.
+
+**Problem.** `acquire_storage` already reuses ordinary admission evidence, but
+MCP selection also calls the shared `generation_witnesses._witnesses` reader.
+That reader independently re-derives source scope, startup permission, paired
+control records and registry state. Raw operations separately derive pause
+groups, parent pin chains and config companion scope. Reusing only a store
+getter or storage acquisition leaves those original paths active.
+
+**Decision.** The same live `_Hold` may keep bounded, process-local positive
+evidence for these exact ordinary derivations, using the existing `_Evidence`
+posture/content fields, settle margin and epoch. Each entry is tied to its
+actual hold, namespace tuple, bootstrap root, selector and selected paths.
+Results containing mutable records or witnesses are defensively copied; a
+consumer cannot change cached authority by editing a returned list or dict.
+
+The permitted derivations are:
+
+- The complete shared `_witnesses(path, lease)` result, including
+  `_source_scope_admitted` and `_paired_witnesses`. The actual lease's execution
+  context and all existing provenance/selection gates remain per-call checks.
+  Dependencies include every fixed control record and registry input, all
+  registry roots needed for source relevance/containment, the complete chains
+  of every consulted historical `path:` token (their resolution is an input
+  even when registry bytes are unchanged), the selector, and every relevant
+  activation store/generation chain and `required.json` read. A stage whose
+  historical/alias dependencies cannot qualify stays on its original fresh path.
+  This caches passive evidence, never activation approval or tool permission.
+- The registry/group derivation in `Admission.pause_requested`. Its dependencies
+  include all registered roots, including foreign namespaces, and every input
+  to absence/overlap determination. The actual registry lock and every gate's
+  fresh open, identity observations and nonblocking flock remain per-call.
+  A cached group never substitutes for a current native contention result.
+- A successful raw parent-chain proof. Each operation still owns a physical
+  parent descriptor and its original cleanup/uncertainty lifetime. Reuse needs
+  the complete chain to match before and after descriptor acquisition, and the
+  descriptor's identity/posture to match the fully derived parent. A held
+  descriptor or leaf-only check does not prove current pathname ancestry.
+- Config companion metadata derived under the existing registry shared lock.
+  Every current member's inode/type/link checks, foreign overlap checks, source
+  selection, parent posture and original lock lifetime remain in place.
+
+Fresh history temporary children may reuse only confirmed directory containment
+within the same ordinary group, while their own complete chain/leaf state is
+observed on the current call. `read_recent` can migrate legacy content, so its
+temporary creation and publication authority is never omitted on a warm read.
+
+**Recording and fallback.** Two full positive derivations must bracket identical
+complete dependencies/stamps at an unchanged epoch, with the existing one-second
+content settle margin. Evidence is read/published under the coordinator lock;
+filesystem work stays outside it. No reuse is recorded for pending/intent state,
+absence-proved roots, symlinked chains, unqualified storage, startup reacquisition,
+maintenance/capture, or Windows. Any stamp, epoch, hold or dependency mismatch
+runs the original derivation with its original result and refusal reason.
+Allocation or uncertain-close failures retain their original resource custody;
+they do not select a weaker fallback. All counted-before-final-check ordering
+and independent participant/lease lifetimes remain unchanged.
+
+**Required evidence.** Actual warm readers for all five MCP sources must reach
+their bodies while skipping the expensive derivations. Differential mutation
+oracles must compare exact results/reasons against reuse disabled, including the
+  existing catalog, foreign roots/historical path retargeting, activation
+  requirements, leaf replacement, fallback creation and fresh history members.
+  A dependency-completeness trace
+must cover every skipped input, with an omitted-dependency negative control.
+Native gate contention must still request pause after a warm false observation;
+physical FD identity, cancellation and retirement must remain observable.
+A task-owned paired real-app boot/settled-idle probe must bill unchanged work at
+the existing cadence and demonstrate at least a further 50% idle-open reduction.
+Original completed PR performance budgets are retained, not replayed as this
+task's measurement. New verification is targeted to the changed paths.
