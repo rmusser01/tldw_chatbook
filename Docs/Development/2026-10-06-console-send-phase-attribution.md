@@ -1,5 +1,7 @@
 # Console Send phase attribution
 
+Deferred and unimplemented options: [optimization review list](console-optimization-review-list.md).
+
 Status: original-body attribution and finite run-log/admission consolidation; overall performance acceptance remains open.
 
 Attribution product source: `f70cacae3b225378573e9e0903422fe0e607553f` on `codex/console-send-preparation-plan`. The prior [shared preparation qualification](2026-10-06-console-shared-preparation-verification.md) retains matched observer-free samples and the failing original native regression.
@@ -1361,3 +1363,54 @@ independent reviews' direct compatibility findings. Scoped static checks pass;
 all original raw module statements and `_checked_read` remain AST-identical.
 Task26 AC1–3 are checked; AC4 and the original performance targets stay open
 until combined application timing and supported-host verification complete.
+
+### Remaining native work after the owned permission load
+
+The final isolated `owned-permission-isolated-count-1` XML reconciles all 529
+native open attempts across 23 objects. One attempt opens the actual permission
+payload. The repeated infrastructure work is:
+
+| Mutually exclusive owner | Native open attempts |
+| --- | ---: |
+| Four retained source/effect/publication checks | 184 |
+| Two storage acquisitions | 112 |
+| Other setup, recovery control and directory pinning | 232 |
+| Actual payload leaf | 1 |
+| Total | 529 |
+
+Each retained check has 38 opens in its fresh source proof and eight for parent
+association. Each acquisition has 56 opens. The largest buckets outside those
+checks/acquisitions are `_control_observation` (96), private descriptor allocation
+(40) and the final `pinned_directory` tree pass (26). These are operation counts,
+not distinct files or independent elapsed spans. The existing count observer has
+zero ancestry or capacity misses in this sample.
+
+Source review found an unselected setup option: move initial installed MCP
+selection/preparation under the existing source mutex to avoid a separate
+pre-lock source observation. Its approximate ceiling is only one 38-open witness
+per read, and moving that observation changes lock order relative to recovery
+admission. It needs a separate deadlock/cancellation argument and is not selected
+for implementation. Keep the four existing effect/publication checks. The current
+priority is the larger whole-Send configuration/catalog and agent-startup cost.
+
+An independent source-only review identifies a concrete hypothesis for the local
+provider span: `_default_specs` synchronously reads three tool-exposure config
+gates, with an additional internal-prompt config lookup when Ask User is enabled.
+Enabled deep search reads nine settings to use one description timeout. Building
+specs for multiple admitted roots repeats that configuration work. Native root
+resolution/ancestor checks are a separate constructor cost. These are confirmed
+call chains, not yet a measured partition of the remaining composition duration.
+
+Those exposure gates are absent from the current turn snapshot and are observed
+at provider construction, not re-read at invocation. Any selected consolidation
+must therefore capture fresh catalog inputs at the existing composition owner,
+including the current environment/prompt precedence, and share only immutable
+construction data among stock builders. Invocation-time root, kill-switch and
+permission checks retain their existing lifetimes. Reusing an older turn snapshot
+would change the current freshness contract and is not the proposed approach.
+
+The optional observer extension at `98cb24aad5` adds the four original targets
+needed to locate that remainder while retaining all default targets and bounds.
+Its static checks pass; runtime qualification and combined observer-off timing
+remain pending after the independent initial-draft repair. No new product change
+or proportional speed claim is made from this source-only review.
