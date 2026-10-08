@@ -474,3 +474,80 @@ spans. Native runs remain sequential. Select the next correction from the larges
 measured cause, then compare matched before/after absolute timings. This ledger
 preserves other ideas without authorizing their implementation or displacing
 that work.
+
+
+### 2026-10-08 whole-Send native census: OPT04/05/06/72/73
+
+At integrated `3ddb59e8fe85`, `3ddb-whole-send-census-1` observes three real
+Enter/button/Enter Sends through original provider entry. All three DeepSeek
+replies and response trace links verify, six messages persist, and no dispatch
+checkpoint remains pending. Source/HEAD stay unchanged. The external observer
+arms at the first actual Send and counts only four original native entry points;
+its counts are entry attempts, not distinct files, successful opens, or CPU time.
+
+The nine-root permission/catalog tree was too narrow to rank the whole Send.
+This census records the following repeated qualified Send work on both warm turns:
+
+| Original owner/family | Open-handle entries per warm Send | Interpretation |
+| --- | ---: | --- |
+| Five `HookPermissions._current` reads combined | 5,400 | Each read has 1,080 opens, 1,758 metadata entries and six multi-path snapshots. The family therefore totals 8,790 metadata entries and 30 snapshots. |
+| Configuration maximum capture | 1,165 | Includes its captured source work; do not add a nested permission span again. |
+| Remaining configuration capture | 821 | Separate original preparation callback. |
+| Awaited history file body | 709 | Joined through the original FileJob creator task and route; the executor does not copy diagnostic context. |
+| Local catalog composition | 608 | Same repeated native validation identified by OPT73. |
+| Composition permission read | 457 | The owned permission path remains distinct from the earlier maximum capture. |
+
+All qualified Send owner/read/history buckets total 12,278 open entries on each
+warm turn. Separate inherited-context-only counts are 7,564/4,234; background
+counts are 10,835/10,657. These unqualified buckets are not proven blockers and
+must not be assigned to a Send owner or added as exclusive duration. Main-loop
+background work and worker-result delivery need attribution alongside the finite
+hook operation; this census does not by itself identify every background caller.
+
+OPT04/72 remain unimplemented. Three reads are original readiness snapshots;
+one is v2 configuration capture; the remaining original `_current` lifetime
+occurs in the precommit hook-input interval (source review points to legacy
+UserPromptSubmit target selection; that immediate caller was not monitored).
+The five `_current` wall lifetimes total 1.080/2.032/2.075 seconds in this
+instrumented run. Nested `snapshot` lifetimes are excluded from those sums.
+Distinct live policy/effect gates must remain fresh; receipt-time authority is
+not a reusable permission cache. Investigate duplicate work inside the finite
+hook operation first. A possible admission/v2-initialization consolidation needs
+an explicit existing-owner result contract preserving refusal, reconciliation,
+custom callbacks and effect order before implementation.
+
+Diagnostic action-to-provider times are 10.827/11.140/11.750 seconds, materially
+slower than the quiet 4.687-5.766-second reference. They cannot establish speed
+acceptance or expected savings. The disjoint diagnostic intervals in milliseconds
+are:
+
+| Send | Action to receipt | Receipt to controller | Controller to save | Save | Saved to trace | Trace | Trace to provider |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 94 | 1,890 | 907 | 671 | 6,547 | 298 | 420 |
+| 2 | 0 | 3,280 | 1,345 | 390 | 5,750 | 171 | 204 |
+| 3 | 15 | 3,437 | 1,203 | 203 | 6,079 | 390 | 423 |
+
+Natural supplied Preparing frames occur .094/1.686/.054 seconds after the
+original UI action. The slow second frame remains a failure of the feedback
+budget in this instrumented run, not a quiet terminal-flush measurement. Its
+initial hook callback returns at +1.003 seconds, while configuration capture
+starts at +1.840 seconds; that gap is not additional hook-body execution.
+Awaited history lasts .300/.613/.487 seconds; this does not authorize deferral.
+
+Observation integrity: 904 selected events and 321 aggregate count rows, zero
+native/read/ancestry/event overflow, zero address collisions or context mismatch,
+unchanged selected originals, and monitoring retired. All 25 preparation reads
+have unique monotonic ordinals and physically retired producers. Only 23 raw
+read/future address pairs occur: address reuse actually happened, so raw IDs
+alone would have merged separate reads. No active observed read or running
+FileJob remains. Expected received spans and one background read span cross the
+recording cutoff; their omitted return events do not contradict the independent
+original retirement records.
+
+Cleanup limit: normal Ctrl+Q, server exit zero, unchanged deadlines, no forced
+process retirement and an empty final process tree are verified. The final
+in-process sample still contains six live leases (pending/raw/core/retiring
+counts zero), and the custody receipt explicitly does not claim complete
+App-native cleanup. Preserve that unresolved ownership qualification separately
+from successful observed-read and process retirement. No product change or
+completed latency target is claimed by this diagnostic.
