@@ -231,9 +231,14 @@ class OriginalPrivateAppCreators(OriginalStorageUnitObserver):
             with storage._lock:
                 settled_closed = not participant.connections
                 assert not participant.retiring_threads and storage._pause is None
-                assert not any(
-                    op.participant is participant for op in storage._operations
-                )
+                active = [
+                    op for op in storage._operations if op.participant is participant
+                ]
+                assert not active, {
+                    "unretired_constructor_owner": participant.owner_id,
+                    "active_threads": [op.thread.name for op in active],
+                    "active_task_types": [type(op.task).__name__ for op in active],
+                }
                 assert not any(
                     getattr(a.operation, "participant", None) is participant
                     for a in storage._pending_acquisitions

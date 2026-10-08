@@ -209,7 +209,9 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
 
     def hold(code, line_or_offset, value=None):
         if code is capture_console_view_workers.__code__:
-            if flags["armed"] and value[0] is exact.get("host"):
+            if flags["armed"] and value[0] is exact.get("host") and value[1] is None:
+                # Character widgets also drain their own workers on unmount.
+                # Only the original whole-host capture owns this exit oracle.
                 exact["shutdown_capture"] = value
             return
         if route == "hooks":
@@ -1097,6 +1099,21 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
     finally:
         release.set()
         receipt = pin.close()
+        (tmp_path / f"console-host-{route}.json").write_text(
+            json.dumps(
+                {
+                    "route": route,
+                    "armed": flags["armed"],
+                    "before_release": before_release,
+                    "post_host_before_creator_cleanup": exact.get(
+                        "post_host_before_creator_cleanup"
+                    ),
+                    "observer": receipt,
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
         assert (
             receipt["original_source_current"]
             and receipt["hooks_retired_before_inactive"]

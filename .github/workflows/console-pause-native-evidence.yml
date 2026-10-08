@@ -351,7 +351,7 @@ jobs:
           if-no-files-found: error
       - name: Verify related source batches and empty transcript rendering
         if: always()
-        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_raw_parent_preparation.py Tests/Backup_Recovery/test_bootstrap_creation_intent_evidence.py Tests/UI/test_console_empty_transcript_config_reads.py Tests/UI/test_console_turn_file_card_factory.py Tests/Backup_Recovery/test_raw_related_source_preparation.py Tests/Backup_Recovery/test_console_related_source_integration.py Tests/Backup_Recovery/test_nested_mcp_scope_integration.py Tests/Backup_Recovery/test_related_path_admission.py Tests/Backup_Recovery/test_restored_mcp_continuous_custody.py Tests/Backup_Recovery/test_mcp_source_metadata_repetition.py Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_actual_warm_mcp_readers_skip_all_admission_derivations Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_bound_history_keeps_fresh_temporary_authority Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_raw_operation_owns_and_retires_actual_parent_fd Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_wrong_warm_parent_fd_is_closed_before_original_fallback Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_parent_swap_during_open_has_the_same_original_refusal Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_descriptor_uncertainty_and_publication_keep_original_custody Tests/Chat/test_console_hook_preparation_reads.py::test_repeated_cancellation_keeps_same_physical_read_in_both_observers Tests/Agents/test_hook_permissions.py::test_consent_survives_a_new_owner_and_state_contains_no_commands Tests/Agents/test_hook_permissions.py::test_stale_approval_cannot_undo_another_owners_revocation -q --timeout=180 --junitxml=${{ runner.temp }}/related-source-controls.xml
+        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_control_observation_parent_reads.py Tests/Backup_Recovery/test_control_observation_parent_lifetimes.py Tests/Backup_Recovery/test_raw_mcp_pending_preparation_counts.py Tests/Backup_Recovery/test_raw_mcp_pending_preparation_lifetimes.py Tests/Backup_Recovery/test_raw_mcp_module_identity.py Tests/Backup_Recovery/test_raw_parent_preparation.py Tests/Backup_Recovery/test_bootstrap_creation_intent_evidence.py Tests/UI/test_console_empty_transcript_config_reads.py Tests/UI/test_console_turn_file_card_factory.py Tests/Backup_Recovery/test_raw_related_source_preparation.py Tests/Backup_Recovery/test_console_related_source_integration.py Tests/Backup_Recovery/test_nested_mcp_scope_integration.py Tests/Backup_Recovery/test_related_path_admission.py Tests/Backup_Recovery/test_restored_mcp_continuous_custody.py Tests/Backup_Recovery/test_mcp_source_metadata_repetition.py Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_actual_warm_mcp_readers_skip_all_admission_derivations Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_bound_history_keeps_fresh_temporary_authority Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_raw_operation_owns_and_retires_actual_parent_fd Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_wrong_warm_parent_fd_is_closed_before_original_fallback Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_parent_swap_during_open_has_the_same_original_refusal Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py::test_warm_descriptor_uncertainty_and_publication_keep_original_custody Tests/Chat/test_console_hook_preparation_reads.py::test_repeated_cancellation_keeps_same_physical_read_in_both_observers Tests/Agents/test_hook_permissions.py::test_consent_survives_a_new_owner_and_state_contains_no_commands Tests/Agents/test_hook_permissions.py::test_stale_approval_cannot_undo_another_owners_revocation -q --timeout=180 --junitxml=${{ runner.temp }}/related-source-controls.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -433,6 +433,20 @@ jobs:
       - name: Verify original Context host shutdown
         if: ${{ !cancelled() }}
         run: python -m Tests.windows_private_fixture_runner "Tests/UI/test_console_finite_presentation_host_terminal.py::test_original_finite_presentation_callback_retires_before_host_return[context]" -q --timeout=180 --junitxml=${{ runner.temp }}/context-host.xml
+      - name: Collect bounded original lifetime diagnostics
+        if: always()
+        shell: python
+        run: |
+          import os, shutil, tempfile
+          from pathlib import Path
+          target = Path(os.environ["RUNNER_TEMP"]) / "context-lifetime-diagnostics"
+          target.mkdir(exist_ok=True)
+          for base in Path(tempfile.gettempdir()).glob("pytest-of-*"):
+              for pattern in ("stock-skill-*.json", "console-host-*.json"):
+                  for source in base.rglob(pattern):
+                      if source.is_file() and source.stat().st_size <= 1000000:
+                          name = "_".join(source.relative_to(base).parts)
+                          shutil.copyfile(source, target / name)
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -441,6 +455,7 @@ jobs:
             ${{ runner.temp }}/context-display.xml
             ${{ runner.temp }}/skill-setup-lifetime.xml
             ${{ runner.temp }}/context-host.xml
+            ${{ runner.temp }}/context-lifetime-diagnostics/*.json
           if-no-files-found: error
   remote-bundle-controls:
     runs-on: ubuntu-24.04
