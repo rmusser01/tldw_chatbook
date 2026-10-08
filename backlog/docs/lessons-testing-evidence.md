@@ -19104,3 +19104,20 @@ that same convention made all four original Context lifetime controls pass.
 Use that convention or explicitly qualify the actual pytest rewrite, as the
 mounted-host control does. Smoke-test one observer setup before expanding a
 parameterized native run, and exclude setup failures from product evidence.
+## A successful Windows DACL mutation test can still leave inaccessible temporary files
+
+**TASK-34563.24, 2026-10-07.** The original unsafe-ancestor DACL control passed with
+24 other checks, and its owned native process tree, handles and pipe tasks retired
+normally. The test-profile deletion then failed with AccessDenied; inspecting the
+specific temporary subtree showed an empty access list after the test's synthesized
+private-descriptor restoration. Reapplying access through PowerShell Set-Acl also
+requested unavailable SeSecurityPrivilege. The native DACL-only utility restored
+existing-owner access within the exact verified test profile, allowing its remaining
+26 temporary objects to be removed. The original cleanup failure and later cleanup
+receipt were kept separately.
+
+For mutation tests, restore the actual prior security descriptor when supported;
+do not infer that a synthesized private descriptor reproduces the initial ACL.
+Keep process retirement, test assertions and temporary-file cleanup as separate
+outcomes. Any recovery must verify the absolute temporary boundary and owned
+process retirement before restoring access or removing the profile.

@@ -13,14 +13,16 @@ import re
 import stat
 import threading
 from collections.abc import Callable, Iterable, Mapping
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from pathlib import Path
 from typing import ParamSpec, TypeVar
 
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
 from ..Utils.private_paths import (
+    PrivatePathError,
     _native_close,
+    _open_directory_component,
     _open_verified_parent,
     _trusted_directory_owner,
 )
@@ -277,18 +279,19 @@ def _same_activation_generation(
 
 
 def _control_records(
-    root: Path, *, activation: bool = True, _observed=None
+    root: Path, *, activation: bool = True, _observed=None, _parent=None
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Read independent fixed evidence; incomplete paired writes remain fenced."""
-    try:
-        if stat.S_ISLNK(os.stat(root, follow_symlinks=False).st_mode):
-            raise ValueError("bootstrap_linked")
-    except FileNotFoundError:
-        if _observed is not None:
-            _observed[root] = None
-        return [], [], []
+    if _parent is None:
+        try:
+            if stat.S_ISLNK(os.stat(root, follow_symlinks=False).st_mode):
+                raise ValueError("bootstrap_linked")
+        except FileNotFoundError:
+            if _observed is not None:
+                _observed[root] = None
+            return [], [], []
     pending, profiles, activations = [], [], []
-    with pinned_directory(root) as parent:
+    with pinned_directory(root) if _parent is None else nullcontext(_parent) as parent:
         info = os.fstat(parent)
         if _observed is not None:
             _observed[root] = (_control_metadata_stamp(info), False)
@@ -406,10 +409,36 @@ def _registry_read_lock(parent: int, *, _observed=None, _path=None):
         os.close(fd)
 
 
-def _registry(root: Path, *, _observed=None) -> dict | None:
-    authority = root / "admission"
+@contextmanager
+def _pinned_control_child(parent, name, expected):
+    """Own one child of the verified control root for its synchronous read."""
+    child = _open_directory_component(parent, name)
     try:
-        info = os.stat(authority, follow_symlinks=False)
+        info = os.fstat(child)
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or not _trusted_directory_owner(info, os.geteuid())
+            or _control_metadata_stamp(info, directory=True)
+            != _control_metadata_stamp(expected, directory=True)
+        ):
+            raise ValueError("authority_unsafe")
+        yield child
+    finally:
+        _native_close(child)
+
+
+def _registry(root: Path, *, _observed=None, _parent=None) -> dict | None:
+    authority = root / "admission"
+    if _parent is not None:
+        info = os.fstat(_parent)
+        if info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ValueError("bootstrap_not_private")
+    try:
+        info = (
+            os.stat(authority, follow_symlinks=False)
+            if _parent is None
+            else os.stat("admission", dir_fd=_parent, follow_symlinks=False)
+        )
     except FileNotFoundError:
         if _observed is not None:
             _observed[authority] = None
@@ -421,7 +450,11 @@ def _registry(root: Path, *, _observed=None) -> dict | None:
     if stat.S_ISLNK(info.st_mode) or info.st_mode & 0o077:
         raise ValueError("authority_unsafe")
     marker = root / "unbound-owner"
-    marker_info = os.stat(marker, follow_symlinks=False)
+    marker_info = (
+        os.stat(marker, follow_symlinks=False)
+        if _parent is None
+        else os.stat("unbound-owner", dir_fd=_parent, follow_symlinks=False)
+    )
     if _observed is not None:
         _observed[marker] = (_control_metadata_stamp(marker_info), False)
     if (
@@ -431,7 +464,12 @@ def _registry(root: Path, *, _observed=None) -> dict | None:
         or marker_info.st_mode & 0o077
     ):
         raise ValueError("enrollment_marker_unsafe")
-    with pinned_directory(authority) as parent:
+    parent_scope = (
+        pinned_directory(authority)
+        if _parent is None
+        else _pinned_control_child(_parent, "admission", info)
+    )
+    with parent_scope as parent:
         lock = (
             _registry_read_lock(parent)
             if _observed is None
@@ -491,6 +529,38 @@ def _control_metadata_stamp(info, *, directory=False):
     )
 
 
+def _control_readers_current():
+    """Keep pre-existing custom reader signatures outside the borrowed-FD path."""
+    for (
+        name,
+        function,
+        code,
+        defaults,
+        keywords,
+        items,
+    ) in _ACTIVATION_PREPARATION_CALLBACKS:
+        if name not in {"_control_records", "_registry"}:
+            continue
+        if (
+            globals().get(name) is not function
+            or function.__code__ is not code
+            or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not keywords
+            or (
+                keywords is not None
+                and (
+                    len(keywords) != len(items)
+                    or any(
+                        key not in keywords or keywords[key] is not value
+                        for key, value in items
+                    )
+                )
+            )
+        ):
+            return False
+    return True
+
+
 @contextmanager
 def _control_observation(root: Path):
     """Share freshly validated control metadata only through this finite read.
@@ -499,8 +569,40 @@ def _control_observation(root: Path):
     return a decision. No record, absence or filesystem observation is cached.
     """
     observed = {}
-    records = _control_records(root, _observed=observed)
-    registry = _registry(root, _observed=observed)
+    if not _control_readers_current():
+        records = _control_records(root, _observed=observed)
+        registry = _registry(root, _observed=observed)
+    else:
+        with ExitStack() as stack:
+            parent = None
+            try:
+                # The root may live directly under a trusted sticky directory.
+                ancestor, _ = _open_verified_parent(root, missing_leaf_allowed=False)
+                stack.callback(_native_close, ancestor)
+            except PrivatePathError as error:
+                if error.result.reason != "missing_parent":
+                    raise
+                # Preserve the original missing-control receipts and race checks.
+            else:
+                try:
+                    info = os.stat(root.name, dir_fd=ancestor, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    if stat.S_ISLNK(info.st_mode):
+                        raise ValueError("bootstrap_linked")
+                    parent = stack.enter_context(
+                        _pinned_control_child(ancestor, root.name, info)
+                    )
+            if not _control_readers_current():
+                raise ValueError("projection_control_observation_changed")
+            records = _control_records(root, _observed=observed, _parent=parent)
+            if not _control_readers_current():
+                raise ValueError("projection_control_observation_changed")
+            registry = _registry(root, _observed=observed, _parent=parent)
+            if not _control_readers_current():
+                raise ValueError("projection_control_observation_changed")
+    # Initial pins retire before the caller reads dependent activation state.
     yield records, registry
     if os.name == "nt":
         ancestors = {parent for path in observed for parent in path.parents}

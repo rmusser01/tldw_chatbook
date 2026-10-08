@@ -1029,3 +1029,60 @@ retain each actual record/lock read, and preserve the independent final named
 validation. No witness or permission result is cached. Task23 remains In Progress
 until sequential integrated candidate timing is recorded; neither speed target
 has been met.
+
+## Shared initial control traversal: task24
+
+The original-body regression `control-parent-red-1` fails only its final initial
+walk assertion: five initial drive walks instead of one; the two independent
+completion walks, actual shared lock, three record reads, generation payload and
+all physical native HANDLE closes pass first (7.312s driver / 2.73s pytest).
+
+The implementation shares one verified root-parent walk, opens the root and
+admission child relative to owned descriptors, and retires every initial pin
+before yielding records. It uses the existing private native allocation/close
+path. The original standalone reader ABI remains intact; stock reader identity
+uses the existing activation callback anchors, and late drift refuses. The root
+uses existing-child walk semantics so a private root below a trusted sticky POSIX
+parent keeps its original behavior. Final named metadata/ancestor validation is
+unchanged. No fresh witness, record parsing, registry lock or actual effect gate
+is removed.
+
+`control-parent-green-1` passes 25 checks with two POSIX skips in 28.96s pytest,
+including the original Windows unsafe-ancestor DACL mutation. Source hashes remain
+unchanged and the owned native Job, identity and pipes retire normally, with zero
+force/overflow/races. Its driver then fails to remove the test-created temporary
+ACL subtree. A separate scoped cleanup restores only existing-owner DACL access
+and removes the retained 26 temporary objects; the original failure and subsequent
+cleanup receipt remain recorded separately. This was test-profile cleanup, not
+an unretired native process or a product success claim.
+
+After custom-reader and module-identity review corrections,
+`control-parent-module-green-2` passes four original-body controls in 23.406s driver /
+18.73s pytest, with unchanged sources and normal native tree/identity/pipes/profile
+retirement (zero force/overflow/races). Whole permission-read native attempts are
+**689 versus 1,013**, a reduction of 324 (32.0%). Successful opens fall from 962 to 638
+on the same count of 23 actual objects. Six ancestor objects fall from 103 opens
+each to 55; bootstrap falls from 94 to 58. The original 11 source selections,
+12 fresh witnesses, two real storage acquisitions, independent member admission
+and completion pair remain. The member evidence reuse succeeds with 56 opens.
+The initial control observation itself has 44 attempts, 42 actual handles positively
+retired, and exactly one initial drive walk plus two completion walks. All census
+overflow/depth-limit counts are zero.
+
+These counts establish less actual filesystem work; they do not establish a 32%
+wall-time improvement. Task24 remains open for its final lifetime checks and an
+integrated combined-source Send sample. The one-second Send and 100ms input targets
+remain unmet.
+
+Final combined targeted verification, `control-parent-integrated-focused-1`:
+**54 passed, five POSIX-only skips, one deselected** in 157.906s driver /
+151.78s pytest. The deselected original Windows DACL mutation already passed in
+`control-parent-green-1`; its separately recovered test-profile cleanup is noted
+above. All selected source hashes remain unchanged. The real restored-custody
+child and parent interpreters, owned native Job, identity, pipe tasks and private
+profile retire normally, with zero force, overflow or PID races. The final census
+again records 689 native attempts with the original witness/selection counts.
+Scoped formatting and lint checks pass; bootstrap's 13 existing E721/E731 findings
+are identical to its saved baseline and excluded from that scoped check. Final
+independent source review found no remaining blocker. POSIX-specific CI and the
+combined application timing sample remain outstanding.
