@@ -18924,6 +18924,8 @@ class ChatScreen(BaseAppScreen):
                     draft,
                 )
             opened = await self._console_command_rewind(parse)
+            if opened and pending_send_token is not None:  # TASK-33620.15
+                _commit_captured_console_draft(self, session_id, stash)
             if opened and opening_composer is not None and opening_revision is not None:
                 current = self._console_composer_or_none()
                 current_snapshot = (

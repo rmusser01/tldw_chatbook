@@ -280,3 +280,51 @@ async def test_a_raw_command_leaves_the_composer_once_whichever_send_starts_it(
         assert [stash.text for stash in started] == ["! pwd"]
         console._dispatch_console_draft_send.assert_not_awaited()
         assert composer.draft_text() == ("" if accepted else "! pwd")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", ["enter", "button", "workbench"])
+async def test_rewind_takes_its_command_out_of_the_composer_whichever_send_opens_it(
+    trigger,
+):
+    """``/rewind`` leaves the composer once its menu opens, from every send.
+
+    On dev only the Send button and the Workbench cleared it (they had no
+    captured draft); Enter left "/rewind" in the composer behind the menu.
+    All three now capture first, so the captured command is committed once
+    the menu opens -- text typed after the capture stays.
+    """
+    from textual.widgets import Button
+
+    from Tests.UI.app_factory import attach_chachanotes_db
+    from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+    from Tests.UI.test_console_rewind_restore import _seed_u1_a1_u2_a2
+    from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
+    from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+        ConsoleHarness,
+    )
+    from tldw_chatbook.Widgets.Console.console_rewind_modal import ConsoleRewindModal
+
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(160, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        await _seed_u1_a1_u2_a2(console)
+        composer = console.query_one("#console-native-composer")
+        composer.focus()
+        composer.load_draft("/rewind")
+        console._sync_console_workbench_actions_from_draft()
+        console._dismiss_console_command_popup()
+        await pilot.pause()
+        if trigger == "enter":
+            press(host, "enter", "\r")
+        elif trigger == "button":
+            console.query_one("#console-send-message", Button).press()
+        else:
+            console.post_message(WorkbenchActionRequested("send"))
+        await until(lambda: isinstance(host.screen_stack[-1], ConsoleRewindModal))
+        await pilot.pause()
+        assert composer.draft_text() == ""
