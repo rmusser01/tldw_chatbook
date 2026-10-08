@@ -1688,3 +1688,85 @@ changed call paths without the unrelated full-app backup/restore roundtrip.
 Its Windows environment fixture issue remains documented for separate review;
 its unverified fixture edit is excluded. Original POSIX-only controls remain a
 supported-host qualification item. No assertions or deadlines were relaxed.
+
+
+### Integrated task27 quiet and detailed Send samples, 2026-10-08
+
+Integration owner saved task27 in7824bc6850b017760b55b6bfc60295fa34861085;
+all22new controls passed again in46.82spytest/53.531sdriver with unchanged
+source/HEAD and normal native retirement, zero forced cleanup/overflow/races.
+The quiet and detail runs below use frozen cleanb4a284513b5837998017c12e146aea58b0356a7d,
+the exact earlier source-current Python3.12 interpreter and unchanged native
+launchers. Peer tests, source edits and host analysis were paused during timing.
+
+Quiet `lock-stream-integrated-send-1` PASS74.938sdriver/68.730spytest:
+
+| Timing in seconds | Send1 | Send2 | Send3 |
+| --- | ---: | ---: | ---: |
+| Action to adapter | 8.530106 | 8.031268 | 7.938409 |
+| Action to controller | 2.007627 | 2.359209 | 2.097941 |
+| Durable commit body | .338777 | .220950 | .300818 |
+| Action to durable commit complete | 3.304732 | 4.067844 | 3.822725 |
+| Commit complete to trace reservation entry | 4.795620 | 3.550926 | 3.618096 |
+| Trace reservation body | .184684 | .201938 | .125797 |
+
+All three now use early awaiting-review receipts, returned at.131398/.009174/
+.008970s; the first no longer takes the previous legacy fallback. This is not a
+render/paint timestamp. Heartbeat maxima: Send.629569/.399890/.276254s,
+typing.481068s, startup1.969293s, idle.307386s and shutdown.038336s.
+The sample is slower than the older031b point sample. Count reduction does not
+establish latency improvement, and combined source changes plus point-sample
+variation do not isolate task27 as its cause. Main acceptance remains unmet.
+
+The diagnostic completed3user/3assistant records, F/F/T provider streaming,
+three complete traces and three response links with zero dispatch checkpoints.
+All7847Python hashes and savedHEAD remained unchanged; native Job/tree/identity/
+pipes/profile retired normally with zero forced cleanup/overflow/lookup races.
+The original40k native-open acceptance budget and rendered feedback were not
+requalified by this quiet diagnostic.
+
+Detailed `lock-stream-integrated-detail-1` PASS74.047sdriver, adapter10.506469/
+7.696659/8.025910s. These are separately instrumented observations. Source/HEAD
+and the same transcript/trace/retirement outcomes were preserved; PID diagnostics
+recorded one lookup race, with zero forced cleanup/overflow. This limitation is
+retained. The83original targets remained current; monitor retired with zero
+global events, overflow, unmatched starts or unfinished entries.92raw-ancestry
+misses still limit deeper attribution. Inclusive, overlapping elapsed times:
+
+| Original context | Send1 | Send2 | Send3 |
+| --- | ---: | ---: | ---: |
+| Provider composition | 1.654856 | 1.089550 | .985552 |
+| Shared tool preparation | 1.614051 | 1.086097 | .981463 |
+| Local external catalog | 1.247642 | .414013 | .684662 |
+| Both permission payload reads | .897138 | .620473 | .367427 |
+| Local-provider builder | .037420 | .001276 | .001776 |
+| Configuration capture | 1.703063 | 1.243197 | .971674 |
+| Nested MCP maximum | 1.378437 | .603273 | .514787 |
+| Non-MCP capture worker | .285242 | .605918 | .448519 |
+| Five hook-current contexts | 1.596547 | 2.133842 | 3.082386 |
+| Actual hook state reads | .082659 | .076663 | .076575 |
+| Hook default path resolution | .219344 | .429573 | .428778 |
+| Prompt-history persistence | .384663 | .334634 | .319255 |
+| Scoped run-log binding | .507633 | .299105 | .106503 |
+
+These nested times must not be added. Most hook contexts record70full raw
+checks, whose total elapsed varies roughly.06-.54s; one records128checks.
+Neither contention nor a scheduling/native-I/O cause follows from those totals.
+No new cache, skipped permission boundary or weak durability is selected.
+
+The quiet record intentionally has no stacks or detailed main-call census.
+The existing detail locates the first synchronous receipt's92.124ms inside
+receive_console_visible_intent, in92.321ms dispatch; action returns104.084ms.
+Later receipt callbacks take3.036/4.022ms. All return accepted at original line563,
+with no selected descendant events inside the first receipt. The next smallest
+existing-observer extension is original ConsoleRuntime.accept_received_intent;
+phase heartbeat maxima cannot identify its internals or explain typing stalls.
+
+Source review preserves OPT33: secure_private_directory has a separate ancestor
+walker, not task22's prepared parent walk. Per-component runtime discovery may
+repeat full native parent-pin validation. This is separate layered checking,
+not general raw-check recursion. Measure existing versus creation paths before
+considering finite sharing; retain actual mkdir/chmod/postcondition gates and
+custom/actor/native lifetime behavior. The initial pin-miss hypothesis is
+superseded by this direct separate-walker finding. OPT34 retains the unselected
+existing-first warm lock alternative. The review list now has34stable entries.
