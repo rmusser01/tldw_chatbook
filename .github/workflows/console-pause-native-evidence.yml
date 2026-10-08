@@ -430,6 +430,9 @@ jobs:
       - name: Verify stock skill setup source and physical lifetime
         if: ${{ !cancelled() }}
         run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_console_skill_trust_stock_owned.py -q --timeout=180 --junitxml=${{ runner.temp }}/skill-setup-lifetime.xml
+      - name: Verify MCP registration observations and native failure boundaries
+        if: ${{ !cancelled() }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_raw_mcp_registration_counts.py Tests/Backup_Recovery/test_raw_mcp_registration_boundaries.py Tests/Backup_Recovery/test_mcp_source_lifetimes.py -q --timeout=180 --junitxml=${{ runner.temp }}/mcp-registration.xml
       - name: Verify Collections setup responsiveness and native ownership
         if: ${{ !cancelled() }}
         run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_collections_deferred_loop.py Tests/Library/test_collections_capture_app_wiring.py -q --timeout=180 --junitxml=${{ runner.temp }}/collections-setup.xml
@@ -463,6 +466,7 @@ jobs:
             ${{ runner.temp }}/context-host.xml
             ${{ runner.temp }}/collections-setup.xml
             ${{ runner.temp }}/actor-recovery-shutdown.xml
+            ${{ runner.temp }}/mcp-registration.xml
             ${{ runner.temp }}/context-lifetime-diagnostics/*.json
           if-no-files-found: error
   remote-bundle-controls:
