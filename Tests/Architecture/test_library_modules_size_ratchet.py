@@ -447,7 +447,14 @@ _BUDGETS: dict[str, int] = {
     # state.py` as `ROOT_STATUS_LABELS`, next to the refusal table above, and
     # the healthy label is now dated there (`root_status_label`); the
     # controller spends one line on the call it used to spend three on.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2366,
+    #
+    # 2026-10-08, TASK-34000.50 fix round 1: 2366 -> 2357 (-9), a MOVE. The
+    # per-root label overlays (refused action, runtime not active, a root
+    # nothing watches, the dated healthy label) moved next to the table
+    # as `root_row_status_label`; `_project_root` spends one call on it.
+    # (TASK-34000.50 itself had grown this file to 2375 with the third
+    # overlay inline; the move lands the row BELOW its previous pin.)
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2357,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

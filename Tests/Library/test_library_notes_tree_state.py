@@ -1436,3 +1436,54 @@ def test_a_held_sync_folder_row_reads_needs_attention_instead_of_sync_managed():
     assert calm_row is not None
     assert calm_row.status_text == "⇄ Sync managed"
     assert calm_row.semantic_status == "connected"
+
+
+def test_an_unwatched_sync_folder_row_reads_sync_stopped_instead_of_sync_managed():
+    """TASK-34000.50 fix round 1 (review Minor 2, AC#2): a root whose lease has
+    no running watcher is not carrying changes either way, so its folder row
+    must not read "⇄ Sync managed". It wears the same wording the Manage sync
+    folders row wears for that state, at the same width; a held folder still
+    outranks it, and an unwatched folder that is not managed is untouched.
+    """
+    from tldw_chatbook.Library.library_notes_lasting_sync_state import (
+        ROOT_STATUS_LABELS,
+    )
+
+    managed = _folder("managed", None, "/Managed")
+    held = _folder("held", None, "/Held")
+    other = _folder("other", None, "/Other")
+    plain = _folder("plain", None, "/Plain")
+    branches = {
+        NotesBranchKey(None, "folders"): _branch(
+            None, "folders", items=(managed, held, other, plain), total=4
+        ),
+    }
+
+    projection = tree_state.build_paged_library_notes_tree(
+        branch_states=branches,
+        expanded_folder_ids=set(),
+        protected_folder_ids=frozenset({"managed", "held", "other"}),
+        attention_folder_ids=frozenset({"held"}),
+        unwatched_folder_ids=frozenset({"managed", "held", "plain"}),
+    )
+
+    stopped_row = projection.row(FolderPlacementId.folder("managed"))
+    assert stopped_row is not None
+    assert stopped_row.status_text == tree_state.NOTES_TREE_SYNC_STOPPED_STATUS
+    assert stopped_row.status_text == ROOT_STATUS_LABELS["not_watching"]
+    assert stopped_row.status_text == "⚠ Sync stopped"
+    assert len(stopped_row.status_text) == len("⇄ Sync managed")
+    assert stopped_row.semantic_status == "needs_attention"
+
+    held_row = projection.row(FolderPlacementId.folder("held"))
+    assert held_row is not None
+    assert held_row.status_text == tree_state.NOTES_TREE_SYNC_ATTENTION_STATUS
+
+    calm_row = projection.row(FolderPlacementId.folder("other"))
+    assert calm_row is not None
+    assert calm_row.status_text == "⇄ Sync managed"
+    assert calm_row.semantic_status == "connected"
+
+    plain_row = projection.row(FolderPlacementId.folder("plain"))
+    assert plain_row is not None
+    assert (plain_row.status_text, plain_row.semantic_status) == ("", "normal")
