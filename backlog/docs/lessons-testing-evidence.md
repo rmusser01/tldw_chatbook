@@ -50,6 +50,29 @@ provider-call time from a timing proxy. Re-measure any "moving it off the
 loop made it slower" result from a run with an input probe before you act on
 it. The five-hop variant has not been re-measured without the poller.
 
+## Freeing a pump opens every await on the path to input (TASK-33620.15, 2026-10-08)
+
+**Incident.** The off-pump Console send was pinned by one test: type a key
+while admission's MCP read is held, then require the key to land and the send
+to finish. That passed, but it typed in only one of the send's three awaits.
+The review switched tabs at that same await and found two defects:
+- The screen's send gate, which reads the VISIBLE chat, was read after the
+  await. A switch to an unconfigured tab refused the send with that tab's
+  reason.
+- A deferred second Enter replayed in whichever chat was visible when the
+  send settled. It sent the other tab's unsent draft.
+
+A key typed at the first await (the hook-snapshot read) failed differently:
+the hook gate compared the live composer with the captured draft, so
+type-ahead refused the send. That check had never run with keys flowing.
+Typing straight after Enter refused the send on origin/dev too, unnoticed.
+
+**What to do.** When you stop a pump awaiting a path, list every await on it
+and probe each one with both kinds of concurrent input: typing, and
+navigation (tab switch, screen change). After any await, re-check each
+"visible"/"active"/"current" read, and each equality check against live
+widget state, or move it before the first await.
+
 ## A loguru sink added before the app mounts is gone by the time you read it (TASK-33628.5, 2026-10-05)
 
 **Incident.** The quit-mid-delete test added a loguru WARNING sink, ran the
