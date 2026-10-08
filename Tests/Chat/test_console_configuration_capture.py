@@ -507,6 +507,82 @@ async def test_both_adapters_use_original_producer_and_preserve_distinct_inputs(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("builder", ["selection", "execution"])
+@pytest.mark.parametrize(
+    "resident_enabled, raw_enabled",
+    [(False, True), (None, False), (None, True)],
+    ids=["resident-disables", "absent-raw-disabled", "absent-raw-enabled"],
+)
+async def test_mounted_builders_use_only_resident_runtime_flag_override(
+    runtime_case,
+    builder,
+    resident_enabled,
+    raw_enabled,
+):
+    """Original adapters share the live flag but retain other readiness inputs."""
+    from copy import deepcopy
+    from functools import partial
+
+    from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+    from tldw_chatbook.UI.Console_Modules.wiring import _stock_console_scratch_snapshot
+
+    case = runtime_case
+    resident_console = {"native_tool_calls": False, "exchange_capture": True}
+    if resident_enabled is not None:
+        resident_console["agent_runtime"] = resident_enabled
+    case.app.app_config = {"console": resident_console}
+    readiness_config = {
+        "console": {
+            "agent_runtime": raw_enabled,
+            "native_tool_calls": True,
+            "exchange_capture": False,
+        }
+    }
+    resident_before = deepcopy(case.app.app_config)
+    readiness_before = deepcopy(readiness_config)
+    # Reuse the adapter setup above, retaining the original policy methods and
+    # original scratch callback so the real selection builder accepts its source.
+    owner = ConsoleSessionController.__new__(ConsoleSessionController)
+    owner.app_instance = case.app
+    owner._provider_readiness_app_config_fn = lambda: readiness_config
+    owner._build_provider_selection_fn = case.controller._provider_selection_for_session
+    owner._current_chat_store_accessor = lambda: case.store
+    owner._chat_store_accessor = lambda: case.store
+    owner._rag_source_types_accessor = lambda: ["notes"]
+    owner._rag_top_k_accessor = lambda: 17
+    screen = SimpleNamespace(
+        _session=owner,
+        app_instance=case.app,
+        _console_runtime=lambda: case.runtime,
+    )
+    owner._scratch_snapshot_provider = partial(_stock_console_scratch_snapshot, screen)
+    if builder == "selection":
+        captured = owner._build_console_turn_capture_selection(
+            case.session.id,
+            scratch_owner=case.runtime._scratch_spaces,
+        )
+        assert captured is not None, "Original mounted selection source was refused"
+    else:
+        captured = owner._build_console_turn_execution_context(
+            case.session.id,
+            mcp_definition_maximum={},
+        )
+
+    expected = raw_enabled if resident_enabled is None else resident_enabled
+    # Only the runtime flag overrides readiness input; merging the resident
+    # console dictionary would incorrectly alter the other two captured flags.
+    assert captured.tool_configuration["native_tool_calls_enabled"] is True
+    assert captured.tool_configuration["exchange_capture_enabled"] is False
+    assert captured.provider_selection.provider == "deepseek"
+    assert case.app.app_config == resident_before
+    assert readiness_config == readiness_before
+    assert captured.tool_configuration["agent_runtime_enabled"] is expected
+    if builder == "selection":
+        assert captured.agent_runtime_enabled is expected
+        assert captured.project_bindings_eligible is expected
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("route", ["configured", "explicit"])
 async def test_custom_provider_keeps_sync_shape_affinity_and_live_errors(
     runtime_case, route
