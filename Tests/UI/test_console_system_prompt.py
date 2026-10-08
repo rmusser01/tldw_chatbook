@@ -20,8 +20,9 @@ from Tests.UI.test_console_native_chat_flow import (
     _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
+from Tests.UI.test_console_session_tab_close import (
+    ProductionConsoleHarness as ConsoleHarness,
 )
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (
@@ -256,6 +257,7 @@ async def test_console_system_bare_command_opens_editor_with_current_text():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_system_prompt_modal_apply_updates_settings_and_rail_preview():
     app = _build_test_app()
@@ -310,6 +312,7 @@ async def test_console_system_prompt_modal_clear_resets_settings_and_rail_to_non
         assert _rail_system_line_is_dim(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_system_prompt_modal_cancel_leaves_settings_untouched():
     app = _build_test_app()
@@ -626,6 +629,7 @@ async def test_console_system_command_picker_escape_leaves_settings_untouched(tm
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_system_prompt_modal_save_to_library_creates_new_prompt(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -869,6 +873,7 @@ async def test_action_open_console_prompt_insert_opens_picker_with_empty_query()
         assert filter_input.value == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_action_open_console_system_prompt_editor_opens_modal():
     app = _build_test_app()

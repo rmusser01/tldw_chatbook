@@ -19,6 +19,7 @@ _GROUPS = frozenset(
         "console-citation-counts",
         "console-context-publication",
         "console-hook-refresh",
+        "console-prompt-history",
         "console-rail-prune",
         "console-skill-discovery",
         "console-skill-trust-setup",
