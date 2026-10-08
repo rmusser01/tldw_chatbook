@@ -25421,7 +25421,31 @@ class ConsoleChatController:
             return overrides, global_overrides, effective
 
         database = getattr(repository, "db", None) or getattr(persistence, "db", None)
-        return await run_owned_db_call(database, read)
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        if (
+            type(self) is not ConsoleChatController
+            or type(database) is not CharactersRAGDB
+            or database.is_memory_db
+        ):
+            return await run_owned_db_call(database, read)
+
+        # Retain the existing native operation until its new handle has retired.
+        # A private Task adds no configurable factory seam to the original await.
+        worker = asyncio.Task(run_owned_db_call(database, read))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not worker.cancelled():
+                worker.exception()
+            raise
 
     def reset_active_context_memory(self, session_id: str) -> tuple[str, int] | None:
         """Deactivate only the branch-valid memory and return its undo token."""

@@ -19091,3 +19091,16 @@ preparation latency; changing the fixture was not evidence that Send was fixed.
 Also, this screen's text collector includes children of hidden recovery rows:
 the built-in `Trace capture blocked` placeholder alone is not a capture failure.
 Inspect the actual active state or original exception before assigning that cause.
+
+
+## Qualify pytest rewriting before pinning a test observer (TASK-34406, 2026-10-07)
+
+The new Context lifetime controls failed twice before native callback entry
+because their observer compared pytest-rewritten callback bytecode with plain
+compiled source. Moving the callback into an ordinary helper was insufficient:
+pytest still rewrites assertions in that module. The existing annotation
+fixture explicitly uses `PYTEST_DONT_REWRITE` in its module docstring; applying
+that same convention made all four original Context lifetime controls pass.
+Use that convention or explicitly qualify the actual pytest rewrite, as the
+mounted-host control does. Smoke-test one observer setup before expanding a
+parameterized native run, and exclude setup failures from product evidence.

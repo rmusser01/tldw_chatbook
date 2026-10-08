@@ -9,6 +9,7 @@ from textual.worker_manager import WorkerManager
 _GROUPS = frozenset(
     {
         "console-sync",
+        "console-context-presentation",
         "console-skill-discovery",
         "console-skill-trust-setup",
         "console-resume-navigation-startup",

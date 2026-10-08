@@ -2608,3 +2608,19 @@ The post-transcript rail check, current-owner refusal and delayed full-refresh
 retry remain. Pending presentation cannot grant authority or publish old-owner
 settings. This changes scheduling within the existing display boundary, with no
 new worker, timer, cache, dependency or relaxed performance limit.
+
+
+### Context presentation must retire before host exit (2026-10-07)
+
+The original supported-host control reached shutdown with the exact Context
+Notes callback, connection, operation and lease still live. Host capture omitted
+its issued `console-context-presentation` Worker, and cancellation made the
+awaiting task terminal before its executor callback retired. Include that group
+in the existing finite view-worker drain. For the stock controller and stock
+file-backed Notes database only, retain the existing `run_owned_db_call` in a
+private standard Task and drain it through repeated awaiting-task cancellation.
+Consume its outcome before delivering the original cancellation. The private
+Task introduces no configurable task-factory callback; generic database calls,
+custom/subclass/memory routes, fresh native admission, borrowed handles and
+existing owner/publication fences retain their contracts. This completes the
+existing finite callback lifetime; no authority cache or new storage API.
