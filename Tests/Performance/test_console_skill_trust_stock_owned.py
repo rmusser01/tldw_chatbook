@@ -25,7 +25,7 @@ real_profile_guard.install()
 from loguru import logger
 logger.remove()
 route, case = sys.argv[1:]
-assert route == 'console_skill_stock' and case in {'mount', 'cancel', 'recancel', 'shutdown', 'denied', 'ready', 'custom', 'local_winner', 'app_winner', 'runtime_dispose', 'runtime_replacement', 'app_closing', 'helper_binding', 'helper_body', 'metadata_body'}
+assert route == 'console_skill_stock' and case in {'mount', 'cancel', 'recancel', 'shutdown', 'denied', 'ready', 'custom', 'local_winner', 'app_winner', 'runtime_dispose', 'runtime_replacement', 'app_closing', 'helper_binding', 'helper_body', 'metadata_body', 'send_enter', 'send_button'}
 
 foreign_calls = []
 _skill_foreign_calls = foreign_calls
@@ -52,6 +52,8 @@ async def exercise():
     from textual.worker_manager import WorkerManager
     from tldw_chatbook.UI.Console_Modules.view_workers import capture_console_view_workers
 
+    if case in {'send_enter', 'send_button'}:
+        from Tests.Performance._stock_cold_send_control import prepare_cold_send_workspace, observe_cold_send, assert_cold_send_receipt
     from Tests.Performance._stock_private_app_creators import OriginalPrivateAppCreators
     creators = OriginalPrivateAppCreators(app_source, Path(os.environ['XDG_DATA_HOME']).parent)
     creators.install()
@@ -68,10 +70,20 @@ async def exercise():
     facade = app.skills_scope_service
     local = app.local_skills_service
     assert app._local_skill_trust_service is None and local._trust_service is None
+    workspace_id = prepare_cold_send_workspace(app, case) if case in {'send_enter', 'send_button'} else None
     loop, main = asyncio.get_running_loop(), threading.current_thread()
     builder = inspect.getattr_static(wiring.ServiceWiringMixin, '_build_local_skill_trust_service')
     ensure = inspect.getattr_static(wiring.ServiceWiringMixin, 'ensure_local_skill_trust_service')
     monitor = OriginalStorageUnitObserver({}, lambda: False, lambda _name: None)
+    workspace_connections = {}
+    workspace_code = None
+    if case in {'send_enter', 'send_button'}:
+        workspace_database = app.workspace_registry_service.db
+        workspace_binding = inspect.getattr_static(type(workspace_database), '_get_connection')
+        workspace_getter = inspect.unwrap(workspace_binding)
+        workspace_code = monitor._pin(workspace_getter)
+        monitor._pin(workspace_binding)
+        monitor.slots.append((type(workspace_database), '_get_connection', workspace_binding))
     builder_code = monitor._pin(builder)
     ensure_code = monitor._pin(ensure)
     from tldw_chatbook.UI.Console_Modules.skill import ConsoleSkillController
@@ -184,6 +196,24 @@ async def exercise():
         try:
             frame = sys._getframe(1)
             assert frame.f_code is actual_code
+            if actual_code is workspace_code:
+                if frame.f_locals.get('self') is not workspace_database:
+                    return
+                assert frame.f_globals is workspace_getter.__globals__
+                assert isinstance(value, sqlite3.Connection)
+                assert len(workspace_connections) < 128
+                lead = []
+                parent = frame.f_back
+                for _ in range(24):
+                    if parent is None or parent.f_code is work_code:
+                        break
+                    lead.append((parent.f_globals.get('__name__'), parent.f_code.co_qualname))
+                    parent = parent.f_back
+                item = parent.f_locals.get('self') if parent is not None and parent.f_code is work_code else None
+                if threading.current_thread() is not main:
+                    assert type(item) is _WorkItem and type(item.future) is Future and item.future.running()
+                workspace_connections[value] = {'thread': threading.current_thread().name, 'original_getter': True, 'caller_lead': lead, 'executor_item': type(item) is _WorkItem}
+                return
             if actual_code is fresh_code:
                 executor = frame.f_locals['self']
                 request = frame.f_locals['fn']
@@ -265,7 +295,7 @@ async def exercise():
         if case == 'mount':
             controller_thread = threading.Thread(target=coordinate_normal, name='stock_skill_original_hold', daemon=False)
             controller_thread.start()
-        elif case in {'cancel', 'recancel', 'shutdown', 'local_winner', 'app_winner', 'runtime_dispose', 'runtime_replacement', 'app_closing', 'helper_binding', 'helper_body', 'metadata_body'}:
+        elif case in {'cancel', 'recancel', 'shutdown', 'local_winner', 'app_winner', 'runtime_dispose', 'runtime_replacement', 'app_closing', 'helper_binding', 'helper_body', 'metadata_body', 'send_enter', 'send_button'}:
             def admit_held_control():
                 nonlocal held_task
                 assert held_task is None
@@ -321,6 +351,8 @@ async def exercise():
         assert any(row[0].group == 'console-skill-discovery' for row in selected[-1])
         facts['exact_App_manager_issued_setup_and_discovery_selected'] = True
         assert app._local_skill_trust_service_build_lock.locked() and future.running() and not future.done()
+        if case in {'send_enter', 'send_button'}:
+            await observe_cold_send(app, screen, case, workspace_id, release, facts)
         if case in {'cancel', 'recancel'}:
             setup.cancel()
             await asyncio.sleep(0)
@@ -463,6 +495,8 @@ async def exercise():
         assert sys.monitoring.register_callback(monitor.tool, start_event, builder_started) is None
         monitor.registered[start_event] = builder_started
         monitor.codes = {builder_code: 'original_stock_builder', fresh_code: 'original_FreshContext_submit', discovery_code: 'original_skill_discovery'}
+        if workspace_code is not None:
+            monitor.codes[workspace_code] = 'original_workspace_connection_birth'
         for code in monitor.codes:
             assert sys.monitoring.get_local_events(monitor.tool, code) == 0
             sys.monitoring.set_local_events(monitor.tool, code, event | (start_event if code in {builder_code, discovery_code} else 0))
@@ -494,7 +528,7 @@ async def exercise():
                     assert any(request is captured[0][2] and issued is captured[0][1] for request, issued in submitted)
                     facts['actual_original_FreshContext_wrapper_correspondence'] = True
                 await settle(lambda: app._local_skill_trust_service is not None)
-            elif case in {'cancel', 'recancel', 'shutdown', 'local_winner', 'app_winner', 'runtime_dispose', 'runtime_replacement', 'app_closing', 'helper_binding', 'helper_body', 'metadata_body'}:
+            elif case in {'cancel', 'recancel', 'shutdown', 'local_winner', 'app_winner', 'runtime_dispose', 'runtime_replacement', 'app_closing', 'helper_binding', 'helper_body', 'metadata_body', 'send_enter', 'send_button'}:
                 # held_control handles only the exact setup task; normal App
                 # context exit still exercises its original creator teardown.
                 # Initial-screen settlement precedes actual lazy builder admission.
@@ -592,6 +626,10 @@ async def exercise():
                 facts['invalid'] = invalid
                 facts['policy_or_custom_calls'] = calls
                 facts['final_counts'] = counts()
+                if workspace_code is not None:
+                    with storage._lock:
+                        live_connections = tuple(workspace_database._maintenance_participant.connections)
+                    facts['workspace_connection_origins'] = [dict(row, remains_registered=connection in live_connections, native_closed=native_closed(connection)) for connection, row in workspace_connections.items()]
                 with storage._lock:
                     assert len(storage._pending_acquisitions) <= 16 and len(storage._raw_operations) <= 16
                     assert len(storage._operations) <= 16
@@ -623,6 +661,9 @@ async def exercise():
         assert facts['original_builder_off_ui_loop']
         assert facts['actual_original_FreshContext_wrapper_correspondence']
         assert facts['actual_loop_progress_before_original_builder_release'], 'Original stock skill trust setup blocked shared UI loop'
+    if case in {'send_enter', 'send_button'}:
+        assert facts['exact_original_callback_Future_and_singleflight_physically_retired']
+        assert_cold_send_receipt(facts)
     print('retired and reopened')
 
 
@@ -655,6 +696,8 @@ with user_fixture_default_owner():
         "helper_binding",
         "helper_body",
         "metadata_body",
+        "send_enter",
+        "send_button",
     ),
 )
 def test_stock_console_skill_setup_has_original_owned_lifetime(tmp_path, case):

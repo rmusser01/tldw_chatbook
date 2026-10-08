@@ -1218,7 +1218,8 @@ class LocalWorkspaceRegistryService:
                 """
             params = (0,)
         try:
-            with self.db.connection() as conn:
+            database = self.db
+            with operation_owned_connection(database), database.connection() as conn:
                 rows = conn.execute(query, params).fetchall()
         except sqlite3.Error as exc:
             raise WorkspaceRegistryServiceError(_STORAGE_FAILURE_MESSAGE) from exc

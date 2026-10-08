@@ -243,9 +243,32 @@ class OriginalPrivateAppCreators(OriginalStorageUnitObserver):
                     getattr(a.operation, "participant", None) is participant
                     for a in storage._pending_acquisitions
                 )
-            assert settled_closed or _close_settled_core_cache(
-                owner
-            ), "fixture_creator_not_settled"
+            closed = settled_closed or _close_settled_core_cache(owner)
+            if not closed:
+                with storage._lock:
+                    remaining = tuple(participant.connections.items())
+                handles = []
+                for connection, lease in remaining:
+                    try:
+                        transaction = sqlite3.Connection.in_transaction.__get__(
+                            connection
+                        )
+                    except sqlite3.ProgrammingError:
+                        transaction = "closed_or_foreign_thread"
+                    handles.append(
+                        {
+                            "thread": getattr(lease.resource_thread, "name", None),
+                            "transaction": transaction,
+                            "live_lease": lease in storage._live_leases,
+                        }
+                    )
+                raise AssertionError(
+                    {
+                        "fixture_creator_not_settled": participant.owner_id,
+                        "participant_closed": participant.closed,
+                        "handles": handles,
+                    }
+                )
             for connection in initial_connections:
                 try:
                     sqlite3.Connection.in_transaction.__get__(connection)
