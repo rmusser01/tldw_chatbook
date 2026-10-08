@@ -201,7 +201,11 @@ async def exercise():
                     return
                 cells = dict(zip(callback.__code__.co_freevars, callback.__closure__))
                 read = cells['read'].cell_contents
-                if read.creator is not app:
+                if (
+                    read.creator is not app
+                    or getattr(read.callback, '__self__', None) is not app
+                    or getattr(read.callback, '__func__', None) is not builder
+                ):
                     return
                 assert type(read) is read_source.ConsolePreparationRead
                 assert read.callback.__self__ is app and read.callback.__func__ is builder

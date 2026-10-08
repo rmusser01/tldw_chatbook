@@ -216,7 +216,10 @@ def test_local_capture_wiring_reuses_configured_collections_database(
 
     assert app.collections_capture_repository.db is database
     assert app.local_collections_capture_service.repository.db is database
-    assert app.local_collections_capture_service.extractor is app_module._extract_collections_article
+    assert (
+        app.local_collections_capture_service.extractor
+        is app_module._extract_collections_article
+    )
     assert app.collections_capture_scope_service.active_authority.kind == "local"
     assert app.collections_legacy_recovery_service is not None
 
@@ -347,3 +350,31 @@ async def test_capture_shutdown_deactivates_scope_and_cancels_extractions() -> N
     await TldwCli._shutdown_collections_capture_runtime(app)
 
     assert calls == ["deactivate", "cancel"]
+
+
+@pytest.mark.parametrize(
+    "closing_flag",
+    ["_collections_capture_initializer_closed", "_shutting_down", "_exit"],
+)
+def test_first_use_does_not_schedule_reconciliation_after_closing(
+    monkeypatch, closing_flag
+):
+    scope = object()
+    app = SimpleNamespace(
+        collections_capture_scope_service=None,
+        _collections_capture_initializer_task=SimpleNamespace(done=lambda: False),
+    )
+    setattr(app, closing_flag, True)
+
+    def compose(host):
+        host.collections_capture_scope_service = scope
+        host.collections_capture_repository = object()
+
+    def unexpected_reconciliation():
+        raise AssertionError(
+            "First use scheduled reconciliation after shutdown admission"
+        )
+
+    app._reconcile_collections_capture_startup = unexpected_reconciliation
+    monkeypatch.setattr(TldwCli, "_wire_collections_capture_services", compose)
+    assert TldwCli.ensure_collections_capture_services(app) is scope

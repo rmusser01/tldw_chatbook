@@ -439,9 +439,9 @@ jobs:
       - name: Verify original Actor Pack native shutdown
         if: ${{ !cancelled() }}
         run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_actor_recovery_native_shutdown.py -q --timeout=180 --junitxml=${{ runner.temp }}/actor-recovery-shutdown.xml
-      - name: Verify original Context host shutdown
+      - name: Verify original finite presentation host shutdown
         if: ${{ !cancelled() }}
-        run: python -m Tests.windows_private_fixture_runner "Tests/UI/test_console_finite_presentation_host_terminal.py::test_original_finite_presentation_callback_retires_before_host_return[context]" -q --timeout=180 --junitxml=${{ runner.temp }}/context-host.xml
+        run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_finite_presentation_host_terminal.py Tests/UI/test_console_view_worker_groups.py -q --timeout=180 --junitxml=${{ runner.temp }}/context-host.xml
       - name: Collect bounded original lifetime diagnostics
         if: always()
         shell: python

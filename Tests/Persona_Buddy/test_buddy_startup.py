@@ -5,6 +5,9 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from loguru import logger
+import pytest
+
+pytestmark = pytest.mark.bootstrap_profile
 
 from tldw_chatbook.Persona_Buddy.preferences import (
     BuddySelection,

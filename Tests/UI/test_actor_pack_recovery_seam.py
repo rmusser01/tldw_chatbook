@@ -130,6 +130,7 @@ def test_ensure_recovery_runs_real_recovery_through_the_app_method(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_deferred_startup_kicks_the_recovery_worker():
     """A real mounted app runs recovery via the deferred-startup thread worker.
 

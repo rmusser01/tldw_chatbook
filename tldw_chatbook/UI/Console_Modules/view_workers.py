@@ -10,6 +10,9 @@ _GROUPS = frozenset(
     {
         "console-sync",
         "console-context-presentation",
+        "console-readiness-config",
+        "console-agent-history",
+        "console-hook-refresh",
         "console-skill-discovery",
         "console-skill-trust-setup",
         "console-resume-navigation-startup",

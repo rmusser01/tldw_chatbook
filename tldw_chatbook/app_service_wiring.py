@@ -2505,6 +2505,24 @@ class ServiceWiringMixin:
         if scope is None or isinstance(scope, _DeferredCollectionsCaptureScope):
             TldwCli._wire_collections_capture_services(self)
             scope = getattr(self, "collections_capture_scope_service", None)
+            initializer = getattr(self, "_collections_capture_initializer_task", None)
+            if (
+                initializer is not None
+                and not initializer.done()
+                and not any(
+                    getattr(self, flag, False)
+                    for flag in (
+                        "_collections_capture_initializer_closed", "_shutting_down", "_exit"
+                    )
+                )
+                and getattr(self, "collections_capture_repository", None) is not None
+            ):
+                # First use wins publication; the displaced initializer cannot
+                # schedule reconciliation for this independently composed owner.
+                self._create_deferred_startup_task(
+                    self._reconcile_collections_capture_startup(),
+                    name="deferred_collections_capture_reconciliation",
+                )
         return scope
 
     def _deferred_wire_collections_capture_services(self) -> None:

@@ -26,7 +26,7 @@ async def test_original_deferred_collections_callback_keeps_loop_responsive(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("control", ["shutdown", "borrowed"])
+@pytest.mark.parametrize("control", ["shutdown", "borrowed", "first_use"])
 @private_profile_test
 async def test_original_collections_setup_preserves_native_owner(
     request, tmp_path, control
@@ -169,6 +169,15 @@ async def _exercise_deferred_collections_callback(route, *, control=None):
         nonlocal shutdown
         try:
             initializer = app._collections_capture_initializer_task
+            if control == "first_use":
+                app.ensure_collections_capture_services()
+                held["first_use_repository"] = app.collections_capture_repository
+                held["first_use_reconciliation_scheduled"] = any(
+                    task.get_coro().cr_code
+                    is app_source.TldwCli._reconcile_collections_capture_startup.__code__
+                    for task in app._deferred_startup_tasks
+                )
+                return
             shutdown = asyncio.create_task(app._shutdown_collections_capture_runtime())
             for _ in range(3):
                 await asyncio.sleep(0)
@@ -193,7 +202,7 @@ async def _exercise_deferred_collections_callback(route, *, control=None):
             return
         loop.call_soon_threadsafe(progress.set)
         held["loop_progress_while_original_callback_held"] = progress.wait(0.35)
-        if control == "shutdown":
+        if control in {"shutdown", "first_use"}:
             loop.call_soon_threadsafe(start_control)
             if not controlled.wait(10):
                 errors.append("shutdown_control_never_completed")
@@ -274,6 +283,8 @@ async def _exercise_deferred_collections_callback(route, *, control=None):
                 app.collections_capture_scope_service.active_authority
                 is app.local_collections_capture_authority
             )
+        if control == "first_use":
+            assert app.collections_capture_repository is held["first_use_repository"]
         if "future" in held:
             assert held["future"].done()
             if route == "legacy" and control != "borrowed":
@@ -313,6 +324,10 @@ async def _exercise_deferred_collections_callback(route, *, control=None):
             assert closed(borrowed)
         await runtime.dispose()
         creators.retire()
+    if control == "first_use":
+        assert held[
+            "first_use_reconciliation_scheduled"
+        ], "First use displaced deferred setup without scheduling startup reconciliation"
     assert held[
         "loop_progress_while_original_callback_held"
     ], "Original deferred Collections setup blocked the shared event loop"
