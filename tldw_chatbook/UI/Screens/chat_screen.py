@@ -16985,7 +16985,7 @@ class ChatScreen(BaseAppScreen):
         repository_token: tuple[str, int, int, int] | None = None,
     ) -> None:
         """Discover citation footer counts off-loop and refresh current rows."""
-        from ...DB.base_db import run_owned_db_call
+        from ..Console_Modules.citation_counts import read_citation_counts
 
         if repository_token is None:
             repository_token, current_repository = (
@@ -16994,11 +16994,8 @@ class ChatScreen(BaseAppScreen):
             if current_repository is not repository:
                 return
         queried = signature[1] if eligible is None else eligible
-        counts = await run_owned_db_call(
-            getattr(repository, "db", None),
-            self._read_console_citation_counts,
-            repository,
-            queried,
+        counts = await read_citation_counts(
+            repository, self._read_console_citation_counts, queried
         )
         if not self._apply_console_citation_counts(
             signature,
