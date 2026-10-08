@@ -2,17 +2,22 @@
 
 I1. The sync executor requires a note to stay unchanged from the moment a pass
 admits its ``update_file`` until that write completes. A second save that
-commits inside that window fences the folder (``stale_observation`` or
-``postcondition_failed``), and it then syncs in neither direction until the
-user presses Recovery. TASK-34000.1 made that second save routine: an autosave
+commits inside that window used to fence the folder (``stale_observation`` or
+``postcondition_failed``), and it then synced in neither direction until the
+user pressed Recovery. TASK-34000.1 made that second save routine: an autosave
 now fires while the user is still typing, and the note session re-saves at once
-for keys that landed during it. The mitigation: a save of a note whose previous
-save hinted a pass waits, bounded, for that pass before it commits. A note in
-no synced folder never waits. TASK-34000.51 owns the durable runtime fix.
+for keys that landed during it. Wave 1a mitigated this on the save path with a
+bounded wait for the previous save's pass; TASK-34000.51 removed that wait and
+fixed the cause in the runtime -- a pass fenced only because the note moved on
+is settled at the baseline it can prove and re-planned, with no click. The
+tests here drive the shipped note session and port through that window; the
+runtime's own pins (both fence points, the two-sided negative controls, a
+restart in the middle, the re-plan bound, and a pass on another folder) are in
+``Tests/Notes/test_notes_sync_source_moved_settle.py``.
 
 I4. Ctrl+Q flushed the note and exited without waiting for the pass that flush
 hinted, so the file missed the last edit until the next launch. A clean quit
-flush now waits, bounded, for that pass.
+flush waits, bounded, for that pass (``SYNC_PASS_WAIT_SECONDS``).
 
 Everything here is the production stack: the shipped note session coordinator
 and its Library port, the production sync runtime, executor and POSIX
@@ -132,45 +137,26 @@ def _healthy(vault: Vault, owner, note_text: str) -> None:
     assert vault.file.read_bytes() == _file_bytes(note_text)
 
 
-# --- I1: a save waits for the pass the previous save hinted ----------------------
+# --- I1: a save inside the previous save's pass leaves no hold ------------------
 
 
-async def test_a_second_save_waits_for_the_pass_the_first_save_hinted(
-    vault: Vault, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    gate = _PassGate(monkeypatch)
-    owner = build_owner(vault)
-    await owner.start()
-    try:
-        session = await _session(vault, owner)
-        assert session.mutate(body=FIRST_SAVE)
-        first = await session.request_save(explicit=False)
-        assert first.kind is NoteSaveOutcomeKind.SAVED
-        await asyncio.wait_for(gate.reached.wait(), 10)  # pass 1 is mid-flight
+def test_the_save_path_has_no_sync_wait() -> None:
+    """TASK-34000.51 (AC#6): the bounded save-path wait is gone, not narrowed.
+    The quit flush's bound stays, for the quit flush alone."""
 
-        assert session.mutate(body=SECOND_SAVE)
-        second = asyncio.create_task(session.request_save(explicit=False))
-        await asyncio.sleep(0.3)
-        committed_inside_the_pass = vault.note()["content"] != FIRST_SAVE
-        snapshot = session.snapshot
-        waiting_reads_as_saving = snapshot is not None and snapshot.saving
-        gate.release.set()
-        outcome = await asyncio.wait_for(second, 10)
-        await owner.settle()
-
-        assert outcome.kind is NoteSaveOutcomeKind.SAVED
-        _healthy(vault, owner, SECOND_SAVE)
-        assert not committed_inside_the_pass
-        assert waiting_reads_as_saving, "the waiting save must read as in flight"
-    finally:
-        gate.release.set()
-        await owner.shutdown()
+    assert not hasattr(_LibraryDatabaseNoteSessionPort, "settle_before_save")
+    assert not hasattr(DatabaseNoteSessionCoordinator, "_settle_port_before_save")
+    assert not hasattr(attention, "RESAVE_SYNC_PASS_WAIT_SECONDS")
+    assert 0 < attention.SYNC_PASS_WAIT_SECONDS
 
 
 async def test_keys_landing_during_a_save_are_resaved_after_its_pass(
     vault: Vault, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The session's own immediate re-save (``_drive_saves``), one save chain."""
+    """The session's own immediate re-save (``_drive_saves``), one save chain.
+    Pass 1 already holds the first save's ``update_file`` when the re-save
+    commits -- the fence that used to need Recovery -- and the folder still
+    ends healthy at the re-saved text, with the re-save never delayed."""
 
     gate = _PassGate(monkeypatch)
     owner = build_owner(vault)
@@ -199,53 +185,61 @@ async def test_keys_landing_during_a_save_are_resaved_after_its_pass(
         chain = asyncio.create_task(session.request_save(explicit=False))
         await asyncio.wait_for(gate.reached.wait(), 10)  # pass 1 is mid-flight
         await asyncio.sleep(0.3)
-        committed_inside_the_pass = vault.note()["content"] != FIRST_SAVE
+        committed_inside_the_pass = vault.note()["content"] == SECOND_SAVE
         gate.release.set()
         outcome = await asyncio.wait_for(chain, 10)
-        await owner.settle()
+        await asyncio.wait_for(owner.settle(), 30)
 
         assert outcome.kind is NoteSaveOutcomeKind.SAVED
         assert saves_started == [FIRST_SAVE, SECOND_SAVE]
+        assert committed_inside_the_pass, "the re-save waited for the pass"
         _healthy(vault, owner, SECOND_SAVE)
-        assert not committed_inside_the_pass
     finally:
         gate.release.set()
         await owner.shutdown()
 
 
-async def test_keys_typed_while_a_save_waits_are_saved_with_it(
+async def test_keys_typed_while_a_save_is_in_flight_go_out_with_the_next_save(
     vault: Vault, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The wait must not make its own draft stale. A key typed while a save
-    waits for the pass goes out with that save: one save, not a save of the
-    older draft followed at once by another (which would repeat for as long
-    as the user typed faster than a pass)."""
+    """Keys that land while the port's save is in flight are coalesced into
+    exactly one follow-up save of the latest draft (not one save per key, and
+    not a save of a draft that is already stale). With pass 1 held open the
+    whole time, the folder still ends healthy at the latest text."""
 
     gate = _PassGate(monkeypatch)
     owner = build_owner(vault)
     await owner.start()
+    latest = SECOND_SAVE + ", then another"
     try:
         session = await _session(vault, owner)
-        assert session.mutate(body=FIRST_SAVE)
-        assert (await session.request_save(explicit=False)).kind is (
-            NoteSaveOutcomeKind.SAVED
-        )
-        await asyncio.wait_for(gate.reached.wait(), 10)  # pass 1 is mid-flight
-        version = int(vault.note()["version"])
+        port = session._port
+        real_persist = port._persist_note
+        saves: list[str] = []
 
-        assert session.mutate(body=SECOND_SAVE)
-        second = asyncio.create_task(session.request_save(explicit=False))
-        await asyncio.sleep(0.2)  # the save is waiting for pass 1
-        latest = SECOND_SAVE + ", then another"
-        assert session.mutate(body=latest)
+        async def persist_then_type(note_id, expected_version, payload):
+            saves.append(payload.body)
+            reply = await real_persist(note_id, expected_version, payload)
+            if len(saves) == 1:
+                # Two keys land while the first save is still in flight.
+                assert session.mutate(body=SECOND_SAVE)
+                assert session.mutate(body=latest)
+            return reply
+
+        monkeypatch.setattr(port, "_persist_note", persist_then_type)
+        version = int(vault.note()["version"])
+        assert session.mutate(body=FIRST_SAVE)
+        started = time.monotonic()
+        outcome = await asyncio.wait_for(session.request_save(explicit=False), 10)
+        took = time.monotonic() - started
+        await asyncio.wait_for(gate.reached.wait(), 10)
         gate.release.set()
-        outcome = await asyncio.wait_for(second, 10)
-        await owner.settle()
+        await asyncio.wait_for(owner.settle(), 30)
 
         assert outcome.kind is NoteSaveOutcomeKind.SAVED
-        assert int(vault.note()["version"]) == version + 1, (
-            "the save committed a draft its own wait had made stale"
-        )
+        assert saves == [FIRST_SAVE, latest], "the follow-up save was not coalesced"
+        assert int(vault.note()["version"]) == version + 2
+        assert took < 1.0, f"the save chain waited {took:.2f}s on the sync pass"
         _healthy(vault, owner, latest)
         assert not session.snapshot.dirty and not session.snapshot.saving
     finally:
@@ -277,117 +271,6 @@ async def test_a_second_save_shortly_after_the_first_leaves_no_hold(
         _healthy(vault, owner, SECOND_SAVE)
     finally:
         await owner.shutdown()
-
-
-async def test_a_note_in_no_synced_folder_never_waits(
-    vault: Vault, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Negative control: with root-1's pass held open, an unbound note's re-save
-    is not delayed, and its port asks the runtime to settle nothing."""
-
-    assert vault.database.add_note("loose", "outside any vault", "note-free")
-    gate = _PassGate(monkeypatch)
-    owner = build_owner(vault)
-    await owner.start()
-    settles: list[float] = []
-    real_settle = owner.settle
-
-    async def counted_settle():
-        settles.append(time.monotonic())
-        await real_settle()
-
-    monkeypatch.setattr(owner, "settle", counted_settle)
-    try:
-        bound = await _session(vault, owner)
-        assert bound.mutate(body=FIRST_SAVE)
-        assert (await bound.request_save(explicit=False)).kind is (
-            NoteSaveOutcomeKind.SAVED
-        )
-        await asyncio.wait_for(gate.reached.wait(), 10)  # root-1's pass is held open
-
-        port = _port(vault, owner)
-        loose = DatabaseNoteSessionCoordinator(
-            port, clock=lambda: datetime.now(timezone.utc)
-        )
-        assert (
-            await loose.open_session("note-free")
-        ).kind is NoteLoadOutcomeKind.LOADED
-        started = time.monotonic()
-        for text in ("first loose save", "second loose save"):
-            assert loose.mutate(body=text)
-            outcome = await asyncio.wait_for(loose.request_save(explicit=False), 2.0)
-            assert outcome.kind is NoteSaveOutcomeKind.SAVED
-        took = time.monotonic() - started
-
-        assert not gate.release.is_set(), "the control needs the pass still held"
-        assert settles == [], "an unbound note's save waited on the sync runtime"
-        assert took < 2.0
-        row = vault.database.get_note_by_id("note-free")
-        assert row is not None and row["content"] == "second loose save"
-        # Not even one event-loop turn: the hook finishes without suspending.
-        probe = port.settle_before_save("note-free")
-        with pytest.raises(StopIteration) as finished:
-            probe.send(None)
-        assert finished.value.value is False
-    finally:
-        gate.release.set()
-        await owner.shutdown()
-
-
-async def test_a_pass_that_outlasts_the_wait_does_not_block_the_save(
-    vault: Vault, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """On timeout the save proceeds. The folder may then be held, as before the
-    mitigation, and Recovery heals it with nothing lost."""
-
-    monkeypatch.setattr(attention, "RESAVE_SYNC_PASS_WAIT_SECONDS", 0.2, raising=False)
-    gate = _PassGate(monkeypatch)
-    owner = build_owner(vault)
-    await owner.start()
-    try:
-        session = await _session(vault, owner)
-        assert session.mutate(body=FIRST_SAVE)
-        assert (await session.request_save(explicit=False)).kind is (
-            NoteSaveOutcomeKind.SAVED
-        )
-        await asyncio.wait_for(gate.reached.wait(), 10)
-
-        assert session.mutate(body=SECOND_SAVE)
-        started = time.monotonic()
-        outcome = await asyncio.wait_for(session.request_save(explicit=False), 5.0)
-        waited = time.monotonic() - started
-
-        assert outcome.kind is NoteSaveOutcomeKind.SAVED
-        assert not gate.release.is_set(), "the save must not have needed the pass"
-        assert vault.note()["content"] == SECOND_SAVE
-        assert waited >= 0.2, "the save did not wait for the pass at all"
-
-        gate.release.set()
-        await owner.settle()
-        root = owner.snapshot().roots[0]
-        if root.status != "up_to_date":
-            # Visible and healable, exactly as today.
-            assert root.status == "needs_attention"
-            if root.action_id is not None:
-                await owner.resolve_cleanup("root-1", root.action_id)
-            else:
-                await owner.note_changed("note-1")
-            await owner.settle()
-        _healthy(vault, owner, SECOND_SAVE)
-    finally:
-        gate.release.set()
-        await owner.shutdown()
-
-
-def test_the_resave_wait_fits_inside_the_flush_bound() -> None:
-    """A navigation or quit flush that has to wait must still have time to save."""
-
-    assert (
-        0
-        < attention.RESAVE_SYNC_PASS_WAIT_SECONDS
-        < library_pending_work._DEFAULT_FLUSH_TIMEOUT_SECONDS
-    )
-    assert attention.RESAVE_SYNC_PASS_WAIT_SECONDS <= attention.SYNC_PASS_WAIT_SECONDS
 
 
 # --- I4: a clean quit flush waits for the pass it hinted -------------------------

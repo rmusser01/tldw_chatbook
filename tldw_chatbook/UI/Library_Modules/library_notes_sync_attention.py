@@ -43,15 +43,6 @@ from .screen_constants import LIBRARY_NOTES_SOURCE_DATABASE
 #: flush waits this long too before the app exits (final review I4).
 SYNC_PASS_WAIT_SECONDS = 5.0
 
-#: How long a SAVE of a synced note waits for the pass its previous save
-#: hinted before it commits (final review I1). The executor fences a folder
-#: when a note moves on between a pass admitting its ``update_file`` and that
-#: write completing, so a save must not land inside that window. Shorter than
-#: the navigation and quit flush bound (5 s): a flush that has to wait must
-#: still have time to commit. Past this the save proceeds, and a hold it
-#: causes is visible and healable, as before.
-RESAVE_SYNC_PASS_WAIT_SECONDS = 3.0
-
 #: ``_ask``'s answer when the runtime could not say (final review I3). It is
 #: not the question's default: "nothing is held" is an answer, and a refused
 #: or failed read is not one.
@@ -172,11 +163,11 @@ async def _ask(runtime: Any, name: str, *args: Any, default: Any) -> Any:
 async def await_sync_pass(runtime: Any, *, timeout: float | None = None) -> None:
     """Let the sync pass a save just hinted land, bounded.
 
-    ``settle`` joins the runtime's own hint tasks; it is shielded so a caller
-    that is superseded (``exclusive=True``) or times out can never cancel
-    them. Three callers: the post-save re-read of the editor's line, a save of
-    a note whose previous save hinted a pass (final review I1), and a clean
-    quit flush (I4).
+    ``settle`` joins the runtime's own hint tasks -- every folder's, so this
+    is never on a save path; it is shielded so a caller that is superseded
+    (``exclusive=True``) or times out can never cancel them. Two callers: the
+    post-save re-read of the editor's line (a worker) and a clean quit flush
+    (final review I4). The save-path wait of I1 was removed by TASK-34000.51.
 
     Args:
         runtime: The sync runtime, or None when the app has none.
@@ -499,7 +490,6 @@ def release_library_notes_sync_attention_listener(host: Any) -> None:
 
 
 __all__ = [
-    "RESAVE_SYNC_PASS_WAIT_SECONDS",
     "STATUS_LISTENER_DEBOUNCE_SECONDS",
     "SYNC_PASS_WAIT_SECONDS",
     "LibraryNotesSyncAttentionListener",

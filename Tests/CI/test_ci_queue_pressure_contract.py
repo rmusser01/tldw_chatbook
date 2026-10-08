@@ -75,6 +75,7 @@ FAST_LANE_TARGETS = (
 NOTES_SYNC_REAL_STACK_TARGETS = (
     "Tests/Notes/test_notes_sync_tail_edit.py",
     "Tests/Notes/test_notes_sync_delete_restore_signal.py",
+    "Tests/Notes/test_notes_sync_source_moved_settle.py",
     "Tests/Notes/test_notes_sync_watcher_after_heal.py",
     "Tests/Notes/test_notes_sync_version_only_move.py",
     "Tests/Notes/test_notes_sync_resave_window.py",

@@ -818,6 +818,7 @@ def test_the_lease_refusal_still_names_the_other_window() -> None:
     [
         "postcondition_failed",
         "stale_observation",
+        "source_moved_on",
         "operation_needs_attention",
         "binding_authority_changed",
         "recovery_authority_changed",
