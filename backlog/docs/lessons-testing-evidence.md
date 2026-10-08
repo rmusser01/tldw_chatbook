@@ -19120,3 +19120,30 @@ sorted `^FAILED` lists from both runs and `diff` them; identical failure
 LISTS are the evidence, not identical exit codes, and the first suspicion
 of a "new" failure should be tested against the base commit in a throwaway
 worktree before it gets chased as a regression.
+
+## A fix that lands on one seam while the identical pattern survives on a sibling
+
+**Wave 7 / TASK-34433, 2026-10-07.** The perf review flagged
+`ChatMessageEnhanced.update_message_chunk` as a silent no-op (it appends to
+`message_text`, a reactive with no watcher and no repaint, so the composed
+Markdown body never sees the text). Task 21 removed it — and the fresh caller
+grep then showed the IDENTICAL method surviving on the sibling class
+`ChatMessage` (`Widgets/Chat_Widgets/chat_message.py:312-321`): same
+watcher-less append, same zero callers, and a docstring still claiming "This
+method is called by handle_streaming_chunk", a caller that no longer exists.
+Removing the enhanced widget's copy fixed nothing user-visible because
+`ChatMessageEnhanced` itself has zero production importers — both seams were
+dead, and the task's scope (one named file) would have left the other half of
+the pattern in place. The same shape ran through this review's flagship: the
+Console search fix landed while the Library search path kept the identical
+unfixed logic (F-number findings), and the debounce/N+1 fixes had the same
+one-seam risk.
+
+**What to do.** When a removal/fix targets a method on one class, grep the
+method NAME repo-wide before finishing and explicitly check sibling classes
+with the same base or the same docstring provenance; if the identical
+dead/broken pattern survives on a sibling, either widen scope with the
+controller's sign-off or record the survivor (file:line) in the task notes
+and the matching lessons file so the next task starts from the full list —
+a half-removed pattern reads as "handled" to every future grep that only
+checks the seam the task named.
