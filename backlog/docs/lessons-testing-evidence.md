@@ -16243,6 +16243,38 @@ test's first draft. If you genuinely cannot run it, say INFERRED and name the
 experiment that would settle it; never let proximity to your own change
 decide the verdict in either direction.
 
+## A fake that reports an observation the real parser cannot produce pins a fiction, and the fiction outlives the rule it contradicts (TASK-34000.48, 2026-10-08)
+
+**The incident.** The lasting-sync file parser reports every text with no
+line ending as `lf` -- the profile has no "indeterminate" -- so a CRLF file
+whose note shrank to one line was re-observed as `lf` after its own correct
+write and the folder wedged for good. The fix is one rule (a newline-free
+observation inherits the recorded `newline`), applied at ~25 sites. Of the
+170+ existing sync tests, exactly ONE went red:
+`test_create_file_rejects_representation_drift_before_membership_binding[crlf]`
+in `Tests/Notes/test_notes_sync_executor.py`, whose `DriftingCreatingFilesystem`
+fake reported `crlf` for the text `"from-note"`. No real filesystem can say
+that -- the bytes `b"from-note"` parse to `lf` -- so the test had pinned a
+drift that cannot exist, and it was the only thing in the suite that
+"knew" about newline drift on a one-line file. Meanwhile the real-stack RED
+file (`Tests/Notes/test_notes_sync_crlf_single_line.py`: real
+`PosixNotesSyncFilesystem`, real DB, real bytes) found the actual defect at
+the first assertion.
+
+**The rule.** A fake authority may only return observations the real one can
+produce from the same bytes; when a parametrized "drift" case needs a fake to
+assert a field the real parser derives from content, derive the content so
+the field is REAL (here: `"from\nnote"` makes the CRLF drift observable and
+the written bytes differ). When a fix turns one such pin red, read the fake
+before the fix: if the fake's observation is impossible on disk, the pin was
+the fiction and the fix is right. And a code-derived guard that resolves
+names through a function's assignments must carry a name's VALUE KIND, not
+its whole subtree -- the first draft of
+`Tests/Architecture/test_notes_sync_binding_profile_commits.py` read
+`relative_path in claimed_paths` as a profile comparison because an earlier,
+unrelated `candidate = NotesSyncBindingRecord(..., serialization=...)` in the
+same function tainted every name derived from `candidate`.
+
 ## A `Tests/UI` file that is red ALONE with `raw_source_selection_changed` is red by collection order, not by your change (TASK-34000.50, 2026-10-08)
 
 **The incident.** The pure controller pin for TASK-34000.50 lives in

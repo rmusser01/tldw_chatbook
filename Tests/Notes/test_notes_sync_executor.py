@@ -138,20 +138,27 @@ async def test_create_file_executes_one_sided_plan_and_activates_binding(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "observed_profile",
+    ("observed_profile", "content"),
     (
-        NotesSyncSerializationProfile(True, "lf", False, 0o600),
-        NotesSyncSerializationProfile(False, "crlf", False, 0o600),
-        NotesSyncSerializationProfile(False, "lf", True, 0o600),
-        NotesSyncSerializationProfile(False, "lf", False, 0o640),
+        (NotesSyncSerializationProfile(True, "lf", False, 0o600), "from-note"),
+        # TASK-34000.48: a newline drift is only observable on a text that
+        # carries a line ending. The real parser reports every newline-free
+        # text as ``lf``, so a fake reporting ``crlf`` for "from-note" pinned
+        # a drift that cannot exist; the written bytes decide, and here they
+        # genuinely differ (CRLF on disk, LF candidate).
+        (NotesSyncSerializationProfile(False, "crlf", False, 0o600), "from\nnote"),
+        (NotesSyncSerializationProfile(False, "lf", True, 0o600), "from-note"),
+        (NotesSyncSerializationProfile(False, "lf", False, 0o640), "from-note"),
     ),
+    ids=("bom", "newline", "final-newline", "mode"),
 )
 async def test_create_file_rejects_representation_drift_before_membership_binding(
     tmp_path: Path,
     observed_profile: NotesSyncSerializationProfile,
+    content: str,
 ) -> None:
     store, _ = _store(tmp_path)
-    note = _note(content="from-note", version=4)
+    note = _note(content=content, version=4)
     notes = FakeNoteAuthority(note)
     files = DriftingCreatingFilesystem(observed_profile)
     reviewed_profile = NotesSyncSerializationProfile(False, "lf", False, 0o600)
@@ -213,22 +220,26 @@ async def test_move_file_executes_guarded_move_and_updates_binding_path(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "observed_profile",
+    ("observed_profile", "content"),
     (
-        NotesSyncSerializationProfile(True, "lf", False, 0o600),
-        NotesSyncSerializationProfile(False, "crlf", False, 0o600),
-        NotesSyncSerializationProfile(False, "lf", True, 0o600),
-        NotesSyncSerializationProfile(False, "lf", False, 0o640),
+        (NotesSyncSerializationProfile(True, "lf", False, 0o600), "before"),
+        # TASK-34000.48: see the create twin above -- a newline drift needs a
+        # text that carries a line ending to be observable at all.
+        (NotesSyncSerializationProfile(False, "crlf", False, 0o600), "be\nfore"),
+        (NotesSyncSerializationProfile(False, "lf", True, 0o600), "before"),
+        (NotesSyncSerializationProfile(False, "lf", False, 0o640), "before"),
     ),
+    ids=("bom", "newline", "final-newline", "mode"),
 )
 async def test_move_file_rejects_representation_drift_before_membership_binding(
     tmp_path: Path,
     observed_profile: NotesSyncSerializationProfile,
+    content: str,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
-    note = _note(content="before", version=4)
+    store, _ = _execution_store(tmp_path, content)
+    note = _note(content=content, version=4)
     notes = FakeNoteAuthority(note)
-    source = _file(content="before")
+    source = _file(content=content)
     files = DriftingMovingFilesystem(source, observed_profile)
     request = replace(
         _request(action=NotesSyncActionKind.UPDATE_FILE, note=note, file=source),
@@ -945,9 +956,11 @@ def _file_at(
     )
 
 
-def _execution_store(tmp_path: Path) -> tuple[NotesDeviceStateStore, Path]:
+def _execution_store(
+    tmp_path: Path, content: str = "before"
+) -> tuple[NotesDeviceStateStore, Path]:
     store, database = _store(tmp_path)
-    file_before = _file(content="before")
+    file_before = _file(content=content)
     store.create_binding(
         NotesSyncBindingRecord(
             binding_id="binding-1",
@@ -960,7 +973,7 @@ def _execution_store(tmp_path: Path) -> tuple[NotesDeviceStateStore, Path]:
             ),
             state=NotesSyncBindingState.ACTIVE,
             serialization=file_before.observation.serialization,
-            content_digest=_digest("before"),
+            content_digest=_digest(content),
             note_version=4,
         )
     )
@@ -1042,6 +1055,7 @@ class FakeFilesystem:
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
         assert expected == self.snapshot
         self.replace_calls += 1
@@ -1062,6 +1076,7 @@ class PartialFilesystem(FakeFilesystem):
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
         self.snapshot = _file(
             content=text, inode=expected.observation.identity.inode + 1
@@ -1087,6 +1102,7 @@ class NullCleanupPartialFilesystem(PartialFilesystem):
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
         self.snapshot = _file(
             content=text, inode=expected.observation.identity.inode + 1
@@ -1110,6 +1126,7 @@ class DuplicateBlockingFilesystem(FakeFilesystem):
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
         self.replace_calls += 1
         self.started.set()
@@ -1132,6 +1149,7 @@ class BlockingFilesystem(FakeFilesystem):
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
         self.started.set()
         assert self.release.wait(3.0)

@@ -45,13 +45,30 @@ TAIL_EDIT = VAULT_TEXT + "second edit line"
 class Vault:
     """One real bound note/file pair in disposable authorities."""
 
-    def __init__(self, tmp_path: Path, text: str = VAULT_TEXT) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        text: str = VAULT_TEXT,
+        *,
+        file_bytes: bytes | None = None,
+    ) -> None:
+        """Seed one bound pair.
+
+        Args:
+            tmp_path: Where the vault and both databases go.
+            text: The note's content -- the LOGICAL text, LF newlines.
+            file_bytes: The file's exact bytes; defaults to ``text`` in UTF-8.
+                TASK-34000.48 seeds a CRLF file this way: the note keeps the
+                logical text, the file keeps its own line endings, and the
+                binding baseline is the one digest both sides share.
+        """
+
         self.notes_path = tmp_path / "notes.sqlite3"
         self.state_path = tmp_path / "sync.sqlite3"
         self.root = tmp_path / "vault"
         self.root.mkdir()
         self.file = self.root / "quotes.md"
-        self.file.write_bytes(text.encode("utf-8"))
+        self.file.write_bytes(text.encode("utf-8") if file_bytes is None else file_bytes)
         database = CharactersRAGDB(self.notes_path, client_id="task-34000-2-seed")
         folders = LocalNoteFolderRepository(database)
         assert database.add_note("quotes", text, "note-1") == "note-1"
@@ -59,7 +76,7 @@ class Vault:
         folders.reconcile_managed(owner_id="root-1", desired=(("folder-1", "note-1"),))
         with PosixNotesSyncFilesystem(self.root) as filesystem:
             baseline = filesystem.observe("quotes.md")
-        assert baseline.observation.serialization.final_newline is True
+        assert baseline.observation.serialization.final_newline is text.endswith("\n")
         note = database.get_note_by_id("note-1")
         assert note is not None
         store = NotesDeviceStateStore(self.state_path)
@@ -147,12 +164,14 @@ def build_owner(vault: Vault):
     )
 
 
-def old_postcondition(file, note, reviewed) -> bool:
+def old_postcondition(file, note, reviewed, recorded=None) -> bool:
     """The comparison origin/dev 2d34cbf80d shipped (notes_sync_executor:5384).
 
     Re-installed only to put a root into the exact durable state the defect
     leaves -- ``update_file | needs_attention | postcondition_failed`` after
     the file write -- so the heal path is proved on the real rows.
+    ``recorded`` is the binding profile TASK-34000.48's callers pass; the old
+    comparison never looked at it.
     """
 
     return (
