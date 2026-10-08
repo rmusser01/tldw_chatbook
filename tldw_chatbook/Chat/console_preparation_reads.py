@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from contextvars import ContextVar, copy_context
 from dataclasses import dataclass, field
 import os
@@ -249,3 +249,23 @@ async def drain_preparation_reads(
                 raise RuntimeError("Hook read retirement signal was cancelled.")
             read.retired.result()
     return cancelled
+
+
+async def await_finite_read[_Result](
+    operation: Coroutine[Any, Any, _Result],
+) -> _Result:
+    """Retire a stock finite read before delivering view-worker cancellation."""
+    worker = asyncio.Task(operation)
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:  # noqa: BLE001 - cancellation wins.
+                break
+        if not worker.cancelled():
+            worker.exception()
+        raise
