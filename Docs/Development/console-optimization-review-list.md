@@ -563,3 +563,66 @@ counts zero), and the custody receipt explicitly does not claim complete
 App-native cleanup. Preserve that unresolved ownership qualification separately
 from successful observed-read and process retirement. No product change or
 completed latency target is claimed by this diagnostic.
+
+
+### 2026-10-08 isolated hook-read partition and source limits
+
+The integration owner's `3ddb-hook-snapshot-native-probe.json` measures one
+original warmed `HookPermissions.snapshot` on the disposable UAT profile, with
+original native entry counters restricted to the exact actor and `_current`
+receiver ancestry. Its 1,080 open / 1,758 metadata / six multi-path-snapshot
+entries exactly reproduce the whole-Send count for each hook read.
+
+| Disjoint native stage | Open entries | Metadata entries | Multi-path snapshots |
+| --- | ---: | ---: | ---: |
+| `locked_hooks_config_snapshot` | 572 | 965 | 3 |
+| `HookPermissions._store_lock` | 383 | 602 | 2 |
+| `HookPermissions._read_state` | 75 | 105 | 0 |
+| `default_hook_permissions_path` | 50 | 86 | 1 |
+
+This does not select a product change. OPT03's directory-establishment candidate
+accounts for only 50 opens (4.6 percent) on this route, rather than most of the
+hook read. Keep default-root and custom-source variants distinct.
+
+Within those same stage totals, nearest `raw._check` callers account for 257
+opens at `_runtime_operation`, 72 at `_scope`, 48 at the prepared-parent finish,
+and 21 at config `operation`. These are overlapping classifications of the table,
+not additional opens. The 565 entries without a `raw._check` ancestor include
+original preparation and actual native access; they are not automatically
+removable. This probe counts entries, not elapsed cost or possible savings.
+
+OPT07 is narrower than the 257 discovery-associated opens. The retained original
+TASK-34563.19 plan selects only immediate duplicate consumers: admitted file,
+admitted reader, Windows binary-reader branch and trusted-directory verification.
+The admitted-file and admitted-reader buckets identify 9 and 16 opens at
+immediate second checks. The 16 entries labelled `open_private_binary` cannot be
+assigned to the eligible fallback branch from this caller-level trace: the
+native guarded branch also checks after `os.fdopen`, and that check remains
+required. The observed prepared-parent finish and current native Windows facade
+support the guarded branch. Thus 25 opens are directly identified immediate
+duplicates; the initial 41-open interpretation included a potentially required
+post-allocation boundary and was corrected before any product change. Actual
+allocation, stream-specific path checks and checks after native work remain
+required. The earlier .118839 seconds over three Sends remains historical
+evidence, not a current speed gain.
+
+Source review also rules out a supposed `_prepare_config_parent` plus config-lock
+parent-establishment duplicate on this read path. `_prepare_config_parent` is
+called by config writing, snapshot writing and restore, not by the hook snapshot.
+The measured profile explicitly sets `TLDW_CONFIG_PATH`, so
+`application_owned_config_directory` returns None after its companion check and
+the config lock's application-owned-parent helper returns immediately. The hook
+store lock does request its parent, once through the already implemented lock
+stream body (OPT09). Do not select a parent-creation removal from these counts.
+The remaining candidate is consolidation of actual finite configuration/lock
+preparation, with its source/effect checks and ownership preserved.
+
+Qualification: the observer reports ready state, zero ancestry overflow, current
+selected stage/counter bodies, retired monitoring, and raw/pending counts zero.
+The integration owner reports frozen source/HEAD, normal process retirement and
+4.64 seconds for the whole isolated driver (not snapshot execution time). The
+initial probe did not pin `_current`/`_check` in the final identity list, compare
+all native owner baselines, or explicitly close the HookPermissions owner. The
+review arrived as the run finished. These counts remain diagnostic attribution;
+no stronger internal cleanup claim or product pass follows from the process exit.
+A future causal control must include those small ownership checks.
