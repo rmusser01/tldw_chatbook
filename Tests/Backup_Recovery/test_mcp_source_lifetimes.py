@@ -462,7 +462,7 @@ def test_independent_maintainer_enters_after_history_rotation_native_close(
     if _private_child(request, "rotation-observer"):
         return
     import os
-    import select
+    from Tests.pipe_readiness import pipe_readable
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Utils import private_paths
 
@@ -488,7 +488,7 @@ def test_independent_maintainer_enters_after_history_rotation_native_close(
                 local_root / "admission", "maintenance", ("bootstrap.unbound",)
             )
             observers.append(observer)
-            assert not select.select([observer.stdout], [], [], 0.05)[0]
+            assert not pipe_readable(observer.stdout, 0.05)
 
     monkeypatch.setattr(private_paths, "_native_close", closed)
     try:
