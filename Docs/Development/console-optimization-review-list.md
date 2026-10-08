@@ -44,6 +44,24 @@ is an input-delivery upper bound. Stage summaries can repeat one crossing
 heartbeat gap. OPT57-59 retain source-backed startup leads without inventing
 exclusive CPU or nested file-call attribution.
 
+OPT60 source follow-up at d221: the 0.2-second transcript timer always awaits
+full Console UI sync before deciding whether to stop. Receipt Preparing and
+custody draft commit start it, so this repeats during preparation as well as
+streaming. The transcript fingerprint skips redraw only after core/roleplay
+admission. The existing full-sync coalescer collapses overlap, but does not
+separate display requests from domain transitions; the control coalescer already
+has a narrow path with explicit whole-sync escalation. Reusing those owners to
+distinguish polling/display demand from full reconciliation is a separate
+possible approach within OPT60, not permission to reuse display evidence for
+live publication. Original poll ancestry accounts for 7/11/7 entries and
+.811/1.280/.781 seconds; missing async origins prevent assigning the other full
+sync calls to that timer. Keep settings/profile/session transitions, attach,
+rewind, Stop and terminal reconciliation fresh. Narrowed polling must still
+cover background runs, custody, wake/review publication, tabs/approvals and the
+final browser-cache invalidation/survivor handoff. No product change selected.
+Source: `chat_screen.py` d221 lines 17507-17842, 18219, 20682-20743;
+`wiring.py:792`; `console_spend_projection.py:440`.
+
 ## Candidates preserved for review
 
 | ID / status | Opportunity and evidence | Why held; condition for revisiting |
