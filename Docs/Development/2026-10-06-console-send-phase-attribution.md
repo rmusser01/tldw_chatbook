@@ -1770,3 +1770,66 @@ considering finite sharing; retain actual mkdir/chmod/postcondition gates and
 custom/actor/native lifetime behavior. The initial pin-miss hypothesis is
 superseded by this direct separate-walker finding. OPT34 retains the unselected
 existing-first warm lock alternative. The review list now has34stable entries.
+
+
+Task27 supported-host qualification: CI run37739739905 on integratedb4a reports
+mcp-registration107/107PASS on each Windows/Linux/macOS host, including all22new
+lock-stream controls alongside the previous85cases. Standard JUnit supplies the
+host evidence. Task34563.27 is Done within its bounded scope; main task34563 and
+latency qualification34563.4 remain open. Separate stock-skill and Context shutdown
+DB-operation/path-lease failures remain with the integration owner. No main Send,
+paint/heartbeat or whole-app lifetime acceptance is inferred from this task's green
+qualification.
+
+
+### Isolated parent-metadata census and default-off control, 2026-10-08
+
+The optional observer attaches only to the existing warm-hook read in
+`test_raw_lock_stream_preparation`. It observes six original synchronous bodies,
+with 21 fixed scalar aggregates and 128 active slots. Local START/RETURN events
+are supplemented by code-filtered global PY_UNWIND because Python 3.12 cannot
+register UNWIND locally. It retains no observed arguments, paths, results, frames
+or native handles. Global events are therefore nonzero during this read, then
+zero after retirement. The receipt checks selected defining bodies/source files;
+it does not establish every installed instance-bound dispatch join. Review
+narrowed the final receipt wording to state that limit explicitly.
+
+`raw-parent-metadata-1`: 1 PASS, 7.110s driver / 3.586s pytest.
+`raw-parent-metadata-control-1`: the exact same isolated node with the diagnostic
+disabled, 1 PASS, 7.484s driver / 3.442s pytest. Both retain original payload,
+lock, descriptor and lease assertions; audited product/test source is unchanged
+during each run, and normal native retirement proves tree/Job/identity/pipes/
+profile removal with zero forced cleanup, identity overflow or lookup races.
+The later receipt-label clarification changes no observed target or callback.
+
+| Original counter | Instrumented | Diagnostic off |
+| --- | ---: | ---: |
+| Parent establishment | 1 | 1 |
+| Descriptor closes | 34 | 34 |
+| Whole-read native open attempts | 1,375 | 1,008 |
+
+The control matches the previous multi-node task27 warm-hook count. The extra
+367 attempts in the instrumented sample remain an observation-associated/state
+gap, not an established ACL, admission-confirmation or direct callback cause.
+Callbacks contain no native operations; source hashes are read outside counting.
+All ten shared product/fixture hashes match the earlier task27 batch. Existing
+admission evidence has time-sensitive confirmation, but no receipt proves it
+caused this difference. Do not use this census as an observer-free workload count
+or infer performance improvement from these two elapsed samples.
+
+Within the instrumented sample alone, 64 parent checks total .225993s: named
+stat .207486s, retained fstat .015998s. Named calls account for 442 native open
+attempts; retained calls account for zero. Both final `_stat_handle` groups total
+.030495s, with .017863s in nested security queries. These inclusive times overlap
+and must not be added. Thread CPU readings are coarse, not zero-cost evidence.
+The other 933 opens reconcile the total exactly (868 returns, 65 unwinds). All
+330 global unwind callbacks are accounted for: 65 selected, 265 unselected.
+No overflow, unmatched/unfinished entries or exit-order mismatch occurred;
+monitor ownership and registrations retired.
+
+OPT25 stays deferred: even this instrumented final-metadata ceiling is small,
+and it would not remove named path walks. OPT33 still requires its own eligible
+component/effect partition. Source review also identified conditional repeated
+default-root filesystem selection (OPT35), outside the explicit-directory test.
+The review list preserves these limits rather than turning them into promises.
+No further full Send run or product optimization follows from this diagnostic.

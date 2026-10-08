@@ -1,8 +1,10 @@
 """Actual config and hook lock acquisition prepares its owned parent once."""
 
 import inspect
+import json
+import os
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -173,11 +175,30 @@ def test_real_lock_prepares_application_parent_once(
         else:
             assert not lock_path.exists(), "cold means the real lock file is absent"
             before = selected.read_bytes() if selected.exists() else None
-        with retirement_cases._original_tracked_closes(source) as retirement:
-            with _original_lock_preparation(
-                source, lock_path, lock_function
-            ) as observed:
-                output = read()
+        metadata_probe = None
+        if (
+            os.environ.get("TLDW_RAW_PARENT_METADATA_PROBE") == "1"
+            and domain == "hook"
+            and lock_state == "warm"
+        ):
+            from Tests.Performance.raw_parent_metadata_probe import (
+                RawParentMetadataProbe,
+            )
+
+            metadata_probe = RawParentMetadataProbe()
+        try:
+            with retirement_cases._original_tracked_closes(source) as retirement:
+                with _original_lock_preparation(
+                    source, lock_path, lock_function
+                ) as observed:
+                    with metadata_probe if metadata_probe is not None else nullcontext():
+                        output = read()
+        finally:
+            if metadata_probe is not None:
+                metadata_receipt = metadata_probe.receipt()
+                request.node.user_properties.append(
+                    ("raw_parent_metadata_probe", json.dumps(metadata_receipt))
+                )
         if domain == "hook":
             assert output.ready and output.rows == () and output.store_path == selected
             assert selected.is_file()
@@ -223,6 +244,30 @@ def test_real_lock_prepares_application_parent_once(
                 ("original_descriptor_closes", counts["closes"]),
             ]
         )
+        if metadata_probe is not None:
+            assert metadata_receipt["selected_defining_bodies_and_source_files_current"]
+            assert metadata_receipt["monitoring_retired"]
+            assert metadata_receipt["global_event_mask_after_read"] == 0
+            assert metadata_receipt["overflow"] == metadata_receipt["unmatched"] == 0
+            assert (
+                metadata_receipt["exit_order_mismatches"]
+                == metadata_receipt["unfinished"]
+                == 0
+            )
+            rows = metadata_receipt["rows"]
+            assert rows["parent_check"]["starts"] > 0
+            assert all(
+                row["starts"] == row["returns"] + row["unwinds"]
+                for row in rows.values()
+            )
+            assert (
+                sum(
+                    row["starts"]
+                    for key, row in rows.items()
+                    if key.endswith(".open_handle")
+                )
+                == observed.native_opens
+            )
         # All payload, lock, FD and lease assertions precede this causal RED.
         assert observed.parent_calls == 1, observed.parent_callers
     finally:
