@@ -3456,7 +3456,15 @@ class NotesSyncRuntimeOwner:
                     recovery_blocked.add(operation.root_id)
                     continue
                 if await self._settle_source_moved_at_startup(current_root, operation):
-                    # Settled; not blocked, so the startup loop reconciles it.
+                    # Settled: the startup loop reconciles it. Fix round 1
+                    # (review Minor 3): the persisted ``needs_attention`` put
+                    # the root among the durable blocks above; the entry it
+                    # stood for is closed, so both marks go, as on
+                    # ``_release_planner_hold``'s healed path -- otherwise
+                    # ``_ensure_lease`` would refuse to lift a later
+                    # transient block until a Check or Review cleared it.
+                    self._blocked_roots.discard(current_root.root_id)
+                    self._durably_blocked_roots.discard(current_root.root_id)
                     continue
                 if await self._classify_incomplete_block(current_root, operation):
                     recovery_blocked.add(current_root.root_id)

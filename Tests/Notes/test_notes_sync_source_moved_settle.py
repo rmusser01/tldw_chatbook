@@ -53,7 +53,6 @@ from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncRootState,
 )
 from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
-from tldw_chatbook.UI.Library_Modules import library_notes_sync_attention as attention
 from tldw_chatbook.UI.Library_Modules.note_session_port import (
     _LibraryDatabaseNoteSessionPort,
 )
@@ -263,6 +262,24 @@ async def test_a_source_moved_entry_persisted_across_a_restart_is_settled_at_sta
 
         _healthy_at(vault, relaunched, SECOND_SAVE)
         assert [entry for entry in published if entry[1] in HELD] == []
+        # Fix round 1 (review Minor 3): the persisted ``needs_attention`` put
+        # the root among startup's durable blocks; the settle closed the entry
+        # that mark stood for, so a later transient block (a failed pass, say)
+        # lifts through a fresh lease the way it does for any healthy root.
+        assert "root-1" not in relaunched._durably_blocked_roots
+        relaunched._blocked_roots.add("root-1")
+        lease = relaunched._leases.pop("root-1")
+        relaunched._admissions.pop("root-1", None)
+        await relaunched._maintenance_offload(
+            relaunched._coordinator.close_admission, lease, lambda: None
+        )
+        root_record = await relaunched._maintenance_offload(
+            relaunched._store.get_root, "root-1"
+        )
+        assert await relaunched._ensure_lease(root_record)
+        assert "root-1" not in relaunched._blocked_roots, (
+            "a stale durable mark kept a transient block in place"
+        )
         # And the root is watched again (TASK-34000.50): a disk edit flows.
         appended = SECOND_SAVE + "\nafter the restart\n"
         vault.file.write_bytes(appended.encode("utf-8"))
@@ -335,6 +352,184 @@ async def test_the_re_plan_is_bounded_and_the_hint_loop_carries_the_rest(
         assert max(per_reconcile) <= bound + 1, per_reconcile
         # ...and the remainder was carried by a later pass, not by looping.
         assert len([count for count in per_reconcile if count]) >= 2, per_reconcile
+    finally:
+        await owner.shutdown()
+
+
+# --- The third raise site: ``_advance`` RECOVERY_ADMITTED (fix round 1) ----------
+
+
+DISK_EDIT_2 = VAULT_TEXT + "| edited on disk a second time |\n"
+
+
+def _reasons(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every reason the executor bounds a failure to, in order (a recorder
+    around the real ``_bounded_reason``; it changes nothing)."""
+
+    seen: list[str] = []
+    real = NotesSyncExecutor._bounded_reason
+
+    def recording(error):
+        reason = real(error)
+        seen.append(reason)
+        return reason
+
+    monkeypatch.setattr(NotesSyncExecutor, "_bounded_reason", staticmethod(recording))
+    return seen
+
+
+async def _race_after_admission(
+    vault: Vault,
+    owner: NotesSyncRuntimeOwner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    edit_file: bool,
+) -> None:
+    """One pass whose note moves on AFTER the journal row is admitted and
+    BEFORE ``_advance`` re-observes (the gate the other tests cannot reach:
+    nothing is written yet, the row exists). With ``edit_file`` the file
+    changes too."""
+
+    real_admit = NotesSyncExecutor._admit
+    fired: list[str] = []
+
+    def racing_admit(executor, request):
+        admitted = real_admit(executor, request)
+        if request.root_id == "root-1" and not fired:
+            fired.append(request.operation_id)
+            vault.edit_note(SECOND_SAVE)
+            if edit_file:
+                vault.file.write_bytes(DISK_EDIT.encode("utf-8"))
+        return admitted
+
+    with monkeypatch.context() as patch:
+        patch.setattr(NotesSyncExecutor, "_admit", racing_admit)
+        vault.edit_note(FIRST_SAVE)
+        assert await owner.note_changed("note-1") == ("root-1",)
+        await asyncio.wait_for(owner.settle(), 30)
+    assert len(fired) == 1, "the pass never admitted root-1's write"
+
+
+async def test_a_note_moved_after_admission_settles_with_nothing_written_from_it(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Positive pin of the RECOVERY_ADMITTED site: the fence is
+    ``source_moved_on``, the entry is settled at the reviewed baseline
+    (nothing was written from the stale source), the re-plan writes the newer
+    note, and no row stays open."""
+
+    reasons = _reasons(monkeypatch)
+    owner = build_owner(vault)
+    await owner.start()
+    published = _recorded(owner)
+    try:
+        await _race_after_admission(vault, owner, monkeypatch, edit_file=False)
+
+        assert reasons == ["source_moved_on"], reasons
+        _healthy_at(vault, owner, SECOND_SAVE)
+        assert [entry for entry in published if entry[1] in HELD] == []
+    finally:
+        await owner.shutdown()
+
+
+async def test_a_note_and_file_moved_after_admission_stay_recoverys(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Negative control at the RECOVERY_ADMITTED site: the file changed too,
+    so the fence keeps ``stale_observation`` (never ``source_moved_on``), no
+    settle runs, Recovery owns it, and the plan after Recovery is the
+    conflict review with both texts intact."""
+
+    reasons = _reasons(monkeypatch)
+    settled: list[str] = []
+    real_settle = NotesSyncExecutor.settle_attention
+
+    async def counted_settle(executor, operation_id):
+        settled.append(operation_id)
+        return await real_settle(executor, operation_id)
+
+    monkeypatch.setattr(NotesSyncExecutor, "settle_attention", counted_settle)
+    owner = build_owner(vault)
+    await owner.start()
+    try:
+        await _race_after_admission(vault, owner, monkeypatch, edit_file=True)
+
+        assert reasons == ["stale_observation"], reasons
+        assert settled == [], "the runtime settled a two-sided fence on its own"
+        assert vault.incomplete() == [
+            ("update_file", "needs_attention", "stale_observation")
+        ]
+        root = _root(owner)
+        assert (root.status, root.next_action) == ("needs_attention", "resolve_cleanup")
+        assert root.action_id is not None
+        assert vault.note()["content"] == SECOND_SAVE
+        assert vault.file.read_bytes() == DISK_EDIT.encode("utf-8")
+
+        await owner.resolve_cleanup("root-1", root.action_id)
+        assert vault.incomplete() == []
+        plan = await owner.check_root("root-1")
+        assert [(item.kind.value, item.reason_code) for item in plan.attention] == [
+            ("conflict", "both_sides_changed")
+        ]
+        assert vault.note()["content"] == SECOND_SAVE
+        assert vault.file.read_bytes() == DISK_EDIT.encode("utf-8")
+    finally:
+        await owner.shutdown()
+
+
+async def test_an_update_note_whose_file_moved_on_is_never_source_moved_on(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The symmetric case (review focus): ``update_note`` -- the FILE is the
+    source. A second disk edit after the note write keeps today's
+    ``postcondition_failed``, nothing is settled on its own, Recovery owns it
+    and the plan after Recovery is the conflict review."""
+
+    reasons = _reasons(monkeypatch)
+    settled: list[str] = []
+    real_settle = NotesSyncExecutor.settle_attention
+
+    async def counted_settle(executor, operation_id):
+        settled.append(operation_id)
+        return await real_settle(executor, operation_id)
+
+    monkeypatch.setattr(NotesSyncExecutor, "settle_attention", counted_settle)
+    real_desired = NotesSyncExecutor._require_desired
+    fired: list[str] = []
+
+    async def racing_desired(executor, request):
+        if request.root_id == "root-1" and not fired:
+            fired.append(request.action_kind.value)
+            vault.file.write_bytes(DISK_EDIT_2.encode("utf-8"))  # the SOURCE moves on
+        return await real_desired(executor, request)
+
+    monkeypatch.setattr(NotesSyncExecutor, "_require_desired", racing_desired)
+    owner = build_owner(vault)
+    await owner.start()
+    try:
+        vault.file.write_bytes(DISK_EDIT.encode("utf-8"))
+        assert owner.schedule_hint("root-1") is not None
+        await asyncio.wait_for(owner.settle(), 30)
+
+        assert fired == ["update_note"]
+        assert reasons == ["postcondition_failed"], reasons
+        assert settled == []
+        assert vault.incomplete() == [
+            ("update_note", "needs_attention", "postcondition_failed")
+        ]
+        root = _root(owner)
+        assert (root.status, root.next_action) == ("needs_attention", "resolve_cleanup")
+        assert vault.note()["content"] == DISK_EDIT  # the write landed
+        assert vault.file.read_bytes() == DISK_EDIT_2.encode("utf-8")
+
+        await owner.resolve_cleanup("root-1", root.action_id)
+        assert vault.incomplete() == []
+        plan = await owner.check_root("root-1")
+        assert [(item.kind.value, item.reason_code) for item in plan.attention] == [
+            ("conflict", "both_sides_changed")
+        ]
+        assert vault.note()["content"] == DISK_EDIT
+        assert vault.file.read_bytes() == DISK_EDIT_2.encode("utf-8")
     finally:
         await owner.shutdown()
 
@@ -537,10 +732,10 @@ async def test_a_save_in_one_folder_never_waits_for_another_folders_pass(
     """Review focus "a pass on another folder". Root-2's pass is held open the
     whole time; a re-save of root-1's note through the shipped session and
     port returns at once and its file is written, without the port ever
-    joining the runtime's work. On the mitigation this save waited the full
-    bound (patched to 2 s) for root-2's pass."""
+    joining the runtime's work. On the mitigation (wave 1a's 3 s
+    ``RESAVE_SYNC_PASS_WAIT_SECONDS``, removed) this save waited the full
+    bound for root-2's pass: 2.01 s measured on base with it patched to 2 s."""
 
-    monkeypatch.setattr(attention, "RESAVE_SYNC_PASS_WAIT_SECONDS", 2.0, raising=False)
     other_file = _add_second_root(vault, tmp_path)
     gate = _Gate(monkeypatch, "execute", root_id="root-2")
     owner = build_owner(vault)
