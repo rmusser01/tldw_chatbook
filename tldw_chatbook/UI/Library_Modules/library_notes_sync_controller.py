@@ -797,6 +797,15 @@ class LibraryNotesSyncController:
             status_label = ROOT_STATUS_LABELS[
                 "starting" if runtime_status == "starting" else "not_watching"
             ]
+        elif status == "up_to_date" and not root.watching:
+            # TASK-34000.50: the same lie one level down -- the runtime is
+            # active, but THIS root's lease has no watcher (a folder held at
+            # startup and healed through Review or Recovery used to land
+            # here). ``watching`` is read live by the runtime's snapshot, so
+            # the label follows the fact, not the last publication; Check
+            # changes (``sync_now``, this status's own next action) starts
+            # the watcher.
+            status_label = ROOT_STATUS_LABELS["not_watching"]
         else:
             # TASK-32633 slice (N-03): the healthy label is dated from the
             # publication, so "Up to date" never reads as a standing promise.
