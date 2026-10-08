@@ -516,6 +516,18 @@ hook operation first. A possible admission/v2-initialization consolidation needs
 an explicit existing-owner result contract preserving refusal, reconciliation,
 custom callbacks and effect order before implementation.
 
+A concrete OPT04 internal candidate is an owned raw-config read/lock body:
+`locked_hooks_config_snapshot` enters `_config_write_lock`, the interprocess
+lock enters another config operation, and guarded `_read_raw_cli_config_unlocked`
+enters another. Their nested wrappers share the same operation but repeat source
+and parent checks. An existing-owner body seam could retain standalone/custom
+wrappers while sharing preparation, analogous to the implemented owned permission
+load. This is not selected: count the actual removable work and preserve native
+file-entry/final checks, lock ordering, source refusal, rollback/failure semantics
+and physical retirement first. Consumer-level admission/v2 consolidation also
+crosses awaited reference expansion on supported routes, so it is not an
+await-free duplicate that can simply receive the earlier permission result.
+
 Diagnostic action-to-provider times are 10.827/11.140/11.750 seconds, materially
 slower than the quiet 4.687-5.766-second reference. They cannot establish speed
 acceptance or expected savings. The disjoint diagnostic intervals in milliseconds
