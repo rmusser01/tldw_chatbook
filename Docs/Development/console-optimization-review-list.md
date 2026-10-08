@@ -288,10 +288,19 @@ parent workers and normal diagnostic containment do not erase that native failur
 `stock-cold-send-retirement-origin-2` identifies the failed owner as
 `db.workspaces`: one live, nontransactional cache remains on `asyncio_11`.
 `WorkspaceDB.close` closes its calling thread's cache; a later main-thread close
-cannot prove retirement of that worker's handle. Exact original getter/caller
-attribution is in progress. Do not broaden closure, relax drain or infer that the
-held main-thread SQL created the worker cache; original `get_workspace` already
-has an operation-owned scope. Cold product implementation remains pending.
+cannot prove retirement of that worker's handle. The subsequent exact connection
+trace `stock-cold-send-workspace-origin-3` identifies its birth in
+`ServiceWiringMixin._compose_tool_pack_service_off_thread` →
+`ToolPackService.reconcile_receipts` → `_WorkspaceReferences.capture` →
+`LocalWorkspaceRegistryService.list_workspaces` → original Workspace transaction/
+connection, within its original Textual worker and concurrent-futures WorkItem
+(`asyncio_7` in that run). Every other observed Workspace creator connection
+retired. This attributes the remaining cache to startup tool-pack composition,
+separate from the helper's Send cancellation. The integration owner is correcting
+that finite worker's ownership; no fix/pass is recorded yet. Do not broaden
+closure, relax drain or infer that the held main-thread SQL created the cache;
+original `get_workspace` already has an operation-owned scope. Cold product
+implementation remains pending.
 
 ## Ruled-out premise
 
