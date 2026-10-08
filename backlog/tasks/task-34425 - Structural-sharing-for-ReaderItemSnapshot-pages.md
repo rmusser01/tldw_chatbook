@@ -14,7 +14,7 @@ Wave 5 / F15: every watchlists reader page turn deepcopies all previously cached
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Paging performs zero deepcopies,Rows from page 1 remain identical objects after N turns,No mutation of shared rows by callers,Tests pass
+- [x] #1 Paging performs zero deepcopies,Rows from page 1 remain identical objects after N turns,No mutation of shared rows by callers,Tests pass
 <!-- AC:END -->
 
 ## Implementation Plan

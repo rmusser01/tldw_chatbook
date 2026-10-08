@@ -14,7 +14,7 @@ Wave 4 / F5: opening a conversation materializes every message row even when onl
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Paged API returns identical rows and total_roots vs baseline,Rows fetched bounded to page subtree,Trace callback evidence recorded,Fork path keeps explicit unbounded variant
+- [x] #1 Paged API returns identical rows and total_roots vs baseline,Rows fetched bounded to page subtree,Trace callback evidence recorded,Fork path keeps explicit unbounded variant
 <!-- AC:END -->
 
 ## Implementation Plan

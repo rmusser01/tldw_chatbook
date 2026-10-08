@@ -14,7 +14,7 @@ Wave 6 / F16: pairwise reranker merge sort awaits LLM comparisons strictly seque
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Recursive halves gathered under semaphore,Results identical to serial on golden fixture,Concurrency never exceeds cap
+- [x] #1 Recursive halves gathered under semaphore,Results identical to serial on golden fixture,Concurrency never exceeds cap
 <!-- AC:END -->
 
 ## Implementation Plan

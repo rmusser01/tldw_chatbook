@@ -14,7 +14,7 @@ Wave 7 / F19d-f: chatbooks registry re-parses per call the chat debug payload lo
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Two list_chatbooks calls trigger one file read,INFO level performs zero payload dump work,Two responses trigger one dictionary parse
+- [x] #1 Two list_chatbooks calls trigger one file read,INFO level performs zero payload dump work,Two responses trigger one dictionary parse
 <!-- AC:END -->
 
 ## Implementation Plan

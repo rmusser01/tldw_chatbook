@@ -14,7 +14,7 @@ Wave 3 / F8a: each streamed chunk on six hosted providers is deep-copied 5-9 tim
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Mutation isolation test green,Per-chunk deepcopy count drops to 0-1,Perf microbenchmark recorded,Hosted provider streaming tests pass
+- [x] #1 Mutation isolation test green,Per-chunk deepcopy count drops to 0-1,Perf microbenchmark recorded,Hosted provider streaming tests pass
 <!-- AC:END -->
 
 ## Implementation Plan

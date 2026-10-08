@@ -14,7 +14,7 @@ Wave 1 / F2: library conversation search uses a correlated EXISTS with leading-w
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Results and hit projections byte-identical to baseline,Correlated EXISTS replaced by uncorrelated IN subquery,Trace evidence shows no correlated EXISTS,Note search LIKE branch decision documented
+- [x] #1 Results and hit projections byte-identical to baseline,Correlated EXISTS replaced by uncorrelated IN subquery,Trace evidence shows no correlated EXISTS,Note search LIKE branch decision documented
 <!-- AC:END -->
 
 ## Implementation Plan

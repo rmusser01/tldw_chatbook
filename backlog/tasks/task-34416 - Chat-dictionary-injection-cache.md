@@ -16,7 +16,7 @@ Wave 2 / F4: dictionary entries are re-loaded from DB re-instantiated and regex-
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Store generation counters added,Second send with unchanged dictionaries does no DB loads or regex compiles,Replacement output byte-identical on golden fixture,Console-seam double collection noted for coordination
+- [x] #1 Store generation counters added,Second send with unchanged dictionaries does no DB loads or regex compiles,Replacement output byte-identical on golden fixture,Console-seam double collection noted for coordination
 <!-- AC:END -->
 
 ## Implementation Plan

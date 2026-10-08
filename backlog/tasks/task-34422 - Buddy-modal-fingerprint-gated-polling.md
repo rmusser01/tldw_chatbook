@@ -14,7 +14,7 @@ Wave 5 / F9: the buddy conversation modal polls at 5 Hz rebuilding an O(session)
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Idle modal performs zero messages_for_session calls,Streaming still renders within one poll interval,Duplicate show_decisions call removed,Decisions coordinator invoked once per tick
+- [x] #1 Idle modal performs zero messages_for_session calls,Streaming still renders within one poll interval,Duplicate show_decisions call removed,Decisions coordinator invoked once per tick
 <!-- AC:END -->
 
 ## Implementation Plan

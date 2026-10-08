@@ -14,7 +14,7 @@ Wave 5 / F10: the 1.5s workspace poll does an unbounded full-tree walk with two 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Unchanged vault performs zero replica reads per tick,Reconcile fires exactly once per real change,Session change list capped at 500,Poll backoff to 6s when idle,Existing sync tests pass
+- [x] #1 Unchanged vault performs zero replica reads per tick,Reconcile fires exactly once per real change,Session change list capped at 500,Poll backoff to 6s when idle,Existing sync tests pass
 <!-- AC:END -->
 
 ## Implementation Plan

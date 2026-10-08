@@ -14,7 +14,7 @@ Wave 7 / F19a-c: fork path double-fetches the full conversation CitationTraceBui
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Fork performs one full-conversation read,Citation trace performs N encodings for N records with cap intact,Lore counts one GROUP BY query for 10 books
+- [x] #1 Fork performs one full-conversation read,Citation trace performs N encodings for N records with cap intact,Lore counts one GROUP BY query for 10 books
 <!-- AC:END -->
 
 ## Implementation Plan

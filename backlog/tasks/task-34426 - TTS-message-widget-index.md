@@ -15,7 +15,7 @@ Wave 5 / F18d: TTS progress handlers run two full-app DOM queries plus linear id
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Handlers perform zero app.query calls when no widgets registered,Registered widget receives state update O(1)
+- [x] #1 Handlers perform zero app.query calls when no widgets registered,Registered widget receives state update O(1)
 <!-- AC:END -->
 
 ## Implementation Plan

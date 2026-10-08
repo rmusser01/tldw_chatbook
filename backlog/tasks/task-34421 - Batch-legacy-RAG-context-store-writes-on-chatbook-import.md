@@ -14,7 +14,7 @@ Wave 4 / F7: recovery-mode citation writes re-serialize and rewrite the whole cr
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Import of 500-cited-message chatbook triggers exactly one store write,Single-message recovery path unchanged,Store content identical to per-message writes
+- [x] #1 Import of 500-cited-message chatbook triggers exactly one store write,Single-message recovery path unchanged,Store content identical to per-message writes
 <!-- AC:END -->
 
 ## Implementation Plan

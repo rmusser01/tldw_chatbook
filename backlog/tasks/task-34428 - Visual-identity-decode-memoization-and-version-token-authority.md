@@ -14,7 +14,7 @@ Wave 6 / F13: visual identity resolution fully decodes every animation frame plu
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Second resolution performs zero frame decodes,Exactly one full decode per asset per stat signature,Persona revalidation compares version not bytes
+- [x] #1 Second resolution performs zero frame decodes,Exactly one full decode per asset per stat signature,Persona revalidation compares version not bytes
 <!-- AC:END -->
 
 ## Implementation Plan

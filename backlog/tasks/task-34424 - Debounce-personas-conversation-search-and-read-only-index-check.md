@@ -14,7 +14,7 @@ Wave 5 / F14: personas conversation search fires a full search cycle with a writ
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 5-char burst fires exactly one search,READY index performs zero write transactions,Media filter debounce 0.25s
+- [x] #1 5-char burst fires exactly one search,READY index performs zero write transactions,Media filter debounce 0.25s
 <!-- AC:END -->
 
 ## Implementation Plan
