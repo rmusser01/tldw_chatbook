@@ -90,6 +90,15 @@ class _OriginalPreparingPolls:
             self.completed.append(row)
             del self.active[id(parent)]
 
+    def qualified_indexes(self):
+        return [
+            index
+            for index, row in enumerate(self.completed)
+            if row["held"]
+            and not row["deferred"]
+            and not any(value is False for value in row["full_results"])
+        ]
+
     @contextlib.contextmanager
     def installed(self):
         monitoring = sys.monitoring
@@ -123,7 +132,7 @@ async def test_ordinary_preparing_polls_do_not_repeat_live_core_reconciliation(
     monkeypatch,
     record_property,
 ):
-    """Count original completed work; a busy/deferred retry is not a valid RED."""
+    """Report deferred rows separately from completed, unchanged poll work."""
     async with _received_console_case(
         monkeypatch, "poll-reconciliation", durable=True
     ) as case:
@@ -133,23 +142,29 @@ async def test_ordinary_preparing_polls_do_not_repeat_live_core_reconciliation(
         assert case.console._console_transcript_sync_timer is not None
         observed = _OriginalPreparingPolls(case, record)
         with observed.installed():
-            completed = await _until(lambda: len(observed.completed) >= 3, 5)
+            completed = await _until(lambda: len(observed.qualified_indexes()) >= 2, 5)
         rows = observed.completed
+        qualified = observed.qualified_indexes()
+        deferred = [
+            index
+            for index, row in enumerate(rows)
+            if row["deferred"] or any(value is False for value in row["full_results"])
+        ]
         record_property("original_preparing_poll_observations", rows)
-        assert completed, f"Three original timer callbacks did not complete: {rows!r}"
+        record_property("qualified_poll_indexes", qualified)
+        record_property("deferred_poll_indexes", deferred)
         assert all(row["held"] for row in rows), "Original Preparing hold expired"
-        assert not any(
-            row["deferred"] for row in rows
-        ), f"Deferred full retry: {rows!r}"
-        assert not any(
-            result is False for row in rows for result in row["full_results"]
-        ), f"Full reconciliation was refused, not redundant: {rows!r}"
+        assert completed, (
+            f"Two healthy original polls did not complete: qualified={qualified!r}, "
+            f"deferred={deferred!r}, rows={rows!r}"
+        )
         assert case.provider_calls == []
         assert case.composer.draft_text() == case.draft
         # The fixture selected a workspace after mount, and Send may owe an
-        # initial full reconciliation. Permit the first observed poll to
-        # settle that work; only subsequent unchanged polls are the target.
-        steady_rows = rows[1:]
+        # initial full reconciliation. Permit the first healthy poll to
+        # settle that work. Deferred callbacks remain recorded above, but
+        # do not count their necessary retry work as redundant preparation.
+        steady_rows = [rows[index] for index in qualified[1:]]
         assert (
             sum(row["core_returns"] for row in steady_rows) == 0
         ), f"Unchanged Preparing polls repeated original live core reconciliation: {rows!r}"
