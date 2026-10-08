@@ -11421,7 +11421,7 @@ class ChatScreen(BaseAppScreen):
                 store, session_id, controller
             )
             provider, model, _settings = self._active_console_provider_model_display()
-            catalog = get_pricing_catalog()
+            catalog = spend.pricing_catalog_for_display(self, get_pricing_catalog)
             projection_key = (
                 history_key,
                 provider,
@@ -11491,6 +11491,7 @@ class ChatScreen(BaseAppScreen):
                     model=model,
                     fleet_tokens=0,
                     estimate_cache=estimate_cache,
+                    **spend.pricing_snapshot_options(catalog),
                 )
                 historical_media = any(
                     message.role is ConsoleMessageRole.USER

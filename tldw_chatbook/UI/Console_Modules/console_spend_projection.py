@@ -53,6 +53,12 @@ from ...Widgets.Console.console_context_controls import (
     build_console_next_send_spend_state,
 )
 
+from . import pricing_display as _pricing_display
+
+_PRICING_DISPLAY_SOURCE = _pricing_display._SOURCE_CAPSULE
+_DISPLAY_PRICING_CLASS = _pricing_display.DisplayPricingCatalog
+
+
 _ACCEPTED_RECOVERY_KINDS = frozenset(
     {
         ConsoleDispatchRecoveryKind.ACCEPTED,
@@ -135,6 +141,7 @@ class _CheckedDisplayProof:
     loop: Any
     thread: Any
     at: float
+    pricing: Any = None
 
 
 _checked_display_proofs = weakref.WeakSet()
@@ -150,6 +157,7 @@ class ConsoleReadinessConfigRead:
     source_after: tuple[int, str]
     context_policy: ConsoleContextPolicyOverrides | None = None
     _display_proof: _CheckedDisplayProof | None = None
+    pricing: Any = None
 
 
 class ConsoleReadinessConfigProjection:
@@ -165,6 +173,7 @@ class ConsoleReadinessConfigProjection:
         self.at = 0.0
         self.pending = False
         self.context_policy = None
+        self.pricing = None
         self._display_proof = None
         self._read_request = None
         self._settled = asyncio.Event()
@@ -212,6 +221,11 @@ class ConsoleReadinessConfigProjection:
                         # The existing display reader treats invalid policy as
                         # unavailable; provider readiness still has its mapping.
                         policy = None
+                    pricing = (
+                        _pricing_display.prepare_pricing_display()
+                        if _pricing_display_sources_current()
+                        else None
+                    )
                     after = participants.checked_config_identity(config, active)
                     with storage._lock:
                         participant = raw._states[active].participant
@@ -243,9 +257,12 @@ class ConsoleReadinessConfigProjection:
                         request[0],
                         request[1],
                         time.monotonic(),
+                        pricing,
                     )
                     _checked_display_proofs.add(proof)
-                return ConsoleReadinessConfigRead(before, value, after, policy, proof)
+                return ConsoleReadinessConfigRead(
+                    before, value, after, policy, proof, pricing
+                )
 
             projection = cls(screen, read_current=read_current)
             if type(projection) is ConsoleReadinessConfigProjection:
@@ -360,6 +377,12 @@ class ConsoleReadinessConfigProjection:
                 or not _same_readiness_key(key, self._key())
             ):
                 return
+            # Pricing equality is user-replaceable code too. Refuse before
+            # comparing or publishing an adapter whose source changed in flight.
+            if (self.pricing is not None or result.pricing is not None) and (
+                not _pricing_display_sources_current()
+            ):
+                return
             value = result.value
             controller = getattr(self.screen, "_session", None)
             store = getattr(self.screen, "_console_chat_store", None)
@@ -381,9 +404,11 @@ class ConsoleReadinessConfigProjection:
                 not _same_readiness_key(self.key, current_key)
                 or self.value != value
                 or self.context_policy != result.context_policy
+                or self.pricing != result.pricing
             )
             self.key, self.value, self.at = current_key, value, time.monotonic()
             self.context_policy = result.context_policy
+            self.pricing = result.pricing
             proof = result._display_proof
             self._display_proof = None
             if (
@@ -517,6 +542,8 @@ def _checked_display_status(projection: Any) -> bool | None:
         or chat_screen.load_settings is not config.load_settings
     ):
         return False
+    if not _checked_pricing_current(projection, proof):
+        return None
     # These lexical checks include the current generation and raw selected path.
     # An expired same-owner mapping may use the original native fallback; a
     # different owner/source may never enter a body around that old mapping.
@@ -712,6 +739,66 @@ def cached_context_window_for_display(screen: Any, gateway: Any, settings: Any) 
     ):
         raise _ContextCapacityDisplayRefused()
     return value
+
+
+def _pricing_display_sources_current() -> bool:
+    # Inspect retained original objects before invoking any mutable helper.
+    if (
+        sys.modules.get(_pricing_display.__name__) is not _pricing_display
+        or _pricing_display._SOURCE_CAPSULE is not _PRICING_DISPLAY_SOURCE
+        or _pricing_display.DisplayPricingCatalog is not _DISPLAY_PRICING_CLASS
+    ):
+        return False
+    for owner, name, original, code, defaults, kwdefaults in _PRICING_DISPLAY_SOURCE:
+        if (
+            getattr_static(owner or _pricing_display, name, None) is not original
+            or original.__code__ is not code
+            or original.__defaults__ is not defaults
+            or original.__kwdefaults__ is not kwdefaults
+        ):
+            return False
+    return True
+
+
+def _checked_pricing_current(projection, proof) -> bool:
+    from ...Chat import console_cost_tracker
+    from ...LLM_Calls import pricing_catalog
+    from ..Screens import chat_screen
+
+    if not _pricing_display_sources_current():
+        return False
+
+    snapshot, code, defaults, kwdefaults = console_cost_tracker._COST_SNAPSHOT_SOURCE
+    return (
+        projection.pricing is proof.pricing
+        and _pricing_display.pricing_display_current(proof.pricing)
+        and chat_screen.get_pricing_catalog is pricing_catalog.get_pricing_catalog
+        and console_cost_tracker.get_pricing_catalog
+        is pricing_catalog.get_pricing_catalog
+        and chat_screen.build_cost_snapshot
+        is snapshot
+        is console_cost_tracker.build_cost_snapshot
+        and snapshot.__code__ is code
+        and snapshot.__defaults__ is defaults
+        and snapshot.__kwdefaults__ is kwdefaults
+    )
+
+
+def pricing_catalog_for_display(screen: Any, get_catalog: Callable) -> Any:
+    """Supply detached prices only inside the qualified synchronous UI route."""
+    projection = getattr(screen, "_console_readiness_config_projection", None)
+    if _checked_display_status(projection) is True:
+        return projection.pricing
+    return get_catalog()
+
+
+def pricing_snapshot_options(catalog: Any) -> dict[str, Any]:
+    """Keep original snapshot/custom calls unchanged outside checked display."""
+    from .pricing_display import DisplayPricingCatalog
+
+    return (
+        {"pricing_catalog": catalog} if type(catalog) is DisplayPricingCatalog else {}
+    )
 
 
 def _run_checked_display_sync(
