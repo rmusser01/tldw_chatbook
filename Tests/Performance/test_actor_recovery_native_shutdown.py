@@ -203,6 +203,7 @@ async def test_original_actor_recovery_worker_retires_before_shutdown_returns(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_actor_recovery_closed_owner_never_dispatches_late_callback():
     from types import SimpleNamespace
     from tldw_chatbook.app import TldwCli

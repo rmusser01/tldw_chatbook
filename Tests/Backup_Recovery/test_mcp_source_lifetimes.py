@@ -295,12 +295,12 @@ def test_permission_preflight_pause_has_no_payload_or_backup_effects(
 
 def _private_child(request, kind):
     import os
-    from pathlib import Path
     import subprocess
     import sys
 
     if os.environ.get("TASK10_MCP_CHILD") == kind:
         return False
+    output_root = request.getfixturevalue("tmp_path")
     result = subprocess.run(
         [
             sys.executable,
@@ -309,15 +309,15 @@ def _private_child(request, kind):
             request.node.nodeid,
             "-q",
             "-o",
-            "cache_dir=/private/tmp/task10-phase11-child-cache",
+            f"cache_dir={output_root / 'child-cache'}",
         ],
         env={**os.environ, "TASK10_MCP_CHILD": kind, "PYTHONDONTWRITEBYTECODE": "1"},
         capture_output=True,
         text=True,
         timeout=45,
     )
-    Path(f"/private/tmp/task10-phase11-child-{kind}.log").write_text(
-        result.stdout + result.stderr
+    (output_root / f"mcp-child-{kind}.log").write_text(
+        result.stdout + result.stderr, encoding="utf-8"
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return True

@@ -1110,3 +1110,6 @@ The stock-skill observer now selects its exact callback before checking ownershi
 
 
 Windows maintenance-test portability: the remaining history-rotation observer used socket-only select.select on a subprocess pipe. It now uses the existing native pipe_readable helper with the same50ms bound. The original independent-maintainer/native-close control passes (mcp-rotation-pipe-portability-green-1,9.10s pytest/14.469s contained driver, unchanged source/HEAD). No application behavior or acceptance threshold changed.
+
+
+Cross-platform follow-up at13b0523fce: all three original Actor callback/worker/App shutdown cases pass on macOS and Linux. Their fourth closed-owner unit failed during lazy App import because its fixture lacked the existing bootstrap-profile marker; adding that declaration passes locally. All59 MCP registration/lifetime cases pass on macOS; Linux's11 failures were caused by the existing child helper writing logs to hard-coded /private/tmp (including a similarly hard-coded cache path), not by an admission assertion. Both now use the test's own tmp_path. The affected uncertainty child and Actor unit pass2/2 locally (18.547s driver, source/HEAD unchanged); Linux confirmation remains CI work.
