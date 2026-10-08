@@ -1105,9 +1105,9 @@ async def _census_idle_and_visit(
         from tldw_chatbook.config import get_user_data_dir
         from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
-        # One private-SQLite open always starts a helper (ADR-125): proof the
-        # HelperLease.start seam still counts, so helper ceilings can't pass
-        # at a silent zero.
+        # A POSIX private-SQLite open starts a helper (ADR-125): prove its
+        # start seam still counts. Windows uses native artifact handles and
+        # still exercises the shared config/storage admission canary.
         connect_private_sqlite(
             "db.base", Path(get_user_data_dir()) / "census_canary.db"
         ).close()
@@ -1580,10 +1580,15 @@ async def test_console_storage_units_stay_within_their_ratchets(
     assert (
         counts["cleanup:candidate_queries_completed"] == 1
     ), "startup cleanup did not complete exactly one real candidate query"
-    assert (
-        cleanup_units["helper_spawns"] >= 1
-    ), "the real startup cleanup query's cold SQLite helper was not counted"
+    # Windows validates SQLite artifacts with native handles in process;
+    # POSIX uses HelperLease to preserve live advisory locks (ADR-125).
+    if sys.platform != "win32":
+        assert (
+            cleanup_units["helper_spawns"] >= 1
+        ), "the real startup cleanup query's cold SQLite helper was not counted"
     for unit in IO_UNITS:
+        if sys.platform == "win32" and unit in {"helper_spawns", "os_opens"}:
+            continue  # Native Windows handle opens have their own observer.
         assert counts[f"canary:{unit}"] >= 1, (
             f"census is blind: the canary (a guarded get_user_data_dir() plus "
             f"one private-SQLite open) counted 0 {unit}; the seam "

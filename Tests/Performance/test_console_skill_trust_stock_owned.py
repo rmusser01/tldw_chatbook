@@ -444,7 +444,7 @@ async def exercise():
         release.set()
 
     producer_diagnostic = None
-    if case in {'custom', 'denied'}:
+    if case in {'custom', 'denied', 'runtime_dispose', 'runtime_replacement'}:
         from Tests.Performance._stock_core_producer_diagnostic import OriginalCoreProducerDiagnostic
         producer_diagnostic = OriginalCoreProducerDiagnostic(creators)
         producer_diagnostic.install()

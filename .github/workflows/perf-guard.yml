@@ -110,8 +110,17 @@ jobs:
         run: |
           status=0
           pytest "Tests/Performance/test_console_keystroke_work_census.py::test_console_storage_units_stay_within_their_ratchets" \
-            -v --timeout=300 || status=$?
+            -v --timeout=300 --junitxml="${{ runner.temp }}/storage-unit-ratchet.xml" || status=$?
           echo "::group::Console storage-unit census"
           cat "$TLDW_STORAGE_UNIT_CENSUS_LOG" 2>/dev/null || echo "(no census written)"
           echo "::endgroup::"
           exit "$status"
+      - name: Retain Console storage-unit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-storage-unit-evidence
+          path: |
+            ${{ runner.temp }}/storage-unit-census.jsonl
+            ${{ runner.temp }}/storage-unit-ratchet.xml
+          if-no-files-found: ignore
