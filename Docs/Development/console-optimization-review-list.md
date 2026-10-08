@@ -191,6 +191,8 @@ Source: `chat_screen.py` d221 lines 17507-17842, 18219, 20682-20743;
 
 | OPT-76 / Not selected after source review | **Consolidate the late raw-source validation immediately before operation publication and the full check before yielding.** `raw._scope` performs `_participant_state` after preflight/pause checks, then only coordinator/attempt/identity/closed checks and actor-local activation, then `_check(operation)` repeats full source validation before the caller body. The warm catalog tree has two direct scope-to-participant validations totaling .0609 s inclusive; individual gate costs are not isolated. | Replacing the late gate with `_participant_identity` moves full binding validation after the attempt/closed-gate checks and into active operation context. A late retarget plus concurrent pause/close can therefore change which refusal wins. Root and peer source reviews agree this prevents treating the one-line change as equivalent. Preserve the earlier full pre-lock gate and its real source/pending refusal tests. Review active-but-not-yielded observers, concurrent pause/source replacement, exact refusal priority and retirement; do not infer equivalence merely from adjacent calls. No product change, test or saving is selected. A short draft plan was preserved but stopped before tests; priority returns to the full-Send native census. This remains a central finite-operation alternative for later contract review, not Windows witness caching. |
 
+| OPT-77 / Integrated at 67a7f526fb; focused hosts and three real turns pass; latency still unmet | **Skip derived-evidence construction when the existing owner rules prohibit its publication.** `raw._pin_parent` builds native `_path_evidence` for any retained hold, then `_note_derived` immediately refuses Windows via `_ordinary_hold`. The evidence/posture comparison only controls future metadata publication; actual pin validation is separate. `config_participants.companion_guard` has the same collector-before-eligibility shape on its successful full branch. | Prefer the existing exact ordinary-hold eligibility at these two evidence producers, as generation-witness and pause-query owners already do. Keep real native hold/lease ownership, original derivation, source/pause/parent checks and final publication eligibility unchanged. Do not enable Windows derived reuse or disable the distinct Windows-capable admission evidence. Prove actual discarded collection, original native count reduction and exact retirement under a warmed original hook snapshot; the companion success branch needs separate qualification. This is a simpler alternative to OPT33, not an established timing improvement. |
+
 ## Architecture alternatives retained with their decision
 
 These were considered and deliberately not adopted under the current design.
@@ -654,3 +656,265 @@ removed on this evidence alone. Quiet three-Send timings remain the acceptance
 comparison. The independent source lane is reviewing a finite preparation
 contract under existing owners rather than selecting the small ruled-out
 shortcuts.
+
+### 2026-10-08 OPT33 finite establishment contract (source-only, unselected)
+
+The independent source review finds a concrete repeated operation inside the
+383-open hook store-lock stage: `secure_private_directory` performs its original
+root/component trust walk, but every original `_native_open` also discovers the
+raw owner and repeats the full selected-parent proof. Task34563.22 already
+contracts this duplication for `_open_verified_parent`; it does not cover the
+separate directory-establishment loop. The saved hook partition attributes 144
+opens to runtime discovery in this stage (16 full checks at nine opens each),
+but does not identify every discovery's direct caller. Do not claim all 144 as
+removable, or convert that aggregate into a predicted latency improvement.
+
+The smallest proposed contract reuses the existing finite-walk machinery with
+an explicit actual directory: parent preparation supplies `selected.parent`,
+while establishment supplies `selected`. This is a private factoring of the
+same source/custody and descriptor owner, not a new service or general cache.
+Eligibility remains exact stock config/hook-permission/history ownership,
+unchanged directly consumed callbacks, native guards and an already retained
+pin for that exact directory. Standalone/custom, explicit open/close,
+voice/visual and unpinned/new-directory routes retain the original path.
+
+Preserve the original establishment loop, including every component's owner,
+type, mode, trusted-symlink and private-directory postcondition. Perform full
+source/parent checks at entry and completion, current source/actor/participant/
+lease checks before each native allocation, and a full gate before any actual
+mkdir/chmod effect. At completion the actual final FD must match the original
+still-retained selected-directory pin; repeat the source/custody fence after
+those native identity reads. Creator-owned cleanup must remain possible after
+source drift and must retain uncertain closes. This proposal does not change
+config/hook lock order, their lifetimes, reconciliation, token epochs, lock
+creation/fsync, per-Send hook observations or Windows derived-evidence eligibility.
+
+The integration owner should select a bounded causal control before product
+work: observe original `HookPermissions._current` and its actual establishment
+walk, attribute original full checks/native allocations to that walk, and prove
+exact before/after lease/raw/descriptor retirement. Existing-directory depth
+must increase real traversal while leaving the proposed full-check count
+constant. Keep actual component/native work visible rather than suppressing it.
+Additional controls should cover selected-directory rename/restore and final
+FD substitution, native source/lease revocation during final fstat, actual
+hardening/creation effect refusal, unsafe ancestor/link/owner cases, custom
+callback/default drift, unchanged unpinned fallback, and uncertain-close custody.
+Re-run task22 parent-walk and task27 config/hook lock controls after both product
+and control source are frozen, followed by sequential quiet integrated timing.
+No new whole-App census is needed to choose this candidate.
+
+ADR required: no new ADR if implemented within the above existing boundaries.
+ADR paths: `backlog/decisions/222-console-send-preparation-and-io-ownership.md`
+and `backlog/decisions/126-complete-local-backup-and-recovery.md`.
+Reason: the same finite source/descriptor contract already used by task22;
+creation, storage authority and observable hook semantics remain owner-defined.
+This is a review proposal, not an implementation plan or a qualified fix. Root
+must record the atomic task/plan and causal result before releasing product work.
+If the actual contraction is small, retain OPT33 for later and prioritize the
+existing OPT60 polling work; do not widen this into storage/registry caching.
+
+The larger 572-open config stage is not explained by duplicate raw leases in
+nested config wrappers: they already reuse the current raw operation. Storage
+acquisition also has an existing confirmed-evidence route. Source-level repeated
+`startup_permission`/`_scope` control reads therefore cannot be called a measured
+warm-path bottleneck from the current stage-only census. OPT40 remains subject
+to its recorded companion-guard branch qualification; no new generic control
+snapshot, cross-store lease or stale permission snapshot is proposed.
+
+
+### 2026-10-08 OPT77 source contract: avoid unpublishable evidence collection
+
+`storage._ordinary_hold` refuses native Windows, disabled evidence reuse,
+maintenance and non-serving owners. `_note_derived` applies that gate before
+examining or storing its collected evidence. `generation_witnesses._witnesses`
+and `AdmissionAuthority.pause_requested` already select their evidence hold
+through this gate; their collector returns immediately for `None`.
+
+Two producers instead pass their actual raw-operation hold directly:
+
+- `raw._pin_parent` builds `_path_evidence(hold.names, anchor)` after the real
+  guarded parent walk. Its evidence/posture comparison only clears the optional
+  evidence value; the actual FD still returns through the existing identity and
+  scope gates. On Windows this collected value cannot be published.
+- `config_participants.companion_guard` builds `_metadata_evidence` after the
+  successful original companion derivation, then the same publication gate
+  discards it. Its early-return/no-profile branch does not collect that evidence;
+  do not assume the successful branch explains the measured config stage.
+
+Proposed smallest contract: retain the real raw hold and every actual operation
+unchanged, but select a separate evidence-eligible hold through the existing
+`_ordinary_hold` rule and require exact identity with the retained hold. Use
+only that eligible hold for derived before/reuse/collection/publication. Keep
+`_note_derived`'s final eligibility gate because eligibility may change during
+native work. An initially ineligible operation may simply miss an optional
+future cache publication; it must still perform its complete original authority
+and physical-parent derivation. No cross-operation evidence or permission is
+introduced, and Windows derived-reuse eligibility stays disabled.
+
+Do not change `_path_evidence` globally. The separate `_reuse_evidence` and
+`_note_evidence` admission path also consumes it and supports native Windows.
+Do not pass the optional hold into the actual scope, pin or companion lifetime,
+and do not skip directory acquisition, fstat, parent association, source/pause,
+registry-lock, foreign-owner or final checks. No new reflection framework or
+shared mutable cache is needed for this producer-side selection.
+
+Before selecting product work, one integration-owner control should observe an
+original warmed `HookPermissions._current`, attribute `_path_evidence` and its
+native entries specifically to `_pin_parent`, and show that its publication
+reaches `_note_derived` with an ineligible actual hold. Keep both warmed snapshot
+outputs, all actual source/lock/effect work and exact before/after native custody
+observable. The desired failing assertion is absence of publication-only native
+collection on an ineligible owner, after proving that the original collectors
+really ran and retired. Cover the successful companion branch independently,
+and retain existing supported-platform eligible publication/reuse controls.
+Original failures in actual pin/companion preparation must still refuse and
+retire identically. No arbitrary replacement callback that removes real native
+work can establish the causal reduction. After implementation, root owns the
+integrated targeted checks and sequential quiet Send timing.
+
+ADR required: no new ADR under this scope; existing ADR-222 and ADR-126 apply.
+Reason: avoid preparing data the existing optional publication contract will
+reject, with no change to actual admission or derived-reuse policy. This remains
+a source-only proposal with unmeasured savings; OPT33 is retained as the separate
+finite directory-establishment alternative, not silently discarded.
+
+
+OPT77 selection checkpoint: the integration owner reserved TASK-34563.37 and
+selected only `raw._pin_parent` producer eligibility. The three-line candidate
+uses the existing `_ordinary_hold` gate and requires the exact original hold;
+it was source-reviewed but remains unapplied pending causal RED. The companion
+success branch and OPT33 remain separate, unselected follow-ups. The source-only
+`Tests/Backup_Recovery/test_raw_pin_evidence_eligibility.py` draft uses an actual
+warmed hook snapshot, original local monitoring, returned-evidence/publication
+identity joins, real pin closes and exact issued ownership baselines before its
+zero-unpublishable-collection assertion. Source compilation and Ruff checks pass;
+no native test or product import was run by this review lane. Root owns baseline,
+product edits, final integrated checks and sequential timing.
+
+OPT77 first baseline `c375-pin-evidence-red-1` is not causal RED. Both Windows
+cases failed the draft observer's assumption that collected `_path_evidence`
+reaches `_note_derived` unchanged. The original `_pin_parent` may clear that
+optional object after comparing its metadata posture with the independently read
+pin posture. The corrected observer requires the publisher argument to be the
+actual pin frame's evidence and records either exact forwarding or the original
+posture-mismatch discard before the unchanged ordinary-hold rejection. The
+zero-collection assertion and all source/pin/ownership/physical-close checks stay
+unchanged. Source and HEAD remained current; the 12.640-second driver retired
+normally, with no forced retirement or identity overflow/races and no remaining
+fixture worker rows. The early observer failure did not qualify the later
+in-test ownership/count assertions. Product remains unchanged pending a clean
+baseline. The control now includes default Windows plus the actual disabled-reuse
+setting on all hosts; eligible POSIX reuse remains a separate existing control.
+
+
+### 2026-10-08 OPT77 causal qualification
+
+The corrected `c375-pin-evidence-red-2` qualifies causal RED in both Windows
+cases: only the final two-versus-zero pin-evidence assertion fails after actual
+payload, source, pin, physical-close, exact-issued-custody and owner-close checks.
+The original code collects two optional metadata objects, discards both by its
+posture comparison, and reaches the existing ineligible publisher. Each snapshot
+uses 36 native open attempts solely for that discarded collection in this fixture.
+The source-current driver retires normally in 11.781 seconds.
+
+The integration owner's exact three-line `_pin_parent` eligibility change passes
+`c375-pin-evidence-green-1`: 42 passes and two existing Windows capability skips,
+66.747 seconds in pytest / 72.750 seconds in the contained driver. The skipped
+cases need Administrators owner-SID assignment and an actual native parent rename
+in the installed config-scope fixture. They are not passes. Source/HEAD remain
+frozen within the run; native containment retires normally with zero force,
+identity overflow or lookup races, and the after-fixture worker report is empty.
+
+Independent offline comparison of both XML properties confirms that every count
+and qualification field outside the following changes is identical:
+
+| Observed field | Original | Candidate |
+| --- | ---: | ---: |
+| Raw-pin publication-only evidence collections | 2 | 0 |
+| Native attempts inside that collection | 36 | 0 |
+| Default-mode metadata snapshots | 6 | 4 |
+| Disabled-reuse metadata snapshots | 3 | 1 |
+| Original storage acquisitions, both cases | 3 | 3 |
+| Full source checks / parent checks, both cases | 66 / 66 | 66 / 66 |
+| Actual raw pins / physical descriptor closes, both cases | 2 / 86 | 2 / 86 |
+| Default admission-native / other-native attempts | 198 / 970 | 198 / 970 |
+| Disabled-reuse admission-native / other-native attempts | 1242 / 970 | 1242 / 970 |
+
+The expected observer disposition moves from post-collection discard plus
+publisher eligibility rejection to pre-collection eligibility rejection and
+skipped collection. Both cases retain identical payload, source and positive
+retirement qualification. No authority check was replaced by a cached result.
+
+This establishes the bounded raw-pin contraction locally; it does not establish
+whole-Send elapsed savings, immediate rendered feedback or POSIX qualification.
+The integration owner is saving the candidate and arranging focused supported-host
+controls. Companion-guard evidence collection and OPT33 stay unselected. The
+main quiet Send reference remains approximately 4.7-5.8 seconds pending a fresh
+integrated measurement; the separate six App-sample leases remain unresolved.
+
+The original UAT-profile isolated snapshot also reproduces the contraction:
+`3ddb-hook-snapshot-retirement-probe.json` versus
+`c375-pin-candidate-hook-snapshot.json` falls from 1080 to 1048 open attempts,
+1758 to 1678 info calls and six to four metadata snapshots. Independent offline
+bucket reconciliation finds exactly six deltas: configuration no-raw-check
+metadata loses 14 opens / 35 info calls / one snapshot, and hook-lock
+no-raw-check metadata loses 18 / 45 / one. Every other native bucket is identical.
+Both retain original callbacks, zero overflow/pending/raw work, the exact starting
+custody baseline and normal owner close. The UAT-profile reduction is 32 opens;
+the separate regression fixture reduction is 36. Neither count comparison is a
+quiet whole-Send elapsed-time measurement.
+
+
+OPT77 integration checkpoint: the reviewed three-line product change, frozen
+causal control and focused Linux/macOS/Windows job are committed and pushed at
+`67a7f526fb0ff3e3e4b270e7d04de3f3b6bffdea` in PR3023. The job covers the actual
+disabled-reuse policy on all hosts, the Windows default rejection, separate
+Windows admission evidence, and existing eligible POSIX pin/source/retirement
+controls. Supported-host outcomes and the sequential three-message quiet Send
+run are still pending. TASK-34563.37 remains In Progress; integration alone does
+not qualify the latency budget or the separate App cleanup concern.
+
+
+OPT77 supported-host qualification: focused workflow run `37838634736` at
+exact `67a7f526fb` passes on all three hosts. Independent offline XML review
+confirms macOS 8 passes / 17 Windows-only skips, Linux 8 / 17, and Windows
+18 / 7 POSIX-only skips, with no failure or error. The eligible POSIX controls
+actually execute. Every executed new causal case records zero optional pin
+collections, two actual pins, three acquisitions, positive full/parent checks
+and physical descriptor closes, exact issued custody, current original source,
+owner close and observer retirement. macOS records 68 checks / 104 closes and
+Linux 63 / 59; the two Windows cases reproduce the local GREEN counts exactly.
+Artifacts are `67a7-pin-ci-{macos-15,windows-2022,ubuntu-24.04}/raw-pin-evidence.xml`
+in the integration evidence directory. The wider workflow status is separate
+from these focused jobs; quiet Send timing and App cleanup remain open.
+
+
+OPT77 latest real-provider sample: `67a7-pin-final-uat-1/uat-performance-verification.json`
+records exact `67a7f526fb`, unchanged sources and owner configuration, three
+completed DeepSeek calls, six persisted messages, three `verified_equal` revision
+links and zero pending dispatch checkpoints. Recorded UI-action-to-provider
+entry is **7.967 / 5.530 / 5.422 seconds**. This sample establishes no whole-Send
+speed improvement; retain the earlier 5.766 / 4.687 / 4.952 sample rather than
+replacing it with an implied improvement. The bounded native-open reduction
+remains qualified, but neither a causal elapsed regression nor an elapsed gain
+is established by these two short runs.
+
+Durable commit spans 0.423 / 0.125 / 0.218 seconds in the latest sample. The
+interval from successful durable commit to trace reservation spans 4.469 /
+2.265 / 2.485 seconds. Those are stage gaps, not attribution to one function or
+proof of removable work. Preserve save-before-dispatch and draft retention;
+repeated preparation and UI polling remain the larger open architecture work.
+This verification report does not itself establish final process/App retirement
+or actual rendered feedback within 100 ms. Those concerns remain separate.
+
+The integration owner subsequently verified normal Ctrl+Q exit and full server/
+browser retirement for this sample. That establishes process containment for
+this run, not a new audit of every App-owned native lease. Task 34563.37 can
+close on its bounded count, custody, host and functional criteria while the
+overall Send-delay task and broader architecture remain open. No wider OPT33
+change is selected by this checkpoint.
+
+
+Root completion checkpoint: TASK-34563.37 is Done after the scoped unused-evidence reduction, original count/custody/source controls, executed three-platform qualification and final real-provider UAT. Product checkpoint67a7f526fb remains the exact code exercised by those artifacts; later workflow path/documentation changes do not alter product bodies. The initial fresh setup flow was already verified on integrated dev, and the final Enter/button/Enter conversation has three complete calls and equal revision links with no checkpoints. Source and original configuration remained unchanged and normal App/server/browser retirement is verified.
+
+Latest quiet provider-entry7967/5530/5422ms is retained without a whole-Send gain claim. This task completion does not close the overall latency/architecture objective. The five fresh hook consumers, required consent epochs, background/main-loop work and unqualified intervals remain part of that investigation; no wider OPT33 or polling product change was made in task37.

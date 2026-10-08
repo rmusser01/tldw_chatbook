@@ -69,6 +69,8 @@ on:
       - 'Tests/Performance/run_trace_settlement_diagnostic.py'
       - 'Tests/Utils/test_windows_native_admission.py'
       - 'Tests/Backup_Recovery/test_windows_admission_evidence.py'
+      - 'Tests/Backup_Recovery/test_raw_pin_evidence_eligibility.py'
+      - 'Tests/Backup_Recovery/test_guarded_raw_evidence_reuse.py'
       - 'Tests/Backup_Recovery/test_generation_witness_observation.py'
       - 'Tests/Backup_Recovery/test_raw_source_coordinator_io.py'
       - 'Tests/Backup_Recovery/test_restored_mcp_continuous_custody.py'
