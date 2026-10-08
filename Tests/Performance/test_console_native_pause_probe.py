@@ -457,11 +457,31 @@ async def test_native_console_pause_probe(monkeypatch, tmp_path, request):
             monkeypatch.setattr(gateway, "_chat_api_call_fn", adapter)
             runtime = screen._console_runtime()
             tasks = []
+            custody = []
+
+            def observe_custody(submission, turn_id):
+                record = runtime._turn_custody[turn_id]
+                assert record.session_id == submission.session_id
+                assert record.turn_id == turn_id == submission.turn_id
+                assert isinstance(record.task, asyncio.Task)
+                hooks = screen._hooks
+                custody.append(
+                    (
+                        submission.session_id,
+                        turn_id,
+                        record.task,
+                        hooks,
+                        hooks.pending_send_identity,
+                        time.perf_counter(),
+                    )
+                )
+                tasks.append(record.task)
+
             original_accept = runtime.accept_turn
 
             def accept(request, **kwargs):
                 turn_id = original_accept(request, **kwargs)
-                tasks.append(runtime._turn_custody[turn_id].task)
+                observe_custody(request, turn_id)
                 return turn_id
 
             monkeypatch.setattr(runtime, "accept_turn", accept)
@@ -469,7 +489,7 @@ async def test_native_console_pause_probe(monkeypatch, tmp_path, request):
 
             def receive(intent):
                 turn_id = original_receive(intent)
-                tasks.append(runtime._turn_custody[turn_id].task)
+                observe_custody(intent, turn_id)
                 return turn_id
 
             monkeypatch.setattr(runtime, "accept_received_intent", receive)
@@ -490,11 +510,47 @@ async def test_native_console_pause_probe(monkeypatch, tmp_path, request):
                     screen._session._sync_console_session_draft()
                     composer.load_draft(f"Native pause probe message {index}")
                     before = len(tasks)
+                    session_id = controller.store.active_session_id
+                    hooks = screen._hooks
                     await screen._send_console_message_from_visible_action(
-                        session_id=controller.store.active_session_id
+                        session_id=session_id
                     )
+                    pending = None
+                    if len(tasks) == before:
+                        pending = hooks.pending_send_identity
+                        assert (
+                            pending is not None and pending[0] == session_id
+                        ), "send never reached turn custody or a pending hook worker"
+                        # Hook dispatch may return before its worker admits the
+                        # turn. Observe only that exact Send within its old budget.
+                        while len(tasks) == before:
+                            assert screen.is_mounted and runtime.view is screen
+                            assert screen._hooks is hooks
+                            assert controller.store.active_session_id == session_id
+                            assert (
+                                hooks.pending_send_identity == pending
+                            ), "pending Send cleared or changed without turn custody"
+                            assert (
+                                time.perf_counter() < send_deadline
+                            ), "pending Send never reached turn custody within budget"
+                            await asyncio.sleep(0.01)
                     assert len(tasks) == before + 1, "send never reached turn custody"
-                    await asyncio.wait_for(asyncio.shield(tasks[-1]), 180)
+                    (
+                        accepted_session,
+                        turn_id,
+                        task,
+                        owner,
+                        identity,
+                        accepted_at,
+                    ) = custody[-1]
+                    assert accepted_session == session_id and task is tasks[-1]
+                    assert all(prior[1] != turn_id for prior in custody[:before])
+                    if pending is not None:
+                        assert owner is hooks and identity == pending
+                        assert (
+                            accepted_at <= send_deadline
+                        ), "pending Send reached turn custody after its budget"
+                    await asyncio.wait_for(asyncio.shield(task), 180)
                     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
                     await screen._sync_native_console_chat_ui()
                     await asyncio.sleep(0.25)

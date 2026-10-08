@@ -131,6 +131,7 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
         self.loop_probe_called_at = None
         self.loop_probe_release_at = None
         self.loop_probe_called_after_release = None
+        self.local_timeout_stack_lead = []
 
     def _ancestry(self, frame, wanted):
         found = set()
@@ -515,7 +516,25 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             self.controller_stage = "actual_loop_probe"
             self.loop_probe_queued_at = time.monotonic()
             self.loop.call_soon_threadsafe(self._probe)
-            self.progress.wait(0.1)
+            progressed = self.progress.wait(0.1)
+            if not progressed and os.environ.get("TLDW_LOCAL_COMPACT_STACKS") == "1":
+                # Local-only diagnostic lead after the unchanged response bound.
+                # Keep code names/lines only, never locals or frame references.
+                frame = sys._current_frames().get(self.main_thread.ident)
+                try:
+                    for _ in range(32):
+                        if frame is None:
+                            break
+                        self.local_timeout_stack_lead.append(
+                            (
+                                Path(frame.f_code.co_filename).name,
+                                frame.f_code.co_qualname,
+                                frame.f_lineno,
+                            )
+                        )
+                        frame = frame.f_back
+                finally:
+                    del frame
         except BaseException as error:
             self.editor_error = {
                 "phase": self.controller_stage,
@@ -1118,6 +1137,8 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
             native_permission_guards_replaced=False,
             configuration_edit_is_fixture_input_not_cache_or_guard_override=True,
         )
+        if os.environ.get("TLDW_LOCAL_COMPACT_STACKS") == "1":
+            result["local_timeout_stack_lead"] = self.local_timeout_stack_lead
         result["complete"] = (
             result["complete"]
             and not self.eligibility_overflow
