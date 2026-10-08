@@ -505,6 +505,8 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
         try:
             self.controller_stage = "waiting_original_target_start"
             assert self.edit.wait(10)
+            if self.editor_deadline is None:
+                return  # close() wakes an unarmed observer only to retire it.
             self.controller_stage = "original_config_editor_custody"
             self.editor_facts = coordinate_fixture_editor(
                 self.config, self.selected, self.editor_deadline

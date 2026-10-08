@@ -3,7 +3,7 @@
 Every older handoff test opens the wizard over a Console that is already
 mounted, so Console's "seed what is missing" rail-scope write never lands
 between stage and consume (lessons-live-verification, TASK-33001.5 entry).
-On a fresh profile that write advances the global config generation, and the
+Adopting a saved workspace layout advances the global config generation, and the
 old generation fence released a perfectly good handoff with "Provider settings
 changed before Console opened. Review setup and try again." (8 of 8 live runs,
 entry-exit-handoff-04). These tests start on Home so Console has never been
@@ -22,12 +22,14 @@ from Tests.app_module_patches import patch_app_global
 from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_product_maturity_phase1_first_run import _test_cli_setting
+from tldw_chatbook.Chat.console_rail_state import build_console_rail_preference_key
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import (
     get_runtime_config_snapshot,
     save_settings_to_cli_config,
 )
 from tldw_chatbook.Constants import TAB_CHAT
+from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
 from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     ConsoleFirstChatIntent,
     HandoffChannel,
@@ -85,9 +87,24 @@ def _handoff_status(app, revision: int) -> str:
     )
 
 
-def _first_mount_app(monkeypatch, notices: list[tuple[str, str]]):
+def _first_mount_app(
+    monkeypatch, notices: list[tuple[str, str]], *, saved_layout: bool = False
+):
     _persist_setup()
+    if saved_layout:
+        # Keep the real stage-to-consume generation race through durable
+        # adoption; untouched product defaults no longer cause a write.
+        key = build_console_rail_preference_key(
+            workspace_id=DEFAULT_WORKSPACE_ID, layout_scope="workspace"
+        )
+        assert save_settings_to_cli_config(
+            {"console.rail_state": {key.value: {"left_open": True}}}
+        )
     app = _build_test_app(first_run_setup_completed=True)
+    if saved_layout:
+        assert app.app_config["console"]["rail_state"][key.value] == {"left_open": True}
+        shared = build_console_rail_preference_key(layout_scope="global")
+        assert shared.value not in app.app_config["console"]["rail_state"]
     app._initial_tab_value = "home"
     real_notify = app.notify
 
@@ -105,7 +122,7 @@ async def test_start_chatting_through_consoles_first_mount_warns_nothing(
     monkeypatch: pytest.MonkeyPatch, request
 ) -> None:
     notices: list[tuple[str, str]] = []
-    app = _first_mount_app(monkeypatch, notices)
+    app = _first_mount_app(monkeypatch, notices, saved_layout=True)
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(120, 40)) as pilot:
@@ -130,7 +147,9 @@ async def test_start_chatting_through_consoles_first_mount_warns_nothing(
             assert get_runtime_config_snapshot().generation > staged_at
             assert [text for text, severity in notices if severity == "warning"] == []
             assert not any("Provider settings changed" in text for text, _ in notices)
-            await _wait_until(pilot, lambda: _handoff_status(app, revision) == "settled")
+            await _wait_until(
+                pilot, lambda: _handoff_status(app, revision) == "settled"
+            )
             # Review round 1 (C-F8): re-check after the settle wait (a late
             # warning would have been missed above), and count: the first-run
             # handoff raises at most one notice (AC#11).

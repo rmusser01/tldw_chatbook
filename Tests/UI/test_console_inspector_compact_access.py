@@ -90,9 +90,9 @@ async def test_standard_width_keeps_context_and_preserves_its_preference():
         ):
             pane = console.query_one(f"#{pane_id}")
             assert pane.display, f"{pane_id} is not displayed at 120 columns"
-            assert grid.region.contains_region(pane.region), (
-                f"{pane_id} escaped the workspace grid: {pane.region} vs {grid.region}"
-            )
+            assert grid.region.contains_region(
+                pane.region
+            ), f"{pane_id} escaped the workspace grid: {pane.region} vs {grid.region}"
         assert stored["left_open"] is True
         assert "right_open" not in stored
         assert list(app.app_config["console"]["rail_state"]) == [shared_key.value]
@@ -389,11 +389,38 @@ async def test_default_layout_unchanged_at_160_cols():
         ]
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("layout_scope", ["global", "workspace"])
+def test_default_rail_scope_does_not_dispatch_config_write(layout_scope):
+    """Showing unchanged product defaults cannot invalidate model setup."""
+    from types import SimpleNamespace
+
+    records, writes = {}, []
+    screen = SimpleNamespace(
+        _console_rail_state_config=lambda: records,
+        _save_console_rail_preferences=lambda *args, **kwargs: writes.append(args),
+    )
+    selected = build_console_rail_preference_key(
+        workspace_id="Research Lab", layout_scope=layout_scope
+    )
+    workspace = build_console_rail_preference_key(
+        workspace_id="Research Lab", layout_scope="workspace"
+    )
+    result = chat_screen_module.ChatScreen._ensure_console_rail_scope_seed(
+        screen, selected, workspace
+    )
+    assert result == records[selected.value]
+    assert result["left_open"] is True
+    assert "right_open" not in result and "left_open_explicit" not in result
+    assert writes == []
+
+
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_safe(
     monkeypatch,
 ):
-    """Every absent target is seeded once without deleting or rewriting sources."""
+    """Saved scopes migrate once; missing preferences render defaults read-only."""
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -476,12 +503,16 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
 
             assert seeded == expected
             assert records[selected_key.value] == expected
-            assert writes == [(selected_key.value, expected, False)]
+            assert writes == (
+                [(selected_key.value, expected, False)] if source_snapshot else []
+            )
             for source_key, source_payload in source_snapshot.items():
                 assert records[source_key] == source_payload
 
             console._ensure_console_rail_scope_seed(selected_key, workspace_key)
-            assert writes == [(selected_key.value, expected, False)]
+            assert writes == (
+                [(selected_key.value, expected, False)] if source_snapshot else []
+            )
 
         writes.clear()
         existing = {**defaults, "model_open": False}
@@ -523,6 +554,7 @@ async def test_console_rail_scope_seeding_is_lossless_one_time_and_responsive_sa
         assert "right_open" not in writes[0][1]
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rail_writes_cannot_finish_with_stale_seed(monkeypatch):
     """A delayed seed writer cannot overwrite a newer in-memory mutation."""
@@ -535,7 +567,14 @@ async def test_console_rail_writes_cannot_finish_with_stale_seed(monkeypatch):
         await pilot.app.workers.wait_for_complete()
 
         shared_key = build_console_rail_preference_key(layout_scope="global")
-        app.app_config["console"] = {"rail_layout_scope": "global", "rail_state": {}}
+        workspace_key = build_console_rail_preference_key(
+            workspace_id=console._workspace._current_console_workspace_context().active_workspace_id,
+            layout_scope="workspace",
+        )
+        app.app_config["console"] = {
+            "rail_layout_scope": "global",
+            "rail_state": {workspace_key.value: {"left_open": True}},
+        }
         seed_started = threading.Event()
         release_seed = threading.Event()
         mutation_finished = threading.Event()
@@ -582,6 +621,7 @@ async def test_console_rail_writes_cannot_finish_with_stale_seed(monkeypatch):
         assert write_order[-1] is False
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rail_scope_seed_preserves_explicit_left_open_intent(
     monkeypatch,

@@ -95,7 +95,11 @@ Rail disclosure layout is global by default. Console Behavior offers an
 explicit per-workspace mode; existing workspace-scoped records remain stored and
 become authoritative again when that mode is selected. A missing global record
 is seeded once from the active workspace's effective saved layout, otherwise
-product defaults apply. Scope changes never persist transient scroll, focus,
+product defaults apply. Applying defaults without a saved source is read-only:
+it must not publish a configuration generation merely because Console opened.
+Adopting an existing saved layout still persists the target once, and explicit
+user edits retain the existing durable writer (TASK-34406).
+Scope changes never persist transient scroll, focus,
 search disclosure, Tree selection, or tooltip state and never delete the
 inactive scope's records. Responsive compact-collapse remains a rendering
 override rather than a preference mutation.
