@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.hook_permissions import HookPermissions
     from tldw_chatbook.Chat.console_chat_controller import (
         ApprovalDecision,
         ApprovalDecisions,
@@ -53,7 +54,6 @@ if TYPE_CHECKING:
 from loguru import logger
 
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
-from tldw_chatbook.Agents.hook_permissions import HookPermissions
 from tldw_chatbook.Chat.console_hook_review_host import InitialHookReviewMixin
 from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_PENDING_APPROVAL_KIND,
