@@ -457,3 +457,30 @@ async def test_navigation_after_receipt_keeps_original_turn_and_newer_session_dr
         )
         assert case.store.session_draft(successor.id) == "Untouched other draft"
         assert case.store.received_turn_for_session(successor.id) is None
+
+
+async def test_switch_settlement_send_refuses_stale_draft_without_consumption(monkeypatch):
+    from tldw_chatbook.UI.Console_Modules.wiring import receive_console_visible_intent
+
+    async with _received_console_case(monkeypatch, "switch-settlement") as case:
+        successor = case.store.create_session(title="Next draft owner", activate=False)
+        case.store.set_session_draft(successor.id, "Other saved draft")
+        case.console._session._capture_console_draft_switch_snapshot()
+        case.store.switch_session(successor.id)
+        case.composer.insert_text(" new typing")
+        visible = case.composer.draft_text()
+        captured = case.composer.capture_draft_for_send()
+        previous = case.store.session_draft(case.session.id)
+        assert visible != previous
+
+        result = receive_console_visible_intent(
+            case.console, visible, case.session.id, captured
+        )
+
+        assert result == ""
+        assert case.store.received_turn_for_session(case.session.id) is None
+        assert case.store.received_turn_for_session(successor.id) is None
+        assert case.store.session_draft(case.session.id) == previous
+        assert case.store.session_draft(successor.id) == "Other saved draft"
+        assert case.composer.draft_text() == visible
+        assert case.provider_calls == []

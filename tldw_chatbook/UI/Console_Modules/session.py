@@ -1150,6 +1150,7 @@ class ConsoleSessionController:
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_visible_draft_session_id: str | None = None
+        self._initial_composer_sync_pending = False
         self._visible_agent_handoff_draft: (
             tuple[str, str, int, ComposerDraftSnapshot] | None
         ) = None
@@ -5641,6 +5642,35 @@ class ConsoleSessionController:
             if composer.commit_captured_draft(composer.capture_draft_for_send()):
                 self._console_draft_switch_snapshot = None
 
+    def initialize_composer_draft(self, composer: Any) -> None:
+        """Bind the initial visible draft before the composer accepts edits."""
+        store = self._console_chat_store
+        session = self._active_native_console_session()
+        if store is None or session is None:
+            return
+        try:
+            draft = store.session_draft(session.id)
+            revision = store.session_input_snapshot(session.id).draft_revision
+        except KeyError:
+            return
+        composer.load_draft(draft)
+        composer.restore_undo_history(self._console_undo_histories.get(session.id))
+        self._console_visible_draft_session_id = session.id
+        self._screen._console_visible_draft_revision = revision
+        self._visible_agent_handoff_draft = (
+            (
+                session.id,
+                session.incarnation_id,
+                session.agent_handoff_revision,
+                composer.capture_draft_snapshot(),
+            )
+            if session.agent_handoff_state == "pending"
+            else None
+        )
+        # Mount-time config work may defer the first full sync. Its UI/hook
+        # effects still run there, but early typing already has an exact owner.
+        self._initial_composer_sync_pending = True
+
     def _sync_console_session_draft(self) -> None:
         """Reconcile the composer draft with the active runtime Console session.
 
@@ -5698,6 +5728,11 @@ class ConsoleSessionController:
                     store.set_session_draft(visible_session_id, composer.draft_text())
                 except KeyError:
                     pass
+            if self._initial_composer_sync_pending:
+                self._sync_console_command_popup()
+                if self._on_draft_session_changed is not None:
+                    self._on_draft_session_changed()
+                self._initial_composer_sync_pending = False
             return
         snapshot = self._console_draft_switch_snapshot
         self._console_draft_switch_snapshot = None
@@ -5748,6 +5783,7 @@ class ConsoleSessionController:
         ):
             self._on_draft_session_changed()
         self._console_visible_draft_session_id = active_session_id
+        self._initial_composer_sync_pending = False
         composer._authored_draft_observer = observer
         self._screen._console_visible_draft_revision = store.session_input_snapshot(
             active_session_id

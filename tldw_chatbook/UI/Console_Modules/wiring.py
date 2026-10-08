@@ -541,9 +541,11 @@ def receive_console_visible_intent(
         enabled,
     )
     composer._authored_draft_observer = screen._publish_console_authored_draft
-    screen._publish_console_authored_draft(
+    if not screen._publish_console_authored_draft(
         draft, (composer.capture_draft_snapshot().generation, composer.edit_serial)
-    )
+    ):
+        screen.app_instance.notify("Draft or chat changed; Send again.", severity="warning")
+        return ""
     inputs = store.session_input_snapshot(session_id)
     launch, revision, _notice = runtime.snapshot_console_staged_evidence()
     intent = ConsoleReceivedTurnIntent(

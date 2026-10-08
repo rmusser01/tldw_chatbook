@@ -19142,3 +19142,8 @@ Keep real permission/identity drift on its ordinary validation route and report
 that sample separately; a green count test or identical function-call totals do
 not establish equivalent native work. Do not weaken freshness or change limits
 to manufacture a cleaner performance result.
+
+
+### A Textual harness subclass can run both mount handlers
+
+TASK-34406, 2026-10-07: a startup draft regression inherited ConsoleHarness and added its own on_mount. Textual dispatched both handlers, pushing a second ChatScreen above the intended deferred screen; an observer installed on the first controller recorded no effects from the visible controller. Inherit the common CSS/cleanup App directly when the test owns the complete mounting sequence. The corrected single-screen fixture reproduced all three original draft losses and observed the repaired initial effects once. Keep the earlier real full-App evidence separate from a incorrectly scoped harness observation.

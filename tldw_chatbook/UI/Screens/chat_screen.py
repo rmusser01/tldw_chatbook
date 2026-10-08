@@ -16593,12 +16593,7 @@ class ChatScreen(BaseAppScreen):
             # store with the controller (which records accepted sends) so
             # ghost text and Up/Down recall see this app's own past prompts.
             composer.set_prompt_history(self._ensure_console_prompt_history())
-            store = self._console_chat_store
-            if store is not None and store.active_session_id is not None:
-                try:
-                    composer.load_draft(store.session_draft(store.active_session_id))
-                except KeyError:
-                    pass
+            self._session.initialize_composer_draft(composer)
             # TASK-17651: the composer is a dense-form field, not a framed
             # region — CSS owns its left-edge marker and focus treatment.
             composer._authored_draft_observer = self._publish_console_authored_draft
@@ -19222,19 +19217,29 @@ class ChatScreen(BaseAppScreen):
 
     def _publish_console_authored_draft(
         self, draft: str, token: tuple[int, int]
-    ) -> None:
+    ) -> bool:
         """Publish authored identity synchronously, before queued widget messages."""
         session_id = self._console_visible_draft_session_id
         store = self._console_chat_store
         if session_id is None or store is None:
-            return
+            return False
+        switch = self._session._console_draft_switch_snapshot
+        if (
+            switch is not None
+            and switch[0] == session_id
+            and store.active_session_id != session_id
+        ):
+            # The explicit switch owns these edits. Its normal draft sync
+            # transfers the typed suffix without publishing it to the old chat.
+            return False
         try:
             store.set_session_draft(session_id, draft, authored_token=token)
             self._console_visible_draft_revision = store.session_input_snapshot(
                 session_id
             ).draft_revision
         except KeyError:
-            pass
+            return False
+        return True
 
     def _project_console_received_preparing(self, session_id: str) -> None:
         """Paint the resident admission without running configuration selectors."""
