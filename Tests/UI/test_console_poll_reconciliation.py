@@ -129,3 +129,68 @@ async def test_ordinary_preparing_polls_do_not_repeat_live_core_reconciliation(
         assert (
             sum(row["core_returns"] for row in rows) == 0
         ), f"Unchanged Preparing polls repeated original live core reconciliation: {rows!r}"
+
+
+async def test_in_place_runtime_disable_reaches_next_real_send(monkeypatch):
+    """The next driver Send must honor the gate without a test forcing full sync."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+
+    async with _received_console_case(
+        monkeypatch, "runtime-gate-next-send", durable=True
+    ) as case:
+        controller = case.controller
+        assert controller._agent_runtime_enabled is True
+        assert controller._agent_bridge is not None
+        app_config = case.console.app_instance.app_config
+        console_config = app_config["console"]
+        assert console_config.get("agent_runtime", True) is True
+        agent_entries = []
+        code = ConsoleChatController._run_agent_reply.__code__
+
+        def started(_code, _offset):
+            if sys._getframe(1).f_locals.get("self") is controller:
+                agent_entries.append(True)
+
+        monitoring = sys.monitoring
+        tool = next(value for value in range(6) if monitoring.get_tool(value) is None)
+        monitoring.use_tool_id(tool, "original-runtime-gate-next-send")
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_START, started)
+            monitoring.set_local_events(tool, code, monitoring.events.PY_START)
+            # The supported in-memory kill switch changes in place. Do not
+            # save/reload config, rebuild the screen, update the controller,
+            # call full sync, or yield before posting the actual next action.
+            console_config["agent_runtime"] = False
+            _send(case, "enter")
+            record = await _held_received_record(case)
+            assert case.console.app_instance.app_config is app_config
+            assert app_config["console"] is console_config
+            assert record.received_intent.selection.agent_runtime_enabled is False
+            assert (
+                record.received_intent.selection.tool_configuration[
+                    "agent_runtime_enabled"
+                ]
+                is False
+            )
+            task = record.task
+            case.probe.release.set()
+            assert await _until(
+                lambda: not case.runtime.has_custodied_turns(case.session.id), 15
+            )
+            task.result()
+            assert len(case.provider_calls) == 1
+            messages = case.store.messages_for_session(case.session.id)
+            assert any(
+                message.role is ConsoleMessageRole.ASSISTANT
+                and message.status == "complete"
+                and message.content == "received intent reply"
+                for message in messages
+            )
+            assert agent_entries == [], "Disabled runtime still entered the agent route"
+            assert case.probe.retired()
+        finally:
+            case.probe.release.set()
+            monitoring.set_local_events(tool, code, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_START, None)
+            monitoring.free_tool_id(tool)
