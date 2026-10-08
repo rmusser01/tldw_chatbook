@@ -14,7 +14,7 @@
 
 **Task context:** [TASK-34563](../../../backlog/tasks/task-34563%20-%20Design-Console-Send-preparation-and-I-O-ownership.md) and [TASK-34563.15](../../../backlog/tasks/task-34563.15%20-%20Receive-Console-sends-before-checked-preparation.md). This document does not reopen or mark either prior task complete.
 
-**Status:** Integration owner reviewed the plan and approved Task 1 source/control preparation only. The integration owner accepted the need to avoid unused initialization and requested the one-catalog revision below. Its detailed contract remains proposed for review. Product implementation waits for original causal RED and review; all native execution remains integration-owned. No cold-initialization implementation or native qualification is claimed. Source anchors were inspected on the integration worktree through `b0bfd8344a`; verify nearby source drift before editing. Tracked candidate: OPT-69 in the [optimization review list](../../Development/console-optimization-review-list.md).
+**Status:** The integration owner qualified original causal RED in `stock-cold-send-owned-baseline-5` after `c653f5445e` fixed the finite Workspace connection lifetime: both real Send routes reach the exact input-thread SQL-before-receipt assertion after all fourteen App creators and every native counter retire. The reviewed one-catalog contract was then assigned for source-only implementation. Candidate `d7d0cc2d71` implements Task 2 and twenty-two isolated contracts in the dedicated cold-trust worktree; static checks pass. Integration review and all runtime/native qualification remain pending under the integration owner. No measured Send/input gain is claimed. Tracked candidate: OPT69 in the [optimization review list](../../Development/console-optimization-review-list.md).
 
 ADR required: no new ADR.
 ADR path: backlog/decisions/222-console-send-preparation-and-io-ownership.md.
@@ -99,7 +99,7 @@ For the received adapter, common eligibility permits a cold local slot with eith
 
 ### Resident classification and one finite catalog result
 
-Keep the proposed `ConsoleReceivedConfigurationPreparation(trust_source=None)` and:
+Use the reviewed `ConsoleReceivedConfigurationPreparation(trust_source=None)` and:
 
 ```python
 def capture_console_received_configuration_preparation(
@@ -107,7 +107,7 @@ def capture_console_received_configuration_preparation(
 ) -> ConsoleReceivedConfigurationPreparation | None: ...
 ```
 
-None declines the new route. A value with no trust source preserves the current ready route. A cold source proves the exact stock factory and all other configuration sources, without reading the catalog or invoking a getter. Extract shared `_standard_configuration_references(refs) -> bool`; the public `standard_console_configuration_sources(...)` signature/strict behavior remains unchanged. Only private received classification may discover references with a proven `_cold_trust` source. Missing proof modules decline without imports.
+None declines the new route. A value with no trust source preserves the current ready route. A cold source proves the exact stock factory and all other configuration sources, without reading the catalog or invoking a getter. Extract shared `_standard_configuration_references(refs) -> bool`; the public `standard_console_configuration_sources(...)` signature/strict behavior remains unchanged. Only private received classification may discover references with a proven `_unused_trust` source. Missing proof modules decline without imports.
 
 In `console_configuration_preparation.py`, add frozen operation-local `ConsoleSkillCatalogRead` and `ConsolePreparedSkillContext`. Both bind the exact existing creator/session/turn, profile/config generation, original local/facade/plugin/factory objects and method records. These are result values, not admission owners or reusable caches. The read contains detached records plus either an already-projected maximum or an explicit requires-trust outcome. The final result contains a deeply immutable maximum, its captured source checks and whether trust was used. Its live source references never enter `ConsoleTurnConfigurationSnapshot` or persisted data.
 
@@ -136,7 +136,7 @@ An optional catalog/projection error is recorded as unavailable and yields the e
 
 Keep `ConsoleRuntime.accept_received_intent(intent, *, _configuration_preparation=None)` and `ReceivedPreparationSource.configuration_preparation`. Original callers default to their current behavior. The runtime validates any supplied preparation before claiming the draft; no new task, registry or index is created. The screen only passes resident classification with the existing detached intent.
 
-`_prepare_received_configuration_sources(runtime, record, source) -> ConsolePreparedSkillContext | None` runs after the final existing hook readiness/source check and before selected configuration capture:
+The preparation sequence is inlined in the existing `_run_received_intent_bound` driver after the final hook readiness/source check and before selected configuration capture; it returns a `ConsolePreparedSkillContext` only for the cold branch. This avoids a new one-use wrapper:
 
 1. Ready preparation returns None and retains today's ready capture path.
 2. Cold preparation validates `require_received_source`, common source proof and exact read-set identities, then awaits `capture_console_skill_catalog_owned` under the existing controller/runtime read observers.
@@ -177,12 +177,12 @@ In `capture_console_turn_configuration`, add private `_skill_context_maximum=_UN
 
 **Interfaces:** Implements the common proof, resident classification, one finite catalog read/result, optional runtime/source handoff and private prepared-skill reuse specified above. Keeps existing strict guard, received input model, initializer signature and skill-discovery adapter signature intact.
 
-- [ ] Extract common source proof and its definition-time metadata from the current App-worker-specific capture. Retain existing skill-discovery policy/scheduling adapter checks.
-- [ ] Implement received-only stock cold classification and shared structural validation, with strict ready semantics unchanged.
-- [ ] Carry preparation through existing runtime source ownership. After hook readiness, capture original records once; initialize only on managed-record demand; project through the factored original loop without rescanning.
-- [ ] Required-trust branch publishes the checked original local winner and reruns the unchanged strict guard. The no-demand branch uses the explicit finite result/source contract. Both reuse the prepared maximum in original configuration and retain original durable dispatch.
+- [x] Extract common source proof and its definition-time metadata from the current App-worker-specific capture. Retain existing skill-discovery policy/scheduling adapter checks.
+- [x] Implement received-only stock cold classification and shared structural validation, with strict ready semantics unchanged.
+- [x] Carry preparation through existing runtime source ownership. After hook readiness, capture original records once; initialize only on managed-record demand; project through the factored original loop without rescanning.
+- [x] Required-trust branch publishes the checked original local winner and reruns the unchanged strict guard. The no-demand branch uses the explicit finite result/source contract. Both reuse the prepared maximum in original configuration and retain original durable dispatch.
 - [ ] Run Task 1 controls sequentially and the existing `test_stock_console_skill_setup_has_original_owned_lifetime` and `test_original_skill_trust_builder_retains_native_callback` controls. Report real original-source GREEN separately from classification unit results.
-- [ ] Self-review exact source/body/default/closure validation, no retained UI object, no native work during receipt, no synchronous fallback after cold receipt and no wider provider-setting merge. Commit this bounded integration.
+- [x] Self-review exact source/body/default/closure validation, no retained UI object, no native work during receipt, no synchronous fallback after cold receipt and no wider provider-setting merge. Commit this bounded integration.
 
 ## Task 3: Qualify cancellation, races and actual Send completion
 

@@ -22401,6 +22401,7 @@ class ConsoleChatController:
         *,
         context_provider: Callable[..., ConsoleTurnConfigurationSnapshot] | None = None,
         selection: Any = None,
+        _prepared_skills: Any = None,
     ) -> ConsoleTurnConfigurationSnapshot:
         """Select loop-owned values once, then capture eligible native domain inputs."""
         import sys
@@ -22409,6 +22410,8 @@ class ConsoleChatController:
         from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
         provided_selection = selection
+        if _prepared_skills is not None and provided_selection is None:
+            raise RecoveryRequired("console_snapshot_owner_changed")
         original_provider = (
             self._turn_context_provider if provided_selection is None else None
         )
@@ -22458,6 +22461,7 @@ class ConsoleChatController:
             ConsoleTurnCaptureSelection,
             capture_console_turn_configuration_owned,
             standard_console_configuration_sources,
+            require_prepared_skill_context,
         )
         from tldw_chatbook.MCP.console_snapshot import (
             capture_console_definition_maximum,
@@ -22471,9 +22475,20 @@ class ConsoleChatController:
                 return synchronous_capture()
             if service is not None:
                 raise RecoveryRequired("console_snapshot_owner_changed")
-        eligible_sources = standard_console_configuration_sources(
-            app, store, self, session_id=session_id
-        )
+        if _prepared_skills is None:
+            eligible_sources = standard_console_configuration_sources(
+                app, store, self, session_id=session_id
+            )
+        else:
+            require_prepared_skill_context(
+                _prepared_skills,
+                app,
+                store,
+                self,
+                session_id=session_id,
+                selection=provided_selection,
+            )
+            eligible_sources = True
         session = next((row for row in store.sessions() if row.id == session_id), None)
         if session is None:
             raise KeyError(session_id)
@@ -22581,6 +22596,15 @@ class ConsoleChatController:
             )
 
         def require_current():
+            if _prepared_skills is not None:
+                require_prepared_skill_context(
+                    _prepared_skills,
+                    app,
+                    store,
+                    self,
+                    session_id=session_id,
+                    selection=selection,
+                )
             current = next(
                 (row for row in store.sessions() if row.id == session_id), None
             )
@@ -22681,6 +22705,11 @@ class ConsoleChatController:
             reads=self._preparation_reads,
             observers=observers,
             require_current=require_current,
+            **(
+                {}
+                if _prepared_skills is None
+                else {"_prepared_skills": _prepared_skills}
+            ),
         )
         require_current()
         return validate(context)

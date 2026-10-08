@@ -192,43 +192,56 @@ def capture_skill_context_maximum(
         return _empty_local_skill_context()
     try:
         records = local._visible_records()  # noqa: SLF001 -- app-owned snapshot seam
-        available: list[dict[str, Any]] = []
-        blocked: list[dict[str, Any]] = []
-        for _, record in sorted(records.items()):
-            summary = local._summary_for_record(record)  # noqa: SLF001
-            # A built-in never reads trust; with no definition_digest the
-            # later digest gates skip it, and execute re-verifies its pins.
-            is_builtin = record.get("source") == "builtin"
-            trust = None if is_builtin else getattr(local, "trust_service", None)
-            if not summary.get("trust_blocked") and trust is not None:
-                summary["definition_digest"] = trust.current_fingerprint_digest(
-                    str(summary.get("name", ""))
-                )
-            (blocked if summary.get("trust_blocked") else available).append(summary)
-        plugin_service = (
-            getattr(local, "plugin_service", None)
-            if _plugin_service is _UNSET_PLUGIN_SERVICE
-            else _plugin_service
+        return _capture_skill_context_from_records(
+            local, records, workspace_id, _plugin_service=_plugin_service
         )
-        if plugin_service is not None:
-            plugin_context = plugin_service.capture_maximum(workspace_id)
-            names = {item.get("name") for item in available + blocked}
-            available.extend(
-                row
-                for row in plugin_context["available_skills"]
-                if row["name"] not in names
-            )
-        return {
-            "plugin_run_id": "pending:" + str(uuid4()),
-            "available_skills": available,
-            "blocked_skills": blocked,
-            "context_text": "\n".join(
-                f"- {item['name']}" for item in available if item.get("name")
-            ),
-            "backend": "local",
-        }
     except Exception:  # noqa: BLE001 -- uncertainty freezes an empty maximum
         return _empty_local_skill_context()
+
+
+def _capture_skill_context_from_records(
+    local: Any,
+    records: Mapping[str, Mapping[str, Any]],
+    workspace_id: str | None,
+    *,
+    _plugin_service: Any = _UNSET_PLUGIN_SERVICE,
+) -> dict[str, Any]:
+    """Project one already-captured catalog without another native enumeration."""
+    available: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    for _, record in sorted(records.items()):
+        summary = local._summary_for_record(record)  # noqa: SLF001
+        # A built-in never reads trust; with no definition_digest the
+        # later digest gates skip it, and execute re-verifies its pins.
+        is_builtin = record.get("source") == "builtin"
+        trust = None if is_builtin else getattr(local, "trust_service", None)
+        if not summary.get("trust_blocked") and trust is not None:
+            summary["definition_digest"] = trust.current_fingerprint_digest(
+                str(summary.get("name", ""))
+            )
+        (blocked if summary.get("trust_blocked") else available).append(summary)
+    plugin_service = (
+        getattr(local, "plugin_service", None)
+        if _plugin_service is _UNSET_PLUGIN_SERVICE
+        else _plugin_service
+    )
+    if plugin_service is not None:
+        plugin_context = plugin_service.capture_maximum(workspace_id)
+        names = {item.get("name") for item in available + blocked}
+        available.extend(
+            row
+            for row in plugin_context["available_skills"]
+            if row["name"] not in names
+        )
+    return {
+        "plugin_run_id": "pending:" + str(uuid4()),
+        "available_skills": available,
+        "blocked_skills": blocked,
+        "context_text": "\n".join(
+            f"- {item['name']}" for item in available if item.get("name")
+        ),
+        "backend": "local",
+    }
 
 
 def capture_mcp_definition_maximum(app: Any) -> dict[str, str]:
@@ -269,6 +282,9 @@ def capture_mcp_definition_maximum(app: Any) -> dict[str, str]:
         return {}
 
 
+_UNSET_SKILL_CONTEXT = object()
+
+
 def capture_console_turn_configuration(
     app: Any,
     store: ConsoleChatStore,
@@ -287,6 +303,7 @@ def capture_console_turn_configuration(
     mcp_definition_maximum: Mapping[str, str] | None = None,
     _require_current=None,
     _plugin_service: Any = _UNSET_PLUGIN_SERVICE,
+    _skill_context_maximum: Any = _UNSET_SKILL_CONTEXT,
 ) -> ConsoleTurnConfigurationSnapshot:
     """Capture common domain state using the adapters' explicit selected values.
 
@@ -364,15 +381,19 @@ def capture_console_turn_configuration(
             capture_character_authority, session, character_repository
         ),
         prompt_transform_inputs=checked(capture_prompt_transform_inputs, app, session),
-        skill_context_maximum=checked(
-            capture_skill_context_maximum,
-            app,
-            skill_workspace_id,
-            **(
-                {}
-                if _plugin_service is _UNSET_PLUGIN_SERVICE
-                else {"_plugin_service": _plugin_service}
-            ),
+        skill_context_maximum=(
+            checked(
+                capture_skill_context_maximum,
+                app,
+                skill_workspace_id,
+                **(
+                    {}
+                    if _plugin_service is _UNSET_PLUGIN_SERVICE
+                    else {"_plugin_service": _plugin_service}
+                ),
+            )
+            if _skill_context_maximum is _UNSET_SKILL_CONTEXT
+            else _skill_context_maximum
         ),
         mcp_tool_maximum=mcp_definition_maximum,
         mcp_definition_maximum=mcp_definition_maximum,
@@ -402,3 +423,45 @@ def capture_console_turn_configuration(
             "thinking_budget_tokens": provider_selection.thinking_budget_tokens,
         },
     )
+
+
+# Same definition-time capsule format as the original stock skill source proof.
+_CONSOLE_SKILL_CAPTURE_FUNCTIONS = {
+    "_capture_skill_context_from_records": _capture_skill_context_from_records,
+    "_empty_local_skill_context": _empty_local_skill_context,
+}
+_CONSOLE_SKILL_CAPTURE_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (globals(), name, function)
+        for name, function in _CONSOLE_SKILL_CAPTURE_FUNCTIONS.items()
+    )
+    + (
+        (
+            globals(),
+            "_CONSOLE_SKILL_CAPTURE_FUNCTIONS",
+            _CONSOLE_SKILL_CAPTURE_FUNCTIONS,
+        ),
+        (globals(), "_UNSET_PLUGIN_SERVICE", _UNSET_PLUGIN_SERVICE),
+        (globals(), "uuid4", uuid4),
+    ),
+    tuple(
+        (
+            _CONSOLE_SKILL_CAPTURE_FUNCTIONS,
+            name,
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for name, function in _CONSOLE_SKILL_CAPTURE_FUNCTIONS.items()
+    ),
+)

@@ -2653,7 +2653,9 @@ class ConsoleRuntime:
         )
         return record.turn_id
 
-    def accept_received_intent(self, intent: ConsoleReceivedTurnIntent) -> str:
+    def accept_received_intent(
+        self, intent: ConsoleReceivedTurnIntent, *, _configuration_preparation=None
+    ) -> str:
         """Reserve bounded authored input before any hook or configuration read."""
         from .console_received_intent import ConsoleReceivedTurnIntent
         from .console_received_dispatch import (
@@ -2669,7 +2671,21 @@ class ConsoleRuntime:
             raise RuntimeError("Console chat owner is unavailable.")
         if not store.session_inputs_are_current(intent.inputs):
             raise RuntimeError("Console input changed; Send again.")
-        source = received_preparation_source(self)
+        if _configuration_preparation is not None:
+            from .console_configuration_preparation import (
+                require_received_configuration_preparation,
+            )
+
+            require_received_configuration_preparation(
+                _configuration_preparation,
+                self._app,
+                store,
+                self._chat_controller,
+                session_id=intent.session_id,
+            )
+        source = received_preparation_source(
+            self, configuration_preparation=_configuration_preparation
+        )
         claim = None
         if intent.queue_revision is None:
             claim = store.claim_received_turn(

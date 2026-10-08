@@ -99,9 +99,10 @@ class ReceivedPreparationSource:
     config: Any = field(repr=False)
     config_identity: Any = field(repr=False)
     permissions: Any = field(repr=False)
+    configuration_preparation: Any = field(default=None, repr=False)
 
 
-def received_preparation_source(runtime):
+def received_preparation_source(runtime, *, configuration_preparation=None):
     from tldw_chatbook import config
 
     return ReceivedPreparationSource(
@@ -113,6 +114,7 @@ def received_preparation_source(runtime):
         config,
         config.current_config_identity(),
         runtime._hook_permissions,
+        configuration_preparation,
     )
 
 
@@ -225,9 +227,40 @@ async def _run_received_intent_bound(runtime, record, source):
     if not review.ready:
         raise RuntimeError("Hooks changed; Send again.")
     require_received_source(runtime, record, source)
+    prepared_skills = None
+    preparation = source.configuration_preparation
+    if preparation is not None and preparation.trust_source is not None:
+        from .console_configuration_preparation import (
+            capture_console_skill_catalog_owned,
+            finish_console_skill_catalog_owned,
+        )
+
+        def current():
+            require_received_source(runtime, record, source)
+
+        reads, observers = controller._preparation_reads, (runtime._preparation_reads,)
+        catalog = await capture_console_skill_catalog_owned(
+            source.app,
+            store,
+            controller,
+            session_id=record.session_id,
+            turn_id=record.turn_id,
+            skill_workspace_id=intent.selection.skill_workspace_id,
+            preparation=preparation,
+            reads=reads,
+            observers=observers,
+            require_current=current,
+        )
+        prepared_skills = await finish_console_skill_catalog_owned(
+            catalog,
+            reads=reads,
+            observers=observers,
+            require_current=current,
+        )
     configuration = await controller.capture_turn_configuration_snapshot(
         record.session_id,
         selection=intent.selection,
+        **({} if prepared_skills is None else {"_prepared_skills": prepared_skills}),
     )
     require_received_source(runtime, record, source)
     if any(

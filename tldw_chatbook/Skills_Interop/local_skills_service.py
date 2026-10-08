@@ -2975,3 +2975,61 @@ _CONSOLE_SKILL_CONTEXT_SOURCE = (
         if type(_skill_function) is _SkillFunctionType
     ),
 )
+
+
+# Additional read/projection records do not narrow the existing discovery adapter.
+_CONSOLE_SKILL_CATALOG_METHODS = (
+    "_visible_records",
+    "_load_index",
+    "_disabled_builtins",
+    "_builtin_record",
+    "_metadata_from_content",
+    "_summary_for_record",
+    "_trust_fields_for_record",
+)
+_CONSOLE_SKILL_CATALOG_FUNCTIONS = {
+    name: method.__func__ if isinstance(method, (staticmethod, classmethod)) else method
+    for name in _CONSOLE_SKILL_CATALOG_METHODS
+    for method in (LocalSkillsService.__dict__[name],)
+}
+_CONSOLE_SKILL_CATALOG_FUNCTIONS["_builtins"] = _builtins
+_CONSOLE_SKILL_CATALOG_SOURCE = (
+    *_CONSOLE_SKILL_CONTEXT_SOURCE[:4],
+    _CONSOLE_SKILL_CONTEXT_SOURCE[4]
+    + (
+        (globals(), "_SERVICE_ASSIGNED_KEYS", _SERVICE_ASSIGNED_KEYS),
+        (
+            globals(),
+            "_CONSOLE_SKILL_CATALOG_FUNCTIONS",
+            _CONSOLE_SKILL_CATALOG_FUNCTIONS,
+        ),
+        (globals(), "_CONSOLE_SKILL_CATALOG_METHODS", _CONSOLE_SKILL_CATALOG_METHODS),
+        (globals(), "_builtins", _builtins),
+    )
+    + tuple(
+        (LocalSkillsService.__dict__, name, LocalSkillsService.__dict__[name])
+        for name in _CONSOLE_SKILL_CATALOG_METHODS
+    ),
+    _CONSOLE_SKILL_CONTEXT_SOURCE[5]
+    + tuple(
+        (
+            _CONSOLE_SKILL_CATALOG_FUNCTIONS,
+            name,
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for name, method in _CONSOLE_SKILL_CATALOG_FUNCTIONS.items()
+        for function in (
+            method.__func__
+            if isinstance(method, (staticmethod, classmethod))
+            else method,
+        )
+    ),
+)

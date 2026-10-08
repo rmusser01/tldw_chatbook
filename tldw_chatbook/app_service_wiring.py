@@ -25,7 +25,7 @@ import os
 import threading
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, Mapping  # noqa: UP035
+from typing import TYPE_CHECKING, Any, Callable, Mapping, NamedTuple  # noqa: UP035
 
 from loguru import logger
 from textual.worker import Worker
@@ -4296,10 +4296,8 @@ def _console_skill_source_current(metadata, source):
     return metadata._source_current(source)
 
 
-def _capture_console_skill_trust_preparation(
-    app, service, owner_current, controller_source
-):
-    """Capture only the original App/local-facade lazy trust factory route."""
+def _capture_console_skill_trust_source(app, service):
+    """Capture resident service sources without a UI scheduling dependency."""
     import inspect
     import sys
     from types import FunctionType, ModuleType
@@ -4341,13 +4339,8 @@ def _capture_console_skill_trust_preparation(
     config_source = vars(config_module).get("_COMPACT_MODEL_CONFIG_SOURCE")
     if source is not globals().get("_CONSOLE_SKILL_CONTEXT_SOURCE"):
         return None
-    sources = (source, scope_source, local_source, config_source, controller_source)
+    sources = (source, scope_source, local_source, config_source)
     if not all(_console_skill_source_current(metadata, row) for row in sources):
-        return None
-    if (
-        inspect.getattr_static(app_type, "workers", None) is not _CONSOLE_SKILL_WORKERS
-        or inspect.getattr_static(app_type, "app", None) is not _CONSOLE_SKILL_APP
-    ):
         return None
     app_slots = (
         "_build_local_skill_trust_service",
@@ -4425,21 +4418,6 @@ def _capture_console_skill_trust_preparation(
     # An original closing Runtime is a refusal, not eligibility for direct IO.
     if not runtime_current():
         raise RuntimeError("console_skill_trust_runtime_closed")
-    manager = app_fields.get("_workers")
-    manager_fields = metadata._plain_fields(
-        manager, _SkillWorkerManager, ("_app", "_workers")
-    )
-    if (
-        manager_fields is None
-        or manager_fields.get("_app") is not app
-        or type(manager_fields.get("_workers")) is not set  # noqa: E721 -- exact stock metadata; no custom dispatch
-        or any(name in manager_fields for name in ("_new_worker", "add_worker"))
-        or "workers" in app_fields
-        or "app" in app_fields
-        or _CONSOLE_SKILL_APP_GET(app) is not app
-    ):
-        return None
-    manager_workers = manager_fields["_workers"]
     local = scope_fields.get("local_service")
     local_fields = metadata._plain_fields(
         local,
@@ -4463,14 +4441,9 @@ def _capture_console_skill_trust_preparation(
     if (
         app_fields.get("_skills_scope_service") is not service
         or app_fields.get("_local_skills_service") is not local
-        or app_fields.get("_local_skill_trust_service") is not None
-        or local_fields.get("_trust_service") is not None
         or app_fields.get("_shutting_down") is not False
         or app_fields.get("_exit") is not False
         or type(app_fields.get("app_config")) is not dict  # noqa: E721 -- exact stock metadata; no custom dispatch
-        or "run_worker" in app_fields
-        or inspect.getattr_static(app_type, "run_worker", None)
-        is not _CONSOLE_SKILL_RUN_WORKER
     ):
         return None
     lazy = local_fields.get("_trust_service_factory")
@@ -4524,9 +4497,6 @@ def _capture_console_skill_trust_preparation(
         or app_fields.get("_thread_id") != thread.ident
     ):
         return None
-    # Preserve configured/custom scheduling on the preceding direct route.
-    if loop.get_task_factory() is not None:
-        return None
 
     metadata_check = _console_skill_metadata_current
     source_check = _console_skill_source_current
@@ -4561,7 +4531,7 @@ def _capture_console_skill_trust_preparation(
         if not all(source_check(metadata, row) for row in sources):
             return False
         # Captured plain fields only: no Textual accessor or cached authority.
-        return (
+        if not (
             runtime_current()
             and sys.modules.get("tldw_chatbook.app") is app_module
             and app_namespace.get("_CONSOLE_SKILL_APP_SOURCE") is app_record
@@ -4586,113 +4556,180 @@ def _capture_console_skill_trust_preparation(
                 )
             )
             == selector
+        ):
+            return False
+        return (
+            metadata._plain_fields(
+                app,
+                app_type,
+                (
+                    "_local_skill_trust_service",
+                    "_local_skill_trust_service_build_lock",
+                    "_local_skills_service",
+                    "_skills_scope_service",
+                    "_local_skills_stack_inputs",
+                    "app_config",
+                    "_shutting_down",
+                    "_exit",
+                    "_workers",
+                    "_thread_id",
+                    "console_runtime",
+                    "_console_runtime_shutdown_task",
+                ),
+            )
+            is app_fields
+            and metadata._plain_fields(
+                service,
+                scope_type,
+                ("local_service", "server_service", "policy_enforcer"),
+            )
+            is scope_fields
+            and metadata._plain_fields(
+                local,
+                local_type,
+                (
+                    "_trust_service",
+                    "_trust_service_factory",
+                    "store_dir",
+                    "skills_dir",
+                    "policy_enforcer",
+                ),
+            )
+            is local_fields
+            and app_fields.get("_skills_scope_service") is service
+            and app_fields.get("_local_skills_service") is local
+            and app_fields.get("_local_skill_trust_service_build_lock") is lock
+            and app_fields.get("app_config") is mapping
+            and type(app_fields.get("_thread_id")) is int  # noqa: E721 -- original exact source field
+            and app_fields.get("_thread_id") == thread.ident
+            and app_fields.get("_shutting_down") is False
+            and app_fields.get("_exit") is False
+            and all(
+                inspect.getattr_static(app_type, name, None)
+                is ServiceWiringMixin.__dict__[name]
+                for name in app_slots
+            )
+            and not any(name in app_fields for name in app_slots)
+            and local_fields.get("_trust_service_factory") is lazy
+            and lazy.__code__ is _CONSOLE_SKILL_TRUST_FACTORY_CODE
+            and lazy.__globals__ is globals()
+            and lazy.__defaults__ is None
+            and lazy.__kwdefaults__ is None
+            and lazy.__closure__ is lazy_closure
+            and lazy_closure[0].cell_contents is app
+            and local_fields.get("store_dir") is store_dir
+            and local_fields.get("skills_dir") is skills_dir
+            and not any(name in scope_fields for name in _CONSOLE_SKILL_SCOPE_SLOTS)
+            and not any(name in local_fields for name in _CONSOLE_SKILL_LOCAL_SLOTS)
+            and scope_fields.get("server_service") is inputs[1]
+            and app_fields.get("_local_skills_stack_inputs") is inputs
+            and scope_fields.get("local_service") is local
+            and scope_fields.get("policy_enforcer") is inputs[0]
+            and local_fields.get("policy_enforcer") is inputs[0]
         )
 
-    def current(expected_trust=None):
+    def current():
         try:
-            if (
-                asyncio.get_running_loop() is not loop
-                or threading.current_thread() is not thread
-                or loop.get_task_factory() is not None
-            ):
-                return False
-            if not source_current() or owner_current() is not True:
-                return False
             return (
-                metadata._plain_fields(
-                    app,
-                    app_type,
-                    (
-                        "_local_skill_trust_service",
-                        "_local_skill_trust_service_build_lock",
-                        "_local_skills_service",
-                        "_skills_scope_service",
-                        "_local_skills_stack_inputs",
-                        "app_config",
-                        "_shutting_down",
-                        "_exit",
-                        "_workers",
-                        "_thread_id",
-                        "console_runtime",
-                        "_console_runtime_shutdown_task",
-                    ),
-                )
-                is app_fields
-                and metadata._plain_fields(
-                    service,
-                    scope_type,
-                    ("local_service", "server_service", "policy_enforcer"),
-                )
-                is scope_fields
-                and metadata._plain_fields(
-                    local,
-                    local_type,
-                    (
-                        "_trust_service",
-                        "_trust_service_factory",
-                        "store_dir",
-                        "skills_dir",
-                        "policy_enforcer",
-                    ),
-                )
-                is local_fields
-                and app_fields.get("_skills_scope_service") is service
-                and app_fields.get("_local_skills_service") is local
-                and app_fields.get("_local_skill_trust_service_build_lock") is lock
-                and app_fields.get("_local_skill_trust_service") is expected_trust
-                and app_fields.get("app_config") is mapping
-                and app_fields.get("_shutting_down") is False
-                and app_fields.get("_exit") is False
-                and app_fields.get("_workers") is manager
-                and type(app_fields.get("_thread_id")) is int  # noqa: E721 -- exact stock metadata; no custom dispatch
-                and app_fields.get("_thread_id") == thread.ident
-                and metadata._plain_fields(
-                    manager, _SkillWorkerManager, ("_app", "_workers")
-                )
-                is manager_fields
-                and manager_fields.get("_app") is app
-                and manager_fields.get("_workers") is manager_workers
-                and not any(
-                    name in manager_fields for name in ("_new_worker", "add_worker")
-                )
-                and "workers" not in app_fields
-                and "app" not in app_fields
-                and inspect.getattr_static(app_type, "workers", None)
-                is _CONSOLE_SKILL_WORKERS
-                and inspect.getattr_static(app_type, "app", None) is _CONSOLE_SKILL_APP
-                and _CONSOLE_SKILL_APP_GET(app) is app
-                and "run_worker" not in app_fields
-                and inspect.getattr_static(app_type, "run_worker", None)
-                is _CONSOLE_SKILL_RUN_WORKER
-                and all(
-                    inspect.getattr_static(app_type, name, None)
-                    is ServiceWiringMixin.__dict__[name]
-                    for name in app_slots
-                )
-                and not any(name in app_fields for name in app_slots)
-                and local_fields.get("_trust_service_factory") is lazy
-                and lazy.__code__ is _CONSOLE_SKILL_TRUST_FACTORY_CODE
-                and lazy.__globals__ is globals()
-                and lazy.__defaults__ is None
-                and lazy.__kwdefaults__ is None
-                and lazy.__closure__ is lazy_closure
-                and lazy_closure[0].cell_contents is app
-                and local_fields.get("store_dir") is store_dir
-                and local_fields.get("skills_dir") is skills_dir
-                and not any(name in scope_fields for name in _CONSOLE_SKILL_SCOPE_SLOTS)
-                and not any(name in local_fields for name in _CONSOLE_SKILL_LOCAL_SLOTS)
-                and scope_fields.get("server_service") is inputs[1]
-                and app_fields.get("_local_skills_stack_inputs") is inputs
-                and scope_fields.get("local_service") is local
-                and scope_fields.get("policy_enforcer") is inputs[0]
-                and local_fields.get("policy_enforcer") is inputs[0]
+                asyncio.get_running_loop() is loop
+                and threading.current_thread() is thread
+                and source_current()
             )
         except (AttributeError, TypeError, ValueError):
             return False
 
     if not current():
         return None
-    return app, source_current, current, (manager, manager_fields, loop, runtime_reads)
+    return _ConsoleSkillTrustSource(
+        app, service, local, source_current, current, loop, thread, runtime_reads
+    )
+
+
+class _ConsoleSkillTrustSource(NamedTuple):
+    """One stock service proof; no UI owner or permission verdict is captured."""
+
+    app: Any
+    scope: Any
+    local: Any
+    source_current: Callable[[], bool]
+    current: Callable[[], bool]
+    loop: Any
+    thread: Any
+    runtime_reads: set
+
+
+def _capture_console_skill_trust_preparation(
+    app, service, owner_current, controller_source
+):
+    """Add the original skill-discovery App-worker scheduling contract."""
+    import inspect
+    import sys
+
+    source = _capture_console_skill_trust_source(app, service)
+    if source is None:
+        return None
+    app_fields = vars(app)
+    if (
+        app_fields.get("_local_skill_trust_service") is not None
+        or vars(source.local).get("_trust_service") is not None
+    ):
+        return None
+    metadata = sys.modules.get("tldw_chatbook.Widgets.compact_model_bar")
+    if not _console_skill_source_current(metadata, controller_source):
+        return None
+    manager = app_fields.get("_workers")
+    manager_fields = metadata._plain_fields(
+        manager, _SkillWorkerManager, ("_app", "_workers")
+    )
+    if manager_fields is None:
+        return None
+    manager_workers = manager_fields.get("_workers")
+
+    def source_current():
+        return source.source_current() and _console_skill_source_current(
+            metadata, controller_source
+        )
+
+    def current(expected_trust=None):
+        try:
+            return (
+                source.current()
+                and source_current()
+                and owner_current() is True
+                and source.loop.get_task_factory() is None
+                and app_fields.get("_local_skill_trust_service") is expected_trust
+                and app_fields.get("_workers") is manager
+                and metadata._plain_fields(
+                    manager, _SkillWorkerManager, ("_app", "_workers")
+                )
+                is manager_fields
+                and manager_fields.get("_app") is app
+                and type(manager_workers) is set  # noqa: E721 -- original exact worker owner
+                and manager_fields.get("_workers") is manager_workers
+                and not any(
+                    name in manager_fields for name in ("_new_worker", "add_worker")
+                )
+                and "workers" not in app_fields
+                and "app" not in app_fields
+                and inspect.getattr_static(type(app), "workers", None)
+                is _CONSOLE_SKILL_WORKERS
+                and inspect.getattr_static(type(app), "app", None) is _CONSOLE_SKILL_APP
+                and _CONSOLE_SKILL_APP_GET(app) is app
+                and "run_worker" not in app_fields
+                and inspect.getattr_static(type(app), "run_worker", None)
+                is _CONSOLE_SKILL_RUN_WORKER
+            )
+        except (AttributeError, TypeError, ValueError):
+            return False
+
+    if not current():
+        return None
+    return (
+        app,
+        source_current,
+        current,
+        (manager, manager_fields, source.loop, source.runtime_reads),
+    )
 
 
 async def _prepare_console_skill_trust_service(captured):
@@ -4775,6 +4812,7 @@ _CONSOLE_SKILL_FUNCTIONS = {
     "skills_scope_service": ServiceWiringMixin.__dict__["skills_scope_service"].fget,
     "_console_skill_metadata_current": _console_skill_metadata_current,
     "_console_skill_source_current": _console_skill_source_current,
+    "_capture_console_skill_trust_source": _capture_console_skill_trust_source,
     "_capture_console_skill_trust_preparation": _capture_console_skill_trust_preparation,
     "_prepare_console_skill_trust_service": _prepare_console_skill_trust_service,
     "_CONSOLE_SKILL_RUN_WORKER": _CONSOLE_SKILL_RUN_WORKER,
@@ -4822,6 +4860,12 @@ _CONSOLE_SKILL_CONTEXT_SOURCE = (
             ServiceWiringMixin.__dict__,
             "skills_scope_service",
             ServiceWiringMixin.__dict__["skills_scope_service"],
+        ),
+        (globals(), "_ConsoleSkillTrustSource", _ConsoleSkillTrustSource),
+        (
+            globals(),
+            "_capture_console_skill_trust_source",
+            _capture_console_skill_trust_source,
         ),
         (globals(), "_console_skill_metadata_current", _console_skill_metadata_current),
         (globals(), "_console_skill_source_current", _console_skill_source_current),

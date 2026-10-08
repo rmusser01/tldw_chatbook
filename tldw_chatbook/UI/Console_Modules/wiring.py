@@ -313,7 +313,7 @@ _STOCK_CONSOLE_SCRATCH_SNAPSHOT = (
 def receive_console_visible_intent(
     screen: Any, draft: str, session_id: str, stash: Any
 ):
-    """Use bounded resident view values only; custom/cold adapters stay legacy."""
+    """Receive resident stock values, including proven cold trust preparation."""
     from collections.abc import Mapping
     from tldw_chatbook import config
     from tldw_chatbook.Chat.console_chat_controller import (
@@ -326,7 +326,7 @@ def receive_console_visible_intent(
     )
     from tldw_chatbook.Chat.console_configuration_preparation import (
         ConsoleTurnCaptureSelection,
-        standard_console_configuration_sources,
+        capture_console_received_configuration_preparation,
     )
     from tldw_chatbook.Chat.console_received_intent import ConsoleReceivedTurnIntent
     from tldw_chatbook.Chat.console_chat_models import ConsoleWorkspaceContext
@@ -434,9 +434,12 @@ def receive_console_visible_intent(
         and all(name in resident for name in ("general", "logging"))
         else resident
     )
-    if not isinstance(raw, Mapping) or not standard_console_configuration_sources(
+    if not isinstance(raw, Mapping):
+        return None
+    preparation = capture_console_received_configuration_preparation(
         screen.app_instance, store, controller, session_id=session_id
-    ):
+    )
+    if preparation is None:
         return None
     session = next((item for item in store.sessions() if item.id == session_id), None)
     settings = store.effective_session_settings(session_id)
@@ -565,7 +568,9 @@ def receive_console_visible_intent(
     )
     if config.current_config_identity() != config_identity:
         raise RuntimeError("Console configuration changed; Send again.")
-    return runtime.accept_received_intent(intent)
+    return runtime.accept_received_intent(
+        intent, _configuration_preparation=preparation
+    )
 
 
 def _raw_cli_run_log_root() -> Path:
