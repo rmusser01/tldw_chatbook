@@ -2315,7 +2315,8 @@ class ConsoleAgentController:
            screen -- a just-spawned sub-agent's count should show up
            promptly rather than wait out the full TTL. The run's first sync
            refreshes, then at most once per
-           ``CONSOLE_SUBAGENT_COUNTS_ACTIVE_REFRESH_SECONDS`` (TASK-33620.15).
+           ``CONSOLE_SUBAGENT_COUNTS_ACTIVE_REFRESH_SECONDS``, and the first
+           idle sync after it once more (TASK-33620.15).
         3. The cache has aged past ``CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS``
            -- a fallback bound covering counts that changed from a
            different Console session/tab or a resumed run, where neither
@@ -2347,9 +2348,12 @@ class ConsoleAgentController:
                 not self._console_subagent_counts_cache_during_run
                 or age >= CONSOLE_SUBAGENT_COUNTS_ACTIVE_REFRESH_SECONDS
             )
-        # Seen idle: the next active sync is a new run's first.
-        self._console_subagent_counts_cache_during_run = False
-        return age >= CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+        # The first idle sync after a run refreshes once: its last counts can
+        # be up to a second old. Then the next active sync is a new run's first.
+        return (
+            self._console_subagent_counts_cache_during_run
+            or age >= CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+        )
 
     def _console_run_active(self, active_statuses: Iterable[Any]) -> bool:
         """Whether the viewed session's run is in one of ``active_statuses``."""

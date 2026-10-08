@@ -356,8 +356,9 @@ async def test_an_active_run_requeries_subagent_counts_at_most_once_a_second(
     storage-admission checks on the UI thread -- the largest single item
     (18% of main-thread samples) between a live first send's Enter and its
     provider call. A run still refreshes on its first sync, then at most
-    once a second; a sub-agent can only appear once the provider has
-    answered, so its badge lags by at most that second.
+    once a second, and the first sync after it ends refreshes once more: a
+    count read up to a second before the end would otherwise stand for the
+    whole idle TTL.
     """
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -409,6 +410,15 @@ async def test_an_active_run_requeries_subagent_counts_at_most_once_a_second(
             # ...and a second after the last query the run refreshes again.
             fake_time["t"] += 0.2
             assert agent._console_subagent_counts_for_rows(bridge, rows) == {"c0": 3}
+            # The run ends inside that second: the first idle sync refreshes,
+            # then idle syncs keep the idle TTL.
+            fake_time["t"] += 0.2
+            console._console_chat_controller = SimpleNamespace(
+                run_state=SimpleNamespace(status=ConsoleRunStatus.COMPLETED)
+            )
+            assert agent._console_subagent_counts_for_rows(bridge, rows) == {"c0": 4}
+            fake_time["t"] += 0.2
+            assert agent._console_subagent_counts_for_rows(bridge, rows) == {"c0": 4}
         finally:
             console._console_chat_controller = original_controller
 
