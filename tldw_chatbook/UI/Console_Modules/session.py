@@ -276,10 +276,6 @@ from ...Widgets.Console import (
     ProjectInstructionSetupModal,
     ProjectInstructionSetupResult,
 )
-from ...Widgets.Console.console_reaction_picker_modal import (
-    ConsoleReactionPickerModal,
-    ReactionOption,
-)
 from ...Widgets.Console.console_session_switcher_modal import ConsoleSwitcherChoice
 from ...Widgets.Console.console_activity_outcome_notice import (
     ConsoleActivityOutcomeNotice,
@@ -303,6 +299,10 @@ if TYPE_CHECKING:
     from ...Chat.conversation_local_marks_service import (
         ConversationLocalMarksService,
         ManualUnreadToken,
+    )
+    from ...Widgets.Console.console_reaction_picker_modal import (
+        ConsoleReactionPickerModal,
+        ReactionOption,
     )
     from ..Screens.chat_screen import ChatScreen
 
@@ -775,6 +775,8 @@ def _visual_identity_options_for_db(
         return ()
     if graph is None:
         return ()
+    from ...Widgets.Console.console_reaction_picker_modal import ReactionOption
+
     return tuple(
         ReactionOption(
             expression_key=str(asset["expression_key"]),
@@ -2194,6 +2196,10 @@ class ConsoleSessionController:
                 "This actor has no reaction pack.", severity="information"
             )
             return
+        from ...Widgets.Console.console_reaction_picker_modal import (
+            ConsoleReactionPickerModal,
+        )
+
         self.push_screen(
             ConsoleReactionPickerModal(
                 options=options,

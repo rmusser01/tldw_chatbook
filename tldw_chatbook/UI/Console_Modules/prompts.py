@@ -160,7 +160,6 @@ from ...Widgets.Console.console_prompts_modal import (
     ConsoleRecipeApplyGuard,
     ConsoleSavedPromptApplyGuard,
 )
-from ...Widgets.Console.console_system_prompt_modal import ConsoleSystemPromptModal
 from ...Widgets.Console.prompt_variables_dialog import (
     PromptVariablesDialog,
     PromptVariablesDialogRequest,
@@ -2148,6 +2147,10 @@ class ConsolePromptsController:
             if result is None:
                 return
             self._apply_console_session_system_prompt(result)
+
+        from ...Widgets.Console.console_system_prompt_modal import (
+            ConsoleSystemPromptModal,
+        )
 
         self.push_screen(
             ConsoleSystemPromptModal(
