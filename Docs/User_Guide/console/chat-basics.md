@@ -399,8 +399,10 @@ statistics tools.
   a send behind a **Blocked** turn (which is refused) skip this step.
 - Console stays responsive while it prepares the turn. Keys you type go into
   the composer and stay there for your next message. An Enter pressed in that
-  moment is handled once the turn is accepted, so pressing Enter twice never
-  sends the same text twice.
+  moment is handled once the turn is accepted, and only in the tab where you
+  pressed it, so pressing Enter twice never sends the same text twice. If you
+  switch tabs, the turn is still sent from its own tab (or, in the first
+  instant after Enter, stopped with a notice and its draft kept there).
 - The reply row then appears with a dim "Generating…" placeholder and streams
   in with a "[streaming]" suffix until it completes.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's

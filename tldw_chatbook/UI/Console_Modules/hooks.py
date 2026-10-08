@@ -242,17 +242,22 @@ class ConsoleHooksController:
         stash: ConsoleDraftStash | None,
         dispatch: Callable[[], Awaitable[ConsolePromptDispatchResult]],
     ) -> ConsolePromptDispatchResult:
-        if not snapshot.ready:
+        reviewed = not snapshot.ready
+        if reviewed:
             result = await self._request_review(snapshot, True)
             if result.kind != "ready":
                 return self._refused(session_id, "Send cancelled; draft kept.")
             snapshot = await asyncio.to_thread(self._permissions().snapshot)
             self._on_state(snapshot)
+        # The chat is always re-checked: the dispatcher reads the visible
+        # chat's send gate next. The draft only after a review: keys flow
+        # during the snapshot read, and text typed after the capture belongs
+        # to the next draft (TASK-340), not a reason to refuse this send.
         if (
             not snapshot.ready
             or generation != self._generation
             or self._session() != session_id
-            or not same_captured_draft(self._stash(), stash)
+            or (reviewed and not same_captured_draft(self._stash(), stash))
         ):
             return self._refused(
                 session_id, "Draft, chat or hooks changed; Send again."

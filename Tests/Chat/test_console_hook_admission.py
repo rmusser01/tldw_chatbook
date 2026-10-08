@@ -367,6 +367,36 @@ async def test_a_ready_send_never_hands_off(hook_file):
     assert started == [] and sent == ["original"] and not hooks._busy
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("change", ["typed", "session"])
+async def test_a_ready_send_rechecks_its_chat_but_not_text_typed_after_capture(
+    hook_file, change
+):
+    """TASK-33620.15: keys flow while the hook snapshot is read.
+
+    Text typed after the capture belongs to the next draft (TASK-340), so it
+    must not refuse the captured send; with no review, the draft is not
+    re-checked. The chat still is: the dispatcher's send gate reads the
+    visible chat right after this check.
+    """
+    owner = HookPermissions()
+    pending = owner.snapshot()
+    owner.approve(pending, [pending.rows[0].entry.key])
+    hooks, stash, dispatch, sent = _handoff_controller(
+        owner, _approving_review(owner), []
+    )
+    if change == "typed":
+        typed = replace(stash, text="original x", edit_serial=2)
+        hooks._stash = lambda: typed
+    else:
+        hooks._session = lambda: "b"
+    result = await hooks.dispatch(
+        stash.text, session_id="a", stash=stash, dispatch=dispatch
+    )
+    assert result.accepted is (change == "typed")
+    assert sent == (["original"] if change == "typed" else [])
+
+
 async def _dispatch_from_textual(caller, hooks, stash, dispatch):
     """Run ``hooks.dispatch`` from a real Textual caller (no ChatScreen).
 

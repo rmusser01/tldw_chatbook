@@ -1069,19 +1069,12 @@ class ConsolePromptQueueUIController:
         ``session_id`` pins visible composer sends to the chat that owned the
         captured draft. Other callers retain the active-session fallback.
 
-        TASK-33620.15: a pinned send that will build a turn first reads its
-        service-owned turn authority on a worker thread. That is the only
-        new await, and it comes before every gate below, so the gates, the
-        configuration capture and the launch still run in one synchronous
-        stretch exactly as before; a send the gates refuse waits for nothing.
+        TASK-33620.15: a pinned send that will build a turn reads its
+        service-owned turn authority on a worker thread, after the send gate
+        and before the session-pinned gates. Keys flow during that await, so
+        the gate, which reads the VISIBLE chat, is read first: in the stretch
+        where the hook gate checked that this send's chat is the visible one.
         """
-        prepared: Callable[[], AbstractContextManager[None]] = contextlib.nullcontext
-        if (
-            session_id is not None
-            and self._precapture is not None
-            and self._dispatch_builds_turn(session_id)
-        ):
-            prepared = await self._precapture(session_id)
         blocked_reason = self._blocked_reason_accessor().strip()
         if blocked_reason:
             setup_reason = self._setup_blocked_reason_accessor().strip()
@@ -1101,6 +1094,13 @@ class ConsolePromptQueueUIController:
                 ConsolePromptDispatchStatus.REFUSED, detail=visible
             )
 
+        prepared: Callable[[], AbstractContextManager[None]] = contextlib.nullcontext
+        if (
+            session_id is not None
+            and self._precapture is not None
+            and self._dispatch_builds_turn(session_id)
+        ):
+            prepared = await self._precapture(session_id)
         if session_id is None:
             self._ensure_active_session()
         controller = self._chat_controller_accessor()
@@ -1157,13 +1157,11 @@ class ConsolePromptQueueUIController:
     def _dispatch_builds_turn(self, session_id: str) -> bool:
         """Whether ``dispatch`` would now capture a turn rather than refuse it.
 
-        TASK-33620.15: the setup and preparing gates, read-only, in
-        ``dispatch``'s order, so a send they refuse is refused at once. The
-        rarer refusal copy (emergency stop, the parallel-run cap, recovery)
-        is evaluated once, after the read, where ``dispatch`` always did.
+        TASK-33620.15: the preparing gate, read-only, so a send it refuses
+        is refused at once. The rarer refusal copy (emergency stop, the
+        parallel-run cap, recovery) is evaluated once, after the read, where
+        ``dispatch`` always did.
         """
-        if self._blocked_reason_accessor().strip():
-            return False
         controller = self._chat_controller_accessor()
         snapshot = controller.prompt_queue_registry.snapshot(session_id)
         activity = controller.activity_for(session_id)

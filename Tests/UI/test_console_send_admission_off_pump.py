@@ -229,6 +229,152 @@ async def test_enter_during_admission_is_replayed_after_it_as_the_held_pump_did(
 
 
 @pytest.mark.asyncio
+async def test_a_key_typed_while_the_hook_read_is_held_joins_the_next_draft():
+    """Type-ahead never cancels the send it follows (TASK-340's contract).
+
+    The send's first await is its hook-permission read. Keys now flow during
+    it, and the hook gate compared the composer with the captured draft, so
+    the typed key refused the send ("Draft, chat or hooks changed; Send
+    again."). A key typed straight after Enter did the same on dev (it lands
+    before the send starts). The captured draft is what Enter sends; the key
+    belongs to the next draft. Only a review, which takes the user's time,
+    re-checks the draft.
+    """
+    from Tests.UI.test_console_send_acknowledgement import HeldAdmission
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            gate = HeldAdmission(console)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(gate.entered.is_set, timeout=ENTRY_SECONDS)
+                press(host, "x", "x")
+                await until(lambda: composer.draft_text().endswith("x"), timeout=10)
+            finally:
+                gate.release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            await until(lambda: REPLY in "\n".join(_painted_lines(host)))
+            assert composer.draft_text() == "x"
+            assert _users(console, console._console_chat_store.active_session_id) == [
+                DRAFT
+            ]
+
+
+B_DRAFT = "private draft for tab b"
+
+
+def _users(console, session_id: str) -> list[str]:
+    store = console._ensure_console_chat_store()
+    return [
+        message.content
+        for message in store.messages_for_session(session_id)
+        if message.role.value == "user"
+    ]
+
+
+async def _second_tab(console, pilot, *, ready: bool) -> tuple[str, str]:
+    """Open tab B holding its own unsent draft; return to tab A's draft."""
+    from Tests.UI.test_console_native_chat_flow import _select_llamacpp_console
+
+    store = console._ensure_console_chat_store()
+    session_a = store.active_session_id
+    session_b = store.create_session(title="Session B").id
+    if ready:
+        await console._session._activate_native_console_session(session_b)
+        await pilot.pause(0.2)
+        _select_llamacpp_console(console)
+        await pilot.pause(0.2)
+    store.set_session_draft(session_b, B_DRAFT)
+    await console._session._activate_native_console_session(session_a)
+    await pilot.pause(0.3)
+    composer = console._console_composer_or_none()
+    composer.load_draft(DRAFT)
+    composer.focus()
+    await pilot.pause()
+    return session_a, session_b
+
+
+async def _settled(console, pilot) -> None:
+    flight = getattr(console, "_console_send_flight", None)
+    await until(lambda: flight is None or not (flight.tasks or flight.deferred))
+    await pilot.pause(1.0)
+
+
+@pytest.mark.asyncio
+async def test_an_enter_deferred_behind_a_send_never_sends_another_tab_draft():
+    """A deferred send request replays only in the chat it was made in.
+
+    A second Enter during A's admission is deferred until A's send settles.
+    It was replayed in whatever chat was visible then: Enter, Enter, then
+    Alt+2 sent tab B's unsent draft to the provider (stream_calls 2). The
+    parent build's busy pump ran that Enter in tab A, before the switch.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            session_a, session_b = await _second_tab(console, pilot, ready=True)
+            store = console._ensure_console_chat_store()
+            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                press(host, "enter", "\r")
+                press(host, "alt+2")
+                await until(lambda: store.active_session_id == session_b, timeout=10)
+            finally:
+                hold.release.set()
+            await until(lambda: gateway.stream_calls >= 1)
+            await _settled(console, pilot)
+            assert _users(console, session_a) == [DRAFT]
+            assert _users(console, session_b) == []
+            assert store.session_draft(session_b) == B_DRAFT
+            assert gateway.stream_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_leaving_a_tab_while_its_send_is_admitted_still_sends_it_there():
+    """The send's gate is read for its own chat, never the one switched to.
+
+    The screen's send gate (provider readiness, archive, evidence, vision)
+    describes the visible chat. It was read after admission's authority read,
+    while keys flow, so Alt+2 to an unconfigured tab refused tab A's send
+    with tab B's reason ("Add API key ..."). The parent build sent it.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            session_a, session_b = await _second_tab(console, pilot, ready=False)
+            store = console._ensure_console_chat_store()
+            notices: list[str] = []
+            real_notify = host.app_instance.notify
+            host.app_instance.notify = lambda message, **kwargs: (
+                notices.append(str(message)),
+                real_notify(message, **kwargs),
+            )
+            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                press(host, "alt+2")
+                await until(lambda: store.active_session_id == session_b, timeout=10)
+            finally:
+                hold.release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            await _settled(console, pilot)
+            assert _users(console, session_a) == [DRAFT]
+            assert _users(console, session_b) == []
+            assert store.session_draft(session_b) == B_DRAFT
+            assert not [n for n in notices if "API key" in n], notices
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("trigger", ["enter", "button", "workbench"])
 @pytest.mark.parametrize("accepted", [True, False], ids=["accepted", "refused"])
 async def test_a_raw_command_leaves_the_composer_once_whichever_send_starts_it(

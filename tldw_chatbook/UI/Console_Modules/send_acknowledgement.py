@@ -28,7 +28,7 @@ TASK-33620.15: the Send button and the Workbench's send now start here too
 (``request_visible_send``), and the send runs as its own task: awaited from
 the app pump's callback, as it was, every await of it held key delivery.
 A send request made while one runs is replayed when it settles, as the busy
-app pump used to replay it.
+app pump used to replay it, and only in the chat it was made in.
 
 Imported on the first send only, so it adds nothing to the ADR-097 boot
 census; boot-time readers go through ``getattr(screen, ACK_ATTRIBUTE)``.
@@ -409,7 +409,10 @@ def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
 
 
 def request_visible_send(
-    screen: Any, *, guard: Callable[[], bool] | None = None
+    screen: Any,
+    *,
+    guard: Callable[[], bool] | None = None,
+    made_in: str | None = None,
 ) -> None:
     """Capture the visible draft now and send it, acknowledged (TASK-33620.15).
 
@@ -422,6 +425,7 @@ def request_visible_send(
         screen: The Console ``ChatScreen``.
         guard: Enter's check that the Send action is available, run once the
             draft is captured; ``False`` releases the capture unsent.
+        made_in: Set on a deferred request's replay: the chat it was made in.
     """
     from tldw_chatbook.UI.Screens.chat_screen import _ConsolePendingSend
 
@@ -429,15 +433,20 @@ def request_visible_send(
         # A send keypress is already scheduled on the app pump; a second
         # Enter in that window must not enqueue it twice.
         return
+    session_id = screen._console_visible_send_session_id()
     flight = _flight(screen)
     if flight.tasks:
         # The app pump used to hold this request until the running send's
-        # admission returned; replay it then (one request, as the second
-        # Enter of a double press would have found an empty draft).
-        if flight.deferred is None:
-            flight.deferred = partial(request_visible_send, screen, guard=guard)
+        # admission returned; replay the latest one then (one request, as the
+        # second Enter of a double press would have found an empty draft).
+        flight.deferred = partial(
+            request_visible_send, screen, guard=guard, made_in=session_id
+        )
         return
-    session_id = screen._console_visible_send_session_id()
+    if made_in is not None and made_in != session_id:
+        # Its chat was left meanwhile (the held pump ran it there first): it
+        # must never send the draft now on screen. That chat keeps its draft.
+        return
     if session_id is None:
         screen.app_instance.notify("Console send is unavailable.", severity="error")
         return
