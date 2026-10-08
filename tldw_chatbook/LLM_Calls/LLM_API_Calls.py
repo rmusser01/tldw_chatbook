@@ -1319,7 +1319,7 @@ def _estimate_prompt_text(input_data: Any) -> str:
     summary marks via the "includes estimates" qualifier.
     """
     try:
-        return _estimate_prompt_text(input_data)
+        return json.dumps(input_data)
     except Exception:
         return ""
 

@@ -79,8 +79,16 @@ def test_openai_nonstreaming_without_usage_records_estimate():
             streaming=False,
         )
     snap = session_usage().snapshot()
+    # Exact arithmetic pins BOTH estimate sides: a broken prompt-side
+    # extractor (e.g. a never-raising helper that silently returns "")
+    # undercounts and fails this assertion.
+    from tldw_chatbook.Chat.usage_recorder import estimate_tokens
+
+    expected = estimate_tokens(
+        json.dumps([{"role": "user", "content": "hi"}])
+    ) + estimate_tokens("hello there")
+    assert snap.estimated_tokens == expected
     assert snap.exact_tokens == 0
-    assert snap.estimated_tokens > 0
     assert snap.calls == 1
 
 
