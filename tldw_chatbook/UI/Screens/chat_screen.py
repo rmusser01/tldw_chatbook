@@ -658,21 +658,12 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ConsoleComposerMenuModal,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
-from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
     CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION,
 )
 from ...Widgets.destination_rail import (
     DestinationRailSectionHeader,
-)
-from ...Widgets.Console.console_rewind_modal import (
-    ConsoleRewindChoice,
-    ConsoleRewindModal,
-    KIND_RESTORE,
-    KIND_SUMMARIZE_FROM,
-    KIND_SUMMARIZE_UP_TO,
-    RewindPromptRow,
 )
 
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (the summarize-preview modal imports where it is pushed.)
@@ -691,6 +682,10 @@ if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
     from tldw_chatbook.Widgets.Console.console_prompt_comparison_modal import (
         PromptComparisonResult,
+    )
+    from tldw_chatbook.Widgets.Console.console_rewind_modal import (
+        ConsoleRewindChoice,
+        RewindPromptRow,
     )
     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
     from tldw_chatbook.UI.Console_Modules.environment import (
@@ -18524,6 +18519,10 @@ class ChatScreen(BaseAppScreen):
                 return
             self._insert_console_style_token_into_composer(style_id)
 
+        from ...Widgets.Console.console_style_picker_modal import (
+            ConsoleStylePickerModal,
+        )
+
         self.app.push_screen(ConsoleStylePickerModal(), callback=_apply_picker_choice)
 
     def _insert_console_style_token_into_composer(self, style_id: str) -> bool:
@@ -18871,7 +18870,7 @@ class ChatScreen(BaseAppScreen):
 
     def _console_rewind_prompt_rows(
         self, session_id: str
-    ) -> tuple[RewindPromptRow, ...]:
+    ) -> "tuple[RewindPromptRow, ...]":
         """Build newest-first `/rewind` menu rows for a session's USER turns.
 
         Args:
@@ -18886,6 +18885,8 @@ class ChatScreen(BaseAppScreen):
             `preview` is a collapsed, truncated single-line preview of its
             content.
         """
+        from ...Widgets.Console.console_rewind_modal import RewindPromptRow
+
         store = self._ensure_console_chat_store()
         user_messages = [
             message
@@ -19028,6 +19029,8 @@ class ChatScreen(BaseAppScreen):
                 active_path_identity=active_path_identity,
             )
 
+        from ...Widgets.Console.console_rewind_modal import ConsoleRewindModal
+
         self.app.push_screen(
             ConsoleRewindModal(
                 prompts=rows,
@@ -19116,6 +19119,12 @@ class ChatScreen(BaseAppScreen):
                 return
             if choice is None:
                 return
+            from ...Widgets.Console.console_rewind_modal import (
+                KIND_RESTORE,
+                KIND_SUMMARIZE_FROM,
+                KIND_SUMMARIZE_UP_TO,
+            )
+
             if choice.kind in {KIND_SUMMARIZE_UP_TO, KIND_SUMMARIZE_FROM}:
                 try:
                     current_path_identity = tuple(

@@ -174,7 +174,6 @@ from ...Widgets.Console.console_image_viewer_modal import (
     AvatarViewRequested,
     ConsoleImageViewerModal,
 )
-from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.confirmation_dialog import ConfirmationDialog, UnsavedChangesDialog
 from ...Widgets.destination_workbench import DestinationModeStrip
 from ...Widgets.Persona_Widgets.persona_profile_card_widget import (
@@ -13516,6 +13515,10 @@ class PersonasScreen(BaseAppScreen):
             if not self._local_character_actions_allowed():
                 return
             try:
+                from ...Widgets.Console.console_style_picker_modal import (
+                    ConsoleStylePickerModal,
+                )
+
                 choice = await self.app.push_screen_wait(ConsoleStylePickerModal())
             except Exception:
                 logger.opt(exception=True).warning(
