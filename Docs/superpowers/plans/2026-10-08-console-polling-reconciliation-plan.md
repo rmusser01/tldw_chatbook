@@ -12,7 +12,7 @@
 
 **Task:** [TASK-34563.33](../../../backlog/tasks/task-34563.33%20-%20Plan-Console-polling-and-full-state-reconciliation.md).
 
-**Status:** Source-only review draft. No implementation/test code or native execution under this plan has started. Phase 1 below is a required proof gate, not an optional preamble; production narrowing is conditional on its evidence and integration-owner review.
+**Status:** Integration owner reviewed the source plan and authorized Phase 1 source/test preparation only. [TASK-34563.34](../../../backlog/tasks/task-34563.34%20-%20Verify-Console-polling-reconciliation-boundaries.md) owns the first two focused controls. Product narrowing and native qualification remain pending; Phase 1 evidence and integration-owner review are required before Task 2. ADR223 remains Proposed.
 
 ADR required: yes.
 ADR path: backlog/decisions/223-console-polling-and-full-state-reconciliation.md (Proposed).
