@@ -82,6 +82,32 @@ def _press_enter_synchronously(console) -> None:
     console.on_key(Key(key="enter", character="\r"))
 
 
+def _capture_scheduled_sends(monkeypatch) -> list:
+    """Hold each visible send at its hand-off instead of starting it.
+
+    Enter paints its "Sending…" acknowledgement first (TASK-33620.5), then
+    hands the send to ``_start_send``, which runs it as a task no pump awaits
+    (TASK-33620.15). Held there, ``await scheduled[i]()`` runs it.
+    """
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement
+
+    scheduled: list = []
+    monkeypatch.setattr(
+        send_acknowledgement,
+        "_start_send",
+        lambda _screen, send: scheduled.append(send),
+    )
+    return scheduled
+
+
+async def _until_scheduled(pilot, scheduled: list, count: int = 1) -> None:
+    for _ in range(150):
+        if len(scheduled) >= count:
+            return
+        await pilot.pause(0.02)
+    raise AssertionError(f"Enter scheduled {len(scheduled)} send(s), not {count}")
+
+
 def test_composer_captured_revision_is_non_destructive_until_custody_commit() -> None:
     composer = ConsoleComposerBar()
     composer.load_draft("accepted revision")
@@ -933,12 +959,7 @@ async def test_console_deferred_enter_refuses_after_owning_session_changes(
         composer.load_draft("draft for A")
         store.set_session_draft(session_a.id, "draft for A")
 
-        scheduled: list[object] = []
-        monkeypatch.setattr(
-            console.app,
-            "call_later",
-            lambda callback, *_args, **_kwargs: scheduled.append(callback),
-        )
+        scheduled = _capture_scheduled_sends(monkeypatch)
         context_sessions: list[str] = []
         original_context = console._session._build_console_turn_execution_context
 
@@ -953,14 +974,14 @@ async def test_console_deferred_enter_refuses_after_owning_session_changes(
         runtime = console._console_runtime()
         original_accept = runtime.accept_turn
 
-        def record_accept(request):
+        def record_accept(request, **kwargs):
             accepted_sessions.append(request.session_id)
-            return original_accept(request)
+            return original_accept(request, **kwargs)
 
         monkeypatch.setattr(runtime, "accept_turn", record_accept)
 
         _press_enter_synchronously(console)
-        assert len(scheduled) == 1
+        await _until_scheduled(pilot, scheduled)
 
         session_b = store.create_session(title="Session B")
         store.set_session_draft(session_b.id, "draft for B")
@@ -1005,12 +1026,7 @@ async def test_console_same_session_send_waits_for_pending_enter_token(monkeypat
         composer.load_draft("one A draft")
         store.set_session_draft(session.id, composer.draft_text())
 
-        scheduled: list[object] = []
-        monkeypatch.setattr(
-            console.app,
-            "call_later",
-            lambda callback, *_args, **_kwargs: scheduled.append(callback),
-        )
+        scheduled = _capture_scheduled_sends(monkeypatch)
         context_sessions: list[str] = []
         original_context = console._session._build_console_turn_execution_context
 
@@ -1025,14 +1041,14 @@ async def test_console_same_session_send_waits_for_pending_enter_token(monkeypat
         runtime = console._console_runtime()
         original_accept = runtime.accept_turn
 
-        def record_accept(request):
+        def record_accept(request, **kwargs):
             requests.append(request)
-            return original_accept(request)
+            return original_accept(request, **kwargs)
 
         monkeypatch.setattr(runtime, "accept_turn", record_accept)
 
         _press_enter_synchronously(console)
-        assert len(scheduled) == 1
+        await _until_scheduled(pilot, scheduled)
         pending = console._console_pending_send
         send_button = console.query_one("#console-send-message", Button)
 
@@ -1080,12 +1096,7 @@ async def test_console_mouse_send_cannot_claim_another_sessions_pending_enter(
         composer.load_draft("draft for A")
         store.set_session_draft(session_a.id, "draft for A")
 
-        scheduled: list[object] = []
-        monkeypatch.setattr(
-            console.app,
-            "call_later",
-            lambda callback, *_args, **_kwargs: scheduled.append(callback),
-        )
+        scheduled = _capture_scheduled_sends(monkeypatch)
         context_sessions: list[str] = []
         original_context = console._session._build_console_turn_execution_context
 
@@ -1103,23 +1114,24 @@ async def test_console_mouse_send_cannot_claim_another_sessions_pending_enter(
             attachment_sessions.append(session_id)
             return original_pending_attachments(session_id)
 
-        monkeypatch.setattr(store, "pending_attachments", record_pending_attachments)
         requests: list[object] = []
         runtime = console._console_runtime()
         original_accept = runtime.accept_turn
 
-        def record_accept(request):
+        def record_accept(request, **kwargs):
             requests.append(request)
-            return original_accept(request)
+            return original_accept(request, **kwargs)
 
         monkeypatch.setattr(runtime, "accept_turn", record_accept)
 
         _press_enter_synchronously(console)
-        assert len(scheduled) == 1
+        await _until_scheduled(pilot, scheduled)
 
         session_b = store.create_session(title="Session B")
         store.set_session_draft(session_b.id, "draft for B")
         console._session._sync_console_session_draft()
+        # From B's send on (A's acknowledgement paint read A's own state).
+        monkeypatch.setattr(store, "pending_attachments", record_pending_attachments)
         send_button = console.query_one("#console-send-message", Button)
 
         assert await console.handle_console_send_message(Button.Pressed(send_button))
@@ -1142,7 +1154,7 @@ async def test_console_mouse_send_cannot_claim_another_sessions_pending_enter(
         composer.load_draft("next draft for B")
         store.set_session_draft(session_b.id, composer.draft_text())
         _press_enter_synchronously(console)
-        assert len(scheduled) == 2
+        await _until_scheduled(pilot, scheduled, count=2)
 
 
 @pytest.mark.asyncio
@@ -1189,7 +1201,11 @@ async def test_console_session_switch_during_admission_does_not_commit_into_new_
 
 @pytest.mark.asyncio
 async def test_console_enter_schedules_visible_send_without_a_watchdog(monkeypatch):
-    """Enter uses the app pump directly; no screen timer owns the capture."""
+    """Enter hands its capture to one scheduled send; no timer releases it.
+
+    The send is painted "Sending…" first (TASK-33620.5): its frame-length
+    hand-off hops dispatch the send and never release the capture.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -1209,24 +1225,16 @@ async def test_console_enter_schedules_visible_send_without_a_watchdog(monkeypat
         send_button = console.query_one("#console-send-message", Button)
         send_button.styles.display = "block"
         send_button.disabled = False
-        scheduled: list[object] = []
-        timers: list[object] = []
-        monkeypatch.setattr(
-            console.app,
-            "call_later",
-            lambda callback, *_args, **_kwargs: scheduled.append(callback),
-        )
-        monkeypatch.setattr(
-            console,
-            "set_timer",
-            lambda *_args, **_kwargs: timers.append(object()),
-        )
+        scheduled = _capture_scheduled_sends(monkeypatch)
 
         _press_enter_synchronously(console)
+        pending = console._console_pending_send
+        assert pending is not None
+        await _until_scheduled(pilot, scheduled)
+        await pilot.pause(0.3)
 
         assert len(scheduled) == 1
-        assert timers == []
-        assert console._console_pending_send is not None
+        assert console._console_pending_send is pending
         assert composer.draft_text() == "scheduled directly"
 
 
