@@ -1444,6 +1444,8 @@ class TldwCli(
         self._tts_initialization_task: asyncio.Task | None = None
         self._stts_initialization_task: asyncio.Task | None = None
         self._deferred_startup_tasks: set[asyncio.Task] = set()
+        self._actor_pack_recovery_reads: set[Any] = set()
+        self._actor_pack_recovery_closed = False
         # Portable Tool Packs are unavailable until first Tool Profiles use
         # composes every authority owner and attaches one complete guard.
         self.tool_pack_service: Any | None = None
@@ -4707,16 +4709,15 @@ class TldwCli(
 
         def start_actor_pack_recovery() -> Worker:
             # task-21106: Actor Pack crash recovery, moved out of __init__ --
-            # synchronous SQLite has no place on the construction path. A
-            # thread worker (not a coroutine) because recovery does blocking
-            # DB I/O; the coordinator's own once-guard makes every later
+            # synchronous SQLite has no place on the construction path.
+            # Retain the finite blocking callback through worker cancellation;
+            # the coordinator's own once-guard makes every later
             # surface-side call (Personas mount, create_persona) a cached
             # no-op -- which is also why this may be staggered at all.
             return self.run_worker(
-                self.ensure_actor_pack_recovery,
+                self._run_actor_pack_recovery_owned(self.ensure_actor_pack_recovery),
                 name="deferred_actor_pack_recovery",
                 group="actor_pack_recovery",
-                thread=True,
                 exclusive=True,
                 exit_on_error=False,
             )

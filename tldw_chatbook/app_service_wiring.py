@@ -1886,6 +1886,33 @@ class ServiceWiringMixin:
             policy_enforcer=self.service_policy_enforcer,
         )
 
+    async def _run_actor_pack_recovery_owned(self, callback: Callable[[], None]) -> None:
+        """Keep the original startup callback alive until its thread retires."""
+        from .Chat.console_preparation_reads import run_preparation_read
+
+        def require_open() -> None:
+            if self._actor_pack_recovery_closed:
+                raise asyncio.CancelledError
+
+        await run_preparation_read(
+            callback,
+            creator=self,
+            session_id=None,
+            reads=self._actor_pack_recovery_reads,
+            require_current=require_open,
+        )
+
+    async def _shutdown_actor_pack_recovery(self) -> asyncio.CancelledError | None:
+        """Close startup admission and drain its exact physical callbacks."""
+        self._actor_pack_recovery_closed = True
+        reads = getattr(self, "_actor_pack_recovery_reads", None)
+        if reads:
+            from .Chat.console_preparation_reads import drain_preparation_reads
+
+            if await drain_preparation_reads(reads):
+                return asyncio.CancelledError()
+        return None
+
     def ensure_actor_pack_recovery(self) -> None:
         """Run Actor Pack crash recovery once per app session (task-21106).
 

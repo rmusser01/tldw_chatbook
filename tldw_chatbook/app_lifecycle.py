@@ -710,6 +710,7 @@ class LifecycleMixin:
 
     async def _shutdown_app_owned_lifecycles(self) -> None:
         """Drain durable app-owned work before Textual closes screen state."""
+        actor_recovery_cancellation = await TldwCli._shutdown_actor_pack_recovery(self)
         await self._shutdown_workflow_session()
         self._mcp_local_config_saves_closed = True
         self._tool_profile_operations_closed = True
@@ -725,7 +726,9 @@ class LifecycleMixin:
             await tool_profiles.close_and_drain()
         recovery_cancellation = await TldwCli._shutdown_recovery_service(self)
         monitor_cancellation = await TldwCli._stop_backup_maintenance_monitor(self)
-        recovery_cancellation = recovery_cancellation or monitor_cancellation
+        recovery_cancellation = (
+            recovery_cancellation or monitor_cancellation or actor_recovery_cancellation
+        )
         workflow_error = None
         workflow_authoring = getattr(self, "_workflow_authoring", None)
         if workflow_authoring is not None:
