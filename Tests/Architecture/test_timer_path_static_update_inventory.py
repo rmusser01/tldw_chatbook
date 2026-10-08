@@ -726,12 +726,14 @@ def _callback_names(arg: ast.AST) -> list[str]:
         names.append(arg.id)
     elif isinstance(arg, ast.Lambda):
         for call in (n for n in ast.walk(arg) if isinstance(n, ast.Call)):
-            names.append(_callee(call))
             # `lambda: app.call_later(self.update_db_sizes)` runs
             # update_db_sizes per tick; the shim's argument is the real
             # callback (TASK-23028).
-            if _callee(call) in DEFERRAL_SHIMS and call.args:
-                names.extend(_callback_names(call.args[0]))
+            if _callee(call) in DEFERRAL_SHIMS:
+                if call.args:
+                    names.extend(_callback_names(call.args[0]))
+            else:
+                names.append(_callee(call))
     elif isinstance(arg, ast.Call) and _callee(arg) == "partial" and arg.args:
         names.extend(_callback_names(arg.args[0]))
     return [name for name in names if name]
@@ -1590,6 +1592,10 @@ def test_deferral_shim_callback_resolves_through() -> None:
     """
     modules = _modules_from_source(
         """
+        class UnrelatedController:
+            def call_later(self):
+                self.unrelated_status.update("not a timer callback")
+
         class ShimClockManager:
             def start(self):
                 self.app.set_interval(5.0, lambda: self.app.call_later(self.reconcile))
@@ -1601,6 +1607,7 @@ def test_deferral_shim_callback_resolves_through() -> None:
     roots, problems = _collect_clock_roots(modules, _CallGraph(modules))
     assert not problems
     assert ("set_interval", roots[0][1], "ShimClockManager", "reconcile") in roots
+    assert {root[3] for root in roots} == {"reconcile"}
     key = (
         "tldw_chatbook/timer_census_fixture.py",
         "ShimClockManager.reconcile",

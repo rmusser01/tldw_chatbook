@@ -80,6 +80,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #60 Host shutdown retains the original composer prompt-history file read through repeated cancellation, with native source and lease retirement before returning.
 - [x] #61 Applying or clearing the current system prompt immediately updates its local sidebar preview even when checked readiness presentation is deferred.
 - [x] #62 Accepted manual reaction selection and clear update the visible label before background avatar resolution finishes, without changing validation or stale-owner checks.
+- [x] #63 Timer inventory follows a deferral shim's actual callback without inventing a timer root from an unrelated same-named method.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -1378,3 +1379,11 @@ Fresh private-profile browser UI setup selected DeepSeek and deepseek-chat in Se
 The video-artifact-gate-green-1 bundle also passes all three original video-picker cases at41ab in46.664s pytest/53.422s driver; no unfinished original workers after fixture teardown, frozen source/HEAD and normal process/native/pipe retirement with zero force/overflow/races. Windows correctly refuses unsupported external pinned save, retains its one artifact gate through the visible retry choice, then explicit discard removes all artifact/operation/gate/deferred-close entries and closes the stream exactly once.
 
 Observed during live UAT: second-message typing appeared after a delay (empty, partial text, then full text); Canvas repeatedly reported reconnecting/Terminal only. These observations have no measured causal attribution yet. Remaining startup/Send budgets, platform shutdown failures and timer inventory remain open. Task remains In Progress.
+
+
+AC63 plan: source review identifies the callback extractor adding both call_later and its actual callback, allowing fallback resolution to an unrelated LibraryNotesController method. Strengthen the existing synthetic deferral test with an unrelated same-named package method; require only the real callback root and its original reachable update. After reproducing, exclude only known deferral shim names while retaining traversal of their callback arguments. Run targeted extractor controls and the full inventory module to distinguish this repaired defect from inherited classifications/repeated-widget writes. ADR required:no; test inventory correction, no product boundary or runtime behavior change.
+
+
+### AC63 timer callback census repair (2026-10-08)
+
+The original lambda callback extractor recorded known call_later/call_after_refresh deferral names as roots in addition to their callbacks. A newly resolvable unrelated method made that false root appear in the inventory. It now follows each shim's callback without adding the shim name; ordinary lambda calls remain censused. The strengthened original synthetic test reproduces the false call_later root before the change and passes afterward. The complete targeted inventory module reports13 passes/3 remaining failures in60.009s pytest/72.750s driver: unclassified sites, two stale classifications, and unpinned real roots remain. The shim repair is not a blanket inventory pass. Source/HEAD frozen; normal process/native/pipe retirement with zero force/overflow/lookup races. No production change or new ADR. Remaining inherited repeated widget writes are under separate repair.
