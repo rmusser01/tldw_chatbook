@@ -48,11 +48,13 @@ def operation_owned_connection(database: object) -> Iterator[None]:
     close = getattr(database, "close_connection", None)
     if local is None or registry is None or not callable(close):
         from .AgentRuns_DB import AgentRunsDB
+        from .Client_Media_DB_v2 import MediaDatabase
         from .Library_Collections_DB import LibraryCollectionsDB
         from .Workspace_DB import WorkspaceDB
 
         if (
-            type(database) not in {AgentRunsDB, LibraryCollectionsDB, WorkspaceDB}
+            type(database)
+            not in {AgentRunsDB, LibraryCollectionsDB, MediaDatabase, WorkspaceDB}
             or database.is_memory_db
         ):
             yield
@@ -61,7 +63,11 @@ def operation_owned_connection(database: object) -> Iterator[None]:
 
         # A raw close can leave a stale cache. Use the same native retirement
         # evidence as the getter; a still-live borrowed handle remains owned.
-        local = database._thread_local
+        local = (
+            database._local
+            if type(database) is MediaDatabase
+            else database._thread_local
+        )
         close = database.close
         previous = _core_cached_connection(database, getattr(local, "conn", None))
         borrowed = previous is not None

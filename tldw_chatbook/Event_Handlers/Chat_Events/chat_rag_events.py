@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 from collections.abc import Coroutine, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from time import perf_counter
@@ -790,13 +791,19 @@ def _existing_ids_sync(
             "RAG scope existence unavailable; reason=scope_existing_ids_read_failure"
         )
         raise _ScopeExistenceReadError from None
+    from ...DB.base_db import operation_owned_connection
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+    from ...DB.Client_Media_DB_v2 import MediaDatabase
+
+    owned = type(db) in {CharactersRAGDB, MediaDatabase} and not db.is_memory_db
     try:
-        rows = _sensitive_fetchall(
-            db,
-            f"SELECT id FROM {table} "
-            "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
-            (json.dumps(sorted(ids)),),
-        )
+        with operation_owned_connection(db) if owned else nullcontext():
+            rows = _sensitive_fetchall(
+                db,
+                f"SELECT id FROM {table} "
+                "WHERE id IN (SELECT value FROM json_each(?)) AND deleted = 0",
+                (json.dumps(sorted(ids)),),
+            )
         return frozenset(str(row[0]) for row in rows)
     except Exception:
         logger.warning(
