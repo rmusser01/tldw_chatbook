@@ -132,6 +132,28 @@ remember that if no full run has completed since a suspect commit landed, CI has
 never exercised it: a "hang was fixed" verdict from an old artifact says nothing
 about regressions newer than the last completing run.
 
+## Before blaming a PR for a slow shard, count whether its code runs there (TASK-33620.5, 2026-10-08)
+
+**Incident.** PR #3022 added one test file to the UI PR-gate census, and UI
+Fast Lane shard 3 was cancelled at its 20-minute cap. The branch took the file
+back out (8d5f7c6760). Its census checker comment and task notes said the file
+had pushed the shard over. The run on that head, with the file gone, was
+cancelled in shard 3 again at 20m19s (run 37481437649). A passing PR on the
+same base had run the same 50-file shard in 18m51s, 69 s under the cap. Local
+A/B timing of those 50 files took hours of alternating reps and came out
++0.5%. A counter settled it in one pass. The PR's new entry point
+(`schedule_acknowledged_send`) ran 0 times across shard 3's 581 tests, and 11
+times in the send-acknowledgement file, so the counter did see sends when there
+were any. Code that never runs in a shard cannot slow it. The shard was at
+capacity, and dev added a fourth one (a920bfe149).
+
+**What to do.** Before timing a slow shard against its base, wrap the PR's
+changed entry points in call counters and run the shard once. Run the same
+counters over a test that does exercise the path, so that a zero means
+something. If the count is zero, the cause is the runner or the lane's
+capacity. Compare the shard with a passing run on the same base, using each
+job's start and end times. Do not move or drop tests because of it.
+
 ## A screen leaving the stack is not its result arriving (TASK-33622.15, 2026-10-04)
 
 **Incident.** A new test waited for a review dialog's kept close with
