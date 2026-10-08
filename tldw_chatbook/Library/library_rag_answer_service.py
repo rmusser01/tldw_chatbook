@@ -654,6 +654,10 @@ async def generate_library_rag_answer(
         usage = ProviderUsage.from_provider_payload(
             raw_usage_payload, provider=provider, model=response_model
         )
+        # No session-ledger tap here (code-review of PR #3046): `raw` comes
+        # from `chat_api_call` by default, whose provider-function taps
+        # already recorded this response -- recording again would
+        # double-count every Library RAG answer.
 
         body = extract_response_content(raw).strip()
         if not body:

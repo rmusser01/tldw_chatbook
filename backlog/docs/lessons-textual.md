@@ -1596,3 +1596,22 @@ app context. **What to do:** any code that can run during or after app
 teardown (shutdown, workers outliving the app, `call_from_thread` stragglers)
 must not use `self.log` / DOM logging — use the module logger, and treat
 "16 tests suddenly fail with NoActiveAppError" as this exact signature.
+
+---
+
+## `width: auto` on a card container renders blank, and screenshot words
+are non-breaking (issue #365, 2026-10-07)
+
+Bisected a blank `ModalScreen` card property by property: every declaration
+was innocent except `width: auto` on the card `Container` — children
+measured 0×0 and the whole dialog exported as empty space, while the skip
+and auto-dismiss tests PASSED vacuously (`app.screen is not dialog` was
+true because nothing rendered). The repo's working `ConfirmationDialog`
+sizes its card with a FIXED `width` (`width: 60; height: auto`) — auto
+width on these containers is the trap, not the norm. Separately,
+`App.export_screenshot()` emits styled words as separate SVG `<text>`
+spans joined by `&#160;` (non-breaking space), so multi-word copy
+assertions like `"Session summary" in svg` fail on fully-rendered text.
+**Card modals: fixed width. Screenshot asserts: normalize `&#160;`/`\xa0`
+to spaces first, and pair any screen-popped assertion with a render
+assertion so it cannot pass vacuously.**

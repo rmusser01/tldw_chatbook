@@ -4422,6 +4422,13 @@ animation_speed = 1.0  # Animation playback speed multiplier
 
 custom_image_path = ""  # Set path to your image file for custom_image splash screen
 
+[session_summary]
+# Optional quit-time session usage summary (issue #365).
+# After a confirmed quit (Ctrl+Q), briefly show total session tokens and
+# elapsed session time before the app exits. Any key skips it.
+enabled = false  # Show the summary on quit (default off)
+duration_seconds = 3  # Auto-dismiss delay in seconds (clamped to 1..30)
+
 [logging]
 # Log file will be placed in the same directory as the chachanotes_db_path below.
 log_filename = "tldw_cli_app.log"

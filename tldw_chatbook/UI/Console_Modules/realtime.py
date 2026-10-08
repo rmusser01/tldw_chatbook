@@ -1285,6 +1285,14 @@ class ConsoleRealtimeController:
         )
         if usage is None:
             return
+        # Session ledger boundary tap (issue #365): realtime usage events
+        # arrive on the websocket session and never flow through any other
+        # tap. `record_exact` never raises. The import is deferred off the
+        # boot path (UI-ready module census ratchets down, ADR-097); this
+        # handler runs once per realtime reply.
+        from tldw_chatbook.Chat.session_usage import session_usage
+
+        session_usage().record_exact(usage)
         store = self._chat_store_accessor()
         try:
             store.set_message_usage(row_id, usage)

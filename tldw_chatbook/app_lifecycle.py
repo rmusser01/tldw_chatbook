@@ -2106,6 +2106,52 @@ class LifecycleMixin:
                 severity="warning",
             )
 
+    def _session_summary_duration_seconds(self) -> int:
+        """Configured quit-summary duration, clamped to 1..30 (default 3)."""
+        raw = get_cli_setting("session_summary", "duration_seconds", 3)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError, OverflowError):
+            return 3
+        return max(1, min(30, value))
+
+    async def _show_session_summary_before_exit(self) -> None:
+        """Show the optional quit-time usage summary, hard-capped so exit
+        always proceeds (issue #365; spec "Quit-Flow Integration")."""
+        # Quit-only imports, deferred off the boot path: the UI-ready
+        # module census ratchets down and never rises
+        # (Tests/Performance/test_ui_ready_module_census.py).
+        from tldw_chatbook.Chat.session_usage import session_usage
+        from tldw_chatbook.Widgets.session_summary_dialog import SessionSummaryDialog
+
+        try:
+            duration = self._session_summary_duration_seconds()
+            dialog = SessionSummaryDialog(
+                session_usage().snapshot(),
+                started_at=self._startup_start_time,
+                duration_seconds=duration,
+            )
+            # The quit flow's prompt choke point (TASK-33622.10, ADR-031):
+            # direct push_screen_wait can hang when a covered modal's
+            # dismiss() pops the top screen. No vanish toast -- the summary
+            # vanishing still means "exit now". The wait_for stays as a
+            # belt-and-braces cap.
+            await asyncio.wait_for(
+                await_quit_prompt(
+                    self, dialog, no_answer=None, vanished_notice=None
+                ),
+                timeout=duration + 2.0,
+            )
+        except asyncio.TimeoutError:
+            loguru_logger.warning(
+                "Session summary dialog did not dismiss in time; exiting anyway."
+            )
+        except Exception:
+            # Deliberately narrow beyond TimeoutError for robustness, but
+            # CancelledError is BaseException on 3.12 -- it propagates and
+            # must never be swallowed on the quit path (lessons-textual).
+            loguru_logger.warning("Session summary display failed; exiting anyway.")
+
     async def _run_approved_quit_cleanup(self) -> None:
         """Preserve quit ordering without blocking the Textual event loop."""
 
@@ -2119,10 +2165,26 @@ class LifecycleMixin:
                     loguru_logger.warning(
                         "Media cleanup timer could not stop during quit"
                     )
+            persistence_ok = True
             try:
                 await asyncio.to_thread(self._run_blocking_quit_persistence)
             except Exception:
+                persistence_ok = False
                 loguru_logger.warning("Blocking quit persistence failed")
+            # Fail closed: a config-read failure on the quit path must
+            # degrade to "no summary", never to a failed quit (issue #365);
+            # a failed persistence also skips the summary (spec: exit
+            # reliability wins over the farewell screen).
+            summary_enabled = False
+            if persistence_ok:
+                try:
+                    summary_enabled = bool(
+                        get_cli_setting("session_summary", "enabled", False)
+                    )
+                except Exception:
+                    summary_enabled = False
+            if summary_enabled:
+                await self._show_session_summary_before_exit()
         finally:
             self.exit()
 
