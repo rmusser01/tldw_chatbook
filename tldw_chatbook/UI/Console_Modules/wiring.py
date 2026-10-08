@@ -81,9 +81,6 @@ from tldw_chatbook.Widgets.Console.console_character_context import (
 )
 from tldw_chatbook.Widgets.Console.console_control_bar import ConsoleControlBar
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
-from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
-    ConsoleFeedbackCommentModal,
-)
 from tldw_chatbook.Widgets.Console.console_speech_controls import (
     ConsoleSpeechControls,
 )
@@ -968,6 +965,10 @@ async def _show_console_feedback_comment(
     screen: Any, action: str, quote: str
 ) -> str | None:
     """Present the selection-feedback comment modal."""
+    from tldw_chatbook.Widgets.Console.console_feedback_comment_modal import (
+        ConsoleFeedbackCommentModal,
+    )
+
     return await screen.app.push_screen_wait(
         ConsoleFeedbackCommentModal(action=action, quote=quote)
     )

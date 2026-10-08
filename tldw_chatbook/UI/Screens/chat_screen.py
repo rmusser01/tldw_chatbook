@@ -657,10 +657,6 @@ from ...Widgets.Console.console_composer_menu_modal import (
     ACTION_UNDO_PROMPT_IMPROVEMENT,
     ConsoleComposerMenuModal,
 )
-from ...Widgets.Console.console_prompt_comparison_modal import (
-    ConsolePromptComparisonModal,
-    PromptComparisonResult,
-)
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_setup_modal import (
@@ -693,6 +689,9 @@ NoteRequested = ConsoleSelectionNoteRequested
 
 if TYPE_CHECKING:
     from tldw_chatbook.app import TldwCli
+    from tldw_chatbook.Widgets.Console.console_prompt_comparison_modal import (
+        PromptComparisonResult,
+    )
     from tldw_chatbook.Chat.console_environment_state import EnvironmentSnapshot
     from tldw_chatbook.UI.Console_Modules.environment import (
         ConsoleEnvironmentController,
@@ -10138,13 +10137,17 @@ class ChatScreen(BaseAppScreen):
             self._focus_console_composer_if_needed(force=True)
             return
         before, after = comparison
+        from ...Widgets.Console.console_prompt_comparison_modal import (
+            ConsolePromptComparisonModal,
+        )
+
         self.app.push_screen(
             ConsolePromptComparisonModal(before=before, after=after),
             callback=self._handle_console_prompt_comparison_result,
         )
 
     def _handle_console_prompt_comparison_result(
-        self, result: PromptComparisonResult | None
+        self, result: "PromptComparisonResult | None"
     ) -> None:
         """Keep the improved draft or consume Undo to restore the original."""
         if result == "restore":

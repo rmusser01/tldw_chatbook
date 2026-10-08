@@ -1934,11 +1934,11 @@ class ConsoleRuntime:
         """Replace the chat-controller handle."""
         self._chat_controller = value
         if value is not None:
-            from .console_hook_preparation import observe_hook_preparation_reads
+            from .console_preparation_reads import observe_preparation_reads
 
             reads = getattr(value, "_preparation_reads", None)
             if reads is not None:
-                observe_hook_preparation_reads(reads, self._preparation_reads)
+                observe_preparation_reads(reads, self._preparation_reads)
             value._hooks_v2_runtime = self
         if value is not None and self._app is not None:
             value.app = self._app
