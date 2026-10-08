@@ -44,6 +44,6 @@ def test_duration_loader_clamps_and_defaults(monkeypatch):
         monkeypatch.setattr(app_lifecycle, "get_cli_setting", _make_setting(duration))
         assert harness._session_summary_duration_seconds() == expected
 
-    for bad in ["abc", None, ""]:
+    for bad in ["abc", None, "", "inf", "nan"]:
         monkeypatch.setattr(app_lifecycle, "get_cli_setting", _make_setting(bad))
         assert harness._session_summary_duration_seconds() == 3

@@ -2099,20 +2099,20 @@ class LifecycleMixin:
         raw = get_cli_setting("session_summary", "duration_seconds", 3)
         try:
             value = int(raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 3
         return max(1, min(30, value))
 
     async def _show_session_summary_before_exit(self) -> None:
         """Show the optional quit-time usage summary, hard-capped so exit
         always proceeds (issue #365; spec "Quit-Flow Integration")."""
-        duration = self._session_summary_duration_seconds()
-        dialog = SessionSummaryDialog(
-            session_usage().snapshot(),
-            started_at=self._startup_start_time,
-            duration_seconds=duration,
-        )
         try:
+            duration = self._session_summary_duration_seconds()
+            dialog = SessionSummaryDialog(
+                session_usage().snapshot(),
+                started_at=self._startup_start_time,
+                duration_seconds=duration,
+            )
             await asyncio.wait_for(
                 self.push_screen_wait(dialog), timeout=duration + 2.0
             )
@@ -2139,19 +2139,24 @@ class LifecycleMixin:
                     loguru_logger.warning(
                         "Media cleanup timer could not stop during quit"
                     )
+            persistence_ok = True
             try:
                 await asyncio.to_thread(self._run_blocking_quit_persistence)
             except Exception:
+                persistence_ok = False
                 loguru_logger.warning("Blocking quit persistence failed")
             # Fail closed: a config-read failure on the quit path must
-            # degrade to "no summary", never to a failed quit (issue #365).
+            # degrade to "no summary", never to a failed quit (issue #365);
+            # a failed persistence also skips the summary (spec: exit
+            # reliability wins over the farewell screen).
             summary_enabled = False
-            try:
-                summary_enabled = bool(
-                    get_cli_setting("session_summary", "enabled", False)
-                )
-            except Exception:
-                summary_enabled = False
+            if persistence_ok:
+                try:
+                    summary_enabled = bool(
+                        get_cli_setting("session_summary", "enabled", False)
+                    )
+                except Exception:
+                    summary_enabled = False
             if summary_enabled:
                 await self._show_session_summary_before_exit()
         finally:

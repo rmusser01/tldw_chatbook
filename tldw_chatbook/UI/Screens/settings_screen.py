@@ -1193,7 +1193,7 @@ def _session_summary_section_values(
     """Normalize the [session_summary] settings group for persistence."""
     try:
         duration = int(float(str(duration_text).strip()))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         duration = 3
     duration = max(1, min(30, duration))
     return {

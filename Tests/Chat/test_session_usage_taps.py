@@ -365,6 +365,26 @@ def test_legacy_line_stream_records_usage_on_exhaustion():
     assert snap.calls == 1
 
 
+def test_full_response_body_is_not_parsed_as_usage():
+    """Contract for gateway-native taps (final-review Critical fix):
+    `record_provider_payload` takes the BARE usage dict --
+    `from_provider_payload` does not unwrap a nested "usage" key, so a
+    full response body records NOTHING. Boundary callers must extract
+    `.get("usage")` first, mirroring `_maybe_record_usage`.
+    """
+    full_body = {
+        "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 2, "total_tokens": 6},
+    }
+    session_usage().record_provider_payload(full_body)
+    assert session_usage().snapshot().calls == 0  # nested usage NOT parsed
+
+    session_usage().record_provider_payload(full_body.get("usage"))
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 6
+    assert snap.calls == 1  # extraction records exactly once
+
+
 @pytest.mark.parametrize(
     "module_name",
     ["groq", "deepseek", "mistral", "openrouter"],

@@ -5019,9 +5019,13 @@ class ConsoleProviderGateway:
                                     # Session ledger boundary tap (issue #365):
                                     # this stream comes from the gateway's OWN
                                     # httpx call -- no provider-function tap saw
-                                    # it, so record here, exactly once.
+                                    # it, so record here, exactly once. The
+                                    # ledger takes the BARE usage dict
+                                    # (`from_provider_payload` does not unwrap
+                                    # a nested "usage" key), mirroring
+                                    # `_maybe_record_usage`'s extraction.
                                     session_usage().record_provider_payload(
-                                        usage_payload
+                                        usage_payload.get("usage")
                                     )
                         if (
                             thinking_stream_disposition == "displayable"
@@ -5335,8 +5339,13 @@ class ConsoleProviderGateway:
                         _maybe_record_usage(payload_response, call_signals)
                         # Session ledger boundary tap (issue #365): gateway's
                         # OWN one-shot httpx response -- no provider-function
-                        # tap saw it, so record here, exactly once.
-                        session_usage().record_provider_payload(payload_response)
+                        # tap saw it, so record here, exactly once. The ledger
+                        # takes the BARE usage dict (`from_provider_payload`
+                        # does not unwrap a nested "usage" key), mirroring
+                        # `_maybe_record_usage`'s extraction.
+                        session_usage().record_provider_payload(
+                            payload_response.get("usage")
+                        )
                 structured_event = (
                     _structured_local_thinking(
                         response.json(), provider=provider, model=model, protocol=protocol
