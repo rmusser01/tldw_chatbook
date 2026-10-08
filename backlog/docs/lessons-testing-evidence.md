@@ -19183,3 +19183,8 @@ what happened in that observed run, not equivalence to an observer-free workload
 Keep a matching observer-off control, distinguish direct callback overhead from
 possible timing-sensitive state changes, and retain unresolved differences. Do
 not convert instrumented counts or nested elapsed time into promised savings.
+
+
+### A separate Console host must own its view-worker drain (TASK-34406, 2026-10-08)
+
+The dictionary inspector fixtures disposed their app runtime after a minimal Textual harness exited, yet three cases still failed exact database retirement. Observation at the unchanged close helper caught an original WorkspaceDB scope read still acquiring storage. The minimal host had skipped production view-worker capture/drain, so runtime cleanup arrived after Textual detached the worker. Reusing the existing ProductionConsoleHarness fixed all three failures while preserving the database retirement gate; the focused five-case run recorded no refusal. Runtime disposal alone is insufficient evidence for a separate host's issued workers.

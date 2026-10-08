@@ -24,8 +24,8 @@ import pytest
 
 from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
+from Tests.UI.test_console_session_tab_close import (
+    ProductionConsoleHarness as ConsoleHarness,
 )
 from tldw_chatbook.Chat.console_display_state import ConsoleDisplayRow
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
