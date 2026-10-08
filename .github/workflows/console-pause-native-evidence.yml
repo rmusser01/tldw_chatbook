@@ -441,7 +441,7 @@ jobs:
         run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_actor_recovery_native_shutdown.py -q --timeout=180 --junitxml=${{ runner.temp }}/actor-recovery-shutdown.xml
       - name: Verify original finite presentation host shutdown
         if: ${{ !cancelled() }}
-        run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_finite_presentation_host_terminal.py Tests/UI/test_console_view_worker_groups.py Tests/Performance/test_console_rail_prune_shutdown.py -q --timeout=180 --junitxml=${{ runner.temp }}/context-host.xml
+        run: python -m Tests.windows_private_fixture_runner Tests/UI/test_console_finite_presentation_host_terminal.py Tests/UI/test_console_view_worker_groups.py Tests/Performance/test_console_rail_prune_shutdown.py Tests/Performance/test_console_unread_host_shutdown.py -q --timeout=180 --junitxml=${{ runner.temp }}/context-host.xml
       - name: Collect bounded original lifetime diagnostics
         if: always()
         shell: python

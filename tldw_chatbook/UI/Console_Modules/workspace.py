@@ -619,7 +619,22 @@ async def _read_manual_unread_ids(service: object, ids: Iterable[str]) -> frozen
             raise RuntimeError("manual_unread_source_changed")
         return reader(ids)
 
-    return await run_owned_db_call(database, read_captured_owner)
+    # Keep the original finite operation alive until its worker connection
+    # retires. Textual cancellation must not detach an unread-badge read.
+    worker = asyncio.Task(run_owned_db_call(database, read_captured_owner))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not worker.cancelled():
+            worker.exception()
+        raise
 
 
 class _WorkspaceAvailabilityObsolete(RuntimeError):

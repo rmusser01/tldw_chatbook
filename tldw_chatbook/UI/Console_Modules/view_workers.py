@@ -11,6 +11,8 @@ _GROUPS = frozenset(
         "console-sync",
         "console-context-presentation",
         "console-readiness-config",
+        "console-readiness-publication",
+        "console-manual-unread-load",
         "console-agent-history",
         "console-hook-refresh",
         "console-rail-prune",

@@ -18,7 +18,13 @@ pytestmark = pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "group",
-    ["console-readiness-config", "console-agent-history", "console-hook-refresh"],
+    [
+        "console-readiness-config",
+        "console-agent-history",
+        "console-hook-refresh",
+        "console-manual-unread-load",
+        "console-readiness-publication",
+    ],
 )
 async def test_host_drain_retains_finite_presentation_worker(group):
     host = App()
