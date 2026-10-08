@@ -185,3 +185,10 @@ Tests/UI/test_console_composer_reason_restyles.py
 # TASK-34100.16: setup's Restore entry (Inspect mode, title, format hint), the
 # settings-file / folder pre-checks, and the reason line above a disabled Create.
 Tests/UI/test_backup_restore_setup_entry.py
+
+# TASK-33620.5: Enter paints "Sending..." before the send's admission work --
+# the 80x24 frame-ordering test plus the acknowledgement's own rules (9 tests,
+# about 10 s locally). The mounted variants are in
+# test_console_send_acknowledgement_extended.py, outside the lane. Appended,
+# so no other file changes shard.
+Tests/UI/test_console_send_acknowledgement.py
