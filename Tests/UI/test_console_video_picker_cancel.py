@@ -109,7 +109,7 @@ async def _open_the_picker_from(app, pilot, choice) -> EnhancedFileSave:
 async def test_cancelling_the_save_picker_returns_to_the_storage_choice(
     monkeypatch, tmp_path: Path
 ):
-    """Escape, then Cancel, each return to the choice; a later save completes."""
+    """Cancels retain the video; a later save honors native capabilities."""
     from Tests.Chat.test_console_video_capacity import _artifact
 
     app = _build_test_app(configured_default="chat")
@@ -164,22 +164,61 @@ async def test_cancelling_the_save_picker_returns_to_the_storage_choice(
         assert _choice_labels(choice) == _OVER_CAPACITY_CHOICES
         _assert_the_same_video_waits_alone(console, artifact)
 
-        # 3. The video survived both cancels, so a third try still saves it.
+        # 3. The original gate determines whether native external save is
+        # supported. Do not replace it or the copy: unsupported platforms must
+        # retain the paid video and offer another explicit storage decision.
+        try:
+            console._video._require_external_video_pinned_capabilities()
+        except OSError as exc:
+            assert str(exc) == "pinned external save unsupported"
+            external_save_supported = False
+        else:
+            external_save_supported = True
+
         third_picker = await _open_the_picker_from(app, pilot, choice)
         third_picker.query_one("#filename-input", Input).value = str(target)
-        await pilot.click("#select")
+        previous_toasts = tuple(app.query("Toast"))
+        assert await pilot.click("#select"), "the final Save click missed its button"
+        if not external_save_supported:
+            await _until(
+                pilot,
+                lambda: isinstance(app.screen, ConsoleVideoCapacityModal)
+                and app.screen is not choice
+                and any(
+                    toast not in previous_toasts
+                    and toast.is_on_screen
+                    and toast.has_class("-error")
+                    and "Could not save the generated video to " in toast.render().plain
+                    and str(target) in toast.render().plain
+                    for toast in app.screen.query("Toast")
+                ),
+                "the unsupported save to show its error and return to the choice",
+                timeout=5.0,
+            )
+            assert third_picker not in app.screen_stack
+            assert _choice_labels(app.screen) == _OVER_CAPACITY_CHOICES
+            _assert_the_same_video_waits_alone(console, artifact)
+            assert not target.exists()
+            assert list(destination.iterdir()) == []
+            assert opened == []
+            assert await pilot.click("#video-capacity-discard")
+
         await _until(
             pilot,
             lambda: artifact.stream.closed,
-            "the save to finish and release the staged video",
+            "the save or explicit discard to release the staged video",
             timeout=5.0,
         )
         await pilot.pause(0.2)
 
-        assert target.read_bytes() == b"paid generation"
-        # Exactly one file: no staging sibling left behind by any round.
-        assert sorted(destination.iterdir()) == [target]
-        assert [path.resolve() for path in opened] == [target.resolve()]
+        if external_save_supported:
+            assert target.read_bytes() == b"paid generation"
+            # Exactly one file: no staging sibling left behind by any round.
+            assert sorted(destination.iterdir()) == [target]
+            assert [path.resolve() for path in opened] == [target.resolve()]
+        else:
+            assert list(destination.iterdir()) == []
+            assert opened == []
         assert artifact.stream.close_calls == 1
         assert console._video._pending_console_video_artifacts() == {}
         assert console._video._pending_video_operation_cancels == {}
