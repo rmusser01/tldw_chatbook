@@ -123,6 +123,23 @@ def session_usage() -> SessionUsageLedger:
     return _LEDGER
 
 
+def record_stream_terminal_usage(stream: Any) -> None:
+    """Record a hosted stream's terminal-turn usage (issue #365).
+
+    Shared exhaustion tap for the hosted-engine stream shims
+    (`LegacyLineStream`, `MoonshotStream`, `ZAIStream`): their terminal
+    turn's usage is final only at natural exhaustion, so a consumer Stop
+    (close without exhausting) never reaches here and undercounts by
+    policy. Never raises; duck-typed on ``stream.terminal_turn.usage``.
+    """
+    try:
+        usage = stream.terminal_turn.usage
+        if usage:
+            _LEDGER.record_provider_payload(usage)
+    except Exception:  # noqa: BLE001 - accounting must never break a stream
+        pass
+
+
 def reset_for_tests() -> None:
     """Swap in a fresh singleton; call from test fixtures only."""
     global _LEDGER

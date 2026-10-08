@@ -18572,7 +18572,7 @@ class SettingsScreen(BaseAppScreen):
                         str(get_cli_setting("session_summary", "duration_seconds", 3)),
                         id="settings-session-summary-duration",
                         type="integer",
-                        tooltip="How long the quit summary shows before auto-exit (1-30).",
+                        tooltip="How long the quit summary shows before auto-exit (1-30). Invalid or empty values fall back to 3 seconds.",
                     )
             # ADR-146 task-7: named-endpoint management (rename / edit /
             # delete-with-reference-guard / slot conversion). Instant-apply

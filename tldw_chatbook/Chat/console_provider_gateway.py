@@ -5016,17 +5016,9 @@ class ConsoleProviderGateway:
                             else:
                                 if isinstance(usage_payload, Mapping):
                                     _maybe_record_usage(usage_payload, call_signals)
-                                    # Session ledger boundary tap (issue #365):
-                                    # this stream comes from the gateway's OWN
-                                    # httpx call -- no provider-function tap saw
-                                    # it, so record here, exactly once. The
-                                    # ledger takes the BARE usage dict
-                                    # (`from_provider_payload` does not unwrap
-                                    # a nested "usage" key), mirroring
-                                    # `_maybe_record_usage`'s extraction.
-                                    session_usage().record_provider_payload(
-                                        usage_payload.get("usage")
-                                    )
+                                    # Gateway-native stream: record the bare
+                                    # usage dict, exactly once.
+                                    _record_gateway_native_usage(usage_payload)
                         if (
                             thinking_stream_disposition == "displayable"
                             or local_structured_thinking
@@ -5337,15 +5329,9 @@ class ConsoleProviderGateway:
                     payload_response = response.json()
                     if isinstance(payload_response, Mapping):
                         _maybe_record_usage(payload_response, call_signals)
-                        # Session ledger boundary tap (issue #365): gateway's
-                        # OWN one-shot httpx response -- no provider-function
-                        # tap saw it, so record here, exactly once. The ledger
-                        # takes the BARE usage dict (`from_provider_payload`
-                        # does not unwrap a nested "usage" key), mirroring
-                        # `_maybe_record_usage`'s extraction.
-                        session_usage().record_provider_payload(
-                            payload_response.get("usage")
-                        )
+                        # Gateway-native one-shot response: record the bare
+                        # usage dict, exactly once.
+                        _record_gateway_native_usage(payload_response)
                 structured_event = (
                     _structured_local_thinking(
                         response.json(), provider=provider, model=model, protocol=protocol
@@ -7677,6 +7663,20 @@ def _maybe_record_usage(
     usage = payload.get("usage")
     if isinstance(usage, Mapping) and usage:
         signals.record_usage_payload(usage)
+
+
+def _record_gateway_native_usage(payload: Mapping[str, Any]) -> None:
+    """Session ledger boundary tap for gateway-NATIVE HTTP responses
+    (issue #365).
+
+    The ledger takes the BARE usage dict -- ``from_provider_payload`` does
+    not unwrap a nested "usage" key -- so this mirrors
+    ``_maybe_record_usage``'s extraction. Call ONLY where the gateway
+    parsed its OWN httpx response; generators relayed from
+    ``chat_api_call`` are recorded inside their providers and must not be
+    recorded again. Never raises.
+    """
+    session_usage().record_provider_payload(payload.get("usage"))
 
 
 def _content_from_provider_item(

@@ -24,6 +24,7 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
     validate_continuation_restore,
 )
+from tldw_chatbook.Chat.session_usage import record_stream_terminal_usage
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     ProviderPayloadValidators,
     TOOL_FUNCTION_NAME,
@@ -122,7 +123,14 @@ class MoonshotStream(Iterator[dict[str, Any]]):
         return self
 
     def __next__(self) -> dict[str, Any]:
-        event = deepcopy(next(self._stream))
+        try:
+            event = deepcopy(next(self._stream))
+        except StopIteration:
+            # Session ledger boundary tap (issue #365): terminal-turn usage
+            # records only at natural exhaustion; a consumer Stop skips it
+            # (cancelled streams undercount by policy). Never raises.
+            record_stream_terminal_usage(self._stream)
+            raise
         for choice in event.get("choices", ()):
             if isinstance(choice, dict) and isinstance(choice.get("delta"), dict):
                 choice["delta"].pop("reasoning_content", None)

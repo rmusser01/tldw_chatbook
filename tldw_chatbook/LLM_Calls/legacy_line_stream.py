@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 
-from tldw_chatbook.Chat.session_usage import session_usage
+from tldw_chatbook.Chat.session_usage import record_stream_terminal_usage
 from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatStream, HostedChatTurn
 
 _DONE_SENTINEL = "data: [DONE]\n\n"
@@ -50,13 +50,7 @@ class LegacyLineStream(Iterator[str]):
             # `_log_usage_metrics` funnel, so this is the only place those
             # streams record. A consumer Stop (close without exhaustion)
             # skips this -- cancelled streams undercount by policy.
-            # `record_provider_payload` never raises.
-            try:
-                usage = self._stream.terminal_turn.usage
-            except Exception:
-                usage = None
-            if usage:
-                session_usage().record_provider_payload(usage)
+            record_stream_terminal_usage(self._stream)
             return _DONE_SENTINEL
         return f"data: {json.dumps(event)}\n"
 

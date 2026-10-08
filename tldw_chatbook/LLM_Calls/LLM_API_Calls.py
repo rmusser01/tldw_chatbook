@@ -887,16 +887,29 @@ def chat_with_openai(
                             response, model=final_model
                         )
                         return
+                    # `stream_options.include_usage` is requested above, so
+                    # the final chunk carries usage; OpenAI-compatible
+                    # gateways sometimes emit CUMULATIVE usage per chunk, so
+                    # keep the last seen and record ONCE at normal loop end
+                    # (a consumer Stop records nothing -- cancelled streams
+                    # undercount by policy).
+                    openai_stream_final_usage = None
                     for line in response.iter_lines(decode_unicode=True):
                         if line and line.strip():
                             if '"usage"' in line:
-                                _record_openai_stream_usage_line(
-                                    line, model=final_model
-                                )
+                                usage_candidate = _openai_stream_line_usage(line)
+                                if usage_candidate is not None:
+                                    openai_stream_final_usage = usage_candidate
                             # Pass through OpenAI's SSE lines directly.
                             # Ensure they end with \n\n if not already.
                             # OpenAI's SSE usually includes double newlines.
                             yield line if line.endswith("\n") else line + "\n"
+                    if openai_stream_final_usage:
+                        session_usage().record_provider_payload(
+                            openai_stream_final_usage,
+                            provider="openai",
+                            model=final_model,
+                        )
                 except requests.exceptions.RequestException as e_request:
                     logger.opt(exception=True).error(
                         f"OpenAI: RequestException during stream: {e_request}"
@@ -1014,7 +1027,7 @@ def chat_with_openai(
                 provider="openai",
                 model=final_model,
                 fallback_texts=(
-                    json.dumps(input_data),
+                    _estimate_prompt_text(input_data),
                     _completion_text_from_response(response_data),
                 ),
             )
@@ -1275,26 +1288,40 @@ def _completion_text_from_response(response_data: Any) -> str:
     return ""
 
 
-def _record_openai_stream_usage_line(line: str, *, model: str) -> None:
-    """Record exact usage from an OpenAI SSE line, best-effort.
+def _openai_stream_line_usage(line: str) -> dict | None:
+    """Extract a usage dict from an OpenAI SSE line, best-effort.
 
     ``stream_options.include_usage`` is requested for chat-completions
-    streams, so the final chunk carries usage; the substring guard avoids
-    parsing every delta chunk (a false substring hit parses to a payload
-    without a usage dict and records nothing).
+    streams, so the final chunk carries usage; the substring guard at the
+    call site avoids parsing every delta chunk (a false substring hit
+    parses to a payload without a usage dict and returns None). The caller
+    keeps the LAST seen usage and records once at normal loop end --
+    OpenAI-compatible gateways sometimes emit cumulative usage per chunk.
     """
     try:
         data = line.removeprefix("data:").strip()
         if not data or data == "[DONE]":
-            return
+            return None
         payload = json.loads(data)
         usage = payload.get("usage")
         if isinstance(usage, dict) and usage:
-            session_usage().record_provider_payload(
-                usage, provider="openai", model=model
-            )
+            return usage
     except Exception:
         pass
+    return None
+
+
+def _estimate_prompt_text(input_data: Any) -> str:
+    """Best-effort prompt text for token estimates. Never raises.
+
+    Estimates only apply when the response carried no usage payload
+    (rare); base64 image parts can inflate the char count, which the
+    summary marks via the "includes estimates" qualifier.
+    """
+    try:
+        return _estimate_prompt_text(input_data)
+    except Exception:
+        return ""
 
 
 #: The shortest credential form ``_credential_redacted_detail`` masks literally.
@@ -2292,7 +2319,7 @@ def chat_with_anthropic(
                 usage,
                 provider="anthropic",
                 model=current_model,
-                fallback_texts=(json.dumps(input_data), full_assistant_content),
+                fallback_texts=(_estimate_prompt_text(input_data), full_assistant_content),
             )
 
             return normalized_response
@@ -3266,7 +3293,7 @@ def chat_with_cohere(
                 usage_data,
                 provider="cohere",
                 model=final_model,
-                fallback_texts=(json.dumps(input_data), text),
+                fallback_texts=(_estimate_prompt_text(input_data), text),
             )
 
             return openai_compatible_response
@@ -4041,7 +4068,7 @@ def chat_with_google(
                     normalized_usage,
                     provider="google",
                     model=current_model,
-                    fallback_texts=(json.dumps(input_data), assistant_content),
+                    fallback_texts=(_estimate_prompt_text(input_data), assistant_content),
                 )
 
             # Log non-streaming success metrics
@@ -4631,7 +4658,7 @@ def chat_with_huggingface(
                 provider="huggingface",
                 model=final_model_for_payload,
                 fallback_texts=(
-                    json.dumps(input_data),
+                    _estimate_prompt_text(input_data),
                     _completion_text_from_response(result),
                 ),
             )
@@ -4836,7 +4863,7 @@ def chat_with_moonshot(
             provider="moonshot",
             model=model or "",
             fallback_texts=(
-                json.dumps(input_data),
+                _estimate_prompt_text(input_data),
                 _completion_text_from_response(result),
             ),
         )
@@ -4922,7 +4949,7 @@ def chat_with_zai(
             provider="zai",
             model=model or "",
             fallback_texts=(
-                json.dumps(input_data),
+                _estimate_prompt_text(input_data),
                 _completion_text_from_response(result),
             ),
         )

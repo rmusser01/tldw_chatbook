@@ -288,6 +288,37 @@ def test_openai_chat_completions_stream_records_exact_once():
     assert snap.calls == 1
 
 
+def test_openai_stream_cumulative_usage_chunks_record_once():
+    """OpenAI-compatible gateways sometimes emit CUMULATIVE usage per
+    chunk; keep-last semantics must record only the final total once.
+    """
+    lines = [
+        'data: {"id": "1", "choices": [{"index": 0, "delta": {"content": "he"}, "finish_reason": null}]}',
+        'data: {"id": "1", "choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9}}',
+        'data: {"id": "1", "choices": [], "usage": {"prompt_tokens": 7, "completion_tokens": 4, "total_tokens": 11}}',
+        "data: [DONE]",
+    ]
+    response = Mock()
+    response.status_code = 200
+    response.raise_for_status = Mock()
+    response.iter_lines.return_value = iter(lines)
+    response.close = Mock()
+    with patch("requests.Session.post", return_value=response):
+        from tldw_chatbook.Chat.Chat_Functions import chat_api_call
+
+        generator = chat_api_call(
+            "openai",
+            messages_payload=[{"role": "user", "content": "hi"}],
+            api_key="sk-test",
+            model="gpt-4o",
+            streaming=True,
+        )
+        list(generator)
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 11  # the LAST cumulative chunk, once
+    assert snap.calls == 1
+
+
 def test_responses_stream_records_completed_usage_once():
     from tldw_chatbook.LLM_Calls.LLM_API_Calls import _responses_stream_to_chat_sse
 
@@ -383,6 +414,47 @@ def test_full_response_body_is_not_parsed_as_usage():
     snap = session_usage().snapshot()
     assert snap.exact_tokens == 6
     assert snap.calls == 1  # extraction records exactly once
+
+
+def test_gateway_native_usage_helper_extracts_and_is_none_safe():
+    """The gateway-native tap funnel: bare-dict extraction, no-op without
+    usage, never raises (PR #3046 review -- the native inline sites had no
+    coverage)."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _record_gateway_native_usage,
+    )
+
+    _record_gateway_native_usage(
+        {"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}}
+    )
+    _record_gateway_native_usage({"choices": []})  # no usage -> no-op
+    _record_gateway_native_usage({"usage": None})  # null usage -> no-op
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 8
+    assert snap.calls == 1
+
+
+@pytest.mark.parametrize("module_name", ["moonshot", "zai"])
+def test_strict_adapter_streams_record_terminal_usage_on_exhaustion(module_name):
+    """MoonshotStream/ZAIStream exhaustion tap (PR #3046 review): streaming
+    returns the shim before any usage funnel, so natural exhaustion is the
+    only place those streams record."""
+    from unittest.mock import MagicMock
+
+    module = importlib.import_module(f"tldw_chatbook.LLM_Calls.{module_name}")
+    stream = MagicMock()
+    stream.__next__.side_effect = StopIteration
+    stream.terminal_turn.usage = {
+        "prompt_tokens": 6,
+        "completion_tokens": 4,
+        "total_tokens": 10,
+    }
+    shim_class = module.MoonshotStream if module_name == "moonshot" else module.ZAIStream
+    with pytest.raises(StopIteration):
+        shim_class(stream).__next__()
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 10
+    assert snap.calls == 1
 
 
 @pytest.mark.parametrize(
