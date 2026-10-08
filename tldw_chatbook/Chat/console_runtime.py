@@ -5065,21 +5065,67 @@ class ConsoleRuntime:
         runs_db = self._agent_runs_db
 
         def read_receipts() -> int:
-            try:
-                return service.hydrate_from_storage()
-            finally:
-                if runs_db is not None:
-                    runs_db.close()
+            from .console_activity_receipts import ConsoleActivityReceiptService
+            from .conversation_local_marks_service import ConversationLocalMarksService
+            from ..DB.AgentRuns_DB import AgentRunsDB
+            from ..DB.ChaChaNotes_DB import CharactersRAGDB
+            from ..DB.base_db import operation_owned_connection
+
+            finite_runs = type(runs_db) is AgentRunsDB and not runs_db.is_memory_db
+            marks = (
+                service._marks
+                if type(service)
+                in {_LazyConsoleActivityReceiptService, ConsoleActivityReceiptService}
+                else None
+            )
+            notes_db = (
+                marks.db if type(marks) is ConversationLocalMarksService else None
+            )
+            with contextlib.ExitStack() as owned:
+                if finite_runs:
+                    owned.enter_context(operation_owned_connection(runs_db))
+                if type(notes_db) is CharactersRAGDB and not notes_db.is_memory_db:
+                    owned.enter_context(operation_owned_connection(notes_db))
+                try:
+                    return service.hydrate_from_storage()
+                finally:
+                    if not finite_runs and runs_db is not None:
+                        runs_db.close()
 
         async def hydrate() -> int:
-            result = await asyncio.to_thread(read_receipts)
+            from .console_preparation_reads import run_preparation_read
+
+            result = await run_preparation_read(
+                read_receipts,
+                creator=self,
+                session_id=None,
+                reads=self._preparation_reads,
+                require_current=lambda: None,
+            )
             if self._disposed or self.authority_token != token:
                 return 0
             return result
 
-        task = loop.create_task(hydrate())
+        # This private finite owner must not depend on a configurable task factory.
+        task = asyncio.Task(hydrate(), loop=loop)
         self._activity_hydration_task = task
         return task
+
+    async def _drain_activity_hydration(self) -> bool:
+        """Join the exact hydration owner, retaining cancellation until it settles."""
+        task = self._activity_hydration_task
+        cancelled = False
+        if task is None:
+            return cancelled
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled |= not task.done()
+            except Exception:  # noqa: BLE001 - consume the completed read failure.
+                break
+        self._consume_task_outcome(task)
+        return cancelled
 
     def ensure_chat_controller(self, **kwargs: Any) -> "ConsoleChatController":
         """Return the Console chat controller, creating it lazily.
@@ -6289,7 +6335,10 @@ class ConsoleRuntime:
             if controller is not None:
                 await self._drain_ordinary_native_commits(controller)
                 await self._drain_hook_review_operations()
-            await self._drain_hook_preparation_reads()
+            cancelled = await self._drain_hook_preparation_reads()
+            cancelled |= await self._drain_activity_hydration()
+            if cancelled:
+                raise asyncio.CancelledError
 
     async def _dispose_owned(
         self,
@@ -6402,7 +6451,6 @@ class ConsoleRuntime:
         runs_db = await asyncio.to_thread(receipt_database_after_creation)
         self.generation += 1
         hydration_task = self._activity_hydration_task
-        self._activity_hydration_task = None
         if hydration_task is not None and not hydration_task.done():
             hydration_task.cancel()
         # Revoke browser admission before tearing down any controller/store
@@ -6551,7 +6599,8 @@ class ConsoleRuntime:
         if controller is not None:
             await self._drain_ordinary_native_commits(controller)
             await self._drain_hook_review_operations()
-        await self._drain_hook_preparation_reads()
+        cancel_requested |= await self._drain_hook_preparation_reads()
+        cancel_requested |= await self._drain_activity_hydration()
         await self.close_hooks_v2()
         for turn_id in tuple(self._turn_custody):
             self._release_custody(turn_id)
