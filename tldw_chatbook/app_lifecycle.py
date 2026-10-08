@@ -2117,8 +2117,16 @@ class LifecycleMixin:
                 started_at=self._startup_start_time,
                 duration_seconds=duration,
             )
+            # The quit flow's prompt choke point (TASK-33622.10, ADR-031):
+            # direct push_screen_wait can hang when a covered modal's
+            # dismiss() pops the top screen. No vanish toast -- the summary
+            # vanishing still means "exit now". The wait_for stays as a
+            # belt-and-braces cap.
             await asyncio.wait_for(
-                self.push_screen_wait(dialog), timeout=duration + 2.0
+                await_quit_prompt(
+                    self, dialog, no_answer=None, vanished_notice=None
+                ),
+                timeout=duration + 2.0,
             )
         except asyncio.TimeoutError:
             loguru_logger.warning(

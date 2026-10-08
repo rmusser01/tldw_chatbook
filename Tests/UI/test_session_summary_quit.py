@@ -35,6 +35,7 @@ class _CleanupHarness:
         self.never_dismiss = never_dismiss
         self.exited = False
         self.pushed = []
+        self.screen_stack = []  # await_quit_prompt polls this on the no-answer path
 
     async def _cleanup_audio_for_quit(self) -> None:
         return None
@@ -42,10 +43,17 @@ class _CleanupHarness:
     def _run_blocking_quit_persistence(self) -> None:
         return None
 
-    async def push_screen_wait(self, screen) -> None:
+    def push_screen(self, screen, **kwargs):
+        # await_quit_prompt (the quit-flow choke point) uses
+        # push_screen(wait_for_dismiss=True) and awaits the returned future.
         self.pushed.append(screen)
-        if self.never_dismiss:
-            await asyncio.sleep(60.0)
+        future = asyncio.get_running_loop().create_future()
+        if not self.never_dismiss:
+            future.set_result(None)
+        return future
+
+    def notify(self, message, *, severity=None) -> None:
+        return None
 
     def exit(self) -> None:
         self.exited = True
@@ -90,4 +98,7 @@ async def test_stuck_dialog_hard_cap_still_exits(monkeypatch):
     await harness._run_approved_quit_cleanup()
     elapsed = time.perf_counter() - started
     assert harness.exited is True
-    assert elapsed < 10.0  # capped at duration + 2s, not the 60s stub sleep
+    # An unanswered prompt resolves via await_quit_prompt's vanish path
+    # (~0.2s) and the wait_for remains a belt-and-braces cap -- either way
+    # exit proceeds promptly, never blocking on the unresolved future.
+    assert elapsed < 10.0
