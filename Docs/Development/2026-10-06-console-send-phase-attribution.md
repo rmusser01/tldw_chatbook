@@ -1414,3 +1414,114 @@ needed to locate that remainder while retaining all default targets and bounds.
 Its static checks pass; runtime qualification and combined observer-off timing
 remain pending after the independent initial-draft repair. No new product change
 or proportional speed claim is made from this source-only review.
+
+
+## Task26 integrated timing after draft repairs
+
+Both sequential runs use frozen integration HEAD
+`031b8d28dc4c984182f3c8f5e74077f037ea0d9d`, including task26
+(`7bc2d4aa6d41fa4da50ee161c6ecf13a95ccf8a8`), the separate startup/switch draft
+repair (`dbf27ba534b998c82808f69ef08ca59b19a88754`) and the saved optional
+observer (`6b629e982a688eddd6044ae1f531e367cf99d528`). All three parallel lanes
+and the integration owner were shell-idle during measurement. The source is
+combined; comparison with d524 does not isolate task26's wall-time contribution.
+
+`owned-permission-integrated-send-1` is the existing quiet diagnostic without the
+optional spans or heavy native census. It completes in 60.735 s driver / 56.018 s
+pytest. All three user/assistant messages persist; nonstreaming/nonstreaming/
+streaming replies yield three complete linked traces and zero checkpoints.
+
+| Quiet measurement (seconds) | Send1 | Send2 | Send3 |
+| --- | ---: | ---: | ---: |
+| Action to adapter | 7.049159 | 6.762781 | 6.703718 |
+| Action to controller entry | 1.180988 | 1.700554 | 1.967575 |
+| Durable commit body | 0.221166 | 0.244692 | 0.236082 |
+| Action to durable commit complete | 2.281652 | 3.431674 | 3.207896 |
+| Durable commit complete to trace entry | 4.379221 | 3.012768 | 3.229847 |
+| Trace reservation body | 0.172533 | 0.142002 | 0.126962 |
+
+Send heartbeat maxima are .414586/.251354/.326992s; typing .259959s, startup
+1.620373s, idle .794014s and shutdown .030924s. Both product targets remain
+unmet. First Send takes the ordinary `ui_submit` route; the later two use early
+received intent. These stages are not rendered-frame evidence. The old heavy
+40,000-open whole-Send budget has not been requalified by this lighter diagnostic.
+
+`owned-permission-integrated-detail-1` then completes in 59.500 s driver / 54.703 s
+pytest on the same frozen source, again with all three replies/linked traces and
+zero checkpoints. Adapter values are 6.636999/6.321080/5.923517s; they remain
+separate instrumented samples, not replacements for the quiet values above.
+The four additional original-body spans now locate the composition remainder:
+
+| Inclusive original span (seconds) | Send1 | Send2 | Send3 |
+| --- | ---: | ---: | ---: |
+| Whole provider composition | .768296 | .614665 | .643922 |
+| Shared tool preparation | .740071 | .611466 | .640525 |
+| Local external catalog | .540950 | .366745 | .360997 |
+| Compose permission payload | .179042 | .187315 | .221321 |
+| Local provider function | .026118 | .001266 | .001510 |
+| Turn configuration capture | .742217 | 1.279160 | .845061 |
+| Nested MCP maximum capture | .435419 | .620263 | .422285 |
+| Five hook-current contexts | 1.282689 | 1.484787 | 1.579353 |
+| Awaited prompt history | .311771 | .225704 | .232971 |
+| Run-log binding | .278829 | .257641 | .188324 |
+
+These rows overlap and must not be added. The local-provider function is tiny on
+this sampled route, so its speculative config/root changes are not selected.
+The observer does not establish that every enabled multi-root/deep-search builder
+ran; those optional shapes remain unmeasured. Catalog preparation and hook-current
+entry are the larger domains. Catalog already decodes one JSON payload; nested
+source guards and governance/worker admission are its remaining work. Initial
+maximum and postcommit catalog observations retain separate freshness boundaries.
+
+The 83-target observer keeps its original bindings/source current, zero global
+events, unchanged 4096 event / 64 ancestry limits and normal monitoring retirement.
+There are zero event/detail/context overflows, unmatched returns, unfinished
+admission/generator/hook/raw/context entries or context ancestry misses. Raw
+hook ancestry still records 92 depth misses, so raw child attribution is partial.
+First receipt returns `None` at the combined gate on wiring line 437; later ones
+return accepted at line 563. The current probe does not distinguish that gate's
+operands; no failed operand or enabled-builder behavior is inferred.
+
+Both runs retain unchanged HEAD and all 7841 Python source hashes, and reach an
+empty contained Job at normal parent exit. Native identity, pipe/identity tasks
+and private profiles retire with zero forced cleanup, identity overflow or lookup
+races. Original deadlines/guards stay unchanged. These are scoped diagnostic
+retirement receipts, not universal production cleanup proof. Supported-host
+qualification of the new task26 controls is requested from the integration owner;
+its final acceptance criterion stays open. The larger speed/stability task remains
+In Progress. Follow-up review options are maintained in the linked optimization
+review list; further work follows the measured hook/catalog boundaries.
+
+### Current hook-context partition
+
+The same frozen detail run partitions each of the five hook-current contexts by
+original start/yield/read/return events. Unlike the inclusive table above, these
+rows do not overlap:
+
+| Boundary (seconds across five contexts) | Send 1 | Send 2 | Send 3 |
+| --- | ---: | ---: | ---: |
+| Config snapshot entry to first yield | .527 | .633 | .863 |
+| Default hook path derivation | .184 | .342 | .189 |
+| Hook raw scope entry to first yield | .136 | .135 | .156 |
+| Hook scope yield to state-read entry | .355 | .296 | .293 |
+| Actual hook state read | .063 | .061 | .064 |
+| Remaining caller, interstitial and exit work | .018 | .018 | .015 |
+| Total hook-current lifetime | 1.283 | 1.485 | 1.579 |
+
+Configuration entry accounts for 41-55% and includes admission, interprocess
+locking, config reading and projection. The pre-state-read interval contains
+hook lock creation/opening and locking. Send 2's first default path takes 210 ms;
+Send 3's first config entry takes 399 ms, including 263 ms in raw entry. Elapsed
+time alone does not establish contention. The 92 raw ancestry misses still
+limit deeper attribution, and an exception-unwound create has no completed
+return span; this does not establish zero cost.
+
+Source review finds the same lock pair in config and hook owners: attempt empty
+private-file creation, catch existing-file refusal, then independently prepare
+and open an append stream. Both establish the application-owned parent. Simply
+removing creation would lose the successful cold-create fsync. The next candidate
+is one finite private lock-stream operation, preserving actual exclusive-create
+outcome, cold durability, current parent/leaf checks, ordinary portalocker order
+and existing stream/native retirement. Obtain causal original counts before
+product changes. Keep the five fresh hook observations separate. OPT-09 records
+this candidate; OPT-03's directory-selection contraction remains deferred.

@@ -247,3 +247,29 @@ isolated census is 529 native attempts versus 621 baseline; the same product's
 change that correctly declined admission reuse. The report and task retain both
 receipts and all initial test-expectation corrections. Scoped static checks pass;
 combined Send timing and supported-host qualification remain open.
+
+### Task34563.27: finite private lock streams
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/222-console-send-preparation-and-io-ownership.md;
+backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: implement the existing finite same-operation ownership contract; preserve
+all persistence, path safety, freshness, locking and native lifetime boundaries.
+
+The atomic plan is in [task34563.27](../../../backlog/tasks/task-34563.27%20-%20Share-private-lock-creation-and-stream-preparation.md).
+Original code repeats parent establishment for config and hook locks during empty
+creation and append opening. The agreed API is
+`open_private_lock_stream(path, *, application_owned_directory=None, encoding="utf-8", errors=None) -> TextIO`
+under the existing admitted-stream lifetime, factoring existing append machinery.
+Actual exclusive creation establishes the cold fsync obligation; warm confirmed
+EEXIST retains fresh ancestor and leaf checks, opens without O_CREAT, and adds no
+fsync. All five hook policy observations remain fresh.
+
+Shared lane owns private_paths.py and its new lock tests. Integration lane owns
+config.py, hook_permissions.py and hook integration tests. Baseline lane owns the
+original-body causal count test. Root owns final integration, review, evidence and
+sequential native runs. Product edits follow causal RED. Census found no known
+consumer patches of the two imported private helper aliases; preserve actual
+_store_lock/portalocker seams and original public helper APIs without introducing
+an arbitrary monkeypatch compatibility framework. The distinct default-data-root
+lock pair remains OPT-29 for later review, with its ADR-127 contract unchanged.
