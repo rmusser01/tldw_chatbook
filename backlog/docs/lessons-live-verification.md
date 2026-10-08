@@ -1,5 +1,23 @@
 # Lessons: verifying against the real thing
 
+## A stack sampler that holds frames breaks SQLite commits in the app it samples (TASK-33620.15, 2026-10-05)
+
+**Incident.** To see what worker threads did during a send, a `sitecustomize`
+sampler took `sys._current_frames()` for every thread every 4 ms and built
+each stack's text while it held those frames. Twelve seconds after launch, the
+app's log showed `cannot commit transaction - SQL statements in progress` on
+three threads, plus failed WAL checkpoints, and every send then said "your
+conversation database could not be opened". No other run of the same build
+showed the error. A held frame keeps its locals alive after the function
+returns, including an unfinished cursor, and SQLite refuses to commit while
+that statement is open. Main-thread-only samplers of the same build ran clean.
+
+**What to do.** In a sampler, copy only `f_code` objects (they hold no
+locals) while walking a stack, drop every frame reference before you format
+anything, and sample other threads only when you need them. If the app logs a
+database error that no other run of the build shows, suspect the sampler
+before the code under test.
+
 ## A tmux key burst loses typed text, and an empty Input shows its placeholder
 
 **TASK-34100.8, 2026-10-04.** Live-editing the Voice step's Endpoint with
