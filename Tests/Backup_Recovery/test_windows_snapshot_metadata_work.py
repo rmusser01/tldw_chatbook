@@ -30,6 +30,7 @@ def _metadata_counts(native, facade):
         (windows_files.WindowsOS, name)
         for name in ("stat_many_for_admission", "_stat_handle")
     ]
+    members.append((windows_files, "_component"))
     functions = {
         (owner, name): inspect.getattr_static(owner, name) for owner, name in members
     }
@@ -49,6 +50,7 @@ def _metadata_counts(native, facade):
     snapshot_code = functions[
         windows_files.WindowsOS, "stat_many_for_admission"
     ].__code__
+    component_code = windows_files._component.__code__
     named_code = next(
         code
         for code in snapshot_code.co_consts
@@ -69,6 +71,10 @@ def _metadata_counts(native, facade):
         witness._start(code, offset)
         frame = witness._frame(code)
         assert threading.current_thread() is actor
+        if code is component_code:
+            if frame.f_back.f_code is snapshot_code:
+                counts["preflight_component"] += 1
+            return
         expected = facade if code in {stat_code, snapshot_code} else native
         assert frame.f_locals.get("self") is expected
         counts[witness.codes[code]] += 1
@@ -153,6 +159,7 @@ def test_original_tree_snapshot_counts_and_retires_actual_handles(tmp_path, requ
         )
     )
     assert counts == Counter(
+        preflight_component=sum(node.parent != node for node in nodes),
         open_handle=2 * n,
         info=5 * n,
         ntfs=2 * n,
@@ -164,3 +171,16 @@ def test_original_tree_snapshot_counts_and_retires_actual_handles(tmp_path, requ
     assert callers == Counter(
         open_validation=2 * n, identity_record=2 * n, fresh_stat=n
     )
+
+
+@pytest.mark.parametrize("ancestor", ["NUL", "bad:stream", "trailing.", "bad\x01name"])
+def test_snapshot_refuses_invalid_ancestor_before_native_open(
+    tmp_path, monkeypatch, ancestor
+):
+    def unexpected_native():
+        pytest.fail("invalid ancestor reached the native filesystem")
+
+    monkeypatch.setattr(windows_files, "_native", unexpected_native)
+    selected = tmp_path / ancestor / "valid-leaf.bin"
+    with pytest.raises(ValueError, match="(?:invalid|reserved)_windows_component"):
+        windows_files.WindowsOS().stat_many_for_admission((selected,))

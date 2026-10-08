@@ -836,8 +836,9 @@ class WindowsOS:
                 or not node.drive[0].isalpha()
             ):
                 raise ValueError("local_absolute_drive_path_required")
-            for component in node.parts[1:]:
-                _component(component)
+            # The node set includes every ancestor; validate each name once.
+            if node.parent != node:
+                _component(node.name)
         parents = {node.parent for node in nodes if node.parent != node}
         native = _native()
         handles, identities, observations = {}, {}, {}
