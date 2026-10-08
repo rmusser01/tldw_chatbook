@@ -292,7 +292,11 @@ async def test_rewind_takes_its_command_out_of_the_composer_whichever_send_opens
     On dev only the Send button and the Workbench cleared it (they had no
     captured draft); Enter left "/rewind" in the composer behind the menu.
     All three now capture first, so the captured command is committed once
-    the menu opens -- text typed after the capture stays.
+    the menu opens -- text typed after the capture stays. A click on Send
+    leaves the slash-command popup open until then (Enter would accept its
+    entry instead, so Enter's send dismisses it first); the commit must close
+    it, as dev's clear did (live: the "/rewind" popup row stayed drawn under
+    the menu).
     """
     from textual.widgets import Button
 
@@ -317,9 +321,13 @@ async def test_rewind_takes_its_command_out_of_the_composer_whichever_send_opens
         composer.focus()
         composer.load_draft("/rewind")
         console._sync_console_workbench_actions_from_draft()
-        console._dismiss_console_command_popup()
+        console._sync_console_command_popup()
         await pilot.pause()
+        popup = console._console_command_popup_or_none()
+        assert popup is not None and popup.is_open
         if trigger == "enter":
+            console._dismiss_console_command_popup()
+            await pilot.pause()
             press(host, "enter", "\r")
         elif trigger == "button":
             console.query_one("#console-send-message", Button).press()
@@ -328,3 +336,4 @@ async def test_rewind_takes_its_command_out_of_the_composer_whichever_send_opens
         await until(lambda: isinstance(host.screen_stack[-1], ConsoleRewindModal))
         await pilot.pause()
         assert composer.draft_text() == ""
+        assert not popup.is_open
