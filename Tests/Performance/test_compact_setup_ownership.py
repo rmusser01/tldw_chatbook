@@ -215,7 +215,7 @@ async def run():
                 if dispose_job is not None:
                     await dispose_job
                 if gate is not None:
-                    assert gate.entered.is_set() and not gate.invalid
+                    assert gate.entered.is_set() and not gate.invalid, (gate.entered.is_set(), tuple(gate.invalid))
                     assert gate.action_task is not None and gate.action_task.done()
                     assert facts.get('actual_callback_held_at_intervention') is True
                     request = gate.entry_request if gate.queued else gate.worker_request

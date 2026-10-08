@@ -465,6 +465,9 @@ async def test_hidden_console_starts_no_credential_config_reader(request):
             await _press_until_screen(pilot, "ctrl+2", "ChatScreen")
             console = app.screen
             assert str(app.chachanotes_db.db_path) != ":memory:"
+            # Screen identity is visible before the deferred attach refresh ends.
+            # The stock credential timer starts only after that reconciliation.
+            await _until(lambda: console._console_attach_reconciled)
             assert console._console_credential_poll_timer is not None
             projection = ConsoleReadinessConfigProjection.for_screen(console)
             assert type(projection) is ConsoleReadinessConfigProjection

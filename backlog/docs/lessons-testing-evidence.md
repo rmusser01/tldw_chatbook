@@ -19188,3 +19188,6 @@ not convert instrumented counts or nested elapsed time into promised savings.
 ### A separate Console host must own its view-worker drain (TASK-34406, 2026-10-08)
 
 The dictionary inspector fixtures disposed their app runtime after a minimal Textual harness exited, yet three cases still failed exact database retirement. Observation at the unchanged close helper caught an original WorkspaceDB scope read still acquiring storage. The minimal host had skipped production view-worker capture/drain, so runtime cleanup arrived after Textual detached the worker. Reusing the existing ProductionConsoleHarness fixed all three failures while preserving the database retirement gate; the focused five-case run recorded no refusal. Runtime disposal alone is insufficient evidence for a separate host's issued workers.
+
+
+The subsequent initial-draft/suspend fixture reuse initially mounted two Consoles: Textual dispatches an event through each matching MRO handler. Its specialized on_mount must call Mount.prevent_default() before supplying its replacement mount; otherwise inheriting the production lifecycle also invokes the base mount. Original typing/attach controls then pass and the worker census is empty. Keep custom mount semantics explicit when reusing a production shutdown harness.

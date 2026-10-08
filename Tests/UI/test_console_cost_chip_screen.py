@@ -36,8 +36,9 @@ from Tests.UI.test_destination_shells import (
 from Tests.UI.test_console_native_chat_flow import (
     _build_console_send_test_app as _build_test_app,
 )
-from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
-    ConsoleHarness,
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
+from Tests.UI.test_console_session_tab_close import (
+    ProductionConsoleHarness as ConsoleHarness,
 )
 
 from tldw_chatbook.Chat.citation_evidence_models import (
@@ -657,7 +658,8 @@ async def test_build_console_cost_state_includes_fleet_token_spend():
 
 
 @pytest.mark.asyncio
-async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
+@pytest.mark.parametrize("empty_display_cache", [False, True])
+async def test_sync_cost_chip_hides_the_chip_when_state_is_none(empty_display_cache):
     app = _build_test_app()
     attach_chachanotes_db(app)
     host = ConsoleHarness(app)
@@ -665,16 +667,16 @@ async def test_sync_cost_chip_hides_the_chip_when_state_is_none():
     async with host.run_test(size=(200, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-cost-chip")
-        # A freshly mounted Console session has no usage/cost yet, so the
-        # snapshot is empty and the chip renders hidden either way -- force
-        # the "no session at all" branch directly, matching how
-        # `_sync_console_cost_chip` is actually invoked off the sync path.
+        if empty_display_cache:
+            console._context_spend._last_console_cost_state = None
+        # Removing the owner must clear its stale cost immediately. Yielding
+        # here lets startup create another session and tests a different owner.
         console._console_chat_store = None
         console._sync_console_cost_chip()
-        await pilot.pause()
 
         chip = console.query_one("#console-cost-chip")
         assert chip.display is False
+        assert console._console_chat_store is None
 
 
 # --- (e) TTL: past warm_until flips EXPIRED/cold and stops the timer --------
@@ -1193,8 +1195,11 @@ async def test_active_edit_cancels_an_already_armed_idle_cost_timer(monkeypatch)
         await _wait_for_selector(console, pilot, "#console-native-composer")
         summary_refresh = Mock()
         cost_refresh = Mock()
-        monkeypatch.setattr(console, "_sync_console_settings_summary", summary_refresh)
-        monkeypatch.setattr(console, "_sync_console_cost_chip", cost_refresh)
+        # Observe only the debounce owner's callbacks. Startup, identity and
+        # run-state refreshes legitimately update the same screen displays.
+        refresh = console._console_draft_spend_refresh
+        monkeypatch.setattr(refresh, "sync_settings_summary", summary_refresh)
+        monkeypatch.setattr(refresh, "sync_cost_chip", cost_refresh)
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("arm while idle")
         await pilot.pause(0.01)

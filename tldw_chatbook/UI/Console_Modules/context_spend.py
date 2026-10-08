@@ -183,6 +183,12 @@ def _build_console_inspector_exchanges_loader(
     return _exchanges_loader
 
 
+@spend.console_readiness_presentation
+def _refresh_cost_chip_under_config(screen: Any) -> None:
+    """Keep the actual Screen as the checked display owner for a live chat."""
+    screen._context_spend._refresh_cost_chip()
+
+
 class ConsoleContextSpendController:
     """Own passive Context/spend projections and their display caches.
 
@@ -1040,6 +1046,13 @@ class ConsoleContextSpendController:
             logger.opt(exception=True).warning("cost_chip_state_failed")
             return self._last_console_cost_state
 
+    def refresh_cost_chip(self) -> None:
+        """Clear an absent owner without IO; price live owners with checked config."""
+        if self._active_native_session() is None:
+            self._refresh_cost_chip()
+            return
+        _refresh_cost_chip_under_config(self._screen)
+
     def _refresh_cost_chip(self) -> None:
         """Refresh the cost chip from freshly built state (task-5).
 
@@ -1052,12 +1065,12 @@ class ConsoleContextSpendController:
         EXPIRED with no other sync call in between still repaints.
         """
         cost_state = self._build_console_cost_state()
-        if cost_state != self._last_console_cost_state:
+        # A missing owner must also clear a chip composed before this cache
+        # received its first state. Repeated empty clears are widget-gated.
+        if cost_state is None or cost_state != self._last_console_cost_state:
             self._last_console_cost_state = cost_state
             try:
-                status_chips = self.query_one(
-                    "#console-status-chips", ConsoleStatusChips
-                )
+                status_chips = self.query_one("#console-status-chips", ConsoleStatusChips)
             except QueryError:
                 status_chips = None
             if status_chips is not None:

@@ -10768,10 +10768,9 @@ class ChatScreen(BaseAppScreen):
             system_prompt_set=bool(getattr(settings, "system_prompt", None)),
         )
 
-    @spend.console_readiness_presentation
     def _sync_console_cost_chip(self) -> None:
-        """Refresh through the original Screen-owned checked display entry."""
-        self._context_spend._refresh_cost_chip()
+        """Clear absent owners immediately; retain checked pricing for live owners."""
+        self._context_spend.refresh_cost_chip()
 
     def _stop_console_environment_poll_timer(self) -> None:
         """Stop the Environment panel's local-tier poll timer, if running."""

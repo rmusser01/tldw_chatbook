@@ -3,10 +3,11 @@
 from types import SimpleNamespace
 
 import pytest
-from textual.events import Key
+from textual.events import Key, Mount
 
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS
+from Tests.UI.test_console_session_tab_close import ProductionConsoleHarness
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
@@ -14,16 +15,18 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 pytestmark = pytest.mark.bootstrap_profile
 
 
-class DeferredInitialConsole(ConsolidatedCSSApp):
+class DeferredInitialConsole(ProductionConsoleHarness):
     CSS_PATH = [str(path) for path in APP_STYLESHEETS]
 
     def __init__(self, app_instance, initial):
-        super().__init__()
+        super().__init__(app_instance)
         self.app_instance = app_instance
         self.initial = initial
         self.changed_owners = []
 
-    async def on_mount(self):
+    async def on_mount(self, event: Mount):
+        # This specialized mount replaces the base harness's normal Console.
+        event.prevent_default()
         self.app_instance._ui_ready = True
         screen = ChatScreen(self.app_instance)
         store = screen._ensure_console_chat_store()
