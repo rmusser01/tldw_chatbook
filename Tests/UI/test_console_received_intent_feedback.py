@@ -211,6 +211,7 @@ async def _received_console_case(monkeypatch, name, *, durable=False):
     registry = app.workspace_registry_service
     workspace_id = f"received-{name}"
     registry.create_workspace(workspace_id=workspace_id, name=f"Received {name}")
+    registry.set_active_workspace(workspace_id)
     provider_calls = []
 
     def reply(**kwargs):
@@ -225,7 +226,9 @@ async def _received_console_case(monkeypatch, name, *, durable=False):
             async with host.run_test(size=(120, 40)) as pilot:
                 assert await _until(
                     lambda: isinstance(host.screen, ChatScreen)
-                    and host.screen.is_mounted,
+                    and host.screen.is_mounted
+                    and host.screen._console_attach_reconciled
+                    and not host.screen._console_attach_reconcile_running,
                     10,
                 )
                 console = host.screen
@@ -233,13 +236,19 @@ async def _received_console_case(monkeypatch, name, *, durable=False):
                 controller = console._ensure_console_chat_controller()
                 store = controller.store
                 session = store.ensure_session()
-                session.workspace_id = workspace_id
+                assert session.workspace_id == workspace_id
+                assert store.active_session_id == session.id
+                assert console._console_visible_draft_session_id == session.id
                 composer = console._console_composer_or_none()
                 draft = "An exact received draft"
                 composer.load_draft(draft)
                 composer.focus()
                 await pilot.pause()
                 assert host.focused is composer
+                assert console._console_composer_or_none() is composer
+                assert store.active_session_id == session.id
+                assert console._console_visible_draft_session_id == session.id
+                assert composer.draft_text() == store.session_draft(session.id) == draft
                 for selector in (
                     "#console-command-visible-text",
                     "#console-send-message",
