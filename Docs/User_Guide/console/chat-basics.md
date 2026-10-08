@@ -649,14 +649,26 @@ itself, and offers Undo afterwards.
    messages under it change before you confirm (a new turn arrives under it,
    say), Delete asks again with the new count rather than removing more than
    you saw.
-3. A **Deleted N messages** receipt opens. **Undo** (focused) puts exactly
-   those messages back where they were and returns the conversation to the
-   branch you were on; they stay restored after you close and reopen the
-   chat. **Done** or **Esc** keeps the delete, and from then on it can't be
-   undone in the app. If Undo can't finish (the database is busy, say), the
-   messages stay deleted and the receipt opens again so you can retry; if
-   something changed them after the delete, Undo is refused and the delete
-   stands.
+3. A receipt opens straight away. While the delete is being saved it reads
+   **Deleting N messages…**; with thousands of messages that can take a
+   moment, and the rest of Chatbook keeps responding while it saves (in a
+   very long chat, redrawing the transcript afterwards can still pause it).
+   A save can't be stopped once it starts, so until it finishes **Esc**
+   doesn't close the receipt and **Ctrl+Q** says the delete is still being
+   saved (press it again to be asked whether to quit anyway). **Quit
+   anyway** still gives the save a few seconds to finish before Chatbook
+   closes; either way the delete is saved in full or not at all, never
+   halfway.
+4. Once saved, the receipt reads **Deleted N messages**. **Undo** (focused)
+   puts exactly those messages back where they were and returns the
+   conversation to the branch you were on; while it works the receipt reads
+   **Restoring N messages…** (**Esc** and **Ctrl+Q** wait for it as they do
+   for the delete), and it closes when they are back. They stay
+   restored after you close and reopen the chat. **Done** or **Esc** keeps
+   the delete, and from then on it can't be undone in the app. If Undo can't
+   finish (the database is busy, say), the messages stay deleted and the
+   receipt offers Undo again so you can retry; if something changed them
+   after the delete, Undo is refused and the delete stands.
 
 **Conversations saved before branching.** Older versions of Chatbook saved
 each message on its own, without a link to the message before it. Console

@@ -294,13 +294,20 @@ $ds-conversation-menu-width: 30;
     align: center middle;
 }
 
-#console-delete-receipt {
+/* TASK-33628.5: the box stays while its content swaps between the receipt
+   and the "Deleting/Restoring N messages" progress shown while a save runs. */
+#console-delete-receipt-box {
     width: $ds-size-60;
     max-width: $ds-width-full;
     height: auto;
     border: tall $primary;
     background: $surface;
     padding: $ds-space-1 $ds-space-2;
+}
+
+#console-delete-receipt,
+#console-delete-receipt-progress {
+    height: auto;
 }
 
 #console-delete-receipt-actions {

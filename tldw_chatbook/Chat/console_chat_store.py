@@ -10866,37 +10866,15 @@ class ConsoleChatStore:
             self._activate_session(next(iter(self._sessions)))
 
     @_ephemeral_promotion_global_lifecycle
-    def end_app_runtime(self) -> None:
-        """Drop every volatile recovery projection at explicit app teardown."""
+    def end_app_runtime(self, *, replace_state: bool = True) -> None:
+        """Drop every volatile recovery projection at explicit app teardown.
 
-        with self._voice_promotion_state_replacement_scope():
-            self._end_app_runtime_after_voice_fence()
+        ``replace_state=False`` keeps them, so a still-held voice admission
+        cannot stop the other steps (``console_store_teardown``).
+        """
+        from .console_store_teardown import end_store_runtime
 
-    def _end_app_runtime_after_voice_fence(self) -> None:
-        if self.canvas_promotion_participant is not None:
-            self.canvas_promotion_participant.close_runtime()
-        if (
-            self.canvas_turn_controller is not None
-            and self.canvas_turn_controller is not self.canvas_promotion_participant
-        ):
-            self.canvas_turn_controller.close_runtime()
-
-        with self._fence_provider_trace_settlement_registrations(
-            (),
-            permanent=True,
-        ):
-            self._settle_all_provider_trace_settlements()
-            self._drain_retained_provider_trace_settlements_on_teardown()
-            with self._preparation_lock:
-                self._dispatch_recoveries_by_session.clear()
-                self._dispatch_recovery_message_baselines.clear()
-                self._dispatch_recovery_generation_tokens.clear()
-                self._dispatch_recovery_queue_hydration_pending.clear()
-        self._close_provider_trace_settlement_executor()
-        with self._stream_persistence_deferred_lock:
-            self._stream_persistence_executor_closed = True
-        self._stream_persistence_executor.shutdown(wait=True)
-        self._retry_failed_provider_trace_settlements_on_teardown()
+        end_store_runtime(self, replace_state=replace_state)
 
     @staticmethod
     def _set_message_attachments(
@@ -13938,74 +13916,17 @@ class ConsoleChatStore:
             return self._delete_message(message_id)
 
     def _delete_message(self, message_id: str) -> ConsoleChatMessage:
-        """Durably tombstone a complete Console message and its subtree."""
-        message = self._message_or_raise(message_id)
-        self._materialize_stream_buffer(message)
-        if message.status in {"pending", "streaming"}:
-            raise ValueError(
-                "Wait for response to finish before deleting this message."
-            )
-        session_id = self._message_session_index[message_id]
-        parent_native_id = self._native_parent_by_message.get(message_id)
-        on_active_path = message_id in self.active_path_message_ids(session_id)
-        subtree_ids = self._subtree_ids(session_id, message_id)
-        nodes = self._nodes_by_session.get(session_id, {})
-        tombstones: list[dict[str, Any]] = []
-        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+        """Durably tombstone a complete Console message and its subtree.
 
-        with self._dispatch_branch_mutation(session_id):
-            # TASK-33628.6/.7/.9: every saved row, even under an unsaved node.
-            saved = flat_roots.delete_seeds(self, session_id, subtree_ids)
-            anchor = message.persisted_message_id or next(filter(None, saved), None)
-            if anchor is not None and self.persistence is not None:
-                deleter = getattr(self.persistence, "delete_message_subtree", None)
-                if not callable(deleter):
-                    raise RuntimeError("Message deletion could not be persisted.")
-                tombstones = deleter(message_id=anchor, subtree_message_ids=saved)
-            if on_active_path and not self._persist_active_leaf(
-                session_id, parent_native_id
-            ):
-                raise ValueError(
-                    "Resolve pending dispatch before deleting this message."
-                )
-        self._project_sync_v2_message_deletes(tombstones)
-        for node_id in subtree_ids:
-            self._invalidate_generation_attempt(node_id)
-        children_map = self._children_by_parent.get(session_id, {})
-        # Detach the deleted node from its parent's ordered child list.
-        siblings = children_map.get(parent_native_id)
-        if siblings is not None and message_id in siblings:
-            siblings.remove(message_id)
-            if not siblings:
-                children_map.pop(parent_native_id, None)
-        # Purge the deleted node AND its whole subtree from every structure --
-        # deleting a mid-conversation node drops the branch beneath it.
-        for node_id in subtree_ids:
-            self.clear_terminal_citation_state(node_id)
-            nodes.pop(node_id, None)
-            children_map.pop(node_id, None)
-            self._native_parent_by_message.pop(node_id, None)
-            self._restored_tree_message_ids.discard(node_id)
-            self._message_session_index.pop(node_id, None)
-            self._stream_chunks_by_message.pop(node_id, None)
-            self._stream_materialized_counts.pop(node_id, None)
-            self._pending_persistence_message_ids.discard(node_id)
-            self._variant_stream_bases.pop(node_id, None)
-            self._variant_restored_message_ids.discard(node_id)
-            self._failed_retry_message_ids.discard(node_id)
-            self._message_speech_revisions.pop(node_id, None)
-            self._message_completion_generations.pop(node_id, None)
-            self._exchange_blob_cache.pop(node_id, None)
-        # Only when the deleted branch was on the active path does the leaf move
-        # (up to the deleted node's parent); an off-path delete leaves it alone.
-        self._purge_tool_markers(session_id, set(subtree_ids))
-        if on_active_path:
-            self._active_leaf_by_session[session_id] = parent_native_id
-        self._recompute_active_path(session_id)
-        self._bump_payload_revision(session_id)
-        if on_active_path:
-            self._bump_conversation_context_epoch(session_id)
-        return self._snapshot(message)
+        TASK-33628.5: the plan/write/apply phases live in
+        ``console_subtree_delete`` so the Console can run the write off the
+        event loop; this runs all three in a row.
+        """
+        from tldw_chatbook.Chat import console_subtree_delete as subtree
+
+        plan = subtree.plan_subtree_delete(self, message_id)
+        tombstones = subtree.write_subtree_delete(type(self), self.persistence, plan)
+        return subtree.apply_subtree_delete(self, plan, tombstones)
 
     def subtree_message_ids(self, message_id: str) -> tuple[str, ...]:
         """Return the current native ids removed by deleting ``message_id``."""
@@ -22316,7 +22237,18 @@ class ConsoleChatStore:
         conversation_id = (
             session.persisted_conversation_id if session is not None else None
         )
-        db = getattr(self.persistence, "db", None)
+        with self._dispatch_branch_transaction(
+            getattr(self.persistence, "db", None), conversation_id
+        ):
+            yield
+
+    @staticmethod
+    @contextmanager
+    def _dispatch_branch_transaction(db: Any, conversation_id: str | None):
+        """The write transaction of ``_dispatch_branch_mutation``; no store state.
+
+        TASK-33628.5: a Console subtree delete runs it off the event loop.
+        """
         if conversation_id is None or db is None:
             yield
             return
@@ -22362,6 +22294,24 @@ class ConsoleChatStore:
         if message_id is not None:
             node = self._nodes_by_session.get(session_id, {}).get(message_id)
             leaf_persisted_id = node.persisted_message_id if node is not None else None
+        return self._write_active_leaf(
+            persistence_db,
+            conversation_id,
+            leaf_persisted_id,
+            session_id=session_id,
+            content_safe_diagnostic=content_safe_diagnostic,
+        )
+
+    @staticmethod
+    def _write_active_leaf(
+        persistence_db: Any,
+        conversation_id: str,
+        leaf_persisted_id: str | None,
+        *,
+        session_id: str,
+        content_safe_diagnostic: bool = False,
+    ) -> bool:
+        """The write half of ``_persist_active_leaf``; no store state (TASK-33628.5)."""
         try:
             persistence_db.set_conversation_active_leaf(
                 conversation_id, leaf_persisted_id
