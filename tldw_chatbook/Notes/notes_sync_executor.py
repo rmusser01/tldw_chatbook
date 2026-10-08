@@ -295,6 +295,12 @@ _INTERNAL_REASONS = frozenset(
         "postcondition_failed",
         "recovery_authority_changed",
         "restore_postcondition_failed",
+        # TASK-34000.51: an automatic ``update_file`` fenced ONLY because its
+        # note (the source) moved on while the file (the target) is exactly
+        # as expected. The runtime settles such an entry itself and re-plans;
+        # a target that changed too keeps ``stale_observation`` /
+        # ``postcondition_failed`` and stays Recovery's.
+        "source_moved_on",
         "stale_observation",
         "stale_operation_token",
         "stale_restore_observation",
@@ -4051,7 +4057,41 @@ class NotesSyncExecutor:
             raise RuntimeError("stale_observation")
         note, file = await self._observe(request)
         if note != request.note or file != request.file:
-            raise RuntimeError("stale_observation")
+            raise RuntimeError(
+                "source_moved_on"
+                if self._source_moved_only(
+                    request,
+                    target_intact=file == request.file,
+                    source_unchanged=note == request.note,
+                )
+                else "stale_observation"
+            )
+
+    @staticmethod
+    def _source_moved_only(
+        request: NotesSyncExecutionRequest,
+        *,
+        target_intact: bool,
+        source_unchanged: bool,
+    ) -> bool:
+        """Whether a fence is owed only to the note moving on (TASK-34000.51).
+
+        True for an AUTOMATIC ``update_file`` (the note is the source, the
+        file the target) whose target is exactly what this operation expects
+        while its source is not: the user kept typing, nothing else happened.
+        The runtime settles that entry itself. A reviewed resolution (a
+        journal kind), an ``update_note`` (the file is the source; a disk
+        edit mid-pass stays Recovery's), or any target that changed too is
+        never classified this way, so a two-sided change keeps today's
+        reason and still stops for review.
+        """
+
+        return (
+            request.journal_kind is None
+            and request.action_kind is NotesSyncActionKind.UPDATE_FILE
+            and target_intact
+            and not source_unchanged
+        )
 
     def _admit(self, request: NotesSyncExecutionRequest) -> bool:
         binding = self._store.get_binding(request.binding_id)
@@ -4295,7 +4335,19 @@ class NotesSyncExecutor:
                 note, file = await self._observe(request)
                 target, source = self._classify(request, note, file)
                 if not source or target == "stale":
-                    raise RuntimeError("stale_observation")
+                    # Nothing is written from a stale source. TASK-34000.51:
+                    # with the target intact ("original" or "desired") the
+                    # fence is the note's alone, and the settle keeps the
+                    # reviewed baseline (nothing was written by this entry).
+                    raise RuntimeError(
+                        "source_moved_on"
+                        if self._source_moved_only(
+                            request,
+                            target_intact=target != "stale",
+                            source_unchanged=source,
+                        )
+                        else "stale_observation"
+                    )
                 cancelled = False
                 if target == "original":
                     self._require_reviewed_owner(request)
@@ -5706,7 +5758,19 @@ class NotesSyncExecutor:
         note, file = await self._observe(request)
         target, source = self._classify(request, note, file)
         if not source or target != "desired":
-            raise RuntimeError("postcondition_failed")
+            # TASK-34000.51: the write is exactly on disk and only the note
+            # moved on -> ``source_moved_on``; the settle proves the write
+            # from the file and commits the post-write baseline. A target
+            # that is not the desired one keeps ``postcondition_failed``.
+            raise RuntimeError(
+                "source_moved_on"
+                if self._source_moved_only(
+                    request,
+                    target_intact=target == "desired",
+                    source_unchanged=source,
+                )
+                else "postcondition_failed"
+            )
         return note, file
 
     def _stage(self, state: NotesSyncOperationState) -> None:

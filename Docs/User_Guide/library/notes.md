@@ -479,9 +479,10 @@ works.
 **Autosave** runs about two seconds after you stop typing; the meta line
 flips to "saving…" and back to "saved". If you keep typing without a
 two-second pause, it still saves at least every ten seconds, so a long
-burst of steady typing is never held back until you stop. (A note in a synced
-folder can take up to three seconds longer, while the folder finishes syncing
-the previous save.) If an autosave is
+burst of steady typing is never held back until you stop. A note in a synced
+folder saves on the same timings: a save never waits for the folder's previous
+sync, and a save that lands while that sync is still writing the file settles
+on its own (see "Typing in a synced note" under Lasting sync). If an autosave is
 refused — a title with a leading or trailing space, unsafe markup, a
 duplicate keyword — or the write fails, the status line says why, and your
 cursor stays in the field you are typing in. Nothing jumps to another field
@@ -843,12 +844,16 @@ surfaces follow the folder as its state changes — a hold that a background pas
 produces while you sit idle (a disk edit colliding with a note edit, say)
 reaches them within a moment, without a keypress — and they return to the
 healthy wording the same way once the folder is resolved. Typing in a synced
-note can still, rarely, hold its folder: Chatbook saves the note while you
-type, and each save first waits up to three seconds for the folder's previous
-sync to finish, so on a folder slow enough to outlast that wait a save can
-land in the middle of a sync, and the folder is then held until you press
-**Recovery**, which loses nothing (TASK-34000.51 is to make that settle on its
-own). Before this
+note never holds its folder: Chatbook saves the note while you type, and a save
+that lands while the folder is still writing the previous save to the file is
+settled on the next pass with no click -- the folder records the baseline it
+can prove (the journal's digest and the bytes on disk), writes the newer text,
+and the row stays "✓ Up to date"; a save never waits for a sync, on this folder
+or any other, so a note switch, Back or a rail switch is never delayed by a
+folder's pass (TASK-34000.51). The one thing that still waits is a change on
+both sides -- the file edited on disk while the note was edited in Chatbook --
+which is an ordinary "Both file and note changed" review, never a silent
+winner. Before this
 an ordinary edit — Ctrl+End, then a word without Enter, in a vault whose files
 end with a newline — left a `postcondition_failed` entry open on the folder
 while the tree, the list and the editor went on saying Sync managed, Ready and

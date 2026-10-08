@@ -19,13 +19,7 @@ from tldw_chatbook.Library.library_notes_state import (
 
 
 class DatabaseNoteSessionPort(Protocol):
-    """Minimum asynchronous persistence boundary required by a session.
-
-    A port may also offer ``async settle_before_save(note_id) -> bool``: the
-    coordinator awaits it before each save commits, and re-reads its draft
-    when it returns True (it waited). The Library's port uses it so a save of
-    a synced note never lands inside the sync pass its previous save started.
-    """
+    """Minimum asynchronous persistence boundary required by a session."""
 
     async def load_note(self, note_id: str) -> DatabaseNotePortLoadReply:
         """Load one complete normalized note detail."""
@@ -555,25 +549,8 @@ class DatabaseNoteSessionCoordinator:
             self._save_task = task
         return await asyncio.shield(task)
 
-    async def _settle_port_before_save(self, note_id: str) -> bool:
-        """Give the port its bounded moment before a save commits.
-
-        Returns:
-            Whether the port waited, in which case the draft, the session or
-            the note itself may have changed and the caller must re-read.
-        """
-        settle = getattr(self._port, "settle_before_save", None)
-        if not callable(settle):
-            return False
-        try:
-            return bool(await settle(note_id))
-        except Exception:  # noqa: BLE001 - a wait never fails the save
-            return True
-
     async def _drive_saves(self) -> NoteSaveOutcome:
         """Persist successive latest revisions with one active port call."""
-        #: The port has had its moment before the save now being prepared.
-        settled = False
         while True:
             snapshot = self._snapshot
             if snapshot is None:
@@ -625,14 +602,6 @@ class DatabaseNoteSessionCoordinator:
                 status_message="Saving…",
             )
             self._snapshot = saving
-            if not settled:
-                # The wait reads as a save in flight: keys typed meanwhile are
-                # coalesced, and the loop re-reads the draft so they are saved
-                # with it rather than left for another save.
-                settled = True
-                waited = await self._settle_port_before_save(note_id)
-                if waited or self._snapshot is not saving:
-                    continue
             try:
                 reply = await self._port.save_note(
                     note_id,
@@ -722,8 +691,6 @@ class DatabaseNoteSessionCoordinator:
                 ),
             )
             if has_newer_draft:
-                # The re-save waits for whatever this save just started.
-                settled = False
                 continue
 
             return NoteSaveOutcome(
