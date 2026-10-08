@@ -628,7 +628,10 @@ async def exercise():
 
 with user_fixture_default_owner():
     selected = Path(os.environ['TLDW_CONFIG_PATH']).absolute()
-    selected.write_text('[general]\nusers_name="skill-stock-control"\n[first_run]\nsetup_completed=true\n[_first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n', encoding='utf-8')
+    # These controls exercise skill lifetime, not unconfigured-provider
+    # loopback discovery. Keep networking blocked and select ordinary fixture
+    # provider inputs, as in the original compact-model controls.
+    selected.write_text('[general]\nusers_name="skill-stock-control"\n[first_run]\nsetup_completed=true\n[_first_run]\nsetup_completed=true\n[splash_screen]\nenabled=false\n[api_settings.openai]\napi_key="skill-fixture-not-a-real-key"\n[chat_defaults]\nprovider="openai"\nmodel="gpt-4o-mini"\n', encoding='utf-8')
     selected.chmod(0o600)
     asyncio.run(asyncio.wait_for(exercise(), timeout=240))
 """
