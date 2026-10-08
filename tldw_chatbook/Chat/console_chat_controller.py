@@ -19147,6 +19147,7 @@ class ConsoleChatController:
         boundary for the same app-owned controller.
         """
         self.begin_shutdown()
+        recovery_cancelled = await self._fleet_wake.drain_recovery()
         await self._drain_hook_preparation_reads()
         if self._chat_start.tasks():
             await asyncio.gather(*self._chat_start.tasks(), return_exceptions=True)
@@ -19161,6 +19162,8 @@ class ConsoleChatController:
             self._retire_all_live_recovery_continuations()
             if self._owns_scratch_spaces:
                 await asyncio.to_thread(self._scratch_spaces.dispose)
+            if recovery_cancelled:
+                raise asyncio.CancelledError
             return
         current = asyncio.current_task()
         session_ids = set(submit_tasks.values()) | set(stream_tasks)
@@ -19218,6 +19221,8 @@ class ConsoleChatController:
             self._retire_all_live_recovery_continuations()
         if self._owns_scratch_spaces:
             await asyncio.to_thread(self._scratch_spaces.dispose)
+        if recovery_cancelled:
+            raise asyncio.CancelledError
 
     def begin_shutdown(self) -> None:
         """Synchronously fence work and marshal teardown to the owner loop.

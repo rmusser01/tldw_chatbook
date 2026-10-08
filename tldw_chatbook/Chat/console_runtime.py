@@ -6328,14 +6328,26 @@ class ConsoleRuntime:
         refuses work through its permanently-set cancellation Event, which
         is exactly the right answer at exit.
         """
+        from .console_fleet_wake import ConsoleFleetWakeCoordinator
+
         controller = self._chat_controller
+        recovery_owner = getattr(controller, "fleet_wake", None)
+        if not isinstance(recovery_owner, ConsoleFleetWakeCoordinator):
+            recovery_owner = None
+        if recovery_owner is not None:
+            recovery_owner.dispose()
         try:
-            await self._dispose_owned(timeout_seconds=timeout_seconds)
+            await self._dispose_owned(
+                timeout_seconds=timeout_seconds, recovery_owner=recovery_owner
+            )
         finally:
+            cancelled = False
+            if recovery_owner is not None:
+                cancelled |= await recovery_owner.drain_recovery()
             if controller is not None:
                 await self._drain_ordinary_native_commits(controller)
                 await self._drain_hook_review_operations()
-            cancelled = await self._drain_hook_preparation_reads()
+            cancelled |= await self._drain_hook_preparation_reads()
             cancelled |= await self._drain_activity_hydration()
             if cancelled:
                 raise asyncio.CancelledError
@@ -6344,6 +6356,7 @@ class ConsoleRuntime:
         self,
         *,
         timeout_seconds: float,
+        recovery_owner=None,
     ) -> None:
         """Run the existing teardown once under its original shared deadline."""
         loop = asyncio.get_running_loop()
@@ -6601,6 +6614,8 @@ class ConsoleRuntime:
             await self._drain_hook_review_operations()
         cancel_requested |= await self._drain_hook_preparation_reads()
         cancel_requested |= await self._drain_activity_hydration()
+        if recovery_owner is not None:
+            cancel_requested |= await recovery_owner.drain_recovery()
         await self.close_hooks_v2()
         for turn_id in tuple(self._turn_custody):
             self._release_custody(turn_id)
