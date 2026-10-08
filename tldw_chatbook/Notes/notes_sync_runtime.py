@@ -2288,6 +2288,15 @@ class NotesSyncRuntimeOwner:
         if task.cancelled():
             return
         task.exception()
+        if task is not self._watcher_task:
+            # TASK-34000.50 fix round 1 (review Minor 1): this callback is
+            # queued with ``call_soon`` when the task ends and can run AFTER
+            # ``_start_watcher`` replaced the task (a lease landing from a
+            # worker thread sits ahead of it in the ready queue). A stale
+            # callback marked the runtime failed with a live watcher: every
+            # row read "Sync stopped" and every hint was refused until Check
+            # changes. Only the CURRENT watcher's end is a runtime failure.
+            return
         if self._admission_open:
             self._status = "failed"
             self._next_action = "sync_now"
@@ -3549,9 +3558,12 @@ class NotesSyncRuntimeOwner:
     async def _run_released_pass(self, root_id: str) -> bool:
         """Lease a released root if needed, re-plan it, and start the watcher.
 
-        Startup publishes a persisted hold without leasing the root, and a
-        Review or Check changes on that row leases it without starting the
-        watcher, so no hint can reach it either way. Once
+        Startup publishes a persisted hold without leasing the root, so no
+        hint can reach it (before TASK-34000.50 a Review or Check changes on
+        that row leased it without starting the watcher, which left it just
+        as unreachable; a lease now starts the watcher, and this pass remains
+        the path for a root that is still unleased, or leased while the
+        watcher could not start). Once
         :meth:`_release_planner_hold` has cleared the hold, the root takes
         exactly the pass Recovery's settle takes (:meth:`_run_settled_pass`,
         which does not depend on the watcher) and the watcher is started for
@@ -3678,12 +3690,45 @@ class NotesSyncRuntimeOwner:
             for root_id, current in self._root_status.items()
             if current.status in NOTES_SYNC_ATTENTION_STATUSES
         )
-        if self._closing or not held:
+        return await self._folder_ids_of(held)
+
+    @producer_call
+    async def unwatched_folder_ids(self) -> frozenset[str]:
+        """Return the Notes folders whose root is healthy but nothing watches.
+
+        TASK-34000.50 fix round 1 (review Minor 2, AC#2): the Manage sync
+        folders row reads "⚠ Sync stopped" for an ``up_to_date`` root whose
+        lease has no running watcher (:meth:`snapshot`); the tree row kept
+        "⇄ Sync managed". Same read-time fact, per folder, so the two cannot
+        disagree. A ``starting`` runtime reports nothing -- startup publishes
+        every root before it starts the watcher, and a just-reconciled folder
+        has not stopped, it has not finished (the Manage row reads "Starting"
+        for the same reason).
+
+        Returns:
+            The logical folder ids of every ``up_to_date`` root whose live
+            ``watching`` fact is False.
+        """
+
+        if self._status == "starting":
+            return frozenset()
+        unwatched = tuple(
+            root_id
+            for root_id, current in self._root_status.items()
+            if current.status == "up_to_date"
+            and not self._with_watching(current).watching
+        )
+        return await self._folder_ids_of(unwatched)
+
+    async def _folder_ids_of(self, root_ids: tuple[str, ...]) -> frozenset[str]:
+        """The logical folder ids of ``root_ids``, read off the store."""
+
+        if self._closing or not root_ids:
             return frozenset()
 
         def read() -> frozenset[str]:
             folders: set[str] = set()
-            for root_id in held:
+            for root_id in root_ids:
                 try:
                     folder_id = self._store.get_root(root_id).logical_folder_id
                 except Exception:  # noqa: BLE001 - a vanished root holds nothing

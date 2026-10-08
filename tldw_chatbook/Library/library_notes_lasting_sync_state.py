@@ -1371,9 +1371,58 @@ def root_status_label(
     return f"{label} as of {stamp}"
 
 
+def root_row_status_label(
+    status: str,
+    published_at: float | None,
+    *,
+    runtime_status: str,
+    watching: bool,
+    failure: str,
+) -> str:
+    """The status label one Manage sync folders row wears, overlays included.
+
+    Only the one reassuring label is ever rewritten -- every other per-root
+    status already says something is wrong, and the overlay owns the LABEL
+    only (rewriting ``status`` itself would change which controls the canvas
+    offers; task-32604 fix round 1). In order:
+
+    * a refused action on this root (``failure``) reads "⚠ Needs attention";
+    * a runtime that is not ``active`` has nothing watching ANY root
+      (task-32604 round 2); one still ``starting`` has not finished deciding,
+      so it reads "◌ Starting", not "⚠ Sync stopped" (round 3);
+    * a healthy root whose own lease has no running watcher (``watching``
+      False, read live by the runtime's snapshot -- TASK-34000.50) reads
+      "⚠ Sync stopped": the runtime is active, but nothing polls THIS folder
+      (a folder held at startup and healed through Review or Recovery used
+      to land here); Check changes, this status's own next action, starts it;
+    * otherwise the dated healthy label (:func:`root_status_label`).
+
+    Args:
+        status: The root's published status code.
+        published_at: Epoch seconds of that publication, or ``None``.
+        runtime_status: The runtime-level status from the same snapshot.
+        watching: Whether a watcher runs for this root's lease, right now.
+        failure: The last refused action's wording, or ``""``.
+
+    Returns:
+        The label; the dated healthy one only when nothing overlays it.
+    """
+
+    if failure:
+        return ROOT_STATUS_LABELS["needs_attention"]
+    if status == "up_to_date" and runtime_status != "active":
+        return ROOT_STATUS_LABELS[
+            "starting" if runtime_status == "starting" else "not_watching"
+        ]
+    if status == "up_to_date" and not watching:
+        return ROOT_STATUS_LABELS["not_watching"]
+    return root_status_label(status, published_at)
+
+
 __all__ = [
     "ROOT_STATUS_LABELS",
     "root_status_label",
+    "root_row_status_label",
     "RECOVERY_FINISHED_HEALTHY",
     "RECOVERY_FINISHED_UNHEALTHY",
     "recovery_finished_line",

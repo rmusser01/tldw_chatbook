@@ -832,7 +832,9 @@ A folder that is **held for attention** — a sync entry that could not be
 completed, a conflict or deletion waiting for your review, a failed pass — is
 not syncing in either direction until you act, and every Notes surface says so
 rather than only Manage sync folders (TASK-34000.2, review finding N-02): the
-folder's tree row reads "⚠ Needs attention" in place of "⇄ Sync managed", the
+folder's tree row reads "⚠ Needs attention" in place of "⇄ Sync managed" (and
+"⚠ Sync stopped" for a folder that is healthy but not being watched -- the same
+row Manage sync folders shows for it, TASK-34000.50), the
 list's idle status reads "Library notes · ⚠ A sync folder needs attention ·
 Next: Open Manage sync folders." in place of "Ready", and the editor of any
 note in that folder says "Saved HH:MM in Notes · ⚠ Sync needs attention" with

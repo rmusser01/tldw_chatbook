@@ -333,7 +333,8 @@ async def test_restore_releases_the_hold_after_review_or_check_in_a_later_sessio
         assert [item.reason_code for item in plan.attention] == ["note_missing"]
         held = second.snapshot().roots[0]
         assert (held.status, held.next_action) == ("needs_attention", "review_changes")
-        # Leased by the look, but nothing watches it: a hint is refused.
+        # Leased by the look (which, since TASK-34000.50, also starts the
+        # watcher); the hold is what refuses the hint.
         assert second.schedule_hint("root-1") is None
 
         await _restore(vault, tombstone_version)

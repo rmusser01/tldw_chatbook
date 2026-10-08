@@ -14,7 +14,6 @@ from tldw_chatbook.Notes.note_import_discovery import folder_is_obsidian_vault
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LASTING_SYNC_HISTORY_PAGE_SIZE,
-    ROOT_STATUS_LABELS,
     LastingSyncApplyBlocker,
     LastingSyncHistory,
     LastingSyncHistoryRow,
@@ -26,7 +25,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LibraryNotesLastingSyncSnapshot,
     build_reconciliation_review,
     check_failure_line,
-    root_status_label,
+    root_row_status_label,
     check_failure_row,
     recovery_finished_line,
     initial_lasting_sync_snapshot,
@@ -776,40 +775,23 @@ class LibraryNotesSyncController:
         """Project one runtime root, with its last refusal laid over the top.
 
         ``runtime_status`` is the runtime-level status from the same
-        snapshot this root came out of. Only the one reassuring label is
-        rewritten when the runtime is not active -- every other per-root
-        status already says something is wrong, and rewriting ``status``
-        itself would change which controls the canvas offers (see the
-        comment below). A runtime that is still ``starting`` has not
-        finished deciding, so it reads "◌ Starting", not "⚠ Sync stopped".
+        snapshot this root came out of. The label overlays (a refused action,
+        a runtime that is not active, a root nothing watches, the dated
+        healthy label) are decided by :func:`root_row_status_label`; the
+        overlay owns the LABEL only -- rewriting ``status`` itself would
+        change which controls the canvas offers (task-32604 fix round 1).
         """
 
         failure, failed_action = self._root_failures.get(root.root_id, ("", ""))
-        # Fix round 1: the overlay owns the LABELS only. Rewriting ``status``
-        # made an offline root's row render an enabled Check and a Pause,
-        # because the canvas suppresses both by reading ``status`` -- the same
-        # defect this overlay fixes for Resume, on a sibling status.
         status, next_action = root.status, root.next_action
         action_label = failed_action or next_action
-        if failure:
-            status_label = ROOT_STATUS_LABELS["needs_attention"]
-        elif runtime_status != "active" and status == "up_to_date":
-            status_label = ROOT_STATUS_LABELS[
-                "starting" if runtime_status == "starting" else "not_watching"
-            ]
-        elif status == "up_to_date" and not root.watching:
-            # TASK-34000.50: the same lie one level down -- the runtime is
-            # active, but THIS root's lease has no watcher (a folder held at
-            # startup and healed through Review or Recovery used to land
-            # here). ``watching`` is read live by the runtime's snapshot, so
-            # the label follows the fact, not the last publication; Check
-            # changes (``sync_now``, this status's own next action) starts
-            # the watcher.
-            status_label = ROOT_STATUS_LABELS["not_watching"]
-        else:
-            # TASK-32633 slice (N-03): the healthy label is dated from the
-            # publication, so "Up to date" never reads as a standing promise.
-            status_label = root_status_label(status, root.published_at)
+        status_label = root_row_status_label(
+            status,
+            root.published_at,
+            runtime_status=runtime_status,
+            watching=root.watching,
+            failure=failure,
+        )
         return LastingSyncRootRow(
             root.root_id,
             "Sync folder (name unavailable before cutover)",

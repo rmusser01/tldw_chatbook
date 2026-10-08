@@ -123,6 +123,50 @@ async def test_a_refresh_during_a_backup_keeps_a_held_folder_painted_held(
         await owner.shutdown()
 
 
+async def test_a_refresh_paints_a_healthy_folder_nothing_watches_as_stopped(
+    vault: Vault, painted: list[str]
+) -> None:
+    """TASK-34000.50 fix round 1 (review Minor 2, AC#2): the tree's folder
+    sets carry the runtime's read-time "watching" fact. A watcher that stops
+    while the runtime stays active (its task ended; admission open) leaves a
+    healthy, leased root nothing polls: the refresh stores that folder as
+    unwatched and repaints; the watcher restarting clears it and repaints
+    again. The attention set is untouched throughout -- the root is not held.
+    """
+
+    owner = build_owner(vault)
+    await owner.start()
+    try:
+        host = _Host(owner)
+        await attention.refresh_library_notes_sync_attention(host)
+        assert host._notes_state.tree_attention_folder_ids == frozenset()
+        assert host._notes_state.tree_unwatched_folder_ids == frozenset()
+        assert painted == []
+
+        task = owner._watcher_task
+        assert task is not None
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert owner.snapshot().status == "active"
+        assert owner.snapshot().roots[0].watching is False
+
+        await attention.refresh_library_notes_sync_attention(host)
+        assert host._notes_state.tree_unwatched_folder_ids == HELD
+        assert host._notes_state.tree_attention_folder_ids == frozenset()
+        assert painted == ["notes"]
+        sets = attention.library_notes_tree_folder_sets(host._notes_state)
+        assert sets["unwatched_folder_ids"] == HELD
+        assert sets["attention_folder_ids"] == frozenset()
+
+        owner._start_watcher()
+        assert owner.snapshot().roots[0].watching is True
+        await attention.refresh_library_notes_sync_attention(host)
+        assert host._notes_state.tree_unwatched_folder_ids == frozenset()
+        assert painted == ["notes", "notes"]
+    finally:
+        await owner.shutdown()
+
+
 async def test_the_open_note_keeps_its_held_line_while_the_runtime_cannot_say(
     vault: Vault, painted: list[str]
 ) -> None:

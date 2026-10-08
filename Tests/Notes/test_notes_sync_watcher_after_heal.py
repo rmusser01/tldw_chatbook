@@ -295,6 +295,18 @@ async def test_the_watching_fact_follows_the_watcher_not_the_publication(
         )
         # The restart re-announced the root with the live fact.
         assert announced == [("up_to_date", True)]
+        # Fix round 1 (review Minor 2): the tree's folder-level read of the
+        # same fact -- empty while watched, the root's folder while not.
+        assert await owner.unwatched_folder_ids() == frozenset()
+        task = runtime._watcher_task
+        assert task is not None
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert owner.snapshot().status == "active"
+        assert await owner.unwatched_folder_ids() == frozenset({"folder-1"})
+        assert await owner.attention_folder_ids() == frozenset()
+        runtime._start_watcher()
+        assert await owner.unwatched_folder_ids() == frozenset()
     finally:
         await owner.shutdown()
 

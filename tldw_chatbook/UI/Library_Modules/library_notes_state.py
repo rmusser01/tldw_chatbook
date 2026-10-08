@@ -462,6 +462,10 @@ class LibraryNotesState:
     # attention, read live from the runtime (``library_notes_sync_attention``)
     # -- their tree row and the list's idle status say so.
     tree_attention_folder_ids: frozenset[str] = field(default_factory=frozenset)
+    # TASK-34000.50 fix round 1: healthy sync folders nothing is watching,
+    # read live from the runtime the same way -- their tree row reads
+    # "⚠ Sync stopped" instead of "⇄ Sync managed".
+    tree_unwatched_folder_ids: frozenset[str] = field(default_factory=frozenset)
     tree_selected_placement_id: str = ""
     tree_pending_target_placement_id: str = ""
     filter_browse_receipt: LibraryNotesTreeReceipt | None = None
