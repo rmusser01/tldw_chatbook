@@ -84,7 +84,8 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #64 Unchanged progress, stale skill review, Buddy speech and Buddy inbox polls avoid redundant Static updates while still checking current sources and showing changed content or failures.
 - [x] #65 Recovery sidebar, Workspace Files attention and llama.cpp status avoid unchanged text updates while retaining fresh retry owners, attention generations and connection checks. Model warning titles survive the original allocation/layout pass.
 - [x] #66 Startup import budgets retain their ceilings, image templates load only at their use sites, and the CSS census measures the same normalized text Textual parses on each platform.
-- [ ] #67 A live in-place agent-runtime disable is captured by the next real Send without forcing a full refresh, while other configuration source and ownership checks remain unchanged.
+- [x] #67 A live in-place agent-runtime disable is captured by the next real Send without forcing a full refresh, while other configuration source and ownership checks remain unchanged.
+- [ ] #68 The original hooks shutdown control attributes every worker joined to its held refresh flight and proves every captured worker retires after native completion; failed qualification cannot interrupt host cleanup.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -1435,3 +1436,18 @@ Settings template counts and Personas style selection defer generation_templates
 CSS_PATH census now uses the same UTF-8 universal-newline read as installed Textual Stylesheet.read. Original LF parity passes while CRLF and CR parity fail; all three pass after correction, along with the original CSS byte budget. This repairs Windows-only raw-byte inflation; it does not claim a CSS parse-time improvement. No stylesheet changed. The first parity attempt failed profile admission; adding the existing bootstrap_profile marker retained its selected source and exposed the intended mismatch.
 
 boot-budget-local-green-1 reports7passed/1setup error in31.154s pytest37.281s driver: both budgets, three newline cases and two original Personas choose/cancel actions pass. The additional existing Settings panel test fails in scratch_config before the panel mounts because it redirects an already-bound config source; that fixture remains unchanged and is not counted as verified. Source/HEAD frozen, zero unfinished original workers after fixtures, normal process/native/pipe retirement with zero force/overflow/lookup races. Scoped formatting preserves AST. ADR097 applied; no new ADR.
+
+
+AC67 sibling-producer plan: runtime-builders-original-red-1 reproduces the same stale live flag in both original mounted selection/execution builders (2 failed/4 fallback cases passed). Share one pure resident-flag selector between these two builders and the receipt; explicitly present app_config.console.agent_runtime overrides readiness only for that field, with existing boolean coercion and absent-key fallback. Keep other readiness values unchanged and use the same selected boolean for tool configuration and project eligibility. Verify all six regression cases, existing adapter inputs/custom providers and the actual next Send; no manual sync or runtime-default producer change. ADR222 remains applicable; no new ADR.
+
+
+AC68 plan: Windows CI fails the hooks host control at len(workers)==1 before the shutdown oracle; mount/resume and the explicit refresh can legitimately join the same original retained flight. Observe original refresh yields plus already-suspended original frames, tie every Task to its actual Worker/host/Screen/work/flight/producer, and require every joined tuple in whole-host capture and final retirement. Preserve exact-one checks for other routes. Only arm capture assertions after attribution, so setup failure cannot raise KeyError during original cleanup. Run hooks plus history compatibility under unchanged deadlines and source/native ownership checks. ADR required:no; test-only attribution repair under ADR126.
+
+
+### AC67 live runtime flag checkpoint (2026-10-08)
+
+All three mounted configuration producers now share one pure flag selector: an explicitly present resident console.agent_runtime wins over the prior readiness/disk fallback, using the existing boolean coercion. The captured tool flag and project-binding eligibility use that same value; all other provider/tool settings retain their original sources. Runtime-only and custom capture contracts remain unchanged. Existing ADR222 applies.
+
+The original real next-Send control and both older mounted builders reproduce the stale True flag before correction. runtime-builders-original-red-1 has two causal failures and four absent-key fallbacks passing. runtime-producers-local-green-1 passes all10 focused checks in43.613s pytest/50.454s driver: all six mounted flag cases, distinct original adapters, both custom provider routes and actual Enter through completed persisted reply with zero agent-route entries. Independent source review is clear, scoped Ruff formatting preserves AST, changed-line lint and whitespace checks pass.
+
+The ten-case run freezes source/HEAD and retires its diagnostic process/native/pipes normally with zero force/overflow/races. Its after-fixture census nevertheless finds one console-sync worker awaiting character_context.refresh_presentation_if_scope_changed after the visible test harness returns. This is an open app/test-host lifetime investigation; diagnostic containment is not ordinary cleanup evidence. The earlier receipt-only runtime-gate-local-green-1 passed with zero unfinished workers. Do not infer that the broader slowdown or shutdown issue is fixed from these functional passes.

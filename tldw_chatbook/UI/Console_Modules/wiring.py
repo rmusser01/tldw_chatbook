@@ -335,6 +335,7 @@ def receive_console_visible_intent(
         _CONSOLE_CAPTURE_POLICY_ADAPTERS,
         _CONSOLE_TURN_CONTEXT_BUILDER,
         _console_global_user_display_name,
+        _console_live_runtime_enabled,
     )
     from ..Screens.settings_library_rag_defaults import load_direct_library_tools
     from ..Navigation.pending_handoff_store import HandoffChannel
@@ -479,7 +480,7 @@ def receive_console_visible_intent(
     section = section if isinstance(section, Mapping) else {}
     defaults = raw.get("chat_defaults", {})
     defaults = defaults if isinstance(defaults, Mapping) else {}
-    enabled = coerce_bool_setting(section.get("agent_runtime", True), True)
+    enabled = _console_live_runtime_enabled(resident, section)
     display_name = _console_global_user_display_name(raw)
     selected = build_console_provider_selection_from_settings(
         settings,

@@ -666,6 +666,23 @@ def _persona_session_prompt_seed(
     )
 
 
+def _console_live_runtime_enabled(
+    resident_config: object, fallback_console: Mapping[str, Any]
+) -> bool:
+    """Honor the live runtime switch without replacing other captured settings."""
+    resident_console = (
+        resident_config.get("console", {})
+        if isinstance(resident_config, Mapping)
+        else {}
+    )
+    flag = (
+        resident_console["agent_runtime"]
+        if isinstance(resident_console, Mapping) and "agent_runtime" in resident_console
+        else fallback_console.get("agent_runtime", True)
+    )
+    return coerce_bool_setting(flag, True)
+
+
 def _console_global_user_display_name(app_config: object) -> str:
     """Resolve the current global chat label before Task 5 adds its getter."""
     chat_defaults = (
@@ -4459,8 +4476,8 @@ class ConsoleSessionController:
         session = next((row for row in store.sessions() if row.id == session_id), None)
         if session is None:
             raise KeyError(session_id)
-        agent_runtime_enabled = coerce_bool_setting(
-            console_config.get("agent_runtime", True), True
+        agent_runtime_enabled = _console_live_runtime_enabled(
+            getattr(self.app_instance, "app_config", None), console_config
         )
         return ConsoleTurnCaptureSelection(
             provider_selection=selection,
@@ -4533,8 +4550,11 @@ class ConsoleSessionController:
         workspace_id = store.session_workspace_id(session_id)
         session = next(item for item in store.sessions() if item.id == session_id)
         app_instance = getattr(self, "app_instance", None)
+        agent_runtime_enabled = _console_live_runtime_enabled(
+            getattr(app_instance, "app_config", None), console_config
+        )
         agent_dispatch_eligible = bool(
-            coerce_bool_setting(console_config.get("agent_runtime", True), True)
+            agent_runtime_enabled
             and not store.session_one_shot_prefill(session_id)
             and session.assistant_kind != "character"
         )
@@ -4553,10 +4573,7 @@ class ConsoleSessionController:
             },
             tool_configuration={
                 "session_ephemeral": bool(session.ephemeral),
-                "agent_runtime_enabled": coerce_bool_setting(
-                    console_config.get("agent_runtime", True),
-                    True,
-                ),
+                "agent_runtime_enabled": agent_runtime_enabled,
                 "native_tool_calls_enabled": coerce_bool_setting(
                     console_config.get("native_tool_calls", True),
                     True,
@@ -4604,9 +4621,7 @@ class ConsoleSessionController:
                 "_visual_identity_repository",
                 None,
             ),
-            tool_policy_profile_id=self._resolve_turn_tool_policy_profile_id(
-                workspace_id
-            ),
+            tool_policy_profile_id=self._resolve_turn_tool_policy_profile_id(workspace_id),
             persona_policy_rules=self._resolve_turn_persona_policy_rules(session_id),
             mcp_definition_maximum=mcp_definition_maximum,
         )
