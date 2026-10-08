@@ -1249,3 +1249,67 @@ screen/hooks/session/generation and accepted turn, using the already-established
 15s Send deadline. A refusal or changed identity still fails; no retry, review
 approval or deadline extension. The integration owner separately owns shutdown
 corrections. Overall latency and cross-platform qualification remain open.
+
+## Task25 integrated Send result and remaining preparation cost
+
+The corrected observer follows only the exact pending Send within the original
+15-second deadline. Sequential runs on saved combined
+`d5247a2d051d37426c8864a482869403c56442f1` both complete three saved user turns,
+three replies and three linked complete traces, with zero remaining dispatch
+checkpoints. The first two provider calls are non-streaming; the third streams.
+All 7,833 Python hashes and HEAD remain unchanged in both runs. The native Job is
+empty at parent exit; tree, identity, pipe tasks and private profile retire
+normally, with zero force, identity overflow or lookup races.
+
+The minimally instrumented `mcp-registration-integrated-send-2` passes in
+68.063 seconds driver / 62.695 seconds pytest. Optional phase and detail observers
+are off. Its measured intervals are:
+
+| Seconds | Send 1 | Send 2 | Send 3 |
+| --- | ---: | ---: | ---: |
+| Action to provider adapter | 7.635265 | 7.887032 | 7.808551 |
+| Action to controller entry | 1.351106 | 1.772445 | 2.441423 |
+| Durable commit body | .234482 | .284052 | .261044 |
+| Action to durable commit completion | 2.605608 | 4.003077 | 4.164699 |
+| Commit completion to trace reservation entry | 4.580382 | 3.446441 | 3.199156 |
+| Trace reservation body | .202893 | .193265 | .129342 |
+| Maximum Send heartbeat delay | .478189 | .283349 | .316309 |
+
+Typing heartbeat reaches .349622 seconds; startup reaches 2.061333 seconds.
+Neither the one-second Send target nor the 100ms input target is met. Changes
+integrated between this and the prior sample prevent attributing a particular
+wall-time saving to task25 alone.
+
+The existing preparation-detail observer then runs on that same frozen source as
+`mcp-registration-integrated-detail-1`. It passes in 67.375 seconds driver with
+adapter samples 7.530910 / 7.882063 / 8.602772 seconds. Original bindings and
+sources remain current and monitoring retires. Event/caller capacity overflow,
+unmatched starts and unfinished selected/admission/generator entries are zero.
+The bounded raw ancestry walk reaches its limit 92 times; hook raw counts are
+partial observations, not a complete native census. No limit was increased.
+
+| Inclusive seconds in action-to-completed-submission window | Send 1 | Send 2 | Send 3 |
+| --- | ---: | ---: | ---: |
+| Configuration capture | 1.046527 | 1.579835 | 1.254978 |
+| Initial MCP maximum | .563845 | 1.110835 | .942009 |
+| Three guarded MCP reads | .956469 | 1.015194 | 1.022746 |
+| Tool-provider composition | 1.344138 | 1.077705 | .932056 |
+| Hook admission, two calls | .483491 | .651377 | .595428 |
+| Message-version reads, 4 / 5 / 9 calls | .396714 | .322155 | .798993 |
+| Run-log writer binding | .346349 | .286001 | .211673 |
+
+These parent/child spans overlap and cannot be added. Background calls inside
+the measured window are included, so the aggregates alone are not critical-path
+proof. Each Send contains five hook contexts and 450 / 508 / 450 attributed raw
+checks, with .421419 / .579274 / .541762 seconds inclusive raw time; the ancestry
+limit above applies. The first received-intent call returns None at wiring.py
+line 437, the combined raw-mapping/standard-configuration qualification gate.
+The observer does not distinguish that gate's operands. Later received-intent
+calls return an accepted ID at line 561; the fallback is not forced or bypassed.
+
+The evidence still supports simplifying nested MCP load preparation under its
+existing synchronous owner. A generic nested-guard bypass remains unsuitable:
+permission loading can return defaults without opening a file, and corrupt-load
+recovery can rename a file. Final source validation and each actual effect gate
+must therefore remain. Supported-host qualification is still tracked by the
+integration owner; task25 remains In Progress until that evidence is complete.
