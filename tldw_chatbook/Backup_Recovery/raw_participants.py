@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import wraps
 from pathlib import Path
+from types import ModuleType
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -30,6 +31,7 @@ from . import mcp_source_participants as mcp_sources
 from . import settings_file_participants as settings_files
 from . import storage_admission as storage
 from .profile_paths import lexical_path, user_data_dir
+from .admission import _ORDINARY_PAUSE_REQUEST_BINDING
 
 
 @dataclass
@@ -896,6 +898,58 @@ def _pin_parent(state, anchor):
         raise
 
 
+def _raw_holds_pause_requested(holds):
+    """Probe each exact stock hold once; custom queries keep their original route."""
+    (
+        module,
+        owner_type,
+        original,
+        code,
+        namespace,
+        defaults,
+        keywords,
+        closure,
+        lookup,
+        dictionary,
+    ) = _ORDINARY_PAUSE_REQUEST_BINDING
+    seen = []
+    for hold in holds:
+        if hold is None:
+            continue
+        authority, names = hold.authority, hold.names
+        stock = (
+            type(hold) is storage._Hold
+            and type(module) is ModuleType
+            and sys.modules.get("tldw_chatbook.Backup_Recovery.admission") is module
+            and vars(module) is namespace
+            and namespace.get("Admission") is owner_type
+            and type(authority) is owner_type
+            and vars(owner_type).get("pause_requested") is original
+            and original.__code__ is code
+            and original.__globals__ is namespace
+            and original.__defaults__ is defaults
+            and original.__kwdefaults__ is keywords
+            and original.__closure__ is closure
+            and vars(owner_type).get("__getattribute__") is lookup
+            and vars(owner_type).get("__dict__") is dictionary
+        )
+        if stock:
+            values = vars(authority)
+            # A replaced instance dictionary can have custom membership behavior.
+            stock = type(values) is dict and "pause_requested" not in values  # noqa: E721
+        if stock and any(
+            hold is previous and authority is owner and names is group
+            for previous, owner, group in seen
+        ):
+            continue
+        # Re-evaluate eligibility on every occurrence. Changed callbacks are
+        # called through the original dynamic route, never skipped or blessed.
+        if authority.pause_requested(names):
+            return True
+        if stock:
+            seen.append((hold, authority, names))
+    return False
+
 @contextmanager
 def _scope(
     source,
@@ -1259,10 +1313,7 @@ def _scope(
             settings_files.preflight(state, route, attempt)
         if route == "theme_export":
             settings_files.check_export_parent(state)
-        if any(
-            hold is not None and hold.authority.pause_requested(hold.names)
-            for hold in state.holds
-        ):
+        if _raw_holds_pause_requested(state.holds):
             raise bootstrap.RecoveryRequired("storage_locally_paused")
         gate = _participant_state(participant) if participant is not None else None
         with storage._changed:
