@@ -149,3 +149,31 @@ Independent review found that callable-body checks omit in-place constructor and
 Constructor RED evidence: on unchanged product 0a0582, `preparation-constructors-red` failed all 13 new allocation/lookup/conversion controls at their actual boundary assertions (including the before-first-import HubTool constructor). `preparation-hash-red` failed both additional result-hash controls. Foreign allocation/lookup/hash callbacks ran, initial attempts performed native reads, or issued results were adopted instead of refused. Both batches retired their owned process trees normally, released identities/pumps, removed private profiles, and recorded zero diagnostic overflow/races. These are meaningful failing controls, not passing acceptance; final correction evidence follows after implementation.
 
 Constructor correction complete for this scope: final 92 targeted controls pass (15 new + 77 original); all normal retirement/source receipts and scoped Ruff/format/diff checks pass. Independent review found no actionable issue. TASK-34563.2 retains its wider integration/performance qualification status. Full evidence and limitations are recorded in Docs/Development/2026-10-06-console-shared-preparation-verification.md.
+
+
+## Task25: keep participant registration free of source I/O
+
+Task: [TASK-34563.25](../../../backlog/tasks/task-34563.25%20-%20Separate-MCP-participant-registration-from-source-observation.md).
+ADR required: no new ADR; existing ADR-222 and ADR-126 apply.
+ADR path: backlog/decisions/222-console-send-preparation-and-io-ownership.md;
+backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: one already-observed MCP selection can register its process-local participant;
+registration grants no storage authority and every existing phase/effect gate stays.
+
+The task's implementation plan records evidence, ownership and targeted verification.
+Root owns raw_participants.py and native integration. Baseline owns the new registration
+count test; controller lane owns the new registration-boundary tests. Expected ordinary
+permission count is eight selections/nine witnesses instead of eleven/twelve, with the
+same five raw checks, readable approval and two independent storage acquisitions.
+Review rejected bypassing nested load guards: missing/inactive reads may return defaults
+before any actual file-open gate. Keep those guards and all pre/post-lock checks.
+Causal RED precedes the registration edit. Integrate both test lanes before final checks;
+application timing runs remain sequential and no latency acceptance follows from counts.
+
+Task25 execution: causal RED reproduced11/12 observations; final original-body
+count is8/9 with575 native attempts (689 before). Initial integrated64PASS/11FAIL
+was attributed to saved-source failures; final affected22PASS includes all11
+repaired cases with unchanged deadlines and zero final diagnostic overflow.
+Registration and source-category source review plus targeted lint/format pass.
+TASK-34563.25 and the phase-attribution report retain exact evidence and limitations;
+supported-host qualification, integrated Send timing and latency acceptance stay open.

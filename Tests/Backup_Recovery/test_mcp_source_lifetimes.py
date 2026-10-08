@@ -336,22 +336,29 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     if _private_child(request, f"{point}-{timing}"):
         return
     import os
-    import select
+    import stat
+    from Tests.pipe_readiness import pipe_readable
     from tldw_chatbook.Backup_Recovery import raw_participants as raw
     from tldw_chatbook.Utils import private_paths
 
     permission, history = mcp_sources[3:]
+    permission.set_kill_switch(True)
     permission.set_kill_switch(False)
     history.append(_record("before"))
+    if point == "history_read":
+        # A new actual reader naturally misses append's sanitized-byte cache.
+        history = type(history)(history.path)
     source = permission if point == "permission_parent" else history
     payload = permission.load()
-    stamp = payload.get("updated_at")
+    assert permission.path.is_file() and "updated_at" in payload
+    stamp = payload["updated_at"]
     payload["kill_switch"] = True
     history.max_records_per_file = 1
     # Test child only: retire its known quiescent startup, then prove exclusion
     # comes from actual MCP source/native holds, not startup overlap.
     storage._startups[(os.getpid(), str(local_root))].close()
     target = []
+    attempts = []
     real_close = os.close
     real_replace = raw._replace
     real_stream_close = private_paths._close_runtime_stream
@@ -367,13 +374,23 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     def stream_close(operation, stream):
         state = raw._states[operation]
         mode = getattr(stream, "mode", "")
-        if state.source is source and (
-            point == "history_read"
-            and "r" in mode
-            or point == "history_append"
-            and "a" in mode
+        if (
+            state.source is source
+            and not target
+            and (
+                point == "history_read"
+                and "r" in mode
+                or point == "history_append"
+                and "a" in mode
+            )
         ):
-            target.append(stream.fileno())
+            descriptor = stream.fileno()
+            assert stream in state.files and descriptor in state.descriptors
+            opened = raw.os.fstat(descriptor)
+            named = raw.os.stat(source.path, follow_symlinks=False)
+            assert stat.S_ISREG(opened.st_mode)
+            assert (opened.st_dev, opened.st_ino) == (named.st_dev, named.st_ino)
+            target.append(descriptor)
         return real_stream_close(operation, stream)
 
     def native_close(fd):
@@ -397,6 +414,7 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
 
     def uncertain_close(fd):
         if target and fd == target[0]:
+            attempts.append(fd)
             if timing == "after":
                 real_close(fd)
             raise OSError("injected native close uncertainty")
@@ -416,7 +434,7 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
         else:
             history.append(_record("after"))
     monkeypatch.setattr(os, "close", real_close)
-    assert target
+    assert target and attempts == [target[0]]
     if timing == "before":
         assert os.fstat(target[0])
     assert source._mcp_persistence_error == "mcp_persistence_incomplete"
@@ -430,7 +448,7 @@ def test_actual_native_uncertainty_retains_source_and_independent_lease(
     try:
         assert not participant.drain(time.monotonic() + 0.02)
         assert not pause.drain(time.monotonic() + 0.02)
-        assert not select.select([observer.stdout], [], [], 0.06)[0]
+        assert not pipe_readable(observer.stdout, 0.06)
     finally:
         observer.kill()
         observer.wait(timeout=5)

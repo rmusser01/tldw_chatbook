@@ -76,10 +76,10 @@ def test_installed_permission_preparation_retains_one_canonical_admission(
     assert inspect.getattr_static(storage.StorageLease, "close") is close
     assert all(function.__code__ is code for function, code in bindings)
     assert not active_selections
-    # Current stock permission read has eleven selections and one additional
-    # owner observation. Every selection must still execute its own fresh body.
-    assert counts == {"selections": 11, "witnesses": 12}
-    assert selection_reads == [1] * 11
+    # Task25 consumes the initial selection for pure registration, removing
+    # three metadata-only repeats. Every retained selection remains fresh.
+    assert counts == {"selections": 8, "witnesses": 9}
+    assert selection_reads == [1] * 8
     assert len(issued) == observed.all_acquisition_count
     assert len({id(lease) for lease in issued}) == len(issued)
     assert len(closed) == len(issued)

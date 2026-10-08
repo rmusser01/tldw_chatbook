@@ -1165,3 +1165,63 @@ helper validation under one synchronous source owner. Separate post-lock source
 validation, restored-owner approval, actual destination/open/write gates and
 positive native retirement remain required. No check is removed based on timing
 alone; direct/custom calls and corrupt/missing-file behavior need causal controls.
+
+## Task25: registration consumes its already-observed source
+
+The former registration path repeated three complete source/witness observations
+just to record or retrieve participant metadata. Installed MCP preparation now
+uses one pure registry helper after its original initial source selection. Exact
+source/type/owner/path identity remains checked. The full pre-lock, post-lock,
+outer/nested method, readable/recovery and actual file-effect gates remain.
+The separately discovered pending-preparation source-retarget error category is
+restored without changing its authority or native callback order.
+
+| Original permission-read census | After task24 | After task25 |
+| --- | ---: | ---: |
+| Native open attempts | 689 | 575 |
+| Successful opens | 638 | 530 |
+| Actual filesystem objects | 23 | 23 |
+| Each of six common ancestor directories | 55 | 46 |
+| Source selections / fresh witnesses | 11 / 12 | 8 / 9 |
+| Full raw checks / independent acquisitions | 5 / 2 | 5 / 2 |
+
+The final count run also verifies real payload, each retained selection's fresh
+witness, recovery approval, member order, exact lease lifetime and physical handle
+retirement. All native census overflow/depth limits are zero. Compared with the
+1,013-attempt pre-task24 checkpoint, these two changes remove 438 attempts (43.2%).
+This is repeated traversal of 23 objects, not hundreds of unique payload files.
+It does not establish a proportional wall-time improvement.
+
+`mcp-registration-red-1` on unchanged saved product fails only the final expected
+8/9 count assertion (actual11/12); all earlier behavior/custody assertions pass.
+`mcp-registration-green-1` initially passes64 checks and fails11 existing lifetime
+cases. Six representative failures reproduce against exact saved a759 source in
+`mcp-registration-saved-controls-1`, covering all four causes: retarget refusal
+category, a nonpersisting permission seed, a legitimate history cache hit that
+never armed the intended close injection, and socket-only Windows pipe polling.
+The product category is repaired; the fixture repairs retain original actual
+native operations, positive target/custody proof and all original deadlines.
+
+Final affected verification comprises22 passes across five sequential batches:
+
+| Evidence label suffix (prefix mcp-registration-) | Tests | Driver seconds |
+| --- | ---: | ---: |
+| final-boundaries-1 | 14 | 49.828 |
+| final-permission-1 | 2 | 28.125 |
+| final-history-read-1 | 2 | 28.234 |
+| final-history-append-1 | 2 | 23.672 |
+| final-history-atomic-1 | 2 | 22.360 |
+
+All11 earlier failed cases pass in this final scope. Every final batch preserves
+selected source hashes and retires its native Job/tree/identity, pipe tasks and
+private profile normally, with zero force, diagnostic overflow or PID races.
+The initial broad green run overflowed its bounded PID diagnostic inventory194
+times; normal native Job emptiness still held, but that inventory is incomplete.
+Final child-heavy cases were split into pairs to preserve complete diagnostics
+without raising any limits. Scoped lint/format/diff checks pass; the older lifetime
+module retains its same13 pre-existing Ruff findings. Independent source review
+found no remaining issue.
+
+TASK-34563.25 stays In Progress pending supported-host CI and combined-source Send
+verification. Latest pre-task25 Send samples and the unmet one-second/100ms targets
+remain as recorded above. No latency acceptance follows from this count reduction.

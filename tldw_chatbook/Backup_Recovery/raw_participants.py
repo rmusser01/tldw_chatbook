@@ -260,6 +260,25 @@ def _pinned_io_available():
     )
 
 
+def _register_raw_participant(source, owner, selected):
+    """Register observed metadata; admission and file effects validate separately."""
+    selected = lexical_path(selected)
+    with storage._lock:
+        participant = _source_participants.get(source)
+        if participant is None:
+            participant = object.__new__(_RawParticipant)
+            _participants[participant] = _ParticipantState(
+                weakref.ref(source), type(source), owner, selected
+            )
+            _source_participants[source] = participant
+        state = _participant_identity(participant)
+        if state.source() is not source:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner != owner or state.selected != selected:
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        return participant
+
+
 def _raw_participant(source):
     """Only installed actual sources; this does not qualify capture inventory."""
     if not _pinned_io_available():
@@ -307,14 +326,7 @@ def _raw_participant(source):
         else:
             raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     selected = lexical_path(selected)
-    with storage._lock:
-        participant = _source_participants.get(source)
-        if participant is None:
-            participant = object.__new__(_RawParticipant)
-            _participants[participant] = _ParticipantState(
-                weakref.ref(source), type(source), owner, selected
-            )
-            _source_participants[source] = participant
+    participant = _register_raw_participant(source, owner, selected)
     state = _participant_state(participant)
     with storage._lock:
         if _participant_identity(participant) is not state:
@@ -749,12 +761,13 @@ def _check_pending_mcp_preparation(preparation, source, canonical):
                 or issued_source is not source
                 or mcp_sources._BINDINGS.get(source) is not binding
                 or type(source) is not binding.source_type
-                or lexical_path(source.path) != binding.selected
                 or canonical != selected
                 or getattr(source, "_recovery_original_path", None) != selected
                 or lease not in storage._live_leases
             ):
                 raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+            if lexical_path(source.path) != binding.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
             attempt.check()
         if (
             _pending_mcp_acquirer() is None
@@ -1068,8 +1081,17 @@ def _scope(
             # Constructor directory selection is complete before binding.
             if route == "template_directory":
                 source.user_templates_dir = selected
-            participant = _raw_participant(source)
-            binding = _participant_state(participant)
+            if route == mcp_sources.ROUTE:
+                # Initial selection already observed this installed source.
+                # Registration only records that metadata; the full pre-lock
+                # and post-lock admission gates below remain independent.
+                participant = _register_raw_participant(
+                    source, mcp_sources._source_owner(source), selected
+                )
+                binding = _participant_identity(participant)
+            else:
+                participant = _raw_participant(source)
+                binding = _participant_state(participant)
             if (
                 binding.owner
                 not in {
