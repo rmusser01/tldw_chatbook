@@ -2271,7 +2271,7 @@ Capture and recheck the exact App mapping and its plain inputs without rebinding
 
 ### TASK-34406 clarification: finite deferred Collections capture setup
 
-The stock post-ready timer currently calls the synchronous Collections capture initializer on the UI loop. The source-current contained whole probe records this original caller during the idle UI pause; detached setup must preserve the fresh path, data-root, schema, offline-store and legacy checks. This amendment refines ADR085 App-owned service lifetime and preserves ADR113 Local/Server authority selection.
+The stock post-ready timer currently calls the synchronous Collections capture initializer on the UI loop. The source-current contained whole probe records this original caller during the idle UI pause; detached setup must preserve the fresh path, data-root, schema, offline-store and legacy checks. This amendment refines this ADR's finite callback lifetime and preserves ADR113 Local/Server authority selection. ADR085 concerns the activity receipt switcher and does not govern this initializer.
 
 Only the original deferred timer with the exact existing stock file-backed LibraryCollectionsDB may select one finite background build. Keep constructor and synchronous first-use/custom/memory routes unchanged. The callback invokes the captured original native readers and builders, returns detached pieces, and physically retires only its newly created worker connection/resources on that same worker; existing borrowers remain live. The UI loop constructs the non-native scope/service, publishes fields and performs original authority activation only after exact App, deferred scope, database, original defining source bindings, selected configuration path/generation and runtime owner still match. A first-use winner, replacement, changed source or shutdown cannot be overwritten.
 
@@ -2624,3 +2624,8 @@ Task introduces no configurable task-factory callback; generic database calls,
 custom/subclass/memory routes, fresh native admission, borrowed handles and
 existing owner/publication fences retain their contracts. This completes the
 existing finite callback lifetime; no authority cache or new storage API.
+
+
+### Deferred Collections setup ownership (2026-10-07)
+
+The stock deferred Collections initializer owns one finite preparation callback and its newly acquired thread-local connection. It retains that callback through cancellation and shutdown, and checks its original owner and source before publication on the issuing loop. Original synchronous first use and custom/memory composition remain compatible. Database and archive operations retain their separate original admission scopes: wrapping both in a database-only operation incorrectly rejects archive access. Borrowed connections remain owned by their caller. This completes existing callback custody under ADR113/126 without adding permission or cached authority.

@@ -19121,3 +19121,8 @@ do not infer that a synthesized private descriptor reproduces the initial ACL.
 Keep process retirement, test assertions and temporary-file cleanup as separate
 outcomes. Any recovery must verify the absolute temporary boundary and owned
 process retirement before restoring access or removing the profile.
+
+
+### A finite callback can contain more than one storage authority
+
+TASK-34406, 2026-10-07: moving deferred Collections setup off the UI loop initially wrapped the entire original constructor sequence in a database-only operation. The actual offline-store constructor then failed with operation_path_outside_scope while creating its separate archive directory. Keep finite callback/connection ownership separate from resource authorization; preserve each original operation's admission rather than broadening or reusing a database-only scope for filesystem work. Removing only the added outer scope allowed all21 focused responsiveness, native ownership and wiring controls to pass.

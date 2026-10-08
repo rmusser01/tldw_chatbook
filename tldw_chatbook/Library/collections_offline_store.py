@@ -754,3 +754,45 @@ class CollectionsOfflineStore:
     def _require_limit(value: Any, reason: str) -> None:
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise CollectionsCaptureError(reason)
+
+
+# Original callbacks eligible for finite deferred Collections setup only.
+def _record_collections_setup_source(entries):
+    from types import FunctionType
+
+    rows = []
+    for owner, name in entries:
+        original = owner[name] if type(owner) is dict else getattr(owner, name)  # noqa: E721 - exact stock compatibility boundary
+        function = getattr(original, "__func__", original)
+        records = []
+        while type(function) is FunctionType:
+            records.append(
+                (
+                    function,
+                    function.__code__,
+                    function.__globals__,
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in function.__closure__ or ()
+                    ),
+                    vars(function).get("__wrapped__"),
+                )
+            )
+            function = vars(function).get("__wrapped__")
+        rows.append((owner, name, original, tuple(records)))
+    return globals(), tuple(rows)
+
+
+_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+    (
+        (globals(), "CollectionsOfflineStore"),
+        (CollectionsOfflineStore, "__init__"),
+        (CollectionsOfflineStore, "_ensure_lifecycle_lock"),
+        (CollectionsOfflineStore, "_initialize_cursor"),
+    )
+)
+del _record_collections_setup_source

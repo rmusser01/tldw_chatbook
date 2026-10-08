@@ -778,6 +778,400 @@ class _DeferredCollectionsCaptureScope:
         delattr(self._resolve(), name)
 
 
+class _CollectionsSetupObsolete(RuntimeError):
+    """The original deferred initializer no longer owns publication."""
+
+
+def _collections_setup_sources_current(sources):
+    import inspect
+    import sys
+
+    for namespace, entries in sources:
+        module = sys.modules.get(namespace["__name__"])
+        if module is None or vars(module) is not namespace:
+            return False
+        for owner, name, expected, records in entries:
+            actual = (
+                owner.get(name)
+                if type(owner) is dict  # noqa: E721 - exact stock compatibility boundary
+                else inspect.getattr_static(owner, name, None)
+            )
+            if actual is not expected:
+                return False
+            for (
+                function,
+                code,
+                defining,
+                defaults,
+                keywords,
+                items,
+                closure,
+                cells,
+                wrapped,
+            ) in records:
+                defining_module = sys.modules.get(defining["__name__"])
+                if (
+                    defining_module is None
+                    or vars(defining_module) is not defining
+                    or function.__code__ is not code
+                    or function.__globals__ is not defining
+                    or function.__defaults__ is not defaults
+                    or function.__kwdefaults__ is not keywords
+                    or len(keywords or {}) != len(items)
+                    or any(
+                        key not in (keywords or {}) or keywords[key] is not value
+                        for key, value in items
+                    )
+                    or function.__closure__ is not closure
+                    or any(cell.cell_contents is not value for cell, value in cells)
+                    or vars(function).get("__wrapped__") is not wrapped
+                ):
+                    return False
+    return True
+
+
+def _capture_deferred_collections_setup(app):
+    import inspect
+    import sys
+    from types import SimpleNamespace
+    from tldw_chatbook import config
+    from tldw_chatbook.DB import Library_Collections_DB
+    from tldw_chatbook.Library import (
+        collections_capture_repository,
+        collections_capture_service,
+        collections_legacy_recovery,
+        collections_offline_store,
+    )
+
+    app_module = sys.modules["tldw_chatbook.app"]
+    app_type, defining, factory, factory_code, _runtime_type = (
+        app_module._CONSOLE_SKILL_APP_SOURCE
+    )
+    fields = vars(app)
+    database = fields.get("local_library_collections_db")
+    scope = fields.get("collections_capture_scope_service")
+    if (
+        defining is not vars(app_module)
+        or app_module.TldwCli is not app_type
+        or type(app) is not app_type
+        or factory.__code__ is not factory_code
+        or inspect.getattr_static(app, "_create_deferred_startup_task") is not factory
+        or type(database) is not LibraryCollectionsDB
+        or database.is_memory_db
+        or type(scope) is not _DeferredCollectionsCaptureScope
+        or fields.get("_collections_capture_initializer_closed", False)
+        or fields.get("_shutting_down", False)
+        or fields.get("_exit", False)
+        or type(fields.get("_deferred_startup_tasks")) is not set  # noqa: E721 - exact stock compatibility boundary
+        or any(
+            fields.get(name) is not None for name in _COLLECTIONS_CAPTURE_RESULT_FIELDS
+        )
+    ):
+        return None
+    sources = (
+        _COLLECTIONS_SETUP_SOURCE,
+        config._COLLECTIONS_SETUP_SOURCE,
+        Library_Collections_DB._COLLECTIONS_SETUP_SOURCE,
+        collections_capture_repository._COLLECTIONS_SETUP_SOURCE,
+        collections_capture_service._COLLECTIONS_SETUP_SOURCE,
+        collections_legacy_recovery._COLLECTIONS_SETUP_SOURCE,
+        collections_offline_store._COLLECTIONS_SETUP_SOURCE,
+    )
+    checker, checker_code = _COLLECTIONS_SOURCE_CHECKER
+    if (
+        _collections_setup_sources_current is not checker
+        or checker.__code__ is not checker_code
+        or not checker(sources)
+    ):
+        return None
+    receivers = tuple(
+        (app, name, original) for name, original in _COLLECTIONS_APP_METHODS
+    )
+    receivers += ((app, "_create_deferred_startup_task", factory),)
+    receivers += tuple(
+        (database, name, original)
+        for owner, name, original, _records in Library_Collections_DB._COLLECTIONS_SETUP_SOURCE[
+            1
+        ]
+        if owner is LibraryCollectionsDB
+    )
+    if any(
+        inspect.getattr_static(owner, name, None) is not original
+        for owner, name, original in receivers
+    ):
+        return None
+    policy = app.runtime_policy
+    if policy is None:
+        return None
+    request = SimpleNamespace(
+        app=app,
+        scope=scope,
+        database=database,
+        local=database._thread_local,
+        path=database.db_path,
+        participant=database._maintenance_participant,
+        policy=policy,
+        state=policy.state,
+        identity=config.current_config_identity(),
+        sources=sources,
+        receivers=receivers,
+        factory=factory,
+        factory_code=factory_code,
+        reads=set(),
+        initializer=None,
+        loop=asyncio.get_running_loop(),
+        thread=threading.current_thread(),
+    )
+    require = _require_collections_setup_current
+    checker = _collections_setup_sources_current
+    require_code, checker_code = require.__code__, checker.__code__
+
+    def current():
+        if (
+            globals().get("_require_collections_setup_current") is not require
+            or require.__code__ is not require_code
+            or globals().get("_collections_setup_sources_current") is not checker
+            or checker.__code__ is not checker_code
+        ):
+            raise _CollectionsSetupObsolete("collections_capture_setup_source_changed")
+        require(request)
+
+    request.require_current = current
+    return request
+
+
+def _require_collections_setup_current(request):
+    import inspect
+    from tldw_chatbook import config
+
+    app, database = request.app, request.database
+    if (
+        vars(app).get("_collections_capture_setup") is not request
+        or vars(app).get("_collections_capture_initializer_task")
+        is not request.initializer
+        or type(request.initializer) is not _COLLECTIONS_TASK
+        or request.initializer.get_loop() is not request.loop
+        or request.factory.__code__ is not request.factory_code
+        or vars(app).get("_collections_capture_initializer_closed", False)
+        or vars(app).get("_shutting_down", False)
+        or vars(app).get("_exit", False)
+        or any(
+            inspect.getattr_static(owner, name, None) is not original
+            for owner, name, original in request.receivers
+        )
+        or app.collections_capture_scope_service is not request.scope
+        or app.local_library_collections_db is not database
+        or database._thread_local is not request.local
+        or database.db_path != request.path
+        or database._maintenance_participant is not request.participant
+        or app.runtime_policy is not request.policy
+        or request.policy.state is not request.state
+        or not _collections_setup_sources_current(request.sources)
+        or config.current_config_identity() != request.identity
+        or any(
+            vars(app).get(name) is not None
+            for name in _COLLECTIONS_CAPTURE_RESULT_FIELDS
+        )
+    ):
+        raise _CollectionsSetupObsolete("collections_capture_setup_changed")
+    if threading.current_thread() is request.thread and (
+        asyncio.get_running_loop() is not request.loop
+        or asyncio.current_task() is not request.initializer
+    ):
+        raise _CollectionsSetupObsolete("collections_capture_initializer_changed")
+
+
+def _build_deferred_collections_capture_parts(request):
+    from tldw_chatbook.Backup_Recovery.participants import (
+        _core_cached_connection,
+        _core_closing,
+    )
+    from tldw_chatbook.Utils.private_paths import lexical_path
+
+    request.require_current()
+    database_path = get_library_collections_db_path()
+    request.require_current()
+    if lexical_path(database_path) != request.path:
+        raise _CollectionsSetupObsolete(
+            "collections_capture_database_selection_changed"
+        )
+    data_root = get_user_data_dir()
+    request.require_current()
+    database, local = request.database, request.local
+    previous = _core_cached_connection(database, getattr(local, "conn", None))
+    connection = None
+    try:
+        request.require_current()
+        connection = database._held_connection()
+        request.require_current()
+        # Each original repository/filesystem call keeps its own admission.
+        # A database-only outer scope would reject the separate archive root.
+        return _collections_capture_parts(
+            database,
+            database_path,
+            data_root,
+            require_current=request.require_current,
+        )
+    finally:
+        if connection is not None and connection is not previous:
+            with _core_closing(database, connection) as allowed:
+                if not allowed:
+                    raise RuntimeError("collections_capture_connection_not_retired")
+                connection.close()
+                if getattr(local, "conn", None) is connection:
+                    local.conn = None
+
+
+async def _initialize_deferred_collections_capture(request):
+    app = request.app
+    try:
+        parts = await _COLLECTIONS_RUN_PREPARATION(
+            lambda: _build_deferred_collections_capture_parts(request),
+            creator=app,
+            session_id=None,
+            reads=request.reads,
+            require_current=request.require_current,
+        )
+        request.require_current()
+        scope = _collections_capture_scope(app)
+        service = _local_collections_capture_service(parts)
+        request.require_current()
+    except _CollectionsSetupObsolete:
+        return
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        try:
+            request.require_current()
+        except _CollectionsSetupObsolete:
+            return
+        app.collections_capture_scope_service = _collections_capture_scope(app)
+        logger.opt(exception=True).warning(
+            "Local Collections capture service unavailable during app wiring"
+        )
+        return
+    else:
+        app.collections_capture_scope_service = scope
+        _publish_collections_capture_parts(app, parts, service)
+        app._create_deferred_startup_task(
+            app._reconcile_collections_capture_startup(),
+            name="deferred_collections_capture_reconciliation",
+        )
+    finally:
+        if vars(app).get("_collections_capture_setup") is request:
+            app._collections_capture_setup = None
+
+
+async def _retire_deferred_collections_capture(app):
+    app._collections_capture_initializer_closed = True
+    task = vars(app).get("_collections_capture_initializer_task")
+    cancellation = None
+    if task is None:
+        return None
+    if not task.done():
+        task.cancel()
+    while not task.done():
+        try:
+            # wait does not propagate child cancellation or cancel the child.
+            await asyncio.wait({task})
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+    if not task.cancelled():
+        task.result()
+    return cancellation
+
+
+def _collections_capture_scope(app):
+    from tldw_chatbook.Library.collections_capture_service import (
+        CollectionsCaptureScopeService,
+    )
+
+    return CollectionsCaptureScopeService(
+        resolve_media_reference=functools.partial(
+            _resolve_collections_media_reference, app
+        ),
+        resolve_note_reference=functools.partial(
+            _resolve_collections_note_reference, app
+        ),
+    )
+
+
+def _collections_capture_parts(
+    database, database_path, data_root, *, require_current=None
+):
+    from tldw_chatbook.Library.collections_capture_repository import (
+        CollectionsCaptureRepository,
+    )
+    from tldw_chatbook.Library.collections_capture_service import (
+        build_local_capture_authority,
+    )
+    from tldw_chatbook.Library.collections_legacy_recovery import (
+        LegacyCollectionsRecovery,
+        LegacyCollectionsRecoveryError,
+    )
+    from tldw_chatbook.Library.collections_offline_store import CollectionsOfflineStore
+
+    if require_current is not None:
+        require_current()
+    authority = build_local_capture_authority(
+        profile_id=str(data_root.resolve()),
+        database_identity=str(database_path.resolve()),
+    )
+    if require_current is not None:
+        require_current()
+    repository = CollectionsCaptureRepository(database, authority_key=authority.key)
+    if require_current is not None:
+        require_current()
+    offline_store = CollectionsOfflineStore(
+        repository,
+        data_root=data_root,
+        authority_fingerprint=authority.fingerprint,
+    )
+    if require_current is not None:
+        require_current()
+    legacy_recovery = LegacyCollectionsRecovery(database)
+    try:
+        legacy_recovery.list_collections(page=1, size=1)
+        legacy_recovery_available = True
+    except LegacyCollectionsRecoveryError:
+        legacy_recovery_available = False
+    if require_current is not None:
+        require_current()
+    return (
+        authority,
+        repository,
+        offline_store,
+        legacy_recovery,
+        legacy_recovery_available,
+    )
+
+
+def _local_collections_capture_service(parts):
+    from tldw_chatbook.Library.collections_capture_service import (
+        LocalCollectionsCaptureService,
+    )
+
+    authority, repository, offline_store, legacy_recovery, legacy_available = parts
+    service = LocalCollectionsCaptureService(
+        authority,
+        repository,
+        offline_store=offline_store,
+        extractor=_extract_collections_article,
+        legacy_recovery_available=legacy_available,
+    )
+    return service
+
+
+def _publish_collections_capture_parts(app, parts, service):
+    authority, repository, offline_store, legacy_recovery, _legacy_available = parts
+    app.collections_capture_repository = repository
+    app.collections_offline_store = offline_store
+    app.collections_legacy_recovery_service = legacy_recovery
+    app.local_collections_capture_authority = authority
+    app.local_collections_capture_service = service
+    TldwCli._activate_collections_capture_authority(app)
+
+
 class ServiceWiringMixin:
     """TldwCli's service composition (clusters C, E and O; TASK-33011).
 
@@ -2050,76 +2444,22 @@ class ServiceWiringMixin:
 
     def _wire_collections_capture_services(self) -> None:
         """Compose the profile-owned Local capture authority and scope seam."""
-        from tldw_chatbook.Library.collections_capture_repository import (
-            CollectionsCaptureRepository,
-        )
-        from tldw_chatbook.Library.collections_capture_service import (
-            CollectionsCaptureScopeService,
-            LocalCollectionsCaptureService,
-            build_local_capture_authority,
-        )
-        from tldw_chatbook.Library.collections_legacy_recovery import (
-            LegacyCollectionsRecovery,
-            LegacyCollectionsRecoveryError,
-        )
-        from tldw_chatbook.Library.collections_offline_store import (
-            CollectionsOfflineStore,
-        )
-
         TldwCli._reset_collections_capture_services(self)
-        self.collections_capture_scope_service = CollectionsCaptureScopeService(
-            resolve_media_reference=functools.partial(
-                _resolve_collections_media_reference, self
-            ),
-            resolve_note_reference=functools.partial(
-                _resolve_collections_note_reference, self
-            ),
-        )
+        self.collections_capture_scope_service = _collections_capture_scope(self)
         try:
             database_path = get_library_collections_db_path()
             database = getattr(self, "local_library_collections_db", None)
             if not isinstance(database, LibraryCollectionsDB):
                 database = LibraryCollectionsDB(database_path, CLI_APP_CLIENT_ID)
                 self.local_library_collections_db = database
-            data_root = get_user_data_dir()
-            authority = build_local_capture_authority(
-                profile_id=str(data_root.resolve()),
-                database_identity=str(database_path.resolve()),
-            )
-            repository = CollectionsCaptureRepository(
-                database,
-                authority_key=authority.key,
-            )
-            offline_store = CollectionsOfflineStore(
-                repository,
-                data_root=data_root,
-                authority_fingerprint=authority.fingerprint,
-            )
-            legacy_recovery = LegacyCollectionsRecovery(database)
-            try:
-                legacy_recovery.list_collections(page=1, size=1)
-                legacy_recovery_available = True
-            except LegacyCollectionsRecoveryError:
-                legacy_recovery_available = False
-            service = LocalCollectionsCaptureService(
-                authority,
-                repository,
-                offline_store=offline_store,
-                extractor=_extract_collections_article,
-                legacy_recovery_available=legacy_recovery_available,
-            )
+            parts = _collections_capture_parts(database, database_path, get_user_data_dir())
+            service = _local_collections_capture_service(parts)
         except Exception:
             logger.opt(exception=True).warning(
                 "Local Collections capture service unavailable during app wiring"
             )
             return
-
-        self.collections_capture_repository = repository
-        self.collections_offline_store = offline_store
-        self.collections_legacy_recovery_service = legacy_recovery
-        self.local_collections_capture_authority = authority
-        self.local_collections_capture_service = service
-        TldwCli._activate_collections_capture_authority(self)
+        _publish_collections_capture_parts(self, parts, service)
 
     def _reset_collections_capture_services(self) -> None:
         """Install inert capture seams without importing their implementations."""
@@ -2141,7 +2481,25 @@ class ServiceWiringMixin:
         return scope
 
     def _deferred_wire_collections_capture_services(self) -> None:
-        """Compose and reconcile capture services after the first frame."""
+        """Prepare stock file-backed capture services away from the UI loop."""
+        if any(vars(self).get(flag, False) for flag in (
+            "_collections_capture_initializer_closed", "_shutting_down", "_exit",
+        )):
+            return
+        task = vars(self).get("_collections_capture_initializer_task")
+        if task is not None and not task.done():
+            return
+        request = _capture_deferred_collections_setup(self)
+        if request is not None:
+            self._collections_capture_setup = request
+            task = _COLLECTIONS_TASK(
+                _initialize_deferred_collections_capture(request),
+                name="deferred_collections_capture_setup",
+            )
+            request.initializer = self._collections_capture_initializer_task = task
+            self._deferred_startup_tasks.add(task)
+            task.add_done_callback(self._deferred_startup_tasks.discard)
+            return
         self.ensure_collections_capture_services()
         if getattr(self, "collections_capture_repository", None) is not None:
             self._create_deferred_startup_task(
@@ -2231,31 +2589,32 @@ class ServiceWiringMixin:
 
         if repository is not None:
             def interrupt_in_worker():
-                with operation_owned_connection(repository.db):
+                with operation_owned_connection(getattr(repository, "db", None)):
                     return repository.interrupt_stale_extractions()
 
             await asyncio.to_thread(interrupt_in_worker)
         offline_store = getattr(self, "collections_offline_store", None)
         if offline_store is not None:
             def reconcile_in_worker():
-                with operation_owned_connection(offline_store.repository.db):
+                with operation_owned_connection(getattr(getattr(offline_store, "repository", None), "db", None)):
                     return offline_store.reconcile_batch(limit=25)
 
             await asyncio.to_thread(reconcile_in_worker)
 
     async def _shutdown_collections_capture_runtime(self) -> None:
-        """Fence capture authority before cancelling app-owned extraction work."""
+        """Fence capture authority and retire its finite setup before disposal."""
+        self._collections_capture_initializer_closed = True
         scope = getattr(self, "collections_capture_scope_service", None)
-        if scope is not None and not isinstance(
-            scope,
-            _DeferredCollectionsCaptureScope,
-        ):
+        if scope is not None and not isinstance(scope, _DeferredCollectionsCaptureScope):
             deactivate = getattr(scope, "deactivate", None)
             if callable(deactivate):
                 deactivate()
+        cancellation = await _retire_deferred_collections_capture(self)
         local_service = getattr(self, "local_collections_capture_service", None)
         if local_service is not None:
             await local_service.cancel_extractions()
+        if cancellation is not None:
+            raise cancellation
 
     def _wire_workspace_registry_services(self) -> None:
         self.change_review_consent_service = None
@@ -4497,3 +4856,97 @@ _CONSOLE_SKILL_CONTEXT_SOURCE = (
     _CONSOLE_SKILL_CONTEXT_SOURCE[5],
 )
 _CONSOLE_SKILL_WIRING_SOURCE = _CONSOLE_SKILL_CONTEXT_SOURCE
+
+
+# Definition-time compatibility boundary for the finite Collections initializer.
+from tldw_chatbook.Chat.console_preparation_reads import (  # noqa: E402
+    run_preparation_read as _COLLECTIONS_RUN_PREPARATION,
+)
+
+_COLLECTIONS_TASK = asyncio.Task
+_COLLECTIONS_SOURCE_CHECKER = (
+    _collections_setup_sources_current,
+    _collections_setup_sources_current.__code__,
+)
+_COLLECTIONS_CAPTURE_RESULT_FIELDS = (
+    "collections_capture_repository",
+    "collections_offline_store",
+    "collections_legacy_recovery_service",
+    "local_collections_capture_authority",
+    "local_collections_capture_service",
+)
+_COLLECTIONS_APP_METHODS = tuple(
+    (name, ServiceWiringMixin.__dict__[name])
+    for name in (
+        "_wire_collections_capture_services",
+        "_reset_collections_capture_services",
+        "ensure_collections_capture_services",
+        "_deferred_wire_collections_capture_services",
+        "_activate_collections_capture_authority",
+        "_shutdown_collections_capture_runtime",
+        "_reconcile_collections_capture_startup",
+    )
+)
+
+
+# Original callbacks eligible for finite deferred Collections setup only.
+def _record_collections_setup_source(entries):
+    from types import FunctionType
+
+    rows = []
+    for owner, name in entries:
+        original = owner[name] if type(owner) is dict else getattr(owner, name)  # noqa: E721 - exact stock compatibility boundary
+        function = getattr(original, "__func__", original)
+        records = []
+        while type(function) is FunctionType:
+            records.append(
+                (
+                    function,
+                    function.__code__,
+                    function.__globals__,
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple((function.__kwdefaults__ or {}).items()),
+                    function.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in function.__closure__ or ()
+                    ),
+                    vars(function).get("__wrapped__"),
+                )
+            )
+            function = vars(function).get("__wrapped__")
+        rows.append((owner, name, original, tuple(records)))
+    return globals(), tuple(rows)
+
+
+_COLLECTIONS_SETUP_SOURCE = _record_collections_setup_source(
+    (
+        (globals(), "_collections_setup_sources_current"),
+        (globals(), "_capture_deferred_collections_setup"),
+        (globals(), "_require_collections_setup_current"),
+        (globals(), "_build_deferred_collections_capture_parts"),
+        (globals(), "_initialize_deferred_collections_capture"),
+        (globals(), "_retire_deferred_collections_capture"),
+        (globals(), "_collections_capture_scope"),
+        (globals(), "_collections_capture_parts"),
+        (globals(), "_local_collections_capture_service"),
+        (globals(), "_publish_collections_capture_parts"),
+        (globals(), "get_library_collections_db_path"),
+        (globals(), "get_user_data_dir"),
+        (globals(), "LibraryCollectionsDB"),
+        (globals(), "_COLLECTIONS_RUN_PREPARATION"),
+        (globals(), "_COLLECTIONS_TASK"),
+        (globals(), "_resolve_collections_media_reference"),
+        (globals(), "_resolve_collections_note_reference"),
+        (globals(), "_extract_collections_article"),
+        (ServiceWiringMixin, "_wire_collections_capture_services"),
+        (ServiceWiringMixin, "_reset_collections_capture_services"),
+        (ServiceWiringMixin, "ensure_collections_capture_services"),
+        (ServiceWiringMixin, "_deferred_wire_collections_capture_services"),
+        (ServiceWiringMixin, "_activate_collections_capture_authority"),
+        (ServiceWiringMixin, "_shutdown_collections_capture_runtime"),
+        (ServiceWiringMixin, "_reconcile_collections_capture_startup"),
+    )
+)
+del _record_collections_setup_source

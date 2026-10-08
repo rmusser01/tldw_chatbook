@@ -430,6 +430,9 @@ jobs:
       - name: Verify stock skill setup source and physical lifetime
         if: ${{ !cancelled() }}
         run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_console_skill_trust_stock_owned.py -q --timeout=180 --junitxml=${{ runner.temp }}/skill-setup-lifetime.xml
+      - name: Verify Collections setup responsiveness and native ownership
+        if: ${{ !cancelled() }}
+        run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_collections_deferred_loop.py Tests/Library/test_collections_capture_app_wiring.py -q --timeout=180 --junitxml=${{ runner.temp }}/collections-setup.xml
       - name: Verify original Context host shutdown
         if: ${{ !cancelled() }}
         run: python -m Tests.windows_private_fixture_runner "Tests/UI/test_console_finite_presentation_host_terminal.py::test_original_finite_presentation_callback_retires_before_host_return[context]" -q --timeout=180 --junitxml=${{ runner.temp }}/context-host.xml
@@ -455,6 +458,7 @@ jobs:
             ${{ runner.temp }}/context-display.xml
             ${{ runner.temp }}/skill-setup-lifetime.xml
             ${{ runner.temp }}/context-host.xml
+            ${{ runner.temp }}/collections-setup.xml
             ${{ runner.temp }}/context-lifetime-diagnostics/*.json
           if-no-files-found: error
   remote-bundle-controls:
