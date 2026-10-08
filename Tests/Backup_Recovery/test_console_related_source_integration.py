@@ -254,7 +254,10 @@ def test_late_acquisition_replacement_refuses_and_retires_issued_lease(
     state = states[0]
     assert not state.active and not state.uncertain
     assert not state.pins and not state.files and not state.descriptors
-    assert state.leases == returned and len(state.holds) == 1
+    observer = state.mcp_observation_lease
+    expected = returned if observer is None else [observer, *returned]
+    assert state.leases == expected and len(state.holds) == len(expected)
+    assert all(lease not in storage._live_leases for lease in expected)
     assert not any(current is state for current in raw._states.values())
     assert storage._live_leases == baseline
     assert storage.acquire_storage is original

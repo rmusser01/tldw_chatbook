@@ -57,9 +57,15 @@ def _selected(source, owner, canonical):
 
         if getattr(source, "_recovery_original_path", None) != canonical:
             return canonical
-        return selected_path(
-            canonical, retained=raw._mcp_observation(source, canonical)
-        )
+        with raw._pending_mcp_observation(source, canonical) as retained:
+            return selected_path(
+                canonical,
+                retained=(
+                    raw._mcp_observation(source, canonical)
+                    if retained is None
+                    else retained
+                ),
+            )
     return canonical
 
 

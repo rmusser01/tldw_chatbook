@@ -673,6 +673,136 @@ def _related_member_acquirer():
     return acquire
 
 
+def _pending_mcp_acquirer():
+    """Qualify the original canonical observation callbacks without calling them."""
+    from ..MCP import recovery_activation as activation
+
+    acquire = _related_member_acquirer()
+    if (
+        acquire is None
+        or activation.acquire_storage is not acquire
+        or vars(activation) is not activation._PENDING_OBSERVATION_NAMESPACE
+    ):
+        return None
+    for name, function, bodies in activation._PENDING_OBSERVATION_BINDINGS:
+        if getattr(activation, name) is not function:
+            return None
+        if (
+            len(bodies) > 1
+            and getattr(function, "__wrapped__", None) is not bodies[1][0]
+        ):
+            return None
+        for (
+            current,
+            code,
+            defining,
+            defaults,
+            keywords,
+            items,
+            closure,
+            cells,
+        ) in bodies:
+            if (
+                current.__code__ is not code
+                or current.__globals__ is not defining
+                or current.__defaults__ is not defaults
+                or current.__kwdefaults__ is not keywords
+                or current.__closure__ is not closure
+                or any(cell.cell_contents is not value for cell, value in cells)
+                or (
+                    keywords is not None
+                    and (
+                        len(keywords) != len(items)
+                        or any(
+                            key not in keywords or keywords[key] is not value
+                            for key, value in items
+                        )
+                    )
+                )
+            ):
+                return None
+    return acquire
+
+
+def _check_pending_mcp_preparation(preparation, source, canonical):
+    """Fence one exact pending owner around a fresh canonical witness read."""
+    if type(preparation) is not tuple or len(preparation) != 5:
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    attempt, issued_source, binding, selected, lease = preparation
+
+    def current():
+        with storage._lock:
+            if (
+                type(attempt) is not storage._Acquisition
+                or attempt not in storage._pending_acquisitions
+                or getattr(attempt, "_mcp_preparation", None) is not preparation
+                or getattr(_local, "pending_mcp_preparation", None) is not preparation
+                or attempt.pid != os.getpid()
+                or attempt.thread is not threading.current_thread()
+                or attempt.task is not storage._task_identity()
+                or attempt.operation is not None
+                or getattr(storage._operation_local, "operation", None) is not None
+                or getattr(_local, "operation", None) is not None
+                or issued_source is not source
+                or mcp_sources._BINDINGS.get(source) is not binding
+                or type(source) is not binding.source_type
+                or lexical_path(source.path) != binding.selected
+                or canonical != selected
+                or getattr(source, "_recovery_original_path", None) != selected
+                or lease not in storage._live_leases
+            ):
+                raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+            attempt.check()
+        if (
+            _pending_mcp_acquirer() is None
+            or mcp_sources.canonical_path(source) != selected
+        ):
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+
+    current()
+    lease.execution_context(selected)
+    current()
+    return lease
+
+
+def _begin_mcp_preparation(source, attempt):
+    """Own one canonical lease before selectors, leaving member admission separate."""
+    binding = mcp_sources._BINDINGS.get(source)
+    if (
+        binding is None
+        or type(source) is not binding.source_type
+        or mcp_sources._source_owner(source)
+        not in {"mcp.local", "mcp.permissions", "mcp.context"}
+        or (acquire := _pending_mcp_acquirer()) is None
+    ):
+        return None
+    canonical = mcp_sources.canonical_path(source)
+    if getattr(source, "_recovery_original_path", None) != canonical:
+        return None
+    attempt.check()
+    lease = acquire(canonical)
+    # Publish cleanup ownership before any subsequent source or lease validation.
+    preparation = (attempt, source, binding, canonical, lease)
+    attempt._mcp_preparation = preparation
+    _local.pending_mcp_preparation = preparation
+    _check_pending_mcp_preparation(preparation, source, canonical)
+    return preparation
+
+
+@contextmanager
+def _pending_mcp_observation(source, canonical):
+    """Retain admission only; selected_path still observes fresh witnesses."""
+    preparation = getattr(_local, "pending_mcp_preparation", None)
+    if preparation is None:
+        yield None
+        return
+    lease = _check_pending_mcp_preparation(preparation, source, canonical)
+    try:
+        yield {canonical: lease}
+    finally:
+        _check_pending_mcp_preparation(preparation, source, canonical)
+
+
 def _nested_installed_mcp_state(source, route, previous):
     """Inspect issued MCP custody without repeating its native source proof."""
     if route != mcp_sources.ROUTE or type(previous) is not _RawOperation:
@@ -820,9 +950,14 @@ def _scope(
     source_lock = None
     locked = False
     body_completed = False
+    previous_preparation = getattr(_local, "pending_mcp_preparation", None)
+    _local.pending_mcp_preparation = None
+    preparation = None
     try:
         attempt = storage._Acquisition()  # before selectors, authority or path IO
         pinned = _pinned_io_available()
+        if pinned and route == mcp_sources.ROUTE:
+            preparation = _begin_mcp_preparation(source, attempt)
         selected, installed, directory_only = _selection(
             source, route, template, user_template, selected_read
         )
@@ -986,7 +1121,6 @@ def _scope(
                 for state in _states.values()
             ):
                 raise bootstrap.RecoveryRequired("raw_resources_not_retired")
-        operation = object.__new__(_RawOperation)
         state = _State(
             source,
             participant,
@@ -1007,9 +1141,16 @@ def _scope(
                 else None
             ),
         )
+        operation = object.__new__(_RawOperation)
         with storage._changed:
             _states[operation] = state
             storage._raw_operations.add(operation)
+            if preparation is not None:
+                lease = preparation[4]
+                state.leases.append(lease)
+                state.holds.append(storage._holds.get(lease._key))
+                state.mcp_canonical = preparation[3]
+                state.mcp_observation_lease = lease
         # Every publication/creation target is admitted before any side effect.
         admission_paths = (
             ((parent,) if route in {"pet", "theme_directory"} else ())
@@ -1060,7 +1201,11 @@ def _scope(
                 state.leases.append(storage.acquire_storage(path))
                 state.holds.append(storage._holds.get(state.leases[-1]._key))
                 attempt.check()
-        if route == mcp_sources.ROUTE and participant is not None:
+        if (
+            route == mcp_sources.ROUTE
+            and participant is not None
+            and state.mcp_observation_lease is None
+        ):
             canonical = mcp_sources.canonical_path(source)
             state.mcp_canonical = canonical
             if canonical == admission_paths[0]:
@@ -1102,6 +1247,7 @@ def _scope(
                     raise bootstrap.RecoveryRequired("raw_participant_not_installed")
                 if gate.closed:
                     raise bootstrap.RecoveryRequired("storage_locally_paused")
+            _local.pending_mcp_preparation = None
             state.active = True
             _local.operation = operation
         _check(operation)
@@ -1117,6 +1263,13 @@ def _scope(
             raise
     finally:
         _local.operation = None
+        # A validation failure in _begin may happen before its return assignment.
+        preparation = getattr(attempt, "_mcp_preparation", None)
+        transferred = (
+            preparation is not None
+            and operation is not None
+            and any(lease is preparation[4] for lease in _states[operation].leases)
+        )
         try:
             if operation is not None:
                 state = _states[operation]
@@ -1129,20 +1282,27 @@ def _scope(
                         storage._raw_operations.discard(operation)
                         storage._changed.notify_all()
         finally:
-            if locked:
-                source_lock.release()
-            if attempt is not None:
-                attempt.close()
-            if core is not None:
-                storage._check_operation(core, core.path)
-            storage._operation_local.operation = core
-            _local.operation = previous
             try:
-                if previous is not None:
-                    _check(previous)
-            except BaseException:
-                _local.operation = None
-                raise
+                if preparation is not None and not transferred:
+                    preparation[4].close()
+            finally:
+                if attempt is not None:
+                    attempt._mcp_preparation = None
+                _local.pending_mcp_preparation = previous_preparation
+                if locked:
+                    source_lock.release()
+                if attempt is not None:
+                    attempt.close()
+                if core is not None:
+                    storage._check_operation(core, core.path)
+                storage._operation_local.operation = core
+                _local.operation = previous
+                try:
+                    if previous is not None:
+                        _check(previous)
+                except BaseException:
+                    _local.operation = None
+                    raise
 
 
 def _selected(operation):

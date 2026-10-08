@@ -135,6 +135,34 @@ def selected_path(canonical, *, retained=None):
         return _root(canonical, witnesses) / canonical.name if witnesses else canonical
 
 
+# Exact compatibility entries for finite pending MCP observations only.
+_PENDING_OBSERVATION_NAMESPACE = globals()
+_PENDING_OBSERVATION_BINDINGS = tuple(
+    (
+        name,
+        function,
+        tuple(
+            (
+                current,
+                current.__code__,
+                current.__globals__,
+                current.__defaults__,
+                current.__kwdefaults__,
+                tuple((current.__kwdefaults__ or {}).items()),
+                current.__closure__,
+                tuple((cell, cell.cell_contents) for cell in current.__closure__ or ()),
+            )
+            for current in (
+                function,
+                *((function.__wrapped__,) if hasattr(function, "__wrapped__") else ()),
+            )
+        ),
+    )
+    for name in ("selected_path", "observed")
+    for function in (globals()[name],)
+)
+
+
 def _installed_items(witness):
     """Read the actual operation's receipt-bound local destination mapping."""
     from tldw_chatbook.Backup_Recovery.archive_reader import _manifest

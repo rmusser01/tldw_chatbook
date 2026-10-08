@@ -831,3 +831,201 @@ integrated CLEAN snapshot after task22 and the independent live-config-lock
 repair, avoiding duplicate diagnosis of the earlier UI path. The third-Send
 receipt branch is already covered by the same observer. No production callbacks,
 persistence gates or permissions were changed by this extension.
+
+## Hook path-selection audit while integrated pricing qualification runs
+
+The warm stock hook snapshot already contains `HookConfigSnapshot.profile_data_dir`,
+derived from the saved raw mapping under the config writer lock. `_current` calls
+`default_hook_permissions_path` only to compare that selection, invoking guarded
+`get_user_data_dir` again. The subsequent stock raw hook scope compares
+`selected_read` against current canonical selection; original participant, lease,
+source and effect checks remain fresh. This identifies a possible naming-versus-
+establishment boundary, not permission reuse.
+
+Read-only analysis of retained original-body spans gives the following seconds
+per Send. Each row contains five mutually disjoint `_current` contexts. Columns
+are nested/inclusive and must not be added.
+
+| Sample | Send | Hook context lifetime | Proven pre-yield minimum | Default-path lookup | Nested user-directory body | Permission read body |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| domain-capture-spans-1 | 1 | 2.990 | 2.970 | .208 | .195 | .123 |
+| domain-capture-spans-1 | 2 | 1.971 | 1.952 | .347 | .335 | .126 |
+| domain-capture-spans-1 | 3 | 1.810 | 1.794 | .163 | .152 | .105 |
+| related-source-spans-1 | 1 | 3.132 | 3.089 | .321 | .304 | .177 |
+| related-source-spans-1 | 2 | 3.074 | 3.046 | .591 | .565 | .213 |
+| related-source-spans-1 | 3 | 2.970 | 2.937 | .278 | .259 | .217 |
+
+The observer did not capture `_current`'s first yield. Its original `_read_state`
+return precedes the successful yield, establishing the pre-yield lower bound;
+the remaining caller/cleanup tail is 17-44 ms per Send. The default-path lookup
+accounts for about 7-19% of the observed hook-context lifetime. The larger
+unattributed pre-yield interval contains config/raw admission and lock preparation;
+it is not evidence that JSON reading itself consumes those seconds.
+
+Artifacts are the existing `.spans.json` and `.probe.json` pairs under
+`.superpowers/sdd/2026-10-06-console-shared-tool-preparation/native-pairs/`.
+Both have current original bindings, stable run sources, zero event/detail
+overflow, and complete selected pairs. Raw ancestry walks have 164/122 depth
+misses respectively, so child attribution is not exhaustive. Both retired the
+contained process normally; the related-source run records one PID-lookup race.
+Both precede task22: hook/config source is unchanged, but raw/private-path code
+has changed. These establish historical priority only, not current savings.
+
+No product change follows this audit. Cold/default-root selection owns serialized
+fallback establishment and configured-base verification that cannot be removed
+as a simple path substitution. Changed getters and snapshot providers must retain
+the existing callback route and refusal behavior. The next source-frozen integrated
+caller diagnostic remains the selection gate for further implementation; the
+whole preparation cost takes priority over this bounded naming duplication.
+
+## Integrated caller diagnostic after task22 and display-read fixes
+
+The expanded related-source CI selection at CLEAN06ff60ba216a1551924d526563fe11cda411437e
+contains75 cases including the task22 parent controls. Independently inspected XML:
+Linux74 pass/1 skip52.793s; macOS74 pass/1 skip58.714s; Windows62 pass/13 skips115.284s;
+zero failures/errors. The skip sets remain platform-specific. These are targeted
+correctness checks, not a whole-suite or latency acceptance claim.
+
+The integrated diagnostic used CLEAN HEAD49ca07d799e24a704d685ed48257943a5473c9d0
+plus its explicitly frozen retained work. All7822 Python source hashes and HEAD
+were unchanged. The first attempt, integrated-context-caller-detail-1, stopped
+before native launch because CLEAN has no .venv: the original Windows launcher
+rejects a missing executable before its process-creation API. Its empty log,
+no-PID custody receipt and2.0s ValueError source receipt are retained; the private
+profile was retained by the failure policy. It supplies no timing evidence.
+
+The existing runner now accepts an explicit interpreter and uses the integration
+owner's established -I source bootstrap: prepend CLEAN/core and CLEAN, then assert
+Tests runner and application module origins under CLEAN. All containment/hash
+function ASTs and native/test deadlines are unchanged. The corrected run uses the
+already-tested source-current-venv-312 environment; no .pth or production source
+was changed. Its receipt also records the exact command, interpreter, launcher
+hash and private profile path.
+
+integrated-context-caller-detail-2 completed91.047s driver/83.863s pytest, one pass.
+Three user and three assistant messages were saved, two nonstreaming plus one
+streaming reply completed, all three traces are complete and linked, and no
+checkpoints remain. Normal empty Job at parent exit, tree/identity/pipes retired,
+no forced retirement or PID-history overflow, one PID-lookup race; private profile
+removed. This is diagnostic process retirement, not universal native cleanup.
+
+| Stage or inclusive domain (seconds) | Send1 | Send2 | Send3 |
+| --- | ---: | ---: | ---: |
+| Action to adapter | 11.065324 | 9.555754 | 10.168618 |
+| Action to controller entry | 2.750636 | 3.427218 | 3.379840 |
+| Configuration capture | 2.312481 | 2.531542 | 2.617389 |
+| Nested MCP maximum preparation | 1.921856 | 1.980092 | 2.160735 |
+| Durable commit complete | 4.270445 | 5.017099 | 5.179785 |
+| Commit complete to trace reservation | 6.351184 | 4.118808 | 4.737720 |
+| Provider composition | 1.475132 | 1.629 | 1.656 |
+| Fresh compose permission read | .711 | .722 | .619 |
+| Six recovery-guard entries combined | .593 | .714 | .687 |
+
+Domains overlap and are not additive savings. All three receipt returns are
+accepted at the original successful source line; no third-Send legacy fallback
+occurred. Awaiting-review stage arrives at.121416/.014436/.014201s, not a measured
+paint time. Send heartbeat maxima.522995/.258465/.269512s and typing maximum.380146s
+still exceed100ms. Both speed targets remain unmet.
+
+The79-target observer remained source-current and retired normally. Event/detail
+and context overflow, context unmatched/unfinished and raw unmatched/unfinished
+counts are zero. Raw ancestry has90 depth misses, limiting exhaustive child
+attribution. Generic exception-unwound function starts remain unfinished by
+observer design; do not convert them into completed spans.
+
+Exact context records reconcile28 snapshot/version pairs. The five live
+acceptance/dispatch get_message_versions calls total2.662ms across all Sends:
+Send1 dispatch2 requested IDs/.346ms; Send2 preaccept2/.512ms then dispatch4/.717ms;
+Send3 preaccept4/.284ms then dispatch6/.803ms. They straddle commit and are not an
+unchanged accepted state. No changed-request preaccept reread was observed.
+Presentation contributes3/6/7 calls before adapter entry, with.303105/.541830/.824583s
+worker elapsed respectively;16 calls total. Requested counts are2 throughout
+Send1; four2-ID then two4-ID calls in Send2; three4-ID then four6-ID calls in Send3.
+There are five later presentation calls during submission completion and two
+outside those windows. Counts do not identify actual ID sets or prove unchanged
+versions. The existing display reader already serializes warming and uses owner/
+revision checks plus a1s TTL. This probe cannot infer invalidation causes or
+contention, so these worker spans are not attributed as Send delay.
+
+Decision: preserve live acceptance/dispatch freshness and focus TASK-34563.23 on
+finite pending MCP canonical admission. The existing raw _Acquisition begins
+before source selection, but repeated installed binding observations reacquire
+canonical storage until active raw custody exists. The retained-lease observation
+path still reads fresh generation witnesses. Consolidate only that admission
+within each individual finite preparation, keeping related-member admission,
+recovered destinations, original effect gates and actual cleanup independent.
+No permission payload or lease is shared across capture, commit or composition.
+The task plan and focused causal/lifetime controls precede product edits.
+
+TASK-34563.23 causal baseline: pending-mcp-red-1 fails only the final expected
+2-acquisition assertion with actual7 (six canonical observations and one member
+admission). All real output/member-order/source gates,11 original selected_path
+calls,12 fresh witness bodies, seven distinct issued leases closed exactly once,
+and actual FD retirement pass first. Native opens1263. Selected six source hashes
+are unchanged;11.875s driver/7.26s pytest. Contained native tree is empty at parent
+exit, identity/pipes/profile retired, no force or overflow, one PID-lookup race.
+This instrumented RED establishes the duplicated acquisition, not wall-time savings.
+
+After RED, root-owned observer accounting permits exactly the independently
+retained canonical observation lease alongside the unchanged ordered direct-member
+leases. The restored-custody test now identifies the actual member lease by object
+identity instead of list position, validates both correct execution selections,
+and requires crossed canonical/recovered selections to refuse. These assertions
+support early transfer without relaxing source, membership or cleanup checks.
+
+
+TASK-34563.23 integrated baseline before the candidate
+-----------------------------------------------------
+
+`pending-mcp-integrated-baseline-1` runs the original wall-clock fixture on frozen
+CLEAN `b678c396b466e8f8d1697ddfe2d30d55e51be26a`, without the optional function-span
+observer. All Python source hashes and HEAD remain unchanged during this run.
+The existing isolated CLEAN interpreter uses the previously verified explicit
+source bootstrap; the timing runner's containment helper bodies and deadlines
+are unchanged. No phase-span plugin is loaded.
+
+The run passes in 89.281 seconds driver time. All three user turns and assistant
+replies persist, all three traces complete and link, and no dispatch checkpoint
+remains. Action-to-adapter times are **12.620 / 10.626 / 11.735 seconds**. Maximum
+Send heartbeat delays are **1.089 / 0.426 / 0.486 seconds**; typing reaches
+**0.503 seconds**. Neither the one-second Send target nor the 100ms input target
+is met. Stage-return times are not a paint measurement.
+
+The native Job is empty at normal parent exit; tree, identity, pipe tasks and
+private profile retire normally, with zero forced cleanup, identity overflow or
+PID lookup races. This is an integrated baseline, not evidence for a task23
+improvement. Any later UI/source changes must be disclosed when comparing its
+sample to this baseline.
+
+## Canonical admission and actual native object census
+
+TASK-34563.23 preserves all 11 original source selections and 12 fresh witness
+observations while reducing stock preparation from seven real storage acquisitions
+to two: one canonical observer and one independent member admission. Final
+`pending-mcp-green-2` passes 17 causal/lifetime/late-callback controls in 79.500s
+driver / 73.52s pytest, with unchanged source hashes and normal empty native Job,
+identity, pipe and private-profile retirement (zero force, overflow or PID races).
+The preceding compatibility run supplies 25 passing existing source and restored
+custody controls. Its one accounting failure and two earlier lifetime-accounting
+failures are corrected and included in the final passing selection; product code
+has not changed between these runs.
+
+Lease counts alone concealed substantial duplicated native work. The passive
+original-body census records actual object identity from the original returned
+native info; it does not issue additional reads. `pending-mcp-native-census-1`
+passes with **1,013 open attempts, 962 successful opens across 23 real objects**.
+Six ancestor directories each receive **103 opens (618 combined)**. Bootstrap is
+opened 94 times; admission and registry.lock 54 each; unbound-owner 44; registry.json
+42. Request/object/ancestry census overflow is zero. A second unchanged-source
+sample in `pending-mcp-green-2` again reports 1,013 attempts. An earlier 1,436-open
+sample includes a member evidence-reuse miss (479 member opens versus 56 in the
+later successful reuse samples); it cannot establish a deterministic regression.
+
+These are native open calls, not a count of distinct files. They establish the
+next structural target: `_control_observation` currently restarts initial root,
+admission and marker ancestry five times, then separately validates the completed
+read. TASK-34563.24 will share one initial verified parent across those readers,
+retain each actual record/lock read, and preserve the independent final named
+validation. No witness or permission result is cached. Task23 remains In Progress
+until sequential integrated candidate timing is recorded; neither speed target
+has been met.

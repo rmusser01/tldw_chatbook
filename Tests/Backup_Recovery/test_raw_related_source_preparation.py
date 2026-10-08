@@ -75,6 +75,7 @@ def _original_scope_acquisitions(source):
     )
     reuse_function = storage._reuse_evidence
     reuse_code = reuse_function.__code__
+    evidence_code = storage._observe_evidence.__code__
     close_code = raw._close_descriptor.__code__
     private_module = sys.modules["tldw_chatbook.Utils.private_paths"]
     parent_function = private_module._open_verified_parent
@@ -104,6 +105,11 @@ def _original_scope_acquisitions(source):
         else None
     )
     native_code = native_open.__code__ if native_open is not None else None
+    native_info = (
+        inspect.getattr_static(native_type, "info") if native_type is not None else None
+    )
+    native_info_code = native_info.__code__ if native_info is not None else None
+    requested_names, object_opens, open_identities = {}, {}, {}
     observed = SimpleNamespace(
         requests=requests,
         returned=returned,
@@ -112,6 +118,10 @@ def _original_scope_acquisitions(source):
         active_acquires=active_acquires,
         active_closes=active_closes,
         native_opens=0,
+        native_open_requests=[],
+        native_object_opens=[],
+        native_object_overflow=0,
+        native_request_overflow=0,
         native_opens_outside_acquisitions=0,
         acquisition_details=[],
         detail_overflow=0,
@@ -205,10 +215,45 @@ def _original_scope_acquisitions(source):
                 assert observed.parent_walk_depth > 0
                 observed.parent_walk_depth -= 1
                 observed.parent_walk_exits += 1
+        # Read identity already returned by the original native open; no extra IO.
+        if (
+            frame.f_code is native_info_code
+            and event == "return"
+            and result is not None
+            and frame.f_back is not None
+            and frame.f_back.f_code is native_code
+        ):
+            open_identities[id(frame.f_back)] = (
+                result.volume,
+                (result.index_high << 32) | result.index_low,
+            )
         # Whole measured-thread read: include surrounding config work for hooks.
         if frame.f_code is native_code:
             if event == "call":
                 observed.native_opens += 1
+                values = frame.f_locals
+                request_key = (
+                    values["name"],
+                    values["parent"] is not None,
+                    values["directory"],
+                    values["metadata"],
+                )
+                request_row = requested_names.get(request_key)
+                if request_row is None and len(requested_names) < 256:
+                    request_row = dict(
+                        zip(
+                            ("name", "relative_to_parent", "directory", "metadata"),
+                            request_key,
+                            strict=True,
+                        ),
+                        calls=0,
+                    )
+                    requested_names[request_key] = request_row
+                    observed.native_open_requests.append(request_row)
+                if request_row is None:
+                    observed.native_request_overflow += 1
+                else:
+                    request_row["calls"] += 1
                 if not active_acquires:
                     observed.native_opens_outside_acquisitions += 1
                 for detail in active_acquires.values():
@@ -249,6 +294,25 @@ def _original_scope_acquisitions(source):
                 row, started = active_native.pop(id(frame))
                 row["inclusive_seconds"] += time.perf_counter() - started
                 row["exits"] += 1
+                identity = open_identities.pop(id(frame), None)
+                if result is not None and identity is not None:
+                    object_row = object_opens.get(identity)
+                    if object_row is None and len(object_opens) < 256:
+                        object_row = dict(
+                            identity=identity, calls=0, requested_names=[]
+                        )
+                        object_opens[identity] = object_row
+                        observed.native_object_opens.append(object_row)
+                    if object_row is None:
+                        observed.native_object_overflow += 1
+                    else:
+                        object_row["calls"] += 1
+                        name = frame.f_locals["name"]
+                        if (
+                            name not in object_row["requested_names"]
+                            and len(object_row["requested_names"]) < 4
+                        ):
+                            object_row["requested_names"].append(name)
         if frame.f_code is check_code:
             if event == "call":
                 state = raw._states.get(frame.f_locals["operation"])
@@ -280,6 +344,39 @@ def _original_scope_acquisitions(source):
                 row, started = active_checks.pop(id(frame))
                 row["inclusive_seconds"] += time.perf_counter() - started
                 row["exits"] += 1
+        if (
+            frame.f_code is evidence_code
+            and event == "return"
+            and frame.f_back is not None
+            and id(frame.f_back) in active_reuses
+        ):
+            row = active_reuses[id(frame.f_back)]
+            row["evidence_observation_returned"] = isinstance(result, tuple)
+            if isinstance(result, tuple):
+                differences = []
+                for entry, actual in zip(
+                    frame.f_locals["entries"], result, strict=True
+                ):
+                    for kind, wanted, observed_stamps in zip(
+                        ("posture", "content"),
+                        (entry.posture, entry.content),
+                        actual,
+                        strict=True,
+                    ):
+                        for (path, expected), observed_stamp in zip(
+                            wanted, observed_stamps, strict=True
+                        ):
+                            if expected != observed_stamp:
+                                differences.append(
+                                    dict(
+                                        kind=kind,
+                                        leaf=path.name,
+                                        expected=repr(expected),
+                                        observed=repr(observed_stamp),
+                                    )
+                                )
+                row["evidence_differences"] = differences[:16]
+                row["evidence_difference_overflow"] = max(0, len(differences) - 16)
         if frame.f_code is reuse_code:
             if event == "call":
                 parent = frame.f_back
@@ -435,6 +532,9 @@ def _original_scope_acquisitions(source):
             assert inspect.getattr_static(native_type, "open_handle") is native_open
             assert native_open.__code__ is native_code
             assert native_open.__globals__ is vars(native_module)
+            assert inspect.getattr_static(native_type, "info") is native_info
+            assert native_info.__code__ is native_info_code
+            assert not open_identities
 
 
 def _assert_one_original_read_acquisition(case, request):
@@ -479,7 +579,17 @@ def _assert_one_original_read_acquisition(case, request):
         for member in (primary, *related)
     )
     assert admitted == expected, "all original members retain their request order"
-    assert tuple(observed.returned) == leases
+    observation_lease = state.mcp_observation_lease
+    if observation_lease is not None and all(
+        observation_lease is not lease for lease in observed.returned
+    ):
+        assert isinstance(observation_lease, storage.StorageLease)
+        assert sum(lease is observation_lease for lease in leases) == 1
+        assert tuple(
+            lease for lease in leases if lease is not observation_lease
+        ) == tuple(observed.returned)
+    else:
+        assert tuple(observed.returned) == leases
     assert observed.closes and all(
         closed and removed for closed, removed in observed.closes
     )
@@ -494,6 +604,10 @@ def _assert_one_original_read_acquisition(case, request):
             ("original_members", len(admitted)),
             ("native_descriptor_closes", len(observed.closes)),
             ("native_whole_read_opens", observed.native_opens),
+            ("native_open_requests", json.dumps(observed.native_open_requests)),
+            ("native_object_opens", json.dumps(observed.native_object_opens)),
+            ("native_request_overflow", observed.native_request_overflow),
+            ("native_object_overflow", observed.native_object_overflow),
             (
                 "native_opens_outside_direct_acquisitions",
                 observed.native_opens_outside_acquisitions,

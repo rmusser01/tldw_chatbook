@@ -30,9 +30,15 @@ def loaded(value,*args,**kwargs):
   state=raw._states[operation]
   assert state.mcp_canonical == canonical
   observer=state.mcp_observation_lease
-  assert observer is not state.leases[0]
-  assert observer in state.leases
+  assert sum(lease is observer for lease in state.leases) == 1
+  members=[lease for lease in state.leases if lease is not observer]
+  assert len(members) == 1
+  members[0].execution_context(state.selected)
   observer.execution_context(canonical)
+  for lease,path in ((members[0],canonical),(observer,state.selected)):
+   try:lease.execution_context(path)
+   except bootstrap.RecoveryRequired:pass
+   else:raise AssertionError('canonical and recovered selections were conflated')
   leases.append(observer)
   pauses.append(storage._begin_local_pause())
  return result
