@@ -435,7 +435,7 @@ jobs:
         run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_raw_mcp_registration_counts.py Tests/Backup_Recovery/test_raw_mcp_registration_boundaries.py Tests/Backup_Recovery/test_mcp_source_lifetimes.py -q --timeout=180 --junitxml=${{ runner.temp }}/mcp-registration.xml
       - name: Verify Collections setup responsiveness and native ownership
         if: ${{ !cancelled() }}
-        run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_collections_deferred_loop.py Tests/Library/test_collections_capture_app_wiring.py -q --timeout=180 --junitxml=${{ runner.temp }}/collections-setup.xml
+        run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_collections_deferred_loop.py Tests/Performance/test_collections_reconciliation_shutdown.py Tests/Library/test_collections_capture_app_wiring.py -q --timeout=180 --junitxml=${{ runner.temp }}/collections-setup.xml
       - name: Verify original Actor Pack native shutdown
         if: ${{ !cancelled() }}
         run: python -m Tests.windows_private_fixture_runner Tests/Performance/test_actor_recovery_native_shutdown.py -q --timeout=180 --junitxml=${{ runner.temp }}/actor-recovery-shutdown.xml

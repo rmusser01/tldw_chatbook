@@ -2628,23 +2628,40 @@ class ServiceWiringMixin:
                 deactivate()
 
     async def _reconcile_collections_capture_startup(self) -> None:
-        """Repair interrupted Local capture state outside the event loop."""
-        repository = getattr(self, "collections_capture_repository", None)
+        """Repair interrupted capture state with retained physical callbacks."""
+        from .Chat.console_preparation_reads import run_preparation_read
         from .DB.base_db import operation_owned_connection
 
+        def require_open() -> None:
+            if any(getattr(self, flag, False) for flag in (
+                "_collections_capture_initializer_closed", "_shutting_down", "_exit",
+            )):
+                raise asyncio.CancelledError
+
+        require_open()
+        reads = getattr(self, "_collections_capture_reconciliation_reads", None)
+        if reads is None:
+            reads = self._collections_capture_reconciliation_reads = set()
+        repository = getattr(self, "collections_capture_repository", None)
         if repository is not None:
             def interrupt_in_worker():
                 with operation_owned_connection(getattr(repository, "db", None)):
                     return repository.interrupt_stale_extractions()
 
-            await asyncio.to_thread(interrupt_in_worker)
+            await run_preparation_read(
+                interrupt_in_worker, creator=self, session_id=None,
+                reads=reads, require_current=require_open,
+            )
         offline_store = getattr(self, "collections_offline_store", None)
         if offline_store is not None:
             def reconcile_in_worker():
                 with operation_owned_connection(getattr(getattr(offline_store, "repository", None), "db", None)):
                     return offline_store.reconcile_batch(limit=25)
 
-            await asyncio.to_thread(reconcile_in_worker)
+            await run_preparation_read(
+                reconcile_in_worker, creator=self, session_id=None,
+                reads=reads, require_current=require_open,
+            )
 
     async def _shutdown_collections_capture_runtime(self) -> None:
         """Fence capture authority and retire its finite setup before disposal."""
@@ -2655,6 +2672,12 @@ class ServiceWiringMixin:
             if callable(deactivate):
                 deactivate()
         cancellation = await _retire_deferred_collections_capture(self)
+        reads = getattr(self, "_collections_capture_reconciliation_reads", None)
+        if reads:
+            from .Chat.console_preparation_reads import drain_preparation_reads
+
+            if await drain_preparation_reads(reads):
+                cancellation = cancellation or asyncio.CancelledError()
         local_service = getattr(self, "local_collections_capture_service", None)
         if local_service is not None:
             await local_service.cancel_extractions()

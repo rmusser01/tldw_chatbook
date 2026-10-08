@@ -331,6 +331,25 @@ async def test_startup_recovery_runs_blocking_capture_work_off_loop() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "closing_flag",
+    ["_collections_capture_initializer_closed", "_shutting_down", "_exit"],
+)
+async def test_startup_reconciliation_refuses_new_work_after_closing(closing_flag):
+    import asyncio
+
+    class Repository:
+        def interrupt_stale_extractions(self):
+            raise AssertionError("Reconciliation started after closing")
+
+    app = SimpleNamespace(collections_capture_repository=Repository())
+    setattr(app, closing_flag, True)
+    with pytest.raises(asyncio.CancelledError):
+        await TldwCli._reconcile_collections_capture_startup(app)
+    assert not getattr(app, "_collections_capture_reconciliation_reads", None)
+
+
+@pytest.mark.asyncio
 async def test_capture_shutdown_deactivates_scope_and_cancels_extractions() -> None:
     calls: list[str] = []
 
