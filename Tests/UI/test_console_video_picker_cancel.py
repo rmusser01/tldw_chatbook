@@ -119,7 +119,7 @@ async def test_cancelling_the_save_picker_returns_to_the_storage_choice(
     destination = tmp_path / "saved"
     destination.mkdir()
     target = destination / "kept.mp4"
-    async with app.run_test(size=(140, 44)) as pilot:
+    async with app.run_test(size=(140, 44), notifications=True) as pilot:
         console = await _mounted_console(app, pilot)
         opened: list[Path] = []
         monkeypatch.setattr(console, "_open_video_with_os", opened.append)
@@ -180,21 +180,72 @@ async def test_cancelling_the_save_picker_returns_to_the_storage_choice(
         previous_toasts = tuple(app.query("Toast"))
         assert await pilot.click("#select"), "the final Save click missed its button"
         if not external_save_supported:
-            await _until(
-                pilot,
-                lambda: isinstance(app.screen, ConsoleVideoCapacityModal)
-                and app.screen is not choice
-                and any(
-                    toast not in previous_toasts
-                    and toast.is_on_screen
-                    and toast.has_class("-error")
-                    and "Could not save the generated video to " in toast.render().plain
-                    and str(target) in toast.render().plain
-                    for toast in app.screen.query("Toast")
-                ),
-                "the unsupported save to show its error and return to the choice",
-                timeout=5.0,
-            )
+            try:
+                await _until(
+                    pilot,
+                    lambda: isinstance(app.screen, ConsoleVideoCapacityModal)
+                    and app.screen is not choice
+                    and any(
+                        toast not in previous_toasts
+                        and toast.is_on_screen
+                        and toast.has_class("-error")
+                        and "Could not save the generated video to "
+                        in toast.render().plain
+                        and str(target) in toast.render().plain
+                        for toast in app.screen.query("Toast")
+                    ),
+                    "the unsupported save to show its error and return to the choice",
+                    timeout=5.0,
+                )
+            except AssertionError as exc:
+                # Diagnose the original predicate without another wait or any
+                # replacement of notification, capability or copy behavior.
+                try:
+                    toast_rows = []
+                    for screen in app.screen_stack[-8:]:
+                        for toast in list(screen.query("Toast"))[:8]:
+                            rendered = toast.render().plain
+                            toast_rows.append(
+                                {
+                                    "screen_class": type(screen).__name__,
+                                    "on_current_screen": screen is app.screen,
+                                    "previous_toast": toast in previous_toasts,
+                                    "is_on_screen": toast.is_on_screen,
+                                    "error_class": toast.has_class("-error"),
+                                    "save_prefix_matches": (
+                                        "Could not save the generated video to "
+                                        in rendered
+                                    ),
+                                    "target_matches": str(target) in rendered,
+                                    "text": rendered[:512],
+                                }
+                            )
+                    exc.add_note(
+                        "Unsupported-save UI state: "
+                        + repr(
+                            {
+                                "screen_class": type(app.screen).__name__,
+                                "new_capacity_choice": (
+                                    isinstance(app.screen, ConsoleVideoCapacityModal)
+                                    and app.screen is not choice
+                                ),
+                                "is_previous_choice": app.screen is choice,
+                                "picker_on_stack": third_picker in app.screen_stack,
+                                "notifications_disabled": app._disable_notifications,
+                                "notifications": [
+                                    (note.severity, note.message[:512])
+                                    for note in list(app._notifications)[:8]
+                                ],
+                                "toasts": toast_rows,
+                            }
+                        )
+                    )
+                except Exception as diagnostic_error:
+                    exc.add_note(
+                        "Unsupported-save UI diagnostic failed: "
+                        f"{type(diagnostic_error).__name__}"
+                    )
+                raise
             assert third_picker not in app.screen_stack
             assert _choice_labels(app.screen) == _OVER_CAPACITY_CHOICES
             _assert_the_same_video_waits_alone(console, artifact)
