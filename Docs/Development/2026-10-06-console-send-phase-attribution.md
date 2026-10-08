@@ -1892,3 +1892,25 @@ controls still need their supported hosts; no full suite was requested or run.
 The review list now has 36 stable IDs and retains OPT36 as implemented with
 these remaining limits. Overall one-second Send and 100ms feedback acceptance
 remain unmet.
+
+
+Task28 whole-operation follow-up `user-dir-posture-whole-hook-1` runs the same
+isolated warm-hook control with optional diagnostics disabled on saved435309614e.
+It passes1case,7.234sdriver/3.593spytest, source hashes unchanged and positive
+native retirement with zero forced cleanup/overflow/races. Whole-read attempts
+are952 versus1,008 in the prior default-off control:56fewer, about5.6%, while
+parent establishment1 and descriptor closes34 remain identical. This keeps
+the helper126-to20 reduction separate from the smaller whole-domain result.
+The two single pytest durations (3.442s before,3.593s after) establish no latency
+improvement. Most operation work remains; integrated Send is still unqualified.
+
+OPT37 records a distinct unselected scheduling lead. Source review finds the
+legacy hook controller already defers unissued indicator refresh during Send,
+coalesces an existing refresh flight and replays after settlement. Two running
+worker labels therefore do not establish redundant full reads. Early receipt
+returns through runtime custody before that legacy dispatch flag is set. Any
+new alignment must use exact existing runtime/session ownership, preserve fresh
+Send authority and started native readers, and be bounded to initial snapshot
+work rather than an arbitrary approval/provider wait. Visit misses can reconcile
+disabled/removed grants; this is not a disposable-cache authority shortcut.
+No change is selected without actual early-route overlap evidence.
