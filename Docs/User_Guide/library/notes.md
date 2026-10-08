@@ -816,7 +816,13 @@ and the root's row says so — "⚠ Sync stopped · Next: Check changes" — ins
 of claiming to be up to date. (That one label still appears only on the next
 redraw — on opening **Manage sync folders**, or on returning to the Library:
 a runtime that has stopped publishes nothing, so a list you are already
-sitting on cannot learn it from a publication.) Until this the note side
+sitting on cannot learn it from a publication.) The same row also appears
+for one folder on its own when lasting sync is running but nothing is
+watching that folder — the fact is read each time the list is drawn, never
+remembered from the last status — and **Check changes** on that row starts
+watching it again; when watching resumes on its own (a backup finishing,
+say) the row returns to "✓ Up to date as of HH:MM" without a keypress
+(TASK-34000.50). Until this the note side
 produced no signal at all: Chatbook watches the folder, not the notes
 database, so a note you saved stayed in Notes only and its file kept its old
 bytes until something else touched the disk — with the row reading
@@ -888,6 +894,14 @@ profile at the moment you restore, the folder waits for your next change to
 one of its notes, or for **Check changes**. And **Ctrl+Q** right after a
 restore waits up to five seconds for the folder to be checked; on a folder
 that takes longer, the next session opens with it still held.)
+A folder that opens held — Chatbook was quit while it needed attention, so
+the next session starts with the row already reading "⚠ Needs attention" —
+is also healed by **Review** on that row once the cause is gone (the note
+restored, or the file back on disk), or by **Recovery** on an open entry,
+and either leaves the folder watched: the next edit on disk reaches the note
+and the next save in Chatbook reaches the file, with no **Check changes**
+(TASK-34000.50; before it, that row turned to "✓ Up to date as of HH:MM"
+while nothing was watching the folder, and only Check changes started it).
 The folder keeps syncing both ways after that: the first edit you make to
 that file *on disk* flows into the restored note on the next automatic pass,
 exactly as it did before the delete. (The same holds after a keywords-only

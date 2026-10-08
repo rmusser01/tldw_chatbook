@@ -244,6 +244,14 @@ class NotesSyncRootRuntimeSnapshot:
     was last confirmed instead of an unqualified "Up to date", and that time
     has to come from the publication, never from the paint. ``None`` only for
     a snapshot built by hand.
+
+    ``watching`` (TASK-34000.50) is whether a watcher is running for this
+    root's lease RIGHT NOW: read live by :meth:`NotesSyncRuntimeOwner.snapshot`
+    and stamped onto every listener notification, never frozen into the
+    stored publication (startup publishes each root's ``up_to_date`` before
+    it starts the watcher, and a backup fence stops the watcher without
+    publishing anything). A healthy status with ``watching`` False is a row
+    nothing is carrying changes for; the projection says so.
     """
 
     root_id: str
@@ -251,6 +259,7 @@ class NotesSyncRootRuntimeSnapshot:
     next_action: str
     action_id: str | None = None
     published_at: float | None = None
+    watching: bool = True
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
@@ -259,6 +268,8 @@ class NotesSyncRootRuntimeSnapshot:
             validate_notes_sync_opaque_id(self.action_id, field_name="action_id")
         if self.published_at is not None and type(self.published_at) is not float:
             raise TypeError("published_at must be a float or None")
+        if type(self.watching) is not bool:
+            raise TypeError("watching must be a bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1733,13 +1744,45 @@ class NotesSyncRuntimeOwner:
         return lock
 
     def snapshot(self) -> NotesSyncRuntimeSnapshot:
-        """Return the current path-free UI projection."""
+        """Return the current path-free UI projection.
+
+        Each root carries ``watching`` read at THIS moment (TASK-34000.50):
+        the stored publication never says whether a watcher runs, because
+        the answer changes without a publication -- startup publishes every
+        root before it starts the watcher, and a maintenance fence stops the
+        watcher without publishing. Computed here, a row can never wear a
+        healthy label over a root nothing is polling.
+        """
 
         return NotesSyncRuntimeSnapshot(
             self._status,
             self._next_action,
-            tuple(self._root_status[key] for key in sorted(self._root_status)),
+            tuple(
+                self._with_watching(self._root_status[key])
+                for key in sorted(self._root_status)
+            ),
         )
+
+    def _with_watching(
+        self, entry: NotesSyncRootRuntimeSnapshot
+    ) -> NotesSyncRootRuntimeSnapshot:
+        """Stamp the live "is this root being watched" fact onto a publication.
+
+        True only when a watcher task is running AND the root holds a lease
+        AND it is not blocked -- exactly the set the watcher polls
+        (:meth:`_watchable_root_ids`). ``dataclasses.replace``, not the
+        constructor: ``_publish`` stays the only construction site
+        (``Tests/Architecture/test_notes_sync_snapshot_construction.py``).
+        """
+
+        watching = (
+            self._watcher_running()
+            and entry.root_id in self._leases
+            and entry.root_id not in self._blocked_roots
+        )
+        if entry.watching is watching:
+            return entry
+        return replace(entry, watching=watching)
 
     def _remember_conflict_receipt(
         self,
@@ -2178,6 +2221,45 @@ class NotesSyncRuntimeOwner:
             return
         self._start_watcher()
 
+    def _watch_lease(self, root_id: str, *, persisted: bool) -> None:
+        """Start the watcher for a lease taken after start (TASK-34000.50).
+
+        Startup starts the watcher once, after its loop (admission is still
+        closed while it runs, so this is a no-op there). A lease acquired
+        LATER -- Review on a folder held at startup, Recovery, the released
+        pass, Resume, a migration activation -- used to leave the root leased
+        and healthy with nothing polling it, because only Check changes
+        called :meth:`_start_watcher`. Enforced here, at the one place leases
+        are made, the invariant is "a persisted root leased under open
+        admission has a running watcher", whoever took the lease.
+
+        Only a NEW lease starts one. A root already leased is either watched
+        (startup starts the watcher for every lease it took) or the runtime
+        is ``failed`` because its watcher died -- and a dead watcher is
+        restarted only by a Check changes whose check succeeds
+        (:meth:`request_sync_now`, which also resets the runtime status;
+        pinned by ``test_failed_sync_now_check_does_not_restart_the_watcher``),
+        so this also declines unless the runtime is ``active``: under
+        ``failed`` no hint is admitted anyway (:meth:`schedule_hint`) and the
+        rows already read "⚠ Sync stopped · Next: Check changes".
+
+        Not for a provisional lease (``persisted`` False: a setup review's
+        folder, which the store has never seen and a hint could only fail
+        on -- activation starts the watcher itself once the root exists), and
+        never for a root Pause is closing: its late lease is about to be
+        released, and :meth:`_resume_root` re-leases it when it comes back.
+        :meth:`_start_watcher` keeps its own guards (closing, maintenance
+        fence, admission, idempotent while a watcher task runs).
+        """
+
+        if (
+            not persisted
+            or self._status != "active"
+            or root_id in self._closed_roots
+        ):
+            return
+        self._start_watcher()
+
     def _start_watcher(self) -> None:
         if (
             self._closing
@@ -2193,6 +2275,14 @@ class NotesSyncRuntimeOwner:
             self._watcher.run(), name="notes_sync_watcher"
         )
         self._watcher_task.add_done_callback(self._watcher_finished)
+        # TASK-34000.50: the rows read ``watching`` live, but they are redrawn
+        # on publications. A watcher starting is not one (a fence lifting,
+        # the startup loop's roots), so re-announce every root's last
+        # publication: a row that read "⚠ Sync stopped" while nothing ran is
+        # re-projected without a user action. Listeners publish only on a
+        # change, so this never loops.
+        for root_id in sorted(self._root_status):
+            self._notify_status_listeners(self._root_status[root_id])
 
     def _watcher_finished(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
@@ -2245,6 +2335,7 @@ class NotesSyncRuntimeOwner:
             self._admission_reasons.pop(root.root_id, None)
             if root.root_id not in self._durably_blocked_roots:
                 self._blocked_roots.discard(root.root_id)
+            self._watch_lease(root.root_id, persisted=persist)
             return True
         status, action = {
             RootAdmissionState.PASSIVE: ("passive", "open_active_process"),
@@ -3314,8 +3405,10 @@ class NotesSyncRuntimeOwner:
         the root is leased, the settled pass runs directly, and the watcher
         is started. Fix round 2: the same pass runs whenever NO hint can be
         scheduled for the released root -- unleased, or leased with no
-        watcher running (a Review or Check changes on the held row leases it
-        without starting one) -- and it runs as an admitted background task,
+        watcher running (a lease taken under the maintenance fence, or
+        before TASK-34000.50 any Review or Check changes on the held row,
+        which leased it without starting one) -- and it runs as an admitted
+        background task,
         like a scheduled hint, so a save or restore returns promptly while
         ``settle()`` and the post-save bounded wait still join it. A root
         paused in this session (``_closed_roots``) is refused; a root paused
@@ -4241,6 +4334,10 @@ class NotesSyncRuntimeOwner:
             pass
 
     def _notify_status_listeners(self, snapshot: NotesSyncRootRuntimeSnapshot) -> None:
+        # TASK-34000.50: a notification carries the live ``watching`` fact at
+        # the moment it is sent, like ``snapshot()`` does; the stored
+        # publication keeps the field's default.
+        snapshot = self._with_watching(snapshot)
         for listener in tuple(self._status_listeners):
             try:
                 listener(snapshot)

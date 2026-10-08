@@ -820,6 +820,105 @@ async def test_healthy_root_status_says_when_it_was_confirmed() -> None:
     assert controller.snapshot.roots[0].status_label == "⚠ Needs attention"
 
 
+async def test_a_healthy_root_without_a_watcher_is_projected_as_sync_stopped() -> None:
+    """TASK-34000.50 (AC#2): no healthy label over a root nothing is watching.
+
+    A root healed through Review or Recovery used to be published ``up_to_date``
+    while no watcher ran for its lease. The runtime now reports the fact per
+    root, read live (``NotesSyncRootRuntimeSnapshot.watching``), and the row
+    wears the same "⚠ Sync stopped" the runtime-wide case wears, with Check
+    changes -- which starts the watcher -- as the next action. Only the one
+    reassuring label is rewritten; ``status`` and ``next_action`` still drive
+    which controls the canvas offers.
+    """
+
+    confirmed_at = time.time()
+    runtime = _Runtime()
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root:opaque.v1",
+                "up_to_date",
+                "sync_now",
+                published_at=confirmed_at,
+                watching=False,
+            ),
+        ),
+    )
+    controller = LibraryNotesSyncController(
+        runtime=runtime,
+        import_controller=_ImportController(),
+    )
+
+    row = controller.snapshot.roots[0]
+    assert row.status_label == "⚠ Sync stopped"
+    assert (row.status, row.next_action) == ("up_to_date", "sync_now")
+    assert row.next_action_label == "Check changes"
+
+    # The same publication, watched: the dated healthy label.
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root:opaque.v1",
+                "up_to_date",
+                "sync_now",
+                published_at=confirmed_at,
+                watching=True,
+            ),
+        ),
+    )
+    controller.refresh_roots()
+    local_minute = (
+        datetime.fromtimestamp(confirmed_at, tz=UTC).astimezone().strftime("%H:%M")
+    )
+    assert controller.snapshot.roots[0].status_label == (
+        f"✓ Up to date as of {local_minute}"
+    )
+
+    # The fact qualifies the healthy label only: a held root unwatched says
+    # what it already said, with its own next action.
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "active",
+        "sync_now",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root:opaque.v1",
+                "needs_attention",
+                "resolve_cleanup",
+                action_id="operation-1",
+                published_at=confirmed_at,
+                watching=False,
+            ),
+        ),
+    )
+    controller.refresh_roots()
+    held = controller.snapshot.roots[0]
+    assert held.status_label == "⚠ Needs attention"
+    assert held.next_action_label == "Resolve recovery"
+
+    # A runtime that is not active still outranks the per-root fact (round 3:
+    # a just-reconciled root mid-startup reads "Starting", not "Sync stopped").
+    runtime.snapshot = lambda: NotesSyncRuntimeSnapshot(
+        "starting",
+        "wait",
+        (
+            NotesSyncRootRuntimeSnapshot(
+                "root:opaque.v1",
+                "up_to_date",
+                "sync_now",
+                published_at=confirmed_at,
+                watching=False,
+            ),
+        ),
+    )
+    controller.refresh_roots()
+    assert controller.snapshot.roots[0].status_label == "◌ Starting"
+
+
 def test_a_healthy_confirmation_from_another_day_carries_its_date() -> None:
     """Review Minor 3: a 26-hour-old "as of 08:25" must not read as today."""
 
