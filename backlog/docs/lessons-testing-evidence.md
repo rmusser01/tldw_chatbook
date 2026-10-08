@@ -19147,3 +19147,18 @@ to manufacture a cleaner performance result.
 ### A Textual harness subclass can run both mount handlers
 
 TASK-34406, 2026-10-07: a startup draft regression inherited ConsoleHarness and added its own on_mount. Textual dispatched both handlers, pushing a second ChatScreen above the intended deferred screen; an observer installed on the first controller recorded no effects from the visible controller. Inherit the common CSS/cleanup App directly when the test owns the complete mounting sequence. The corrected single-screen fixture reproduced all three original draft losses and observed the repaired initial effects once. Keep the earlier real full-App evidence separate from a incorrectly scoped harness observation.
+## Explicit config paths do not grant application ownership of their parent
+
+**TASK-34563.27, 2026-10-07.** Four new lock-stream controls and two permission-
+race controls used the real custom-config fixture, then passed its directory as
+`application_owned_directory`. The actual selector policy returned None, so raw
+source admission correctly refused `raw_path_outside_scope` before the intended
+native allocation/fsync boundary. The existing append API failed the same setup.
+Those failures supplied no evidence about the proposed lock change or races.
+
+Use `application_owned_config_directory(selected)` for the selected config's real
+policy. Tests needing an application-owned parent can use a default config path
+or an actual HookPermissions profile parent under its original config scope.
+Assert that the intended native boundary and real mutation occurred before the
+behavior assertion. The corrected hook fixture reached both real DACL races and
+established causal RED; unchanged checks then passed after the narrow repair.

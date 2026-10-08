@@ -97,6 +97,7 @@ from tldw_chatbook.Utils.private_paths import (
     create_private_text,
     lexical_path,
     open_private_binary,
+    open_private_lock_stream,
     open_private_text_append_stream,
     secure_private_directory,
     verify_trusted_directory,
@@ -7306,15 +7307,7 @@ def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
     with _config_participants.operation(sys.modules[__name__], target=config_path):
         lock_path = config_path.with_name(f"{config_path.name}.lock")
         application_directory = application_owned_config_directory(config_path)
-        try:
-            create_private_text(
-                lock_path,
-                "",
-                application_owned_directory=application_directory,
-            )
-        except FileExistsError:
-            pass
-        stream = open_private_text_append_stream(
+        stream = open_private_lock_stream(
             lock_path,
             application_owned_directory=application_directory,
         )

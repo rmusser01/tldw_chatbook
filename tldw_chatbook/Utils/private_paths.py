@@ -1608,12 +1608,73 @@ def open_private_text_append_stream(
     line-oriented JSONL/log files, so LF is also the shape every reader here
     already assumes.
     """
+    return _open_private_text_stream(
+        path,
+        application_owned_directory=application_owned_directory,
+        encoding=encoding,
+        errors=errors,
+    )
 
+
+@_admitted_stream
+def open_private_lock_stream(
+    path: PathInput,
+    *,
+    application_owned_directory: PathInput | None = None,
+    encoding: str = "utf-8",
+    errors: str | None = None,
+) -> TextIO:
+    """Create or open a checked lock stream without duplicate parent preparation.
+
+    Args:
+        path: The lock file to create or open without replacing it.
+        application_owned_directory: Its application-owned parent, if any.
+        encoding: Text encoding for the existing admitted stream.
+        errors: Text encoding error policy.
+
+    Returns:
+        The existing admitted text stream, retaining native custody until close.
+
+    Raises:
+        PrivatePathError: The path is unsafe, changed, or cannot be verified.
+        OSError: The actual creation or native retirement is uncertain.
+    """
+    return _open_private_text_stream(
+        path,
+        application_owned_directory=application_owned_directory,
+        encoding=encoding,
+        errors=errors,
+        lock_create=True,
+    )
+
+
+def _open_private_text_stream(
+    path: PathInput,
+    *,
+    application_owned_directory: PathInput | None = None,
+    encoding: str = "utf-8",
+    errors: str | None = None,
+    lock_create: bool = False,
+) -> TextIO:
+    """Shared append body; lock mode retains exclusive-create durability."""
+
+    if lock_create:
+        "".encode(encoding)
     selected = lexical_path(path)
     _prepare_application_owned_parent(selected, application_owned_directory)
 
     if not _posix_guards_available():
         if _WINDOWS_PLATFORM:
+            if lock_create:
+                try:
+                    create_private_text(
+                        selected,
+                        "",
+                        application_owned_directory=application_owned_directory,
+                        encoding=encoding,
+                    )
+                except FileExistsError:
+                    pass
             selected.parent.mkdir(parents=True, exist_ok=True)
             operation = _runtime_operation(selected)
             if operation is None:
@@ -1651,25 +1712,98 @@ def open_private_text_append_stream(
         missing_leaf_allowed=True,
     )
     file_fd = -1
+    created = False
+    created_stat = None
     try:
-        try:
-            entry_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            entry_stat = None
-        else:
-            rejected = _classify_private_file_stat(
-                entry_stat,
-                expected_uid=os.geteuid(),
+        if lock_create:
+            outcome = _NativeOpenOutcome()
+            try:
+                file_fd = _native_open(
+                    leaf,
+                    os.O_WRONLY
+                    | os.O_APPEND
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | _NOFOLLOW
+                    | _NONBLOCK
+                    | _NOCTTY,
+                    _PRIVATE_FILE_MODE,
+                    dir_fd=parent_fd,
+                    _outcome=outcome,
+                )
+                created = True
+            except FileExistsError:
+                if not outcome.rejected or outcome.descriptor is not None:
+                    raise
+            if created:
+                created_stat = os.fstat(file_fd)
+                rejected = _classify_private_file_stat(
+                    created_stat,
+                    expected_uid=os.geteuid(),
+                )
+                if rejected is not None:
+                    raise PrivatePathError(PrivatePathResult(selected, rejected))
+                os.fchmod(file_fd, _PRIVATE_FILE_MODE)
+                os.fsync(file_fd)
+            # Preserve the former append helper's fresh ancestor check after
+            # either actual creation/fsync or confirmed existing-file rejection.
+            reopened, reopened_leaf = _open_verified_parent(
+                selected,
+                missing_leaf_allowed=True,
             )
-            if rejected is not None:
-                raise PrivatePathError(PrivatePathResult(selected, rejected))
-
-        file_fd = _native_open(
-            leaf,
-            os.O_WRONLY | os.O_APPEND | os.O_CREAT | _NOFOLLOW | _NONBLOCK | _NOCTTY,
-            _PRIVATE_FILE_MODE,
-            dir_fd=parent_fd,
-        )
+            try:
+                old_info, new_info = os.fstat(parent_fd), os.fstat(reopened)
+                if not _same_identity(old_info, new_info):
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.OPERATION_FAILED,
+                            reason="target_parent_replaced",
+                        )
+                    )
+                if application_owned_directory is not None and (
+                    not stat.S_ISDIR(new_info.st_mode)
+                    or new_info.st_uid != os.geteuid()
+                    or stat.S_IMODE(new_info.st_mode) != _PRIVATE_DIRECTORY_MODE
+                ):
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            selected,
+                            PrivatePathStatus.UNSAFE_PARENT,
+                            reason="application_owned_parent_changed",
+                        )
+                    )
+            except BaseException:
+                _native_close(reopened)
+                raise
+            previous_parent, parent_fd = parent_fd, reopened
+            leaf = reopened_leaf
+            _native_close(previous_parent)
+        entry_stat = created_stat
+        if file_fd < 0:
+            try:
+                entry_stat = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                if lock_create:
+                    raise
+            else:
+                rejected = _classify_private_file_stat(
+                    entry_stat,
+                    expected_uid=os.geteuid(),
+                )
+                if rejected is not None:
+                    raise PrivatePathError(PrivatePathResult(selected, rejected))
+            file_fd = _native_open(
+                leaf,
+                os.O_WRONLY
+                | os.O_APPEND
+                | (0 if lock_create else os.O_CREAT)
+                | _NOFOLLOW
+                | _NONBLOCK
+                | _NOCTTY,
+                _PRIVATE_FILE_MODE,
+                dir_fd=parent_fd,
+            )
         file_stat = os.fstat(file_fd)
         rejected = _classify_private_file_stat(
             file_stat,
@@ -1685,7 +1819,8 @@ def open_private_text_append_stream(
                     reason="target_replaced",
                 )
             )
-        os.fchmod(file_fd, _PRIVATE_FILE_MODE)
+        if not created:
+            os.fchmod(file_fd, _PRIVATE_FILE_MODE)
         if not _private_file_postcondition_holds(
             file_fd,
             parent_fd,

@@ -1525,3 +1525,166 @@ outcome, cold durability, current parent/leaf checks, ordinary portalocker order
 and existing stream/native retirement. Obtain causal original counts before
 product changes. Keep the five fresh hook observations separate. OPT-09 records
 this candidate; OPT-03's directory-selection contraction remains deferred.
+
+
+### Task27 original lock-preparation control
+
+`lock-stream-parent-red-1` ran the four original-code cold/warm config/hook
+cases before product changes. All four failed only the final duplicate-parent
+assertion: two establishments instead of one. Earlier assertions confirmed real
+payloads, original private-file callbacks, held portalocker streams, registered
+native descriptors and complete physical descriptor/lease retirement.
+
+| Original case | Parent establishments | Whole observed read native attempts | Descriptor closes |
+| --- | ---: | ---: | ---: |
+| Cold config | 2 | 1623 | 48 |
+| Warm config | 2 | 1622 | 47 |
+| Cold hook | 2 | 2117 | 68 |
+| Warm hook | 2 | 1125 | 42 |
+
+Each warm case includes one exception-unwound create attempt. Counts are native
+attempts over the whole observed read, including surrounding preparation; they
+are not unique files or lock-leaf opens. Cold means the lock file is absent,
+not a cold process. These are causal test counts, not quiet latency measurements.
+The driver took 17.765 s and pytest 14.066 s. Saved HEAD `34bd9b0dca` and the
+source manifest stayed unchanged. The contained Job exited normally and retired
+its native identity, pipes/tasks and private profile, with zero forced cleanup,
+overflow or lookup races. This establishes task27's RED before implementation.
+
+
+### Source review of pre-controller preparation on frozen031b
+
+The quiet first Send spends 1.143 s between UI dispatch and legacy submission,
+with controller entry 1.181 s after action. Later receipts return awaiting review
+in 8.8/7.0 ms, while their controller entries occur 1.701/1.968 s after action.
+The detailed source trace confirms only the combined initial refusal and later
+accepted receipts; it does not identify a failed predicate operand.
+
+In the first detailed fallback, hook-current (.302 s) and MCP read_sources
+(.414 s) execute in workers and are awaited. Configuration capture (.103 s) then
+runs on the main thread, after two separate user-directory calls (.031/.030 s).
+A third .029 s directory call is nested within capture and is not additive.
+This proves some synchronous native work but does not explain the whole interval.
+
+Later detail shows hook -> MCP maximum -> configuration workers in sequence.
+Send 2: hook .021-.499 s, MCP .506-1.105 s, configuration 1.126-1.546 s,
+versions 1.617-1.716 s, capture return 1.779 s, controller entry 2.090 s.
+Send 3: hook .017-.602 s, MCP .609-1.012 s, configuration 1.032-1.321 s,
+versions 1.307-1.383 s (partly overlapping configuration), capture return
+1.447 s, controller entry 1.556 s. Unselected main-thread gaps remain.
+Async intervals combine actual work and waits; whole-Send heartbeat maxima
+cannot attribute pre-entry blocking or distinguish scheduling from lock wait.
+
+There is no duplicate MCP maximum: read_sources is the worker within
+capture_console_definition_maximum, whose result is explicitly passed into the
+configuration producer, skipping its fallback maximum capture. Hook review
+precedes preparation intentionally: later reads can migrate catalog schemas or
+audit policy changes. Starting them before ready consent changes effect order.
+After ready review, MCP and non-MCP preparation could be independently retained
+and joined before original snapshot assembly/revalidation, but shared locks and
+failure/custom-callback contracts need evidence before implementation. OPT-30
+and OPT-31 retain these options. The separate attachment completion repair must
+be integrated and measured before attributing current first-Send behavior.
+
+
+### Task27 draft integration and posture correction
+
+The combined draft run `lock-stream-draft-edges-1` completed in 31.484 s driver /
+27.396 s pytest with 10 passes and six failures. All four original duplicate-
+parent controls and six actual locking/integration cases passed. Four new helper
+controls and two posture cases were refused before their intended operation:
+the fixtures incorrectly declared an application-owned parent for an explicit
+custom config path, whose real policy returns None. The original append API
+failed the same fixture. These failures were not accepted as causal race evidence.
+
+The posture fixture was corrected to a real HookPermissions owner with the
+configured profile parent, inside the original held config scope. No guard or
+assertion was weakened. `lock-stream-posture-red-2` then failed both cases only
+at the final unsafe-acceptance assertion: actual EEXIST followed by owned-parent
+privacy drift, and actual cold-create fsync followed by non-owned ancestor write
+permission drift. Original identities, payloads, actual mutation and stream/FD/
+lease retirement were confirmed first. Windows used real DACL changes rather
+than unsupported chmod modes; POSIX controls use the corresponding mode changes.
+
+The corrected run took 8.968 s driver / 5.451 s pytest. Both runs retained HEAD
+and all selected source hashes, normal empty Job/identity/pipes/profile retirement,
+and zero forced cleanup, overflow or lookup races. The shared correction retains
+a fresh full ancestor traversal after both proven exclusive outcomes, checks the
+current owned-parent private posture, and keeps the actual created FD through
+fsync and stream transfer. No cold traversal saving is claimed. Final integrated
+qualification and current Send timing remain pending.
+
+
+### Task27 corrected integration and regression evidence
+
+The corrected private_paths source (SHA256
+50e0e7322e2626d00abd229da32642d10f328968a19b472a519551932bd38c83)
+passed all 12 integrated controls in `lock-stream-integrated-green-1`:
+four original count controls, six real config/hook locking and body-failure
+controls, and both real parent/ancestor posture races. Driver/pytest elapsed
+was 34.469/29.714 s. Parent establishment is now once in all four cases.
+
+| Case | Original to current whole-read native attempts | Current descriptor closes |
+| --- | ---: | ---: |
+| Cold config | 1623 to 1484 | 38 |
+| Warm config | 1622 to 1495 | 38 |
+| Cold hook | 2117 to 1980 | 59 |
+| Warm hook | 1125 to 1008 | 34 |
+
+These are whole observed read attempts, not unique files or latency savings.
+Cold successful creation still fsyncs the actual FD later transferred into the
+stream; warm acquisition adds no fsync. Both paths retain fresh full ancestor
+validation and exact current owned-parent privacy. The old public append
+signature/docstring and 54 unrelated original definitions are unchanged.
+
+`lock-stream-native-regression-1` was not accepted: the new allocator test
+attempted to patch the read-only dynamic Windows supports_dir_fd property;
+failed teardown left its open callback installed for two following cases.
+The independent existing MCP retained-history test also failed importing asyncio
+in its child because its copied environment omitted Windows interpreter inputs.
+The allocator fixture now patches only mutable support sets when necessary;
+the roundtrip allowlist correction was reviewed but is excluded from this change
+because its full startup/backup/restore acceptance is outside task27. Product,
+assertions, native cleanup and deadlines remain unchanged.
+
+The clean `lock-stream-native-regression-2` rerun passed 21 cases with six
+POSIX-only skips (31.390/27.694 s), including all ten new helper cases, existing
+private artifact controls and original raw native retirement. Together, all
+22 new controls pass. Both accepted runs retain saved HEAD34bd9b0dca and source
+hashes, normal empty Job/tree/identity/pipes/profile retirement, and zero forced
+cleanup, identity overflow or lookup races.
+
+The later original config/hook combined batch
+`lock-stream-config-hook-regression-1` ran 102 cases in 273.016/268.516 s:
+29 config lifetimes and six config lock-order cases passed; hook permissions
+had 61 passes and six failures. Its cumulative identity diagnostics overflowed
+424 times and recorded one lookup race. The Job still retired normally and
+source hashes remained current, but that combined batch is not clean native
+qualification. Focused smaller controls will retain the original diagnostics.
+
+The six hook failures are platform mismatches in original tests: three actual
+symlink creations fail with Windows privilege error1314; two stdlib pathlib
+mode operations assume POSIX permissions instead of the real DACL; the v2
+launch-serialization test waits for loop.subprocess_exec, which the intentionally
+unsupported Windows command executor refuses before launch (ADR-163). These
+are not counted as passes or silently skipped. Real new DACL race controls are
+green; original POSIX cases still require supported-host execution. No product
+change or deadline extension is justified by those failures.
+
+Scoped new-test lint/format checks pass; product Ruff findings remain baseline
+1/56/3 for private_paths/config/hook_permissions, with no new findings. Independent
+source review found no remaining blocker in the corrected lock-stream delta.
+Current integrated Send timing and supported-host qualification remain separate.
+
+
+Final focused original controls: `lock-stream-original-controls-1` passed nine
+cases (six native config lock-order cases, real legacy hook launch/revoke,
+config-lease/foreign-file refusal and recovery admission) in25.047/21.299s.
+`lock-stream-history-controls-1` passed actual installed history append/migration/
+rotation across pause and foreign-task/path helper refusal, in7.250/3.917s.
+Both kept HEAD and source hashes, with normal native retirement and zero forced
+cleanup, identity overflow or lookup races. These focused controls qualify the
+changed call paths without the unrelated full-app backup/restore roundtrip.
+Its Windows environment fixture issue remains documented for separate review;
+its unverified fixture edit is excluded. Original POSIX-only controls remain a
+supported-host qualification item. No assertions or deadlines were relaxed.

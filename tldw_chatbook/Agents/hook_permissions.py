@@ -36,9 +36,8 @@ from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.private_paths import (
     PrivateFileWritePrecondition,
     atomic_private_write_text,
-    create_private_text,
     open_private_binary,
-    open_private_text_append_stream,
+    open_private_lock_stream,
 )
 
 _STORE_MAX_BYTES = 4 * 1024 * 1024
@@ -190,13 +189,7 @@ class HookPermissions:
             self, "hook_permissions", writing=True, selected_read=path
         ):
             lock_path = path.with_name(path.name + ".lock")
-            try:
-                create_private_text(
-                    lock_path, "", application_owned_directory=path.parent
-                )
-            except FileExistsError:
-                pass
-            stream = open_private_text_append_stream(
+            stream = open_private_lock_stream(
                 lock_path, application_owned_directory=path.parent
             )
             try:
