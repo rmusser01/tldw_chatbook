@@ -54,6 +54,9 @@ FAST_LANE_TARGETS = (
     # carrying its time. About 6 s together; nothing else gated them.
     "Tests/Library/test_library_file_export.py",
     "Tests/Architecture/test_notes_sync_snapshot_construction.py",
+    # TASK-34000.48: every file-profile comparison and binding commit goes
+    # through the newline rule (AST scan of the three sync modules, seconds).
+    "Tests/Architecture/test_notes_sync_binding_profile_commits.py",
     # TASK-34000.49: binding.note_version is never a precondition against
     # the live note (AST scan of the executor, under a second).
     "Tests/Architecture/test_notes_sync_version_proxy_sites.py",
@@ -79,6 +82,7 @@ FAST_LANE_TARGETS = (
 NOTES_SYNC_REAL_STACK_TARGETS = (
     "Tests/Notes/test_notes_sync_tail_edit.py",
     "Tests/Notes/test_notes_sync_delete_restore_signal.py",
+    "Tests/Notes/test_notes_sync_crlf_single_line.py",
     "Tests/Notes/test_notes_sync_source_moved_settle.py",
     "Tests/Notes/test_notes_sync_watcher_after_heal.py",
     "Tests/Notes/test_notes_sync_version_only_move.py",

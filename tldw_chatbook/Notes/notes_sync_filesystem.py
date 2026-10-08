@@ -187,6 +187,50 @@ def represented_text(text: str, profile: NotesSyncSerializationProfile) -> str:
     return logical
 
 
+def proven_profile(
+    observed: NotesSyncSerializationProfile,
+    text: str,
+    recorded: NotesSyncSerializationProfile | None,
+) -> NotesSyncSerializationProfile:
+    """Return the profile an observation proves: a text with no line ending keeps the recorded newline.
+
+    TASK-34000.48: ``_parse_supported_text`` has to report ``lf`` or ``crlf``
+    and a text that contains no line ending at all gives it nothing to go on,
+    so such a file reads as ``lf`` whatever convention it was written under.
+    A CRLF file whose note shrank to one newline-less line was therefore
+    re-observed as ``lf`` right after its own correct write and refused at
+    ``replacement_postcondition_failed``; committing that observation would
+    instead have flipped the file's recorded convention on its next
+    multi-line write. The one rule, applied at every comparison and commit:
+    an observation whose logical text contains no ``"\\n"`` proves nothing
+    about ``newline`` and inherits the recorded one. ``final_newline``,
+    ``utf8_bom`` and ``mode`` are always determinate from the bytes and the
+    metadata and are never carried, so a genuine BOM or mode difference on
+    such a file (FAT32/SMB volumes report one mode for everything) is still
+    a representation change.
+
+    Args:
+        observed: The profile the bytes on disk parse to.
+        text: The observation's logical (LF-normalized) text.
+        recorded: The convention recorded for the file -- the binding's, the
+            journal's, the reviewed snapshot's or a create's candidate --
+            or ``None`` when nothing is recorded (a discovered candidate).
+
+    Returns:
+        ``observed`` with ``newline`` taken from ``recorded`` when ``text``
+        has no line ending; ``observed`` unchanged otherwise.
+    """
+
+    if recorded is None or "\n" in text or observed.newline == recorded.newline:
+        return observed
+    return NotesSyncSerializationProfile(
+        utf8_bom=observed.utf8_bom,
+        newline=recorded.newline,
+        final_newline=observed.final_newline,
+        mode=observed.mode,
+    )
+
+
 def represented_digest(text: str, profile: NotesSyncSerializationProfile) -> str:
     """Return the content digest a file would carry after writing ``text``.
 
@@ -317,15 +361,42 @@ class PosixNotesSyncFilesystem:
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
-        """Replace only the exact state presented for review."""
+        """Replace only the exact state presented for review.
+
+        Args:
+            relative_path: The file, relative to the root.
+            text: The note text to write.
+            expected: The exact reviewed state the replacement is conditional on.
+            profile: The representation to write under; defaults to the one
+                ``expected`` parses to. TASK-34000.48: the executor passes the
+                RECORDED profile here because a reviewed file whose text has
+                no line ending parses to ``lf`` whatever its convention, and a
+                multi-line write under that parse would flip a CRLF file. Only
+                a profile the reviewed state proves is accepted: the same BOM,
+                final-newline rule and mode, and the same newline unless the
+                reviewed text carries no line ending.
+
+        Raises:
+            NotesSyncFilesystemError: ``replacement_profile_unproven`` when
+                ``profile`` is not one ``expected`` can carry; nothing is
+                written.
+        """
 
         if type(expected) is not NotesSyncFileSnapshot:
             raise TypeError("expected must be a NotesSyncFileSnapshot.")
         metadata_issue = self._metadata_issue(expected.reviewed_state)
         if metadata_issue is not None:
             raise NotesSyncFilesystemError(metadata_issue)
-        profile = expected.observation.serialization
+        requested = expected.observation.serialization if profile is None else profile
+        if type(requested) is not NotesSyncSerializationProfile:
+            raise TypeError("profile must be a NotesSyncSerializationProfile.")
+        profile = proven_profile(
+            expected.observation.serialization, expected.text, requested
+        )
+        if profile != requested:
+            raise NotesSyncFilesystemError("replacement_profile_unproven")
         payload = self.serialize(text, profile)
         try:
             self._root.replace_bytes(
@@ -355,9 +426,12 @@ class PosixNotesSyncFilesystem:
                     "replacement_postcondition_failed",
                 ),
             ) from None
+        # TASK-34000.48: the bytes ARE the comparison; a newline-free result
+        # proves nothing about ``newline`` and inherits the profile written.
         if (
             observed.raw_bytes != payload
-            or observed.observation.serialization != profile
+            or proven_profile(observed.observation.serialization, observed.text, profile)
+            != profile
         ):
             raise NotesSyncFilesystemPartialError(
                 "replacement_postcondition_failed",
@@ -417,7 +491,8 @@ class PosixNotesSyncFilesystem:
             ) from None
         if (
             observed.raw_bytes != payload
-            or observed.observation.serialization != profile
+            or proven_profile(observed.observation.serialization, observed.text, profile)
+            != profile
         ):
             raise NotesSyncFilesystemPartialError(
                 "replacement_postcondition_failed",
@@ -576,10 +651,12 @@ class PosixNotesSyncFilesystem:
                     "move_postcondition_failed",
                 ),
             ) from None
+        reviewed = expected.observation.serialization
         if (
             moved.raw_bytes != expected.raw_bytes
             or moved.observation.identity != expected.observation.identity
-            or moved.observation.serialization != expected.observation.serialization
+            or proven_profile(moved.observation.serialization, moved.text, reviewed)
+            != reviewed
         ):
             raise NotesSyncFilesystemPartialError(
                 "move_postcondition_failed",
@@ -694,6 +771,7 @@ __all__ = [
     "PosixNotesSyncFilesystem",
     "WindowsNotesSyncObservationFilesystem",
     "WindowsNotesSyncObservation",
+    "proven_profile",
     "represented_digest",
     "represented_text",
     "validate_sync_root_admission",

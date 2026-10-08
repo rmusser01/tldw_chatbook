@@ -855,7 +855,11 @@ or any other, so a note switch, Back or a rail switch is never delayed by a
 folder's pass (TASK-34000.51). The one thing that still waits is a change on
 both sides -- the file edited on disk while the note was edited in Chatbook --
 which is an ordinary "Both file and note changed" review, never a silent
-winner. Before this
+winner. A file's line-ending convention is kept across an edit that leaves
+no line ending at all -- a Windows-style CRLF file whose note shrinks to one
+line stays a CRLF file, the next multi-line edit is written CRLF, and a
+folder that an older build held on exactly this ("Recovery failed" after
+such an edit) is healed by **Recovery** (TASK-34000.48). Before this
 an ordinary edit — Ctrl+End, then a word without Enter, in a vault whose files
 end with a newline — left a `postcondition_failed` entry open on the folder
 while the tree, the list and the editor went on saying Sync managed, Ready and

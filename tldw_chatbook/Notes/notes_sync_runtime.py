@@ -88,6 +88,7 @@ from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFileSnapshot,
     NotesSyncFilesystemError,
     PosixNotesSyncFilesystem,
+    proven_profile,
     represented_digest,
 )
 from tldw_chatbook.Notes.notes_sync_legacy import (
@@ -1123,7 +1124,19 @@ class _ProductionRuntimeAdapter:
                         )
                     ),
                     baseline_serialization=binding.serialization,
-                    serialization=(file.observation.serialization if file else None),
+                    # TASK-34000.48: a file whose text has no line ending
+                    # proves nothing about its newline and keeps the
+                    # binding's; the planner must not raise a representation
+                    # refresh over a one-line note in a CRLF file.
+                    serialization=(
+                        proven_profile(
+                            file.observation.serialization,
+                            file.text,
+                            binding.serialization,
+                        )
+                        if file
+                        else None
+                    ),
                 )
             )
             bundle[binding.binding_id] = _ObservedBinding(binding, note, file)
@@ -1146,6 +1159,11 @@ class _ProductionRuntimeAdapter:
                 f"note\0{root.root_id}\0{relative_path}".encode("utf-8")
             ).hexdigest()
             identity_digest = NotesSyncExecutor.stable_identity_digest(file)
+            # A discovered file has no recorded convention yet: its own
+            # observation is the record (TASK-34000.48).
+            candidate_profile = proven_profile(
+                file.observation.serialization, file.text, None
+            )
             candidate = NotesSyncBindingRecord(
                 binding_id=binding_id,
                 root_id=root.root_id,
@@ -1154,7 +1172,7 @@ class _ProductionRuntimeAdapter:
                 normalized_relative_path=relative_path,
                 stable_identity_digest=identity_digest,
                 state=NotesSyncBindingState.CANDIDATE,
-                serialization=file.observation.serialization,
+                serialization=candidate_profile,
                 content_digest=file.observation.content_digest,
                 note_version=0,
             )
@@ -1173,8 +1191,8 @@ class _ProductionRuntimeAdapter:
                     note_id=note_id,
                     note_version=0,
                     bound=False,
-                    baseline_serialization=file.observation.serialization,
-                    serialization=file.observation.serialization,
+                    baseline_serialization=candidate_profile,
+                    serialization=candidate_profile,
                     file_blank=not file.text.strip(),
                     prior_import_note=relative_path in prior_import_paths,
                 )
