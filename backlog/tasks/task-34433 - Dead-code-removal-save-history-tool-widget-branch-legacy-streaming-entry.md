@@ -1,11 +1,11 @@
 ---
 id: TASK-34433
 title: Dead-code removal save_history tool widget branch legacy streaming entry
-status: In Progress
+status: Done
 created_date: 2026-10-07 02:43
 dependencies:
 - TASK-34426
-updated_date: 2026-10-07 23:06
+updated_date: 2026-10-08 00:35
 ---
 
 ## Description
@@ -23,8 +23,8 @@ Wave 7 / F18: save_history has zero callers and per-message transactions tool_me
 
 <!-- SECTION:PLAN:BEGIN -->
 See Docs/superpowers/plans/2026-10-06-nonconsole-efficiency-remediation.md Task 21 (T21)
+Final commit stack after history rebuild: 29b591c73d (save_history), 8490efb76b (tool_message_widgets), a760d88d00 (legacy streaming entry) — earlier hashes in notes were pre-rebuild. Deferred minors: TOOL-CALLING.md:185 dangling import sketch; sibling seam ChatMessage.update_message_chunk recorded as follow-up task.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
