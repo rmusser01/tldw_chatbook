@@ -168,7 +168,10 @@ class SendSpanObserver(CompositionCounter):
             from tldw_chatbook.Chat.console_context_compaction import (
                 ConsoleCompactionPreflight,
             )
-            from tldw_chatbook.MCP import console_snapshot
+            from tldw_chatbook.MCP import console_snapshot, console_tool_preparation
+            from tldw_chatbook.MCP.unified_control_plane_service import (
+                UnifiedMCPControlPlaneService,
+            )
             from tldw_chatbook.UI.Console_Modules import wiring
             from tldw_chatbook.Utils import private_paths, sensitive_paths
 
@@ -190,7 +193,13 @@ class SendSpanObserver(CompositionCounter):
                     console_snapshot,
                     ("capture_console_definition_maximum", "_checked_read"),
                 ),
-                (console_snapshot._CapturedSources, ("permission_call",)),
+                (
+                    console_snapshot._CapturedSources,
+                    ("permission_call", "read_permission_payload"),
+                ),
+                (console_tool_preparation, ("prepare_console_tools",)),
+                (UnifiedMCPControlPlaneService, ("local_external_catalog",)),
+                (ConsoleChatController, ("_compose_local_provider",)),
                 (
                     console_configuration_capture,
                     ("capture_console_turn_configuration",),
