@@ -17814,7 +17814,10 @@ class ChatScreen(BaseAppScreen):
             return
 
         async def _poll_transcript() -> None:
-            await self._sync_native_console_chat_ui()
+            if await self._sync_native_console_chat_ui() is False:
+                # Deferred work still owes its final full refresh, even when
+                # no turn remains active. Keep the existing poll owner alive.
+                return
             controller = self._console_chat_controller
             if controller is None:
                 self._workspace._invalidate_console_persisted_rows_cache()
