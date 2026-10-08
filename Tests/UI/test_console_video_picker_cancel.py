@@ -78,17 +78,31 @@ async def _back_at_the_storage_choice(app, pilot, picker, artifact, how: str):
     return app.screen
 
 
-def _assert_the_same_video_waits_alone(console, artifact) -> None:
+def _assert_the_same_video_waits_alone(
+    console, artifact, *, operation_attempted: bool = False
+) -> None:
     """The one staged video is still owned, open and unduplicated."""
     video = console._video
     assert video._owns_pending_console_video(artifact)
     assert not artifact.stream.closed
     assert artifact.stream.close_calls == 0
     # The same staged payload, not a second copy: one registry entry, and no
-    # operation, publication gate or deferred close left behind by the picker.
+    # active operation or deferred close left behind by the picker/copy.
     assert video._pending_console_video_artifacts() == {artifact.message_id: artifact}
     assert video._pending_video_active_operations == {}
-    assert video._pending_video_operation_cancels == {}
+    if operation_attempted:
+        from tldw_chatbook.Video_Generation.video_store import VideoPublicationGate
+
+        # A real attempted copy retains this artifact's cancellation gate until
+        # its final disposition, even though the native operation has retired.
+        gates = video._pending_video_operation_cancels
+        assert set(gates) == {artifact.message_id}
+        gate = gates[artifact.message_id]
+        assert isinstance(gate, VideoPublicationGate)
+        with gate.claim_publication() as allowed:
+            assert allowed
+    else:
+        assert video._pending_video_operation_cancels == {}
     assert video._pending_video_deferred_closes == {}
     artifact.rewind()
     assert artifact.stream.read() == b"paid generation"
@@ -248,7 +262,9 @@ async def test_cancelling_the_save_picker_returns_to_the_storage_choice(
                 raise
             assert third_picker not in app.screen_stack
             assert _choice_labels(app.screen) == _OVER_CAPACITY_CHOICES
-            _assert_the_same_video_waits_alone(console, artifact)
+            _assert_the_same_video_waits_alone(
+                console, artifact, operation_attempted=True
+            )
             assert not target.exists()
             assert list(destination.iterdir()) == []
             assert opened == []
@@ -273,6 +289,8 @@ async def test_cancelling_the_save_picker_returns_to_the_storage_choice(
         assert artifact.stream.close_calls == 1
         assert console._video._pending_console_video_artifacts() == {}
         assert console._video._pending_video_operation_cancels == {}
+        assert console._video._pending_video_active_operations == {}
+        assert console._video._pending_video_deferred_closes == {}
         assert not [
             screen
             for screen in app.screen_stack
