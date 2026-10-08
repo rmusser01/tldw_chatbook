@@ -1914,3 +1914,77 @@ Send authority and started native readers, and be bounded to initial snapshot
 work rather than an arbitrary approval/provider wait. Visit misses can reconcile
 disabled/removed grants; this is not a disposable-cache authority shortcut.
 No change is selected without actual early-route overlap evidence.
+
+
+### Existing b4a hook interval partition (2026-10-08)
+
+Reanalysis of the saved `lock-stream-integrated-detail-1.spans.json` and its
+original probe stage times; no new application run or observer. Root and the
+baseline lane independently reproduced these totals. Each Send contains five
+nonoverlapping original `HookPermissions._current` intervals before provider
+entry. All 15 contain exactly one same-thread config entry/first-yield pair,
+default-path lookup, subsequent hook raw-scope entry/first-yield pair and state
+read. The following intervals do not overlap:
+
+| Interval, seconds summed across five contexts | Send 1 | Send 2 | Send 3 |
+| --- | ---: | ---: | ---: |
+| Config snapshot entry to first yield | .813687 | 1.118458 | 1.776939 |
+| Default hook-path lookup | .219344 | .429573 | .428778 |
+| Hook raw admission entry to first yield | .184013 | .180155 | .245701 |
+| Hook admission complete to state-read entry | .271391 | .303288 | .532488 |
+| Actual state read | .082659 | .076663 | .076575 |
+| State-read return to hook-context return | .024868 | .025144 | .021286 |
+| Other connecting gaps | .000584 | .000561 | .000619 |
+| **Whole hook-context lifetime** | **1.596547** | **2.133842** | **3.082386** |
+
+The hook context's own yield was not observed. Its entire post-read tail includes
+snapshot construction, caller-held time and cleanup; caller-held time is therefore
+bounded above by 1.56%, 1.18% and .69% of the context totals. It does not explain the
+large lifetime. Fresh config snapshot preparation is the largest measured region.
+The admission-to-read gap contains private lock-stream establishment and lock
+acquisition; the existing trace does not separate them or prove contention.
+
+Separately, the attributed original full raw checks number 350/408/350 and take
+.402730/.550966/.979359 inclusive seconds inside those contexts. The immediate
+hook-runtime discovery branch accounts for 125 checks each; config/runtime discovery
+for 55/91/55. Those counts do not identify the secure-directory walk's eligible
+subset. The admitted wrappers' second checks take only .029266/.036912/.045058
+seconds per Send. Do not prioritize that small duplication as the main delay.
+These nested raw durations must not be added to, or subtracted as nonoverlapping
+parts of, the table above. The 92 raw-ancestry misses limit caller attribution,
+not the directly paired interval table.
+
+Source review keeps OPT33 deferred: an establishment walk would need the exact
+selected-directory pin, full actual-FD-to-pin/final-custody validation before its
+close, and original full checks at mkdir/chmod effects. The existing parent-walk
+wrapper cannot be inserted unchanged. OPT38 records the separate scalar posture
+fan-out in hook visit stamps; its cost is unmeasured. Both remain in the user's
+optimization review list. This historical b4a analysis precedes task28 and the
+integration lane's later cleanup fixes; it is neither a current latency result nor
+a savings estimate. Main Send and input/render acceptance remain open.
+
+
+Task28 supported-host/integrated qualification is complete on integrated commit
+`82347279ee1827311e21460e79a2cf55d08a3aae`, CI run `37749712963`.
+Root independently read the downloaded `user-directory-posture.xml` reports:
+
+| Host | Passed | Platform skips | Failures / errors |
+| --- | ---: | ---: | ---: |
+| Windows 2022 | 7 | 12 original POSIX-only memo cases | 0 / 0 |
+| Ubuntu 24.04 | 16 | 3 Windows metadata/DACL cases | 0 / 0 |
+| macOS 15 | 16 | 3 Windows metadata/DACL cases | 0 / 0 |
+
+All seven new cases ran on Windows; the four portable new cases and all twelve
+original PERF07 cases ran on both POSIX hosts. Artifacts are under the integration
+lane's `deepseek-uat/ci-823472-context/context-and-skill-lifetime-{host}` directory.
+This is the selected directory qualification step, not a claim the wider workflow
+passed: separate Linux skill/context lifetime failures remained in that run.
+
+Root also independently read `integrated-directory-count-green-1.xml`, source and
+custody receipts: 8 passed, 0 skipped/failed/errors, 18.289s JUnit/24.187s driver,
+HEAD and sources unchanged, normal native retirement, no force/overflow/lookup
+races. This confirms integration with the count-shutdown change without importing
+those unrelated changes into task28. Scoped static/review evidence remains above;
+product bytes were not changed after it. Task34563.28 can close under existing
+ADR-222/126. Main Send-under-one-second and input/render-under-100ms goals remain
+open; no new whole-Send latency claim follows from these targeted checks.
