@@ -1,6 +1,8 @@
 """Original cold Send must receive input before its first configuration SQL read."""
 
 import asyncio
+import inspect
+import sys
 import threading
 import time
 
@@ -123,3 +125,88 @@ async def test_cold_stock_send_receives_before_original_configuration_sql(
                 case.probe.release.set()
                 releaser.join(1)
                 assert not releaser.is_alive(), "Cold SQL observer did not retire"
+
+
+async def test_cold_builtin_only_send_does_not_construct_unused_trust(
+    monkeypatch, record_property
+):
+    """A completed original builtin-only Send must not acquire a trust service."""
+    from tldw_chatbook.app_service_wiring import ServiceWiringMixin
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_configuration_capture import (
+        capture_skill_context_maximum,
+    )
+
+    async with _received_console_case(
+        monkeypatch, "cold-builtin-only", durable=True
+    ) as case:
+        app = case.console.app_instance
+        local = vars(app)["_local_skills_service"]
+        assert vars(app)["_local_skill_trust_service"] is None
+        assert local is not None and vars(local)["_trust_service"] is None
+        # Keep the original SQL observer, but do not hold this completion case.
+        case.probe.release.set()
+        capture_code = capture_skill_context_maximum.__code__
+        builder_code = inspect.getattr_static(
+            ServiceWiringMixin, "_build_local_skill_trust_service"
+        ).__code__
+        captures = []
+        builders = []
+
+        def started(code, _offset):
+            if code is builder_code and sys._getframe(1).f_locals.get("self") is app:
+                builders.append(threading.current_thread().ident)
+
+        def returned(code, _offset, value):
+            if (
+                code is not capture_code
+                or sys._getframe(1).f_locals.get("app") is not app
+            ):
+                return
+            rows = tuple(value.get("available_skills", ())) + tuple(
+                value.get("blocked_skills", ())
+            )
+            captures.append(
+                {
+                    "local_backend": value.get("backend") == "local",
+                    "record_count": len(rows),
+                    "all_builtin": all(row.get("source") == "builtin" for row in rows),
+                }
+            )
+
+        def reply_completed():
+            return not case.runtime.has_custodied_turns(case.session.id) and any(
+                message.role is ConsoleMessageRole.ASSISTANT
+                and message.status == "complete"
+                and message.content == "received intent reply"
+                for message in case.store.messages_for_session(case.session.id)
+            )
+
+        monitoring = sys.monitoring
+        tool = next(value for value in range(6) if monitoring.get_tool(value) is None)
+        monitoring.use_tool_id(tool, "cold-builtin-original-send")
+        try:
+            monitoring.register_callback(tool, monitoring.events.PY_START, started)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, returned)
+            monitoring.set_local_events(tool, builder_code, monitoring.events.PY_START)
+            monitoring.set_local_events(tool, capture_code, monitoring.events.PY_RETURN)
+            _send(case, "enter")
+            assert await _until(
+                reply_completed, 15
+            ), "Original saved Send did not finish"
+            record_property("original_skill_capture_kinds", captures)
+            record_property("original_trust_builder_calls", len(builders))
+            assert captures and all(
+                row["local_backend"] and row["record_count"] > 0 and row["all_builtin"]
+                for row in captures
+            ), "Original captured maximum did not qualify as nonempty builtin-only"
+            assert len(case.provider_calls) == 1
+            assert builders == [], "Builtin-only Send constructed unused skill trust"
+            assert vars(app)["_local_skill_trust_service"] is None
+            assert vars(local)["_trust_service"] is None
+        finally:
+            monitoring.set_local_events(tool, builder_code, 0)
+            monitoring.set_local_events(tool, capture_code, 0)
+            monitoring.register_callback(tool, monitoring.events.PY_START, None)
+            monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
+            monitoring.free_tool_id(tool)
