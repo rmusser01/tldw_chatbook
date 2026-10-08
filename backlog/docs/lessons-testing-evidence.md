@@ -19191,3 +19191,23 @@ The dictionary inspector fixtures disposed their app runtime after a minimal Tex
 
 
 The subsequent initial-draft/suspend fixture reuse initially mounted two Consoles: Textual dispatches an event through each matching MRO handler. Its specialized on_mount must call Mount.prevent_default() before supplying its replacement mount; otherwise inheriting the production lifecycle also invokes the base mount. Original typing/attach controls then pass and the worker census is empty. Keep custom mount semantics explicit when reusing a production shutdown harness.
+## A visible Toast assertion requires enabled test notifications (TASK-34563.32, 2026-10-08)
+
+**Incident.** The generated-video cancellation control was corrected to expect a
+real save error and retained artifact on Windows, where the original pinned-copy
+capabilities are unavailable. Its new visible-Toast predicate still timed out.
+Installed Textual `App.run_test` defaults `notifications=False`; Screen omits the
+ToastRack in that mode even though `app._notifications` receives the notice.
+Enabling `notifications=True` let the original error/new-choice predicate pass.
+The next failure exposed a second test-premise mistake: a helper valid before any
+copy expected no publication gate after a real failed attempt. The original owner
+retains that artifact gate until final disposition. Keeping the pre-attempt check
+strict and checking retained gate then explicit-discard cleanup made all three
+original picker controls pass at integrated41ab023e31.
+
+**What to do.** Read the native test runner's notification option before asserting
+rendered toasts. Diagnose predicate components separately; a visible error,
+returned dialog, native-operation retirement and artifact lifetime are different
+facts. Do not reuse a pre-operation empty-bookkeeping oracle after an operation
+without checking the existing owner's lifetime contract. Preserve real callbacks,
+deadlines and final cleanup instead of weakening product gates to fit the test.
