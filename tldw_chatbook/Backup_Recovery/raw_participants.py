@@ -848,6 +848,9 @@ def _pin_parent(state, anchor):
     from tldw_chatbook.Utils import private_paths
 
     hold = next((h for h in state.holds if h is not None), None)
+    # Derived evidence is optional; keep actual operation holds untouched.
+    if hold is not None and storage._ordinary_hold(hold.authority) is not hold:
+        hold = None
     key = ("raw-pin", str(anchor))
     before = storage._derived_before(hold, key)
     reused, posture = storage._derived_reuse(hold, key, before)
