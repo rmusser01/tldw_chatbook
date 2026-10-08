@@ -1185,6 +1185,22 @@ MODEL_CATALOG_CHECKBOX_IDS = frozenset(
         for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
     }
 )
+
+
+def _session_summary_section_values(
+    enabled: bool, duration_text: str
+) -> dict[str, dict[str, object]]:
+    """Normalize the [session_summary] settings group for persistence."""
+    try:
+        duration = int(float(str(duration_text).strip()))
+    except (TypeError, ValueError):
+        duration = 3
+    duration = max(1, min(30, duration))
+    return {
+        "session_summary": {"enabled": bool(enabled), "duration_seconds": duration}
+    }
+
+
 # task-1341: staged save is the default commit model; instant-apply is the
 # labeled exception. One copy pair shared by the inline hints and the
 # focused-field inspector "Save:" rows.
@@ -16070,6 +16086,29 @@ class SettingsScreen(BaseAppScreen):
                 # The app stopped; admitted writes still drain without UI access.
                 pass
 
+    def _persist_session_summary_settings(self) -> None:
+        checkbox = self.query_one("#settings-session-summary-enabled", Checkbox)
+        duration_input = self.query_one("#settings-session-summary-duration", Input)
+        section_values = _session_summary_section_values(
+            checkbox.value, duration_input.value
+        )
+        current = _session_summary_section_values(
+            bool(get_cli_setting("session_summary", "enabled", False)),
+            str(get_cli_setting("session_summary", "duration_seconds", 3)),
+        )
+        if section_values == current:
+            return
+        self._persist_session_summary_section_values(section_values)
+
+    @work(thread=True)
+    def _persist_session_summary_section_values(
+        self, section_values: dict[str, dict[str, object]]
+    ) -> None:
+        try:
+            save_settings_to_cli_config(section_values)
+        except Exception:  # noqa: BLE001 - recover without exposing config details
+            logger.warning("Failed to persist session_summary settings.")
+
     def _provider_readiness_test_report(
         self,
         *,
@@ -18504,6 +18543,37 @@ class SettingsScreen(BaseAppScreen):
                                 "models after a first baseline."
                             ),
                         )
+            # task-34384 (issue #365): quit-time session usage summary.
+            # Instant-apply like the catalog block above; the pure helper's
+            # no-op guard keeps per-keystroke Input.Changed off the disk.
+            with Vertical(
+                id="settings-session-summary-group",
+                classes="settings-instant-apply-group",
+            ):
+                yield Static("Session summary on quit", classes="destination-section")
+                yield Static(
+                    INSTANT_APPLY_BEHAVIOR_COPY,
+                    id="settings-session-summary-instant-hint",
+                    classes="settings-instant-apply-hint",
+                )
+                yield Checkbox(
+                    "Show session usage summary when quitting",
+                    value=bool(
+                        get_cli_setting("session_summary", "enabled", False)
+                    ),
+                    id="settings-session-summary-enabled",
+                )
+                with Horizontal(classes="settings-input-row"):
+                    yield Static(
+                        "Summary duration (seconds):",
+                        classes="settings-status-row",
+                    )
+                    yield Input(
+                        str(get_cli_setting("session_summary", "duration_seconds", 3)),
+                        id="settings-session-summary-duration",
+                        type="integer",
+                        tooltip="How long the quit summary shows before auto-exit (1-30).",
+                    )
             # ADR-146 task-7: named-endpoint management (rename / edit /
             # delete-with-reference-guard / slot conversion). Instant-apply
             # like the catalog block above: threaded config writes, one
@@ -31277,6 +31347,16 @@ class SettingsScreen(BaseAppScreen):
     def handle_model_catalog_stale_hours_changed(self, event: Input.Changed) -> None:
         event.stop()
         self._persist_model_catalog_settings()
+
+    @on(Checkbox.Changed, "#settings-session-summary-enabled")
+    def handle_session_summary_toggle_changed(self, event: Checkbox.Changed) -> None:
+        event.stop()
+        self._persist_session_summary_settings()
+
+    @on(Input.Changed, "#settings-session-summary-duration")
+    def handle_session_summary_duration_changed(self, event: Input.Changed) -> None:
+        event.stop()
+        self._persist_session_summary_settings()
 
     @on(Select.Changed, "#settings-permission-summary-mode")
     def handle_permission_summary_mode_changed(self, event: Select.Changed) -> None:
