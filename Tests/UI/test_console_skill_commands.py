@@ -86,6 +86,17 @@ class FakeSkillsScopeService:
         self.blocked_skills = blocked_skills or []
         self.calls: list[str | None] = []
         self.executions: list[tuple[str, str | None]] = []
+        self.local_service = self
+
+    def _visible_records(self) -> dict[str, dict[str, Any]]:
+        """Supply the same selected catalog to synchronous Send capture."""
+        return {
+            item["name"]: dict(item)
+            for item in (*self.available_skills, *self.blocked_skills)
+        }
+
+    def _summary_for_record(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        return dict(record)
 
     async def get_context(self, *, mode: str | None = None) -> Mapping[str, Any]:
         self.calls.append(mode)
@@ -321,9 +332,19 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send(request
         assert submitted["session_id"] == session_id
         assert submitted["origin"].value == "manual"
         assert submitted["configuration"].session_id == session_id
+        assert [
+            item["name"]
+            for item in submitted["configuration"].skill_context_maximum[
+                "available_skills"
+            ]
+        ] == ["code-review"]
         assert submitted["accepted_attachments"] == ()
         # The skill actually ran (controller-side substitution).
         assert skills.executions == [("code-review", "fix it")]
+        assert gateway.sent_messages[0][-1] == {
+            "role": "user",
+            "content": "RENDERED[code-review:fix it]",
+        }
         # The stored transcript keeps the raw mention -- only the ephemeral
         # provider payload is rendered.
         user_rows = [
