@@ -984,6 +984,35 @@ class ConsoleContextRepository:
                 continue
         return tuple(records)
 
+    def has_active_memory_selection(self, conversation_id: str) -> bool:
+        """Return whether any active selection event exists, decodable or not.
+
+        ``load_applicable_branch_memory`` finds a branch head only among these
+        rows, so without one it finds none for any lineage. The Console sync
+        checks this before capturing a lineage (TASK-33628.5.2).
+
+        Args:
+            conversation_id: Durable conversation to check.
+
+        Returns:
+            True when at least one active selection row exists.
+
+        Raises:
+            ValueError: If ``conversation_id`` is invalid.
+        """
+        _validate_bounded_text("conversation_id", conversation_id, 200)
+        with self.db.transaction() as cursor:
+            row = cursor.execute(
+                """
+                SELECT 1
+                  FROM console_conversation_memory_selections
+                 WHERE conversation_id = ? AND active = 1
+                 LIMIT 1
+                """,
+                (conversation_id,),
+            ).fetchone()
+        return row is not None
+
     def load_applicable_branch_memory(
         self,
         conversation_id: str,
@@ -1271,6 +1300,57 @@ class ConsoleContextRepository:
                 (conversation_id, limit, offset),
             ).fetchall()
         return tuple(dict(row) for row in rows)
+
+
+def may_hold_branch_memory(
+    controller: Any,
+    session_id: str,
+    conversation_id: str | None,
+) -> bool:
+    """Return False only when a Console session's effective memory is raw history.
+
+    ``ConsoleChatController.context_control_inputs`` feeds the Console
+    settings summary and the transcript's memory banner, so every post-action
+    Console sync runs it, twice. Proving which memory applies captures the
+    active lineage: one SQLite version read and one validated
+    ``DurableMessageSnapshot`` per active-path message, ~19 ms of each ~29 ms
+    call at 3,000 messages, on the event loop (TASK-33628.5.2).
+
+    ``select_effective_memory`` returns raw history unless a validated legacy
+    ``/rewind`` summary or an active branch selection names a lineage message.
+    Without either input, which is most conversations, the capture can be
+    skipped. Anything that cannot be ruled out answers True, so a session
+    that holds memory, and any repository double without the real API, keeps
+    the full validated path. Lives here, not in a module of its own, because
+    the first Console sync runs it before the UI is ready (ADR-097 census).
+
+    Args:
+        controller: The ``ConsoleChatController`` asking; its ``store`` owns
+            ``session_id`` and its ``_context_repository`` holds the memory.
+        session_id: Native Console session whose memory is wanted.
+        conversation_id: The session's persisted conversation, if any.
+
+    Returns:
+        False when no memory can apply: no persisted conversation or
+        repository, or no usable legacy summary and no active selection event.
+
+    Raises:
+        KeyError: If ``session_id`` is unknown to the store.
+        ValueError: If ``conversation_id`` is invalid for the repository.
+    """
+    repository = controller._context_repository
+    if conversation_id is None or repository is None:
+        return False
+    summary, boundary = controller.store.session_context_summary(session_id)
+    if isinstance(summary, str) and summary.strip() and boundary is not None:
+        return True
+    probe = getattr(repository, "has_active_memory_selection", None)
+    # Only the real repository finds branch heads solely among active
+    # selection rows; doubles may derive one from memories alone.
+    applicable = getattr(repository, "load_applicable_branch_memory", None)
+    if not callable(probe) or not callable(applicable):
+        return True
+    return bool(probe(conversation_id))
 
 
 def validate_branch_memory_commit(commit: BranchMemoryCommit) -> None:
