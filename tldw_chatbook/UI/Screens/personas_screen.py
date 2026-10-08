@@ -110,7 +110,6 @@ from ...Constants import (
 )
 from ...DB.ChaChaNotes_DB import ConflictError
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
-from ...Media_Creation.generation_templates import GenerationTemplate, get_template
 from ...Persona_Visual.assets import load_persona_visual_asset
 from ...Persona_Visual.authoring import (
     PersonaVisualAuthoringDraft,
@@ -375,6 +374,7 @@ from ...Character_Chat.character_generation_controller import (
 from ..Persona_Modules.personas_preview_controller import PersonasPreviewController
 
 if TYPE_CHECKING:
+    from ...Media_Creation.generation_templates import GenerationTemplate
     from ...Character_Chat.expression_set_io import ExpressionSetApplyResult
     from ...Chat.console_image_view import ConsoleImageRenderCache
     from ...Image_Generation.capabilities import ResolvedReferenceImage
@@ -13526,6 +13526,8 @@ class PersonasScreen(BaseAppScreen):
                 )
                 return
             if choice is not None:
+                from ...Media_Creation.generation_templates import get_template
+
                 style_id = str(choice.get("id") or "")
                 self._expression_generate_style = get_template(style_id)
                 self._update_expression_style_readout()

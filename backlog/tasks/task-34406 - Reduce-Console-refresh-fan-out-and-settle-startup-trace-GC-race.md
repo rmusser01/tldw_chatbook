@@ -83,6 +83,8 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #63 Timer inventory follows a deferral shim's actual callback without inventing a timer root from an unrelated same-named method.
 - [x] #64 Unchanged progress, stale skill review, Buddy speech and Buddy inbox polls avoid redundant Static updates while still checking current sources and showing changed content or failures.
 - [x] #65 Recovery sidebar, Workspace Files attention and llama.cpp status avoid unchanged text updates while retaining fresh retry owners, attention generations and connection checks. Model warning titles survive the original allocation/layout pass.
+- [x] #66 Startup import budgets retain their ceilings, image templates load only at their use sites, and the CSS census measures the same normalized text Textual parses on each platform.
+- [ ] #67 A live in-place agent-runtime disable is captured by the next real Send without forcing a full refresh, while other configuration source and ownership checks remain unchanged.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -1418,3 +1420,18 @@ AC65 allocator fixture correction: the isolated rerun reproduces raw_source_sele
 Final AC65 source review finds no blocker. Scoped formatting preserves AST and targeted Ruff/diff checks pass. The formatted final seven recovery/status/action cases pass again in recovery-final-controls-1. All runs froze source/HEAD and retired the diagnostic process/native/pipes normally without force/overflow/lookup races. The seven-case run has no unfinished original workers after fixtures.
 
 The extra allocator case remains separately unresolved: with its temporary bootstrap marker it mounts but its older synchronous model-summary expectation fails before reaching recovery, and its legacy host leaves prompt-history/hook workers at fixture teardown. The marker experiment was removed, preserving that original test. Do not use this case as passing evidence or the diagnostic process retirement as proof of app cleanup. Its profile selection, asynchronous summary contract and production host lifetime need a separate focused repair. The new mounted warning test directly exercises the original recovery allocator and proves warning persistence without changing that allocator.
+
+
+AC66 plan: original six-module boot step at557385 passes20 and fails2 (Windows CSS629028/608090; preimport561/557). Installed Textual8 Stylesheet.read uses text mode with universal newline normalization, while the census reads CSS_PATH as raw bytes. Add original-Stylesheet parity controls for LF/CRLF/CR before correcting only the census read. Defer image-template imports in Settings image panel and Personas style action; keep annotation imports under TYPE_CHECKING and leave Media_Creation public exports unchanged. Verify the existing preimport/CSS budgets and relevant template/style actions, with all ceilings unchanged. ADR required:no new ADR; direct application of ADR097 plus a measurement bug fix. CSS rules, parser and user-visible behavior are unchanged.
+
+
+AC67 plan: warm-original-poll-controls-1 proves causal RED: the app resident console.agent_runtime is changed toFalse immediately before original Enter, but received selection remainsTrue because receive_console_visible_intent chooses the disk config cache for a complete app config. Read only an explicitly present resident runtime flag over the existing raw fallback; retain the existing coercion, all other raw configuration sources and exact source checks. Rerun original real-Send control through completion, without manual core/full synchronization. Existing ADR222 applies; no new ADR or snapshot-policy change.
+
+
+### AC66 startup-budget checkpoint (2026-10-08)
+
+Settings template counts and Personas style selection defer generation_templates to the existing use sites; GenerationTemplate is annotation-only. Four Media_Creation modules leave the screen preimport path; public package exports and actions are unchanged. Existing preimport budget passes557/557 modules,416042/425347LOC, largest route128224/135111LOC. No ceiling increased.
+
+CSS_PATH census now uses the same UTF-8 universal-newline read as installed Textual Stylesheet.read. Original LF parity passes while CRLF and CR parity fail; all three pass after correction, along with the original CSS byte budget. This repairs Windows-only raw-byte inflation; it does not claim a CSS parse-time improvement. No stylesheet changed. The first parity attempt failed profile admission; adding the existing bootstrap_profile marker retained its selected source and exposed the intended mismatch.
+
+boot-budget-local-green-1 reports7passed/1setup error in31.154s pytest37.281s driver: both budgets, three newline cases and two original Personas choose/cancel actions pass. The additional existing Settings panel test fails in scratch_config before the panel mounts because it redirects an already-bound config source; that fixture remains unchanged and is not counted as verified. Source/HEAD frozen, zero unfinished original workers after fixtures, normal process/native/pipe retirement with zero force/overflow/lookup races. Scoped formatting preserves AST. ADR097 applied; no new ADR.
