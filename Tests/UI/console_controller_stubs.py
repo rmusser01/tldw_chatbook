@@ -379,3 +379,61 @@ def stub_library_activity_controller(
     )
     screen._library_activity = controller
     return controller
+
+
+def context_spend_for_test(screen: Any):
+    """Wire a real display owner on a constructor-free Screen test receiver.
+
+    Every callback uses the receiver's declared seam. Missing fixture inputs
+    fail at the corresponding attribute; no production method gains a fallback.
+    Existing real owners are returned without resetting their state.
+    """
+    from tldw_chatbook.UI.Console_Modules.context_spend import (
+        ConsoleContextSpendController,
+        CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS,
+    )
+    from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
+    from tldw_chatbook.UI.Screens import chat_screen
+
+    existing = vars(screen).get("_context_spend")
+    if existing is not None:
+        return existing
+    screen._context_spend = ConsoleContextSpendController(
+        screen,
+        ensure_chat_store=lambda: screen._ensure_console_chat_store(),
+        current_chat_store=lambda: screen._console_chat_store,
+        ensure_chat_controller=lambda: screen._ensure_console_chat_controller(),
+        current_chat_controller=lambda: screen._console_chat_controller,
+        composer=lambda: screen._console_composer_or_none(),
+        pending_launch=lambda: screen._pending_console_launch_context,
+        build_staged_context_state=lambda launch: screen._build_console_staged_context_state(
+            launch
+        ),
+        active_settings_readiness=lambda: screen._active_console_settings_readiness(),
+        provider_model_display=lambda: screen._active_console_provider_model_display(),
+        active_session_settings=lambda: screen._session._ensure_active_console_session_settings(),
+        active_native_session=lambda: screen._session._active_native_console_session(),
+        workspace_context=lambda: screen._workspace._current_console_workspace_context(),
+        fleet_token_total=lambda: screen._agent._console_agent_fleet_token_total(),
+        sync_rail_system_line=lambda: screen._sync_console_rail_system_line(),
+        sync_agent_section=lambda: screen._sync_console_agent_section(),
+        request_context_allocation_reconcile=lambda: screen._request_console_context_allocation_reconcile(),
+        record_timer_created=lambda name: screen._record_ui_timer_created(name),
+        record_timer_stopped=lambda name: screen._record_ui_timer_stopped(name),
+        push_inspector=lambda **kwargs: screen._push_console_inspector(**kwargs),
+        context_window_for_display=lambda settings: spend.cached_context_window_for_display(
+            screen, screen._ensure_console_provider_gateway(), settings
+        ),
+        context_inputs=lambda controller,
+        session_id: spend.ConsoleContextReadSnapshot.for_screen(
+            screen, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+        ).inputs(controller, session_id),
+        display_pricing_catalog=lambda: spend.pricing_catalog_for_display(
+            screen, chat_screen.get_pricing_catalog
+        ),
+        build_cost_snapshot=lambda *args, **kwargs: chat_screen.build_cost_snapshot(
+            *args, **kwargs
+        ),
+        refresh_checked_cost_chip=lambda: screen._sync_console_cost_chip(),
+    )
+    return screen._context_spend

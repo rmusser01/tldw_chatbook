@@ -16,6 +16,8 @@ Removing ``ChatScreen``'s override therefore only removes the redundant
 ``save_state()`` call, not screen-suspend behavior in general.
 """
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
+
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 
@@ -41,7 +43,18 @@ async def _run_suspend_with_stubs(screen) -> list[str]:
     from types import SimpleNamespace
     from unittest.mock import Mock
 
+    context_spend_for_test(screen)
     calls: list[str] = []
+    screen._hooks = SimpleNamespace(
+        review_open=False, cancel_pending=lambda: calls.append("hooks_cancel")
+    )
+    runtime = SimpleNamespace(
+        chat_controller=None, view=None, _attached_generation=None
+    )
+    screen._console_runtime = lambda: runtime
+    screen._resume_navigation_dispatch_worker = None
+    screen._resume_navigation_startup_worker = None
+    screen._stop_console_credential_poll_timer = lambda: calls.append("stop:credential")
 
     class _Timer:
         def __init__(self, name: str) -> None:
@@ -63,15 +76,15 @@ async def _run_suspend_with_stubs(screen) -> list[str]:
         invalidate_console_speech_context=lambda: calls.append("speech_stop")
     )
     screen._console_auto_speak = SimpleNamespace(
-        unmount=lambda: calls.append("auto_speak_unmount")
+        modal_result_pending=False, unmount=lambda: calls.append("auto_speak_unmount")
     )
-    screen._stop_console_transcript_sync_timer = lambda: calls.append(
-        "stop:sync"
-    )
+    screen._stop_console_transcript_sync_timer = lambda: calls.append("stop:sync")
     screen._fleet = SimpleNamespace(
         _stop_console_fleet_survivor_tick=lambda: calls.append("stop:survivor")
     )
-    screen._stop_console_cost_ttl_timer = lambda: calls.append("stop:cost_ttl")
+    screen._context_spend._stop_console_cost_ttl_timer = lambda: calls.append(
+        "stop:cost_ttl"
+    )
     screen._console_draft_spend_refresh = SimpleNamespace(
         stop=lambda: calls.append("stop:draft_spend")
     )
@@ -86,7 +99,7 @@ async def _run_suspend_with_stubs(screen) -> list[str]:
         teardown=lambda: _async_teardown("realtime_teardown")
     )
     screen._dictation = SimpleNamespace(
-        teardown=lambda: _async_teardown("dictation_teardown")
+        suspend=lambda: _async_teardown("dictation_teardown")
     )
     screen._console_resume_handoff_timers = [_Timer("handoff")]
     screen.__dict__.pop("_console_suspend_sidebar_flush", None)
@@ -129,6 +142,8 @@ def test_on_screen_suspend_quiesces_every_visit_seam():
     screen = _bare_chat_screen()
     calls = asyncio.run(_run_suspend_with_stubs(screen))
     for expected in (
+        "hooks_cancel",
+        "stop:credential",
         "release_claim",
         "sidebar_flush",
         "speech_stop",

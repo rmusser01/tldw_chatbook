@@ -920,6 +920,14 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
 
         for module_name, class_name, names in (
             (
+                "tldw_chatbook.UI.Console_Modules.context_spend",
+                "ConsoleContextSpendController",
+                (
+                    "_build_console_settings_summary_state",
+                    "_active_console_settings_context_estimate",
+                ),
+            ),
+            (
                 "tldw_chatbook.UI.Screens.chat_screen",
                 "ChatScreen",
                 (
@@ -930,8 +938,6 @@ class OriginalCompactModelReadGate(OriginalStorageUnitObserver):
                     "_sync_native_console_chat_ui",
                     "_sync_console_rail_and_controls",
                     "compose_content",
-                    "_build_console_settings_summary_state",
-                    "_active_console_settings_context_estimate",
                 ),
             ),
             (

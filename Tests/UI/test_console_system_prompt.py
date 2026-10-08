@@ -246,9 +246,9 @@ async def test_console_system_bare_command_opens_editor_with_current_text():
         assert len(host.screen_stack) == baseline_depth + 1
         modal = host.screen_stack[-1]
         assert modal.query_one(f"#{TEXT_AREA_ID}", TextArea).text == "Answer tersely."
-        assert composer.draft_text() == "/system", (
-            "bare /system must not touch the draft"
-        )
+        assert (
+            composer.draft_text() == "/system"
+        ), "bare /system must not touch the draft"
 
 
 # ---------------------------------------------------------------------------
@@ -392,9 +392,9 @@ async def test_console_system_command_unique_name_applies_and_updates_rail_previ
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth, (
-            "a unique match must not open the picker"
-        )
+        assert (
+            len(host.screen_stack) == baseline_depth
+        ), "a unique match must not open the picker"
         settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "Answer tersely."
         assert _rail_system_line_text(console) == "System: Answer tersely."
@@ -472,9 +472,9 @@ async def test_console_system_command_empty_system_part_shows_exact_inline_error
         console.query_one("#console-send-message", Button).press()
         await _wait_for_text(console, pilot, NO_SYSTEM_PART_COPY)
 
-        assert len(host.screen_stack) == baseline_depth, (
-            "no picker/modal should open on this error"
-        )
+        assert (
+            len(host.screen_stack) == baseline_depth
+        ), "no picker/modal should open on this error"
         settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt is None
         assert _rail_system_line_text(console) == "System: none"
@@ -521,9 +521,9 @@ async def test_console_system_command_ambiguous_exact_match_opens_apply_system_p
         console.query_one("#console-send-message", Button).press()
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth + 1, (
-            "the picker must have opened"
-        )
+        assert (
+            len(host.screen_stack) == baseline_depth + 1
+        ), "the picker must have opened"
         picker = host.screen_stack[-1]
         filter_input = picker.query_one(f"#{FILTER_INPUT_ID}", Input)
         assert filter_input.value == "Foo"
@@ -572,9 +572,9 @@ async def test_console_system_command_picker_selection_applies_system_prompt(tmp
         row.press()
         await pilot.pause(0.2)
 
-        assert len(host.screen_stack) == baseline_depth, (
-            "the picker must have dismissed"
-        )
+        assert (
+            len(host.screen_stack) == baseline_depth
+        ), "the picker must have dismissed"
         settings = console._session._ensure_active_console_session_settings()
         assert settings.system_prompt == "Sunny system."
 
@@ -802,7 +802,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
     async with host.run_test(size=(180, 48)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        baseline = console._active_console_settings_context_estimate()
+        baseline = console._context_spend._active_console_settings_context_estimate()
         assert baseline.used_tokens is not None
 
         console._session._apply_console_session_system_prompt(
@@ -810,7 +810,7 @@ async def test_console_context_estimate_counts_system_prompt_after_apply():
         )
         await pilot.pause(0.1)
 
-        after = console._active_console_settings_context_estimate()
+        after = console._context_spend._active_console_settings_context_estimate()
         assert after.used_tokens is not None
         assert after.used_tokens > baseline.used_tokens
 

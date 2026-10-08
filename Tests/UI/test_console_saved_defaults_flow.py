@@ -106,7 +106,9 @@ async def _use_saved_defaults(harness, pilot) -> ConsoleSettingsModal:
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_use_saved_defaults_stages_what_a_new_blank_chat_resolves(request) -> None:
+async def test_use_saved_defaults_stages_what_a_new_blank_chat_resolves(
+    request,
+) -> None:
     """AC#5: Use saved defaults stages exactly Ctrl+T's values for the pair.
 
     The chain has a value at every level a new chat reads: the model profile
@@ -209,7 +211,9 @@ async def test_saved_model_defaults_reach_a_chat_with_work_only_through_apply(
         settings = harness.screen
         settings.query_one("#settings-category-providers-models", Button).press()
         await _settle(harness, pilot)
-        settings.query_one("#settings-generation-defaults", Collapsible).collapsed = False
+        settings.query_one(
+            "#settings-generation-defaults", Collapsible
+        ).collapsed = False
         await _settle(harness, pilot)
         for selector, text in (
             ("#settings-model-profile-temperature", "0.25"),
@@ -299,7 +303,9 @@ async def test_a_blank_top_p_applies_summarises_and_sends(
         session_id = store.active_session_id
         work = ConsoleSessionSettings(**pair, top_p=0.5, source="user")
         store.replace_session_settings(session_id, work)
-        assert "top_p" not in supported_generation_fields(*pair.values(), app.app_config)
+        assert "top_p" not in supported_generation_fields(
+            *pair.values(), app.app_config
+        )
 
         modal = await _use_saved_defaults(harness, pilot)
         assert modal._build_draft().top_p is None
@@ -313,7 +319,7 @@ async def test_a_blank_top_p_applies_summarises_and_sends(
         applied = store.session_settings(session_id)
         assert (applied.top_p, applied.temperature) == (None, pytest.approx(0.3))
         word = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
-        summary = console._build_console_settings_summary_state()
+        summary = console._context_spend._build_console_settings_summary_state()
         assert f"P {word}" in summary.sampling_row, summary.sampling_row
 
         await pilot.press("ctrl+o")  # Chat settings reopens on the blank

@@ -1437,7 +1437,7 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         assert (
             app.app_config["api_settings"]["vllm"]["api_url"] == "http://127.0.0.1:9098"
         )
-        summary = console._build_console_settings_summary_state()
+        summary = console._context_spend._build_console_settings_summary_state()
         assert summary.provider_row == "Provider: vLLM"
         assert summary.model_row == "Model: chatbook-vllm"
         assert "127.0.0.1:8000" in summary.endpoint_row
@@ -1785,7 +1785,10 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
             controller.model,
             controller.base_url,
         ) == controller_before
-        assert summary_widget.state == console._build_console_settings_summary_state()
+        assert (
+            summary_widget.state
+            == console._context_spend._build_console_settings_summary_state()
+        )
         durable_after = app.chachanotes_db.get_conversation_by_id(conversation_id)
         assert durable_after is not None
         assert durable_after.get("metadata") == metadata_before

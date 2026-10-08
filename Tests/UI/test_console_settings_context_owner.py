@@ -1,5 +1,7 @@
 """Conversation settings waits for its exact finite context owner."""
 
+from Tests.UI.console_controller_stubs import context_spend_for_test
+
 import asyncio
 from types import SimpleNamespace
 
@@ -30,6 +32,7 @@ def _screen(tmp_path, monkeypatch):
         "session-1", role=ConsoleMessageRole.USER, content="hello", persist=True
     )
     screen = ChatScreen.__new__(ChatScreen)
+    context_spend_for_test(screen)
     pushed, tasks = [], []
 
     async def push(modal, **_kwargs):
@@ -52,7 +55,7 @@ def _screen(tmp_path, monkeypatch):
     screen._ensure_console_provider_gateway = lambda: SimpleNamespace(
         resolve_context_window=lambda _settings: 4096
     )
-    screen._console_settings_context_estimate_for_session = (
+    screen._context_spend._console_settings_context_estimate_for_session = (
         lambda *_args, **_kwargs: ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
     )
     screen._provider_readiness_app_config = lambda: {

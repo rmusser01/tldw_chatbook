@@ -27,6 +27,8 @@ degraded linearly with conversation length: 1.31 ms/key empty, 13.46 ms/key at
 
 from __future__ import annotations
 
+from tldw_chatbook.UI.Console_Modules import context_spend as context_spend_module
+
 import asyncio
 import inspect
 import json
@@ -392,9 +394,9 @@ async def _census_credential_ticks(
         console._poll_console_credential_readiness()
         elapsed += credential_interval
         while elapsed >= MAINTENANCE_PROBE_INTERVAL_SECONDS:
-            assert not await asyncio.to_thread(native_probe), (
-                "native maintenance requested"
-            )
+            assert not await asyncio.to_thread(
+                native_probe
+            ), "native maintenance requested"
             elapsed -= MAINTENANCE_PROBE_INTERVAL_SECONDS
 
 
@@ -606,9 +608,11 @@ async def _census(
             screen_module, "build_cost_snapshot", "cost_snapshot_rows"
         )
         _count_projected_rows(
-            screen_module, "_estimate_tokens_locally", "cost_projection_estimate_rows"
+            context_spend_module,
+            "_estimate_tokens_locally",
+            "cost_projection_estimate_rows",
         )
-        real_context_estimate = screen_module.build_console_context_estimate
+        real_context_estimate = context_spend_module.build_console_context_estimate
 
         def counted_context_estimate(messages: Any, *args: Any, **kwargs: Any) -> Any:
             if counting["on"]:
@@ -622,7 +626,9 @@ async def _census(
             return real_context_estimate(messages, *args, **kwargs)
 
         monkeypatch.setattr(
-            screen_module, "build_console_context_estimate", counted_context_estimate
+            context_spend_module,
+            "build_console_context_estimate",
+            counted_context_estimate,
         )
 
         def _count_calls(module: Any, name: str, key: str) -> None:
@@ -690,9 +696,9 @@ async def _census(
             await _settle(pilot)
             if storage_units:
                 # The serial monitor's held call drains an earlier native probe.
-                assert await asyncio.to_thread(probe_held.wait, 5), (
-                    "native probe never held"
-                )
+                assert await asyncio.to_thread(
+                    probe_held.wait, 5
+                ), "native probe never held"
 
             store = pilot.app.screen._ensure_console_chat_store()
             workspace_id = store.workspace_context.active_workspace_id
@@ -721,8 +727,8 @@ async def _census(
             # projection rebuild before the measured unchanged typing burst; a
             # real restored conversation also paints context and cost before input.
             screen = pilot.app.screen
-            screen._active_console_settings_context_estimate()
-            screen._build_console_cost_state()
+            screen._context_spend._active_console_settings_context_estimate()
+            screen._context_spend._build_console_cost_state()
             if known_evidence:
                 _settle_known_connection_evidence(pilot.app, screen)
                 await _settle(pilot, passes=10)  # Its one refresh is not typing.
@@ -1238,9 +1244,9 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
         "cost_projection_estimate_rows",
         "context_rows",
     ):
-        assert loaded[key] == 0, (
-            f"typing traversed settled transcript in {key}: {loaded[key]} rows"
-        )
+        assert (
+            loaded[key] == 0
+        ), f"typing traversed settled transcript in {key}: {loaded[key]} rows"
     assert loaded["context_estimate_max_rows"] <= 1
 
 

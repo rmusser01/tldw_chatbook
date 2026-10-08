@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.UI.Console_Modules.context_spend import ConsoleContextSpendController
+from Tests.UI.console_controller_stubs import context_spend_for_test
+
 import asyncio
 import inspect
 import json
@@ -162,8 +165,9 @@ def _bind_estimate_fixture(screen, store, controller, gateway):
     screen._console_composer_or_none = lambda: None
     screen._pending_console_launch_context = None
     screen._workspace = SimpleNamespace(_current_console_workspace_context=lambda: None)
-    screen._console_display_history = MethodType(
-        ChatScreen._console_display_history, screen
+    context_spend_for_test(screen)
+    screen._context_spend._console_display_history = MethodType(
+        ConsoleContextSpendController._console_display_history, screen._context_spend
     )
     screen._build_console_staged_context_state = MethodType(
         ChatScreen._build_console_staged_context_state, screen
@@ -202,8 +206,8 @@ async def test_actual_context_estimate_opens_no_second_native_config_route(
 
         def render():
             estimates.append(
-                ChatScreen._console_settings_context_estimate_for_session(
-                    screen, "session-1", settings=settings
+                ConsoleContextSpendController._console_settings_context_estimate_for_session(
+                    context_spend_for_test(screen), "session-1", settings=settings
                 )
             )
 

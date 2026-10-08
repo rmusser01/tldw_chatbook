@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from tldw_chatbook.UI.Console_Modules.context_spend import ConsoleContextSpendController
+from Tests.UI.console_controller_stubs import context_spend_for_test
+
 import asyncio
 import threading
 from contextlib import asynccontextmanager, contextmanager
@@ -61,8 +64,8 @@ def _render(screen, settings, estimates):
     return ChatScreen._run_console_config_sync(
         screen,
         lambda: estimates.append(
-            ChatScreen._console_settings_context_estimate_for_session(
-                screen, "session-1", settings=settings
+            ConsoleContextSpendController._console_settings_context_estimate_for_session(
+                context_spend_for_test(screen), "session-1", settings=settings
             )
         ),
     )

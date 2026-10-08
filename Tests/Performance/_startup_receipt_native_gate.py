@@ -26,8 +26,8 @@ SPECS = (
     ("tldw_chatbook.app", "TldwCli._push_initial_screen", "initial_screen"),
     ("tldw_chatbook.UI.Screens.chat_screen", "ChatScreen.compose_content", "compose"),
     (
-        "tldw_chatbook.UI.Screens.chat_screen",
-        "ChatScreen._build_console_cost_state",
+        "tldw_chatbook.UI.Console_Modules.context_spend",
+        "ConsoleContextSpendController._build_console_cost_state",
         "cost",
     ),
     (

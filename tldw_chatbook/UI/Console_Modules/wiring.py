@@ -119,6 +119,11 @@ from .review_selection import (
     ConsoleReviewSelectionController,
     ConsoleTrajectoryLaunch,
 )
+from .context_spend import (
+    ConsoleContextSpendController,
+    CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS,
+)
+from . import console_spend_projection as spend
 from .send_price import ConsoleSendPriceController
 from .session import ConsoleSessionController
 from .skill import ConsoleSkillController
@@ -544,7 +549,9 @@ def receive_console_visible_intent(
     if not screen._publish_console_authored_draft(
         draft, (composer.capture_draft_snapshot().generation, composer.edit_serial)
     ):
-        screen.app_instance.notify("Draft or chat changed; Send again.", severity="warning")
+        screen.app_instance.notify(
+            "Draft or chat changed; Send again.", severity="warning"
+        )
         return ""
     inputs = store.session_input_snapshot(session_id)
     launch, revision, _notice = runtime.snapshot_console_staged_evidence()
@@ -1203,6 +1210,8 @@ def build_console_controllers(
     read_trace_recovery_state: Callable[[], Callable[..., Any]],
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
+    display_pricing_catalog: Callable[[], Any],
+    build_cost_snapshot: Callable[..., Any],
 ) -> None:
     """Construct the Console screen's controllers and coordinators.
 
@@ -1238,6 +1247,43 @@ def build_console_controllers(
     Returns:
         None. The controllers are reachable as attributes of `screen`.
     """
+
+    screen._context_spend = ConsoleContextSpendController(
+        screen,
+        ensure_chat_store=lambda: screen._ensure_console_chat_store(),
+        current_chat_store=lambda: screen._console_chat_store,
+        ensure_chat_controller=lambda: screen._ensure_console_chat_controller(),
+        current_chat_controller=lambda: screen._console_chat_controller,
+        composer=lambda: screen._console_composer_or_none(),
+        pending_launch=lambda: screen._pending_console_launch_context,
+        build_staged_context_state=lambda launch: screen._build_console_staged_context_state(
+            launch
+        ),
+        active_settings_readiness=lambda: screen._active_console_settings_readiness(),
+        provider_model_display=lambda: screen._active_console_provider_model_display(),
+        active_session_settings=lambda: screen._session._ensure_active_console_session_settings(),
+        active_native_session=lambda: screen._session._active_native_console_session(),
+        workspace_context=lambda: screen._workspace._current_console_workspace_context(),
+        fleet_token_total=lambda: screen._agent._console_agent_fleet_token_total(),
+        sync_rail_system_line=lambda: screen._sync_console_rail_system_line(),
+        sync_agent_section=lambda: screen._sync_console_agent_section(),
+        request_context_allocation_reconcile=lambda: screen._request_console_context_allocation_reconcile(),
+        record_timer_created=lambda name: screen._record_ui_timer_created(name),
+        record_timer_stopped=lambda name: screen._record_ui_timer_stopped(name),
+        push_inspector=lambda **kwargs: screen._push_console_inspector(**kwargs),
+        context_window_for_display=lambda settings: spend.cached_context_window_for_display(
+            screen, screen._ensure_console_provider_gateway(), settings
+        ),
+        context_inputs=lambda controller,
+        session_id: spend.ConsoleContextReadSnapshot.for_screen(
+            screen, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+        ).inputs(controller, session_id),
+        display_pricing_catalog=lambda: display_pricing_catalog(),
+        build_cost_snapshot=lambda *args, **kwargs: build_cost_snapshot(
+            *args, **kwargs
+        ),
+        refresh_checked_cost_chip=lambda: screen._sync_console_cost_chip(),
+    )
     screen._change_review_projection = ConsoleChangeReviewProjection(
         runtime_accessor=lambda: screen._console_runtime(),
         conversation_id_accessor=lambda: screen._current_console_conversation_id(),
@@ -2035,9 +2081,9 @@ def build_console_controllers(
         build_current_provider_selection=lambda: (
             screen._build_console_provider_selection()
         ),
-        build_settings_summary=lambda: screen._build_console_settings_summary_state(),
+        build_settings_summary=lambda: screen._context_spend._build_console_settings_summary_state(),
         apply_settings_summary=lambda state: (
-            screen._apply_console_settings_summary_state(state)
+            screen._context_spend._apply_console_settings_summary_state(state)
         ),
         settings_initial_draft=lambda settings, context_policy, **kwargs: (
             screen._console_settings_initial_draft(settings, context_policy, **kwargs)
