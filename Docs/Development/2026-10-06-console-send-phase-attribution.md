@@ -1225,3 +1225,27 @@ found no remaining issue.
 TASK-34563.25 stays In Progress pending supported-host CI and combined-source Send
 verification. Latest pre-task25 Send samples and the unmet one-second/100ms targets
 remain as recorded above. No latency acceptance follows from this count reduction.
+
+### First task25 integrated timing attempt
+
+`mcp-registration-integrated-send-1` ran on saved combined
+`13b0523fceea5192ce0e7bfd4d89f989eba72e75` with the optional phase/detail observers
+off. It failed after34.641s, before any provider call; this is not a usable Send
+latency sample. All7,832 Python hashes and HEAD remained unchanged. Native Job,
+tree, identity, pipes and private profile retired normally; zero force, overflow
+or PID races.
+
+The first failure is the diagnostic's immediate custody assertion after the
+visible action returned `awaiting_review` in77ms. That supported hook path starts
+an asynchronous continuation before turn acceptance. While assertion teardown
+was underway, the continuation refused and a config-route worker hit
+`raw_resources_not_retired` for an existing uncertain selected source; Textual's
+WorkerFailed then masked the earlier assertion. The retained child-log tail does
+not identify the original transition that made that config state uncertain.
+Do not attribute it to registration or Actor startup without further evidence.
+
+Task25 plan9 scopes an observer correction: follow only the current exact
+screen/hooks/session/generation and accepted turn, using the already-established
+15s Send deadline. A refusal or changed identity still fails; no retry, review
+approval or deadline extension. The integration owner separately owns shutdown
+corrections. Overall latency and cross-platform qualification remain open.
