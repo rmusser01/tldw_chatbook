@@ -1,4 +1,4 @@
-"""Original mounted polling must not repeatedly prepare unchanged live state."""
+"""Warm, stock-source-qualified polling must not repeatedly prepare live state."""
 
 import contextlib
 import inspect
@@ -16,6 +16,23 @@ from Tests.UI.test_console_received_intent_feedback import (
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
+
+
+async def _qualify_warm_capture_sources(case):
+    """Initialize real sources before Send; cold fallback is a separate control."""
+    from tldw_chatbook.Chat.console_configuration_preparation import (
+        standard_console_configuration_sources,
+    )
+
+    app = case.console.app_instance
+    trust = await app.ensure_local_skill_trust_service()
+    # Publish through the original lazy property after its real async owner
+    # has physically completed. Do not inject a ready flag or replace a guard.
+    assert app.local_skills_service.trust_service is trust
+    assert standard_console_configuration_sources(
+        app, case.store, case.controller, session_id=case.session.id
+    ), "Warm original configuration sources are not eligible for worker capture"
+    assert not case.probe.entered.is_set()
 
 
 class _OriginalPreparingPolls:
@@ -107,7 +124,10 @@ async def test_ordinary_preparing_polls_do_not_repeat_live_core_reconciliation(
     record_property,
 ):
     """Count original completed work; a busy/deferred retry is not a valid RED."""
-    async with _received_console_case(monkeypatch, "poll-reconciliation") as case:
+    async with _received_console_case(
+        monkeypatch, "poll-reconciliation", durable=True
+    ) as case:
+        await _qualify_warm_capture_sources(case)
         _send(case, "enter")
         record = await _held_received_record(case)
         assert case.console._console_transcript_sync_timer is not None
@@ -143,6 +163,7 @@ async def test_in_place_runtime_disable_reaches_next_real_send(monkeypatch):
     async with _received_console_case(
         monkeypatch, "runtime-gate-next-send", durable=True
     ) as case:
+        await _qualify_warm_capture_sources(case)
         controller = case.controller
         assert controller._agent_runtime_enabled is True
         assert controller._agent_bridge is not None
