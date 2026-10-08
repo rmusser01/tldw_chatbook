@@ -1988,3 +1988,37 @@ those unrelated changes into task28. Scoped static/review evidence remains above
 product bytes were not changed after it. Task34563.28 can close under existing
 ADR-222/126. Main Send-under-one-second and input/render-under-100ms goals remain
 open; no new whole-Send latency claim follows from these targeted checks.
+
+
+### Config-entry partition inside the saved b4a intervals (2026-10-08)
+
+Root and the baseline lane independently partitioned the same 15 original config
+entry-to-first-yield intervals. Each contains exactly three nonoverlapping
+same-thread raw-scope entry intervals; their full yielded lifetimes would overlap
+and are not summed here. This uses existing saved events only, without another
+native run or observer change.
+
+| Nonoverlapping portion, summed seconds per Send | Send 1 | Send 2 | Send 3 |
+| --- | ---: | ---: | ---: |
+| Three raw-scope entry intervals | .354701 | .556913 | .931842 |
+| Second scope yield to third scope start | .289124 | .457623 | .684550 |
+| Before first raw scope | .107086 | .041933 | .066793 |
+| First scope yield to second scope start | .004655 | .006963 | .008296 |
+| Third scope yield to config snapshot yield | .058121 | .055026 | .085457 |
+| **Total config preparation** | **.813687** | **1.118458** | **1.776939** |
+
+The first outer raw admission accounts for .335618/.534387/.850807s of the first
+row. Both small nested admissions together take only .019083/.022526/.081035s;
+removing nested guards would not address most of this region and remains
+unselected. The largest remaining gap contains config lock-stream preparation,
+lock acquisition/checks and selector revalidation before the guarded config read.
+The final gap includes actual config reading and snapshot construction. Individual
+lock wait, parser and lock-stream timings are absent; no contention or pure-I/O
+attribution follows. No `get_user_data_dir` or `verified_user_data_directory`
+event occurs on the same thread inside these config intervals. The separately
+measured default hook-path getter runs afterward.
+
+The next source review therefore targets the original outer admission and
+lock-preparation boundaries. These are historical measured regions, not projected
+savings. Subsequent directory and lifetime changes require a new integrated quiet
+sample before current performance claims. All native runs remain sequential.
