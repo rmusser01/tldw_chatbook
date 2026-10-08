@@ -1561,44 +1561,6 @@ it calls: list each handler's awaits and what it re-reads after them.**
 
 ---
 
-## `self.log` raises NoActiveAppError once the app has exited — shutdown paths must use the module logger
-
-**PR #3016 review round, 2026-10-06.** Surfacing an ignored retention result
-in `LibraryFileNotesWorkspace.shutdown()` (Qodo finding 10) added
-`self.log.warning(...)` on the result-failure path. Sixteen workspace tests
-that end with `await workspace.shutdown()` AFTER `run_test()` exits (e.g.
-`test_folder_files_save_copy_keeps_editor_editable`) failed with
-`textual._context.NoActiveAppError` from `message_pump.py`: the DOM logger
-resolves the `active_app` ContextVar, which no longer exists once the app
-unmounted. The pre-existing exception branch had the same latent hazard but
-only fired on thrown errors; a result-level failure (`replica-error` from
-`replica=None`) is routine, so the trap fired on every such test. Confirmed
-by file-swap A/B (HEAD pass, fixed fail, bisected to the workspace file).
-Fixed by logging through the module-level loguru `logger`, which needs no
-app context. **What to do:** any code that can run during or after app
-teardown (shutdown, workers outliving the app, `call_from_thread` stragglers)
-must not use `self.log` / DOM logging — use the module logger, and treat
-"16 tests suddenly fail with NoActiveAppError" as this exact signature.
-
----
-
-## `width: auto` on a card container renders blank, and screenshot words
-are non-breaking (issue #365, 2026-10-07)
-
-Bisected a blank `ModalScreen` card property by property: every declaration
-was innocent except `width: auto` on the card `Container` — children
-measured 0×0 and the whole dialog exported as empty space, while the skip
-and auto-dismiss tests PASSED vacuously (`app.screen is not dialog` was
-true because nothing rendered). The repo's working `ConfirmationDialog`
-sizes its card with a FIXED `width` (`width: 60; height: auto`) — auto
-width on these containers is the trap, not the norm. Separately,
-`App.export_screenshot()` emits styled words as separate SVG `<text>`
-spans joined by `&#160;` (non-breaking space), so multi-word copy
-assertions like `"Session summary" in svg` fail on fully-rendered text.
-**Card modals: fixed width. Screenshot asserts: normalize `&#160;`/`\xa0`
-to spaces first, and pair any screen-popped assertion with a render
-assertion so it cannot pass vacuously.**
-
 ## A handler that awaits the removal of its own ancestor never returns -- and `asyncio.wait_for` cannot get you out (TASK-34000.4, 2026-10-04)
 
 **Incident.** Library ▸ Media ▸ "Export…" froze the whole app (review finding
@@ -1663,3 +1625,41 @@ pump tasks' `cr_await` chains to say who is parked and where (the failure
 message then names the handler), cut the cycle at one edge on a red run
 (`unpark`), and keep `@pytest.mark.timeout` as the outer bound -- SIGALRM is
 the only one that holds whatever the loop is doing.
+
+## `self.log` raises NoActiveAppError once the app has exited — shutdown paths must use the module logger
+
+**PR #3016 review round, 2026-10-06.** Surfacing an ignored retention result
+in `LibraryFileNotesWorkspace.shutdown()` (Qodo finding 10) added
+`self.log.warning(...)` on the result-failure path. Sixteen workspace tests
+that end with `await workspace.shutdown()` AFTER `run_test()` exits (e.g.
+`test_folder_files_save_copy_keeps_editor_editable`) failed with
+`textual._context.NoActiveAppError` from `message_pump.py`: the DOM logger
+resolves the `active_app` ContextVar, which no longer exists once the app
+unmounted. The pre-existing exception branch had the same latent hazard but
+only fired on thrown errors; a result-level failure (`replica-error` from
+`replica=None`) is routine, so the trap fired on every such test. Confirmed
+by file-swap A/B (HEAD pass, fixed fail, bisected to the workspace file).
+Fixed by logging through the module-level loguru `logger`, which needs no
+app context. **What to do:** any code that can run during or after app
+teardown (shutdown, workers outliving the app, `call_from_thread` stragglers)
+must not use `self.log` / DOM logging — use the module logger, and treat
+"16 tests suddenly fail with NoActiveAppError" as this exact signature.
+
+---
+
+## `width: auto` on a card container renders blank, and screenshot words
+are non-breaking (issue #365, 2026-10-07)
+
+Bisected a blank `ModalScreen` card property by property: every declaration
+was innocent except `width: auto` on the card `Container` — children
+measured 0×0 and the whole dialog exported as empty space, while the skip
+and auto-dismiss tests PASSED vacuously (`app.screen is not dialog` was
+true because nothing rendered). The repo's working `ConfirmationDialog`
+sizes its card with a FIXED `width` (`width: 60; height: auto`) — auto
+width on these containers is the trap, not the norm. Separately,
+`App.export_screenshot()` emits styled words as separate SVG `<text>`
+spans joined by `&#160;` (non-breaking space), so multi-word copy
+assertions like `"Session summary" in svg` fail on fully-rendered text.
+**Card modals: fixed width. Screenshot asserts: normalize `&#160;`/`\xa0`
+to spaces first, and pair any screen-popped assertion with a render
+assertion so it cannot pass vacuously.**
