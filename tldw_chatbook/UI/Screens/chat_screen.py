@@ -18090,30 +18090,24 @@ class ChatScreen(BaseAppScreen):
         )
         if argument_free_rewind:
             self._console_unknown_send_armed = None
-            opening_composer = composer if pending_send_token is None else None
-            opening_revision = None
-            if opening_composer is not None:
-                opening_revision = (
-                    opening_composer.edit_serial,
-                    opening_composer.capture_draft_snapshot().generation,
-                    draft,
+            opening_store = self._console_chat_store
+            if opening_store is None or opening_store.active_session_id != session_id:
+                self.app_instance.notify(
+                    "Console chat changed before rewind; the draft was kept in its original chat.",
+                    severity="warning",
                 )
+                return False
             opened = await self._console_command_rewind(parse)
-            if opened and opening_composer is not None and opening_revision is not None:
-                current = self._console_composer_or_none()
-                current_snapshot = (
-                    current.capture_draft_snapshot()
-                    if current is opening_composer
-                    else None
-                )
-                if (
-                    current is opening_composer
-                    and current.edit_serial == opening_revision[0]
-                    and current_snapshot is not None
-                    and current_snapshot.generation == opening_revision[1]
-                    and current.draft_text() == opening_revision[2]
-                ):
-                    self._clear_console_composer_draft()
+            if (
+                opened
+                and self._console_chat_store is opening_store
+                and opening_store.active_session_id == session_id
+                and composer is not None
+                and self._console_composer_or_none() is composer
+                and self._console_visible_draft_session_id == session_id
+                and composer.commit_captured_draft(stash)
+            ):
+                self._sync_console_command_popup()
             return False
 
         if parse.kind == KIND_COMMAND:  # Never on this pump (TASK-33622.16).
