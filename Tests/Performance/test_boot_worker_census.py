@@ -133,7 +133,7 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # Rail-preference persistence: observed on the FIRST boot of a fresh
         # profile (initial state write); allowlisted, not asserted present.
         ("_save_console_rail_preferences", "default"),
-        ("_prune_console_rail_preferences", "default"),
+        ("_prune_console_rail_preferences", "console-rail-prune"),
         ("_persist_sidebar_state_off_loop", "sidebar-state-persist"),
     }
 )

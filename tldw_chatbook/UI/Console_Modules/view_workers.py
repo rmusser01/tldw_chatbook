@@ -13,6 +13,7 @@ _GROUPS = frozenset(
         "console-readiness-config",
         "console-agent-history",
         "console-hook-refresh",
+        "console-rail-prune",
         "console-skill-discovery",
         "console-skill-trust-setup",
         "console-resume-navigation-startup",
