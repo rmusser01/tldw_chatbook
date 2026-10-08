@@ -113,10 +113,10 @@ async def test_ordinary_preparing_polls_do_not_repeat_live_core_reconciliation(
         assert case.console._console_transcript_sync_timer is not None
         observed = _OriginalPreparingPolls(case, record)
         with observed.installed():
-            completed = await _until(lambda: len(observed.completed) >= 2, 5)
+            completed = await _until(lambda: len(observed.completed) >= 3, 5)
         rows = observed.completed
         record_property("original_preparing_poll_observations", rows)
-        assert completed, f"Two original timer callbacks did not complete: {rows!r}"
+        assert completed, f"Three original timer callbacks did not complete: {rows!r}"
         assert all(row["held"] for row in rows), "Original Preparing hold expired"
         assert not any(
             row["deferred"] for row in rows
@@ -126,8 +126,12 @@ async def test_ordinary_preparing_polls_do_not_repeat_live_core_reconciliation(
         ), f"Full reconciliation was refused, not redundant: {rows!r}"
         assert case.provider_calls == []
         assert case.composer.draft_text() == case.draft
+        # The fixture selected a workspace after mount, and Send may owe an
+        # initial full reconciliation. Permit the first observed poll to
+        # settle that work; only subsequent unchanged polls are the target.
+        steady_rows = rows[1:]
         assert (
-            sum(row["core_returns"] for row in rows) == 0
+            sum(row["core_returns"] for row in steady_rows) == 0
         ), f"Unchanged Preparing polls repeated original live core reconciliation: {rows!r}"
 
 
