@@ -1663,3 +1663,28 @@ assertions like `"Session summary" in svg` fail on fully-rendered text.
 **Card modals: fixed width. Screenshot asserts: normalize `&#160;`/`\xa0`
 to spaces first, and pair any screen-popped assertion with a render
 assertion so it cannot pass vacuously.**
+
+## Focus on a container, and a screen's first lazy CSS load, restyle whole subtrees too (TASK-33628.5.1, 2026-10-05)
+
+The class-flip entry above has two twins that cost far more in a long Console chat.
+`Widget.watch_has_focus` calls `update_node_styles()`, so a focusable scroll container
+restyles every descendant each time it gains or loses focus. The Console's focus cue
+was a class on the transcript region, the ancestor of every row, so each focus change
+restyled every row twice. With 3,000 rows mounted, one change restyled 72,165 nodes and
+held the loop for 29-37 s. Even when the restyle is scoped, a `scrollbar-color` change
+inside it refreshes every descendant, because colours inherit: 7.2 s live with a
+scrolled-back window. The other twin is `App._load_screen_css`: the first push of a
+screen whose `CSS_PATH` is not loaded yet reads the sheet and then runs
+`stylesheet.update(app)`, which restyles every node of every screen. The first Delete
+receipt cost 9.3 s that way with 3,000 rows mounted.
+
+**What to do.** Count restyles by spying on `Stylesheet.apply` around the action, and
+count refreshes by spying on `Widget.refresh`; wall-clock hides which node paid. Scope a
+focus restyle to the nodes its rules can actually match:
+- override `watch_has_focus` to call `stylesheet.update_nodes((self,))`;
+- set an ancestor's cue class with `update=False`, then update that ancestor and the
+  one child its rule paints.
+Read a lazy sheet before the push with `stylesheet.read()` + `reparse()`. Each shortcut
+is exact only while no rule reaches another node, so pin that with a fidelity test.
+`Tests/UI/test_console_long_chat_bounds.py` has both: one walks every loaded rule, the
+other restyles the whole subtree and compares every computed style.
