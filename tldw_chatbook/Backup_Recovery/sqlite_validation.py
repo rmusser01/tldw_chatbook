@@ -99,6 +99,7 @@ class _Restrictions:
         self.shipped_checkpoint_migration = False
         self.shipped_checkpoint_rename = False
         self.fleet_progress_migration = False
+        self.browse_order_migration = False
         self.sargable_migration = False
         self.canvas_schema = False
         self.changing_schema_trust = False
@@ -342,6 +343,31 @@ class _Restrictions:
                         and second == "fleet_progress_messages"
                         or action == sqlite3.SQLITE_REINDEX
                         and first == "idx_fleet_progress_conversation_sequence"
+                        or action == sqlite3.SQLITE_INSERT
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
+                )
+                allowed |= (
+                    self.browse_order_migration
+                    and database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_INDEX
+                        and first
+                        in {
+                            "idx_conversations_last_modified",
+                            "idx_conversations_archived_browse_order",
+                        }
+                        and second == "conversations"
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first
+                        in {
+                            "idx_conversations_last_modified",
+                            "idx_conversations_archived_browse_order",
+                        }
                         or action == sqlite3.SQLITE_INSERT
                         and first == "sqlite_master"
                         or action == sqlite3.SQLITE_UPDATE
@@ -627,6 +653,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         CHACHANOTES_V77_SCHEMAS,
         CHACHANOTES_V78_SCHEMAS,
         CHACHANOTES_V79_SCHEMAS,
+        CHACHANOTES_V80_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -647,6 +674,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         *CHACHANOTES_V77_SCHEMAS,
         *CHACHANOTES_V78_SCHEMAS,
         *CHACHANOTES_V79_SCHEMAS,
+        *CHACHANOTES_V80_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -865,6 +893,7 @@ def _validate_candidate(
                         CHACHANOTES_V76_SHIPPED_SCHEMAS,
                         CHACHANOTES_V77_SCHEMAS,
                         CHACHANOTES_V78_SCHEMAS,
+                        CHACHANOTES_V79_SCHEMAS,
                     )
 
                     actual_sql = tuple(
@@ -877,6 +906,7 @@ def _validate_candidate(
                         )
                         or version == 77 and actual_sql in CHACHANOTES_V77_SCHEMAS
                         or version == 78 and actual_sql in CHACHANOTES_V78_SCHEMAS
+                        or version == 79 and actual_sql in CHACHANOTES_V79_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -896,7 +926,7 @@ def _validate_candidate(
                         if (
                             shipped_checkpoint and version == 76
                             or installed.owner_id == "db.chachanotes.primary"
-                            and version in (77, 78)
+                            and version in (77, 78, 79)
                         ):
                             migration = (
                                 Path(__file__).resolve().parents[1]
@@ -907,12 +937,15 @@ def _validate_candidate(
                                     if version == 77
                                     else "chachanotes_v78_to_v79_sargable_timestamp_normalization.sql"
                                     if version == 78
+                                    else "chachanotes_v79_to_v80_conversations_browse_order_index.sql"
+                                    if version == 79
                                     else "chachanotes_v76_to_v77_agent_chat_starts.sql"
                                 )
                             )
                             restrictions.shipped_checkpoint_migration = version == 76
                             restrictions.fleet_progress_migration = version == 77
                             restrictions.sargable_migration = version == 78
+                            restrictions.browse_order_migration = version == 79
                             try:
                                 pending = ""
                                 for line in migration.read_text(
@@ -944,6 +977,7 @@ def _validate_candidate(
                                 restrictions.shipped_checkpoint_migration = False
                                 restrictions.fleet_progress_migration = False
                                 restrictions.sargable_migration = False
+                                restrictions.browse_order_migration = False
                         for statement in statements:
                             if restrictions.expired():
                                 raise InterruptedError

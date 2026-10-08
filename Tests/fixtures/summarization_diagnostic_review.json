@@ -1,8 +1,8 @@
 {
     "schema_version": 1,
     "manifest_boundary": {
-        "checked_normalized_inventory_sha256": "d520941d73ab00d874e4333d4c916fae4fca9fb2de36d8c2a758a67ecf295039",
-        "origin_dev_generated_normalized_inventory_sha256": "d520941d73ab00d874e4333d4c916fae4fca9fb2de36d8c2a758a67ecf295039",
+        "checked_normalized_inventory_sha256": "99f4821a791f47079cd4a260d287a6e90afb8e10c7b87549d22af49a2542251e",
+        "origin_dev_generated_normalized_inventory_sha256": "99f4821a791f47079cd4a260d287a6e90afb8e10c7b87549d22af49a2542251e",
         "owned_entries": [
             {
                 "path": "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py",
@@ -11396,16 +11396,10 @@
                 ],
                 "captures_exception": false
             },
-            "outcome": "metadata",
-            "current": {
-                "method": "info",
-                "event": "OpenRouter Stream: Content received",
-                "occurrence": 1,
-                "message_shape": "Constant(value='OpenRouter Stream: Content received')",
-                "expressions": [],
-                "captures_exception": false
-            },
-            "navigation_line": 1777
+            "outcome": "deleted",
+            "current": null,
+            "navigation_line": 1777,
+            "deletion_reason": "Per-chunk 'OpenRouter Stream: Content received' INFO log removed (TASK-34650 review-B B26: one diagnostic per streamed chunk); the stream-completion and error diagnostics remain."
         },
         {
             "site_id": "general-23c7a8609625db2b",

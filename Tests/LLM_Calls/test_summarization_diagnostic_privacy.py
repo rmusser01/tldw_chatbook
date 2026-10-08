@@ -2326,7 +2326,9 @@ def test_manifest_boundary_changes_only_summarization_owner_diagnostics() -> Non
         # site and the per-attempt network log site joined the deleted
         # ledger (10 -> 12). deepseek/mistral keep their frozen status
         # logs verbatim (bound to the typed error) per the freeze.
-        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 12,
+        # TASK-34650 review-B B26 removed the per-chunk "Content received"
+        # INFO log (12 -> 13); stream completion stays frozen.
+        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": 13,
     }
     for path, starting_count in MODULE_COUNTS.items():
         assert owner_maps["generated"][path]["call_count"] == (

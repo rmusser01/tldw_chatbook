@@ -468,9 +468,11 @@ class _CoreAdapter:
             CHACHANOTES_NATIVE_V76_TO_V77_SQL,
             CHACHANOTES_V77_SCHEMAS,
             CHACHANOTES_V78_SCHEMAS,
+            CHACHANOTES_V79_SCHEMAS,
             CHACHANOTES_FLEET_V77_TO_V78_SQL,
             CHACHANOTES_SARGABLE_V78_TO_V79_SQL,
-            CHACHANOTES_V79_SCHEMAS,
+            CHACHANOTES_BROWSE_V79_TO_V80_SQL,
+            CHACHANOTES_V80_SCHEMAS,
             CORE_SCHEMAS,
             PROMPTS_V4_SCHEMA,
             PROMPTS_V4_TO_V5_SQL,
@@ -497,13 +499,19 @@ class _CoreAdapter:
             # v78->v79 step migrates such candidates up to the v79 head,
             # where every v78-lineage variant has its own v79 successor
             # (head + dictionary cover V79[0]/[1]; these are V79[2:]).
+            # ADR-216: the v79 lineage rides the same pattern under the v80
+            # head (head + dictionary cover V80[0]/[1]; these are V79[2:]).
             schemas += tuple((78, schema) for schema in CHACHANOTES_V78_SCHEMAS)
-            schemas += tuple((79, schema) for schema in CHACHANOTES_V79_SCHEMAS[2:])
-            versions += (78, 77, 76, 75)
+            schemas += tuple((79, schema) for schema in CHACHANOTES_V79_SCHEMAS)
+            # ADR-216: every v79-lineage variant has its own v80 successor
+            # under the v80 head (head + dictionary cover V80[0]/[1]).
+            schemas += tuple((80, schema) for schema in CHACHANOTES_V80_SCHEMAS[2:])
+            versions += (79, 78, 77, 76, 75)
             migrations = (
                 (76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),
                 (77, 78, CHACHANOTES_FLEET_V77_TO_V78_SQL),
                 (78, 79, CHACHANOTES_SARGABLE_V78_TO_V79_SQL),
+                (79, 80, CHACHANOTES_BROWSE_V79_TO_V80_SQL),
             )
         elif self.owner_id == "db.prompts.primary":
             schemas += ((4, PROMPTS_V4_SCHEMA),)

@@ -252,7 +252,7 @@ def test_chat_v76_installed_backup_and_shared_subscription_schema(tmp_path, requ
         core = next(
             a for a in core_adapters() if a.owner_id == "db.chachanotes.primary"
         )
-        assert core.schema_policy().schema_sql[0] == (78, actual)
+        assert core.schema_policy().schema_sql[0] == (79, actual)
         assert core.validate(path) == ()
         current = tmp_path / "core-current.sqlite"
         assert db.backup_database(str(current))
@@ -272,7 +272,7 @@ def test_chat_v76_installed_backup_and_shared_subscription_schema(tmp_path, requ
         assert old.read_bytes() == old_bytes
         with db.transaction() as cursor:
             cursor.execute(
-                "UPDATE db_schema_version SET version = 78 WHERE schema_name = ?",
+                "UPDATE db_schema_version SET version = 79 WHERE schema_name = ?",
                 (db._SCHEMA_NAME,),
             )
         subscriptions = SubscriptionsDB(path)
@@ -509,7 +509,7 @@ def test_existing_chat_migrates_and_progress_metadata_never_exposes_bodies(
                 (db._SCHEMA_NAME,),
             )
             .fetchone()[0]
-            == 78
+            == 79
         )
         if version >= 74:
             assert tuple(
@@ -791,11 +791,11 @@ async def test_threaded_saved_child_report_retires_only_new_chat_db_cache(
 
 
 @private_profile_test
-def test_v77_progress_migration_rolls_back_partial_ddl_then_retries(
+def test_v78_browse_index_migration_rolls_back_partial_ddl_then_retries(
     tmp_path, request, monkeypatch
 ):
     path = tmp_path / "rollback.sqlite"
-    with chachanotes_db_at_version(path, 77) as old:
+    with chachanotes_db_at_version(path, 78) as old:
         conversation_id = old.add_conversation({"title": "Retained after rollback"})
         with old.transaction() as cursor:
             cursor.execute(
@@ -811,23 +811,24 @@ def test_v77_progress_migration_rolls_back_partial_ddl_then_retries(
         receipt = _retain_hook_receipt(old, conversation_id)
     original = CharactersRAGDB._execute_migration_statements
 
-    def fail_after_table(db, cursor, script, label):
-        assert label == "V77→V78"
+    def fail_after_first_index(db, cursor, script, label):
+        assert label == "V78→V79"
         first_statement = script[: script.index(";") + 1]
         original(db, cursor, first_statement, label)
         assert (
             cursor.execute(
-                "SELECT 1 FROM sqlite_schema WHERE name = 'fleet_progress_messages'"
+                "SELECT 1 FROM sqlite_schema WHERE name = "
+                "'idx_conversations_last_modified'"
             ).fetchone()
             is not None
         )
-        raise sqlite3.OperationalError("injected after progress table creation")
+        raise sqlite3.OperationalError("injected after first browse index")
 
     with monkeypatch.context() as patch:
         patch.setattr(
-            CharactersRAGDB, "_execute_migration_statements", fail_after_table
+            CharactersRAGDB, "_execute_migration_statements", fail_after_first_index
         )
-        with pytest.raises(SchemaError, match="V77 to V78"):
+        with pytest.raises(SchemaError, match="V78 to V79"):
             CharactersRAGDB(path, "failed-upgrade")
     with open_recovery_validation(
         "db.chachanotes.primary", path, writable=False
@@ -835,11 +836,12 @@ def test_v77_progress_migration_rolls_back_partial_ddl_then_retries(
         assert connection.execute(
             "SELECT version FROM db_schema_version WHERE schema_name = ?",
             (CharactersRAGDB._SCHEMA_NAME,),
-        ).fetchone() == (77,)
+        ).fetchone() == (78,)
         assert (
             connection.execute(
                 "SELECT name FROM sqlite_schema WHERE name IN "
-                "('fleet_progress_messages', 'idx_fleet_progress_conversation_sequence')"
+                "('idx_conversations_last_modified', "
+                "'idx_conversations_archived_browse_order')"
             ).fetchall()
             == []
         )
@@ -855,7 +857,7 @@ def test_v77_progress_migration_rolls_back_partial_ddl_then_retries(
         )
     db = CharactersRAGDB(path, "retry-upgrade")
     try:
-        assert db._get_db_version(db.get_connection()) == 78
+        assert db._get_db_version(db.get_connection()) == 79
         assert tuple(
             db.get_connection()
             .execute(

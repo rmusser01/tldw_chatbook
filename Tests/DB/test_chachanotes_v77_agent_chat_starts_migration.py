@@ -68,7 +68,7 @@ def test_v77_keeps_every_predecessor_checkpoint_column_and_indexes(
             .execute("SELECT * FROM console_dispatch_checkpoints")
             .fetchone()
         )
-        assert reopened._get_db_version(reopened.get_connection()) == 79
+        assert reopened._get_db_version(reopened.get_connection()) == 80
         assert row.pop("agent_chat_start_attempt_id") is None
         assert row == before
         indexes = {
@@ -379,19 +379,22 @@ def test_legacy_native76_upgrade_preserves_exact_receipts(
             )
         )
     from tldw_chatbook.DB.recovery_core_schema import (
+        _browse_order_catalog,
         _fleet_progress_catalog,
         _sargable_catalog,
     )
 
     catalog = tuple(
         (sql,)
-        for sql in _sargable_catalog(_fleet_progress_catalog(tuple(row[0] for row in catalog)))
+        for sql in _browse_order_catalog(
+            _sargable_catalog(_fleet_progress_catalog(tuple(row[0] for row in catalog)))
+        )
     )
     for _ in range(2):
         db = CharactersRAGDB(path, client_id="reopen-native")
         try:
             connection = db.get_connection()
-            assert db._get_db_version(connection) == 79
+            assert db._get_db_version(connection) == 80
             assert (
                 tuple(
                     tuple(row)
@@ -460,11 +463,11 @@ def test_v77_constructor_catalog_matches_exact_native76_capture(
 ):
     import hashlib
     from tldw_chatbook.DB.recovery_core_schema import (
-        CHACHANOTES_V79_SCHEMAS,
+        CHACHANOTES_V80_SCHEMAS,
         _CHAT_DICTIONARIES_INITIAL_TRIGGER,
         _CHAT_DICTIONARIES_UPDATED_TRIGGER,
     )
-    from tldw_chatbook.DB.recovery_operations import _SUBSCRIPTIONS_SARGABLE_SCHEMAS
+    from tldw_chatbook.DB.recovery_operations import _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS
 
     path = tmp_path / "capture.sqlite"
     if subscriptions:
@@ -485,7 +488,9 @@ def test_v77_constructor_catalog_matches_exact_native76_capture(
             )
         )
         expected = (
-            _SUBSCRIPTIONS_SARGABLE_SCHEMAS[0] if subscriptions else CHACHANOTES_V79_SCHEMAS[0]
+            _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS[0]
+            if subscriptions
+            else CHACHANOTES_V80_SCHEMAS[0]
         )
         if dictionary:
             expected = tuple(
@@ -495,7 +500,7 @@ def test_v77_constructor_catalog_matches_exact_native76_capture(
                 for sql in expected
             )
         assert actual == expected
-        assert db._get_db_version(connection) == 79
+        assert db._get_db_version(connection) == 80
         print(
             json.dumps(
                 {
@@ -579,7 +584,7 @@ def test_legacy_queue_constructor_preserves_predecessor(
         )
         assert row.pop("agent_chat_start_attempt_id") is None
         assert row == before
-        assert db._get_db_version(db.get_connection()) == 79
+        assert db._get_db_version(db.get_connection()) == 80
     finally:
         db.close_connection()
 
@@ -680,7 +685,7 @@ def test_populated_legacy_queue_paths_are_lossless(tmp_path, dictionary, route):
         _shipped76,
     )
     from tldw_chatbook.DB.recovery_core_schema import (
-        CHACHANOTES_V79_SCHEMAS,
+        CHACHANOTES_V80_SCHEMAS,
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
     )
 
@@ -769,9 +774,9 @@ def test_populated_legacy_queue_paths_are_lossless(tmp_path, dictionary, route):
             assert catalog == (
                 CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
                 if dictionary
-                else CHACHANOTES_V79_SCHEMAS[0]
+                else CHACHANOTES_V80_SCHEMAS[0]
             )
-            assert db._get_db_version(connection) == 79
+            assert db._get_db_version(connection) == 80
             assert not connection.execute("PRAGMA foreign_key_check").fetchall()
             assert tuple(connection.execute("PRAGMA quick_check").fetchone()) == ("ok",)
             assert connection.execute(

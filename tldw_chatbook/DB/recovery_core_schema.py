@@ -896,9 +896,37 @@ def _sargable_catalog(schema):
 CHACHANOTES_V79_SCHEMAS = tuple(
     _sargable_catalog(schema) for schema in CHACHANOTES_V78_SCHEMAS
 )
-CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V79_SCHEMAS[1]
+
+# ADR-216: v80 appends the two browse-order indexes to every frozen v79
+# catalog; old catalogs stay frozen.
+CHACHANOTES_BROWSE_ORDER_INDEX_SQL = (
+    "CREATE INDEX idx_conversations_last_modified\n  ON conversations(last_modified DESC, id DESC)",
+    "CREATE INDEX idx_conversations_archived_browse_order\n  ON conversations(archived, last_modified DESC, id DESC)",
+)
+
+
+def _browse_order_catalog(schema):
+    """Merge the two frozen browse-order indexes in sqlite_schema type/name order."""
+
+    def catalog_key(sql):
+        import re
+
+        match = re.match(
+            r"""CREATE (?:UNIQUE |VIRTUAL )?(INDEX|TABLE|TRIGGER|VIEW) (?:IF NOT EXISTS )?["`']?([^"`' (]+)""",
+            sql,
+        )
+        assert match is not None
+        return match[1].lower(), match[2]
+
+    return tuple(sorted(schema + CHACHANOTES_BROWSE_ORDER_INDEX_SQL, key=catalog_key))
+
+
+CHACHANOTES_V80_SCHEMAS = tuple(
+    _browse_order_catalog(schema) for schema in CHACHANOTES_V79_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V80_SCHEMAS[1]
 CORE_SCHEMAS = tuple(
-    (owner, 79, CHACHANOTES_V79_SCHEMAS[0])
+    (owner, 80, CHACHANOTES_V80_SCHEMAS[0])
     if owner == "db.chachanotes.primary"
     else (owner, version, schema)
     for owner, version, schema in CORE_SCHEMAS
@@ -906,4 +934,8 @@ CORE_SCHEMAS = tuple(
 # The installed .sql file owns DDL; this fixed step owns only its stamp.
 CHACHANOTES_SARGABLE_V78_TO_V79_SQL = (
     "UPDATE db_schema_version SET version=79 WHERE schema_name='rag_char_chat_schema' AND version=78",
+)
+# The installed .sql file owns DDL; this fixed step owns only its stamp.
+CHACHANOTES_BROWSE_V79_TO_V80_SQL = (
+    "UPDATE db_schema_version SET version=80 WHERE schema_name='rag_char_chat_schema' AND version=79",
 )
