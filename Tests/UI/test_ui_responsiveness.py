@@ -385,6 +385,7 @@ def _make_sync_probe_screen(monitor):
     return screen
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_sync_records_worker_lifecycle():
     """The sync brackets its stage pipeline in started/finished recording."""
@@ -404,6 +405,7 @@ async def test_console_sync_records_worker_lifecycle():
     assert monitor.snapshot().active_workers == 0
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_sync_records_finished_even_when_a_stage_raises():
     """A failing stage must not leak an active-worker record."""

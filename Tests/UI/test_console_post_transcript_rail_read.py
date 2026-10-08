@@ -18,6 +18,7 @@ from tldw_chatbook.Backup_Recovery import (
 )
 from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Console_Modules.attach_visit import ConsoleAttachVisit
 
 pytestmark = pytest.mark.bootstrap_profile
 
@@ -67,6 +68,11 @@ async def test_final_rail_refresh_after_transcript_rechecks_display_owner(
         transcript_called.set()
 
     screen._console_sync_in_progress = screen._console_sync_requested = False
+    # This display-only fixture owns no mounted runtime attachment.
+    screen._current_console_attach_visit = lambda: ConsoleAttachVisit(
+        None, screen, None, 0, False
+    )
+    screen._console_attach_sync_complete = False
     screen._console_chat_controller = controller
     screen._message = SimpleNamespace(reconcile_console_speech_context=noop)
     screen._image = SimpleNamespace(

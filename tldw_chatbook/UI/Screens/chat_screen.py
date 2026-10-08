@@ -161,6 +161,7 @@ from ..Console_Modules.retrieval import (
 )
 from ..Console_Modules.transcript import _ConsoleTranscriptReadingState
 from ..Console_Modules import console_spend_projection as spend
+from ..Console_Modules.attach_visit import ConsoleAttachVisit
 from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
@@ -7314,6 +7315,7 @@ class ChatScreen(BaseAppScreen):
     _console_attach_reconcile_running: bool = False
     _console_resume_after_reconcile: bool = False
     _console_attach_sync_complete: bool = False
+    _console_attach_visit_generation: int = 0
     _console_attach_runtime_reconciled: bool = False
     _console_attach_view_started: bool = False
     _console_attach_resume_in_progress: bool = False
@@ -7520,6 +7522,7 @@ class ChatScreen(BaseAppScreen):
         self._console_attach_reconcile_running = False
         self._console_resume_after_reconcile = False
         self._console_attach_sync_complete = False
+        self._console_attach_visit_generation = 0
         self._console_attach_runtime_reconciled = False
         self._console_attach_view_started = False
         self._console_attach_resume_in_progress = False
@@ -16682,6 +16685,15 @@ class ChatScreen(BaseAppScreen):
         self._console_mount_visit_refreshed = True
         self.call_after_refresh(self._reconcile_console_after_attach)
 
+    def _current_console_attach_visit(self) -> ConsoleAttachVisit:
+        return ConsoleAttachVisit(
+            self._console_runtime(),
+            self,
+            self._console_runtime_attachment_generation,
+            self._console_attach_visit_generation,
+            not _console_screen_is_torn_down(self) and self._is_active_console_screen(),
+        )
+
     async def _reconcile_console_after_attach(self) -> None:
         """Complete each retryable attach phase exactly once."""
         if (
@@ -16690,6 +16702,9 @@ class ChatScreen(BaseAppScreen):
             or _console_screen_is_torn_down(self)
         ):
             return
+        visit = self._current_console_attach_visit()
+        if not visit.can_complete(visit):
+            return
         self._console_attach_reconcile_running = True
         failure: Exception | None = None
         try:
@@ -16697,14 +16712,18 @@ class ChatScreen(BaseAppScreen):
                 # An explicit Resume owns its final presentation. An early sync
                 # creates a competing default session and paints it first.
                 if not self._resume_navigation_startup_in_progress:
-                    await self._sync_native_console_chat_ui()
+                    completed = await self._sync_native_console_chat_ui()
+                    # Another full refresh may finish while this call only
+                    # awaits coalesced tabs. Its current-visit completion wins.
+                    if completed is False and not self._console_attach_sync_complete:
+                        return
+                if not visit.can_complete(self._current_console_attach_visit()):
+                    return
                 self._console_attach_sync_complete = True
+            if not visit.can_complete(self._current_console_attach_visit()):
+                return
             if not self._console_attach_runtime_reconciled:
-                runtime = self._console_runtime()
-                generation = getattr(
-                    self, "_console_runtime_attachment_generation", None
-                )
-                if not runtime.finish_view_reconciliation(self, generation):
+                if not visit.runtime.finish_view_reconciliation(self, visit.generation):
                     return
                 self._console_attach_runtime_reconciled = True
             if not self._console_attach_view_started:
@@ -16730,6 +16749,16 @@ class ChatScreen(BaseAppScreen):
                 )
         finally:
             self._console_attach_reconcile_running = False
+            current = self._current_console_attach_visit()
+            if not visit.same_visit(current):
+                failure = None
+                # Resume can have met this invocation's running flag. Wake
+                # that newer visit once; ordinary deferral never spins here.
+                if (
+                    current.can_complete(current)
+                    and not self._console_attach_reconciled
+                ):
+                    self.call_after_refresh(self._reconcile_console_after_attach)
         if failure is None or _console_screen_is_torn_down(self):
             return
         retry_index = self._console_attach_reconcile_retry_count
@@ -18516,7 +18545,7 @@ class ChatScreen(BaseAppScreen):
                     group="console-sync",
                 )
 
-    async def _sync_native_console_chat_ui(self) -> None:
+    async def _sync_native_console_chat_ui(self) -> bool:
         """Refresh visible Console-native state after send/stop transitions.
 
         **A torn-down screen renders nothing** (task-15860, cross-suite
@@ -18544,12 +18573,12 @@ class ChatScreen(BaseAppScreen):
             # flag keeps a resurrected screen from inheriting this one's
             # coalesced request.
             self._console_sync_requested = False
-            return
+            return False
         if getattr(self, "_console_sync_maintenance_paused", False) or getattr(
             self, "_console_control_bar_replay_whole_sync", False
         ):
             self._console_sync_requested = True
-            return
+            return False
         if self._console_sync_in_progress:
             self._console_sync_requested = True
             try:
@@ -18557,7 +18586,8 @@ class ChatScreen(BaseAppScreen):
             except Exception:
                 if not _console_screen_is_torn_down(self):
                     raise
-            return
+            return False
+        visit = self._current_console_attach_visit()
         self._console_sync_in_progress = True
         self._record_ui_worker_started("console-sync")
 
@@ -18590,7 +18620,7 @@ class ChatScreen(BaseAppScreen):
                 self._console_h3_known_session_ids = live_session_ids
                 self._image._reconcile_h3_image_edit_completions(store)
             if not sync_live_state(self._sync_console_chat_core_state):
-                return
+                return False
             self._session._sync_console_session_draft()
             # PR#757 review (comment 4): warm the effective-scope cache for
             # an already-active persisted session before anything below
@@ -18646,7 +18676,7 @@ class ChatScreen(BaseAppScreen):
                 # Roleplay materializes current message projections. Keep its
                 # fresh authority check before publishing those messages.
                 if not sync_live_state(self._dispatch_active_console_roleplay_refresh):
-                    return
+                    return False
                 self._sync_console_workspace_context()
                 project_instruction_ui.sync_project_instruction_status_for_screen(self)
                 # Passive settings refresh may be slow. Transcript/controls
@@ -18656,7 +18686,7 @@ class ChatScreen(BaseAppScreen):
                 if self._sync_console_rail_and_controls() is False:
                     self._console_control_bar_replay_whole_sync = True
                     self._request_console_control_bar_sync(delayed=True)
-                    return
+                    return False
                 # Delayed persistence and temporary-chat promotion update the
                 # session ledger after Apply returns. Read the current owner
                 # after transcript publication before updating these surfaces.
@@ -18675,9 +18705,20 @@ class ChatScreen(BaseAppScreen):
                 ):
                     self._console_control_bar_replay_whole_sync = True
                     self._request_console_control_bar_sync(delayed=True)
-                    return
+                    return False
             self._dispatch_console_rail_preference_prune()
             self._session.schedule_manual_read_acknowledgement()
+            if (
+                not self._console_attach_sync_complete
+                and visit.can_complete(self._current_console_attach_visit())
+            ):
+                self._console_attach_sync_complete = True
+                if not (
+                    self._console_attach_reconciled
+                    or self._console_attach_reconcile_running
+                ):
+                    self.call_after_refresh(self._reconcile_console_after_attach)
+            return True
         except Exception:
             # Teardown-scoped ONLY. A tick that was mid-flight when the
             # screen was closed is querying widgets Textual has already
@@ -18696,6 +18737,7 @@ class ChatScreen(BaseAppScreen):
                 "render.",
             )
             # fmt: on
+            return False
         finally:
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
@@ -23653,6 +23695,7 @@ class ChatScreen(BaseAppScreen):
           install is idempotent), and the previews cache -- all correct to
           leave running/installed across a suspend.
         """
+        self._console_attach_visit_generation += 1
         if not self._hooks.review_open:
             self._hooks.cancel_pending()
         for resume_worker in (
