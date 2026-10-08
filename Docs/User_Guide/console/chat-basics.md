@@ -552,9 +552,9 @@ In a long chat Console draws only the part of the transcript around what you
 are reading, and loads more as you scroll. When a message is selected for
 you that is far outside that part, or has more than a few screens of
 messages coming back below it — the first message an **Undo** restores,
-say — the transcript
-jumps to it: the message is drawn at the top, with the messages after it
-below, and the rest load as you scroll (**End** goes to the newest).
+say — the transcript jumps to it: the message is drawn at the top, with
+the messages after it below, and the rest load as you scroll (**End** goes
+to the newest).
 
 The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
 text-response **< / >** controls when applicable, **Fork**,
