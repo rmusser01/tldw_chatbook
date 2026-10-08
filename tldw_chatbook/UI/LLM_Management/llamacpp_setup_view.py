@@ -454,9 +454,10 @@ class LlamaCppSetupView(Vertical):
         if message != self._current_preview_text:
             self._current_preview_text = message
             widget.update(message)
-        self.query_one("#llamacpp-preview-title", Static).update(
-            "Next launch — current server unchanged" if active else "Launch draft"
-        )
+        title = self.query_one("#llamacpp-preview-title", Static)
+        title_copy = "Next launch — current server unchanged" if active else "Launch draft"
+        if str(title.renderable) != title_copy:
+            title.update(title_copy)
 
     def invalidate(self) -> None:
         self._departing = None
@@ -599,24 +600,22 @@ class LlamaCppSetupView(Vertical):
             and not self._local_claim.cancel_event.is_set()
         ):
             status = "Starting process. Waiting for API readiness…"
-        self.query_one("#llamacpp-connection-status", Static).update(status)
+        connection_status = self.query_one("#llamacpp-connection-status", Static)
+        if str(connection_status.renderable) != status:
+            connection_status.update(status)
         bind_status = self.query_one("#llamacpp-bind-status", Static)
-        exposed = active and bool(
-            getattr(self._local_claim, "_connection_exposed", False)
-        )
+        exposed = active and bool(getattr(self._local_claim, "_connection_exposed", False))
         bind_status.display = exposed
-        bind_status.update(
+        bind_copy = (
             "Server listens beyond loopback. Review server authentication and network access."
             if exposed
             else ""
         )
+        if str(bind_status.renderable) != bind_copy:
+            bind_status.update(bind_copy)
         for action in ("use-console", "make-default"):
-            self.query_one("#llamacpp-" + action, Button).disabled = (
-                snapshot.target is None
-            )
-        self.query_one("#llamacpp-check", Button).disabled = (
-            snapshot.state == "checking"
-        )
+            self.query_one("#llamacpp-" + action, Button).disabled = snapshot.target is None
+        self.query_one("#llamacpp-check", Button).disabled = snapshot.state == "checking"
         self.query_one("#llamacpp-existing-url", Input).disabled = active
         model = self.query_one("#llamacpp-connection-model", Select)
         if snapshot.model_ids:
@@ -629,9 +628,7 @@ class LlamaCppSetupView(Vertical):
             self._last_models = ()
             with model.prevent(Select.Changed):
                 model.set_options([(value, value) for value in snapshot.model_ids])
-                model.value = (
-                    snapshot.target.model_id if snapshot.target else Select.NULL
-                )
+                model.value = snapshot.target.model_id if snapshot.target else Select.NULL
         model.disabled = active or not self._last_models
         self._render_diagnostics()
 
