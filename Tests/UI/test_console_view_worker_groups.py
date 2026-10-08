@@ -21,6 +21,8 @@ pytestmark = pytest.mark.bootstrap_profile
     [
         "console-readiness-config",
         "console-agent-history",
+        "console-subagent-counts",
+        "console-subagent-count-publication",
         "console-hook-refresh",
         "console-manual-unread-load",
         "console-readiness-publication",

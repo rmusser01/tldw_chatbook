@@ -2579,6 +2579,7 @@ class ConsoleAgentController:
                     # Keep the original function/Code/namespace alive while its
                     # identity IDs participate in the pending input key.
                     "query_definition": query_definition,
+                    "stock_query": stock_query,
                 }
                 self._console_subagent_counts_read[row_ids] = state
                 # Browser and workspace projections may alternate subsets.
@@ -2731,14 +2732,34 @@ class ConsoleAgentController:
         self, bridge: Any, database: Any, state: dict
     ) -> None:
         """Retire a finite worker read before publishing to its exact input owner."""
+        import asyncio
         from ...DB.base_db import run_owned_db_call
 
+        operation = run_owned_db_call(
+            database,
+            state["query"],
+            list(state["key"][1]),
+        )
         try:
-            values = await run_owned_db_call(
-                database,
-                state["query"],
-                list(state["key"][1]),
-            )
+            if state.get("stock_query", False):
+                # The stock finite worker owns its callback until the native
+                # connection retires; cancellation must not detach that read.
+                worker = asyncio.Task(operation)
+                try:
+                    values = await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    while not worker.done():
+                        try:
+                            await asyncio.shield(worker)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:  # noqa: BLE001 - cancellation wins.
+                            break
+                    if not worker.cancelled():
+                        worker.exception()
+                    raise
+            else:
+                values = await operation
         except Exception:  # noqa: BLE001 - counts remain retryable.
             return
         finally:

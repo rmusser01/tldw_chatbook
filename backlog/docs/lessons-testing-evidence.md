@@ -19162,3 +19162,7 @@ or an actual HookPermissions profile parent under its original config scope.
 Assert that the intended native boundary and real mutation occurred before the
 behavior assertion. The corrected hook fixture reached both real DACL races and
 established causal RED; unchanged checks then passed after the narrow repair.
+
+### Hidden ancestor text is not a visible failure (2026-10-08)
+
+During the Console priced-Send investigation, a test text dump included the default “Trace capture blocked” card because it checked each widget's display flag but ignored hidden ancestors. Two observations of the original trace failure handlers recorded no entry. Observation at the original waiter failure showed an idle controller, no recovery checkpoint, and hook review still running. Check effective visibility and original state/handler evidence before attributing a timeout to text from a UI dump; the dump alone did not establish a trace failure.

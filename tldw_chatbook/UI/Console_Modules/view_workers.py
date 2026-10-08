@@ -14,6 +14,8 @@ _GROUPS = frozenset(
         "console-readiness-publication",
         "console-manual-unread-load",
         "console-agent-history",
+        "console-subagent-counts",
+        "console-subagent-count-publication",
         "console-hook-refresh",
         "console-rail-prune",
         "console-skill-discovery",

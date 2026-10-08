@@ -161,11 +161,13 @@ async def test_cancelled_settings_open_keeps_worker_owned_until_safe_retirement(
     try:
         assert await asyncio.to_thread(entered.wait, 5)
         opener.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await opener
+        await asyncio.wait({opener}, timeout=0.05)
+        assert not opener.done(), "Stock context opener detached a live read"
         assert worker_leases(database)
         assert pushed == []
         release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await opener
         assert await asyncio.to_thread(exited.wait, 5)
         for _ in range(200):
             if not worker_leases(database):
