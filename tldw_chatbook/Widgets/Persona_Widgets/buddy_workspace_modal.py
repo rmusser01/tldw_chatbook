@@ -111,8 +111,13 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
             if not self.is_mounted:
                 return
             self._fresh = True
-            self.query_one("#buddy-inbox-title", Static).update(f"Buddy · {title}")
-            self.query_one("#buddy-inbox-error", Static).update("")
+            title_widget = self.query_one("#buddy-inbox-title", Static)
+            title_text = f"Buddy · {title}"
+            if str(title_widget.renderable) != title_text:
+                title_widget.update(title_text)
+            error_widget = self.query_one("#buddy-inbox-error", Static)
+            if str(error_widget.renderable):
+                error_widget.update("")
             if entries == self._entries and self._loaded:
                 self._sync_actions()
                 return
@@ -154,7 +159,9 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
                     if isinstance(exc, ValueError)
                     else "Could not refresh the inbox. Retry by reopening it."
                 )
-                self.query_one("#buddy-inbox-error", Static).update(message)
+                error_widget = self.query_one("#buddy-inbox-error", Static)
+                if str(error_widget.renderable) != message:
+                    error_widget.update(message)
                 self.query_one("#buddy-inbox-open", Button).disabled = True
                 self.query_one("#buddy-inbox-seen", Button).disabled = True
         finally:

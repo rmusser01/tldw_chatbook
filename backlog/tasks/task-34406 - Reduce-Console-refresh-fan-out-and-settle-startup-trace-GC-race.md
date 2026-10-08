@@ -81,6 +81,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #61 Applying or clearing the current system prompt immediately updates its local sidebar preview even when checked readiness presentation is deferred.
 - [x] #62 Accepted manual reaction selection and clear update the visible label before background avatar resolution finishes, without changing validation or stale-owner checks.
 - [x] #63 Timer inventory follows a deferral shim's actual callback without inventing a timer root from an unrelated same-named method.
+- [x] #64 Unchanged progress, stale skill review, Buddy speech and Buddy inbox polls avoid redundant Static updates while still checking current sources and showing changed content or failures.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -1387,3 +1388,13 @@ AC63 plan: source review identifies the callback extractor adding both call_late
 ### AC63 timer callback census repair (2026-10-08)
 
 The original lambda callback extractor recorded known call_later/call_after_refresh deferral names as roots in addition to their callbacks. A newly resolvable unrelated method made that false root appear in the inventory. It now follows each shim's callback without adding the shim name; ordinary lambda calls remain censused. The strengthened original synthetic test reproduces the false call_later root before the change and passes afterward. The complete targeted inventory module reports13 passes/3 remaining failures in60.009s pytest/72.750s driver: unclassified sites, two stale classifications, and unpinned real roots remain. The shim repair is not a blanket inventory pass. Source/HEAD frozen; normal process/native/pipe retirement with zero force/overflow/lookup races. No production change or new ADR. Remaining inherited repeated widget writes are under separate repair.
+
+
+AC64 plan: mount the original progress, skill-review, Buddy speech and Buddy workspace widgets under shipping styles. Observe original Static.update calls across repeated original polling bodies; preserve source-read/currentness counts and verify changed content/error/recovery still paints. Reproduce redundant unchanged updates, then add local rendered-content equality checks at only the affected writes. Do not cache source authority, skip polling/readiness checks, change intervals, suppress changed-content layout or alter action ownership. Run new controls plus selected original action/recovery tests. ADR required:no; routine local presentation idempotence under existing widget ownership. Recovery rail, workspace-attention generation, Buddy conversation/decision cards and llama setup remain separately tracked; no whole-frame/Send latency saving is inferred from call counts.
+
+
+### AC64 unchanged polling writes verified (2026-10-08)
+
+Progress count/body/refusal, stale skill-review text, Buddy speech status and Buddy inbox title/error now compare their actual current renderable before Static.update. Polling, source reads/currentness, button/action updates and error policy stay live. Changed text keeps normal layout; the speech control proves a second line increases its painted height. No new cache/helper/import or authority bypass. No new ADR.
+
+All five mounted original controls fail before the change: eight polls produce16 normal progress/inbox writes,24 unavailable-progress writes, and8 speech/stale-skill writes. After the fix, the first bundle has10 passes and one legitimate first-title publication in the inbox observation. Its test now establishes and asserts the actual original first refresh before measuring unchanged calls. Final polling-static-local-green-2 passes all11 targeted mounted/idempotence/model-collection/inbox-action-recovery/speech-action checks in10.69s pytest/17.312s driver. No unfinished original workers after fixture teardown; source/HEAD frozen; normal native/process/pipe retirement with zero force/overflow/lookup races. New controls are included in the existing Windows/macOS/Linux supplemental matrix; platform results remain pending. Scoped product formatting preserves AST; new-test Ruff and changed-line lint/diff checks pass. These counts establish avoided unchanged layout requests, not measured whole-UI or Send latency improvement. Other repeated surfaces and the full-sync polling boundary remain open.
