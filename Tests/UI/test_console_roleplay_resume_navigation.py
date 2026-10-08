@@ -864,6 +864,7 @@ def _resume_session(screen: ChatScreen) -> session_module.ConsoleSessionControll
         visual_identity_db_accessor=unused,
         reaction_preview_coordinator_accessor=unused,
         refresh_character_avatar=unused,
+        sync_reaction_label=unused,
         screen_mounted_accessor=unused,
         first_chat_presentation_snapshot=unused,
         apply_first_chat_control_selection=unused,

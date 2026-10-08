@@ -899,6 +899,7 @@ class ConsoleSessionController:
             [], ConsoleReactionPreviewCoordinator
         ],
         refresh_character_avatar: Callable[..., Any],
+        sync_reaction_label: Callable[[], None],
         screen_mounted_accessor: Callable[[], bool],
         first_chat_presentation_snapshot: Callable[[], tuple[Any, Any, object | None]],
         apply_first_chat_control_selection: Callable[[Any, Any], None],
@@ -1078,6 +1079,8 @@ class ConsoleSessionController:
             reaction_preview_coordinator_accessor: Current app's shared reaction
                 preview single-flight coordinator. Late-bound so replacement
                 Console screens cannot escape an older screen's draining work.
+            sync_reaction_label: Publish accepted manual reaction state before
+                background avatar resolution.
             refresh_character_avatar: Late-bound forced avatar refresh after
                 a validated manual reaction change.
             screen_mounted_accessor: Late-bound presentation-only mounted state.
@@ -1146,6 +1149,7 @@ class ConsoleSessionController:
             reaction_preview_coordinator_accessor
         )
         self._refresh_character_avatar_fn = refresh_character_avatar
+        self._sync_reaction_label = sync_reaction_label
         self._screen_mounted_accessor = screen_mounted_accessor
         self._first_chat_presentation_snapshot_fn = first_chat_presentation_snapshot
         self._apply_first_chat_control_selection_fn = apply_first_chat_control_selection
@@ -2256,10 +2260,12 @@ class ConsoleSessionController:
 
     async def _apply_console_reaction_selection(self, option: ReactionOption) -> None:
         if await self._select_console_reaction(option):
+            self._sync_reaction_label()
             await self._refresh_character_avatar_fn()
 
     def _dispatch_console_reaction_clear(self) -> None:
         if self._clear_current_console_reaction():
+            self._sync_reaction_label()
             self.run_app_worker(
                 self._refresh_character_avatar_fn(),
                 group="console-reaction-selection",

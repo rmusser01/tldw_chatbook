@@ -18083,12 +18083,11 @@ class ChatScreen(BaseAppScreen):
         else:
             parse = CommandParse(kind=KIND_NOT_COMMAND)
 
-        argument_free_rewind = (
+        if (
             parse.kind == KIND_COMMAND
             and parse.name == REWIND_COMMAND_NAME
             and parse.args == ""
-        )
-        if argument_free_rewind:
+        ):
             self._console_unknown_send_armed = None
             opening_store = self._console_chat_store
             if opening_store is None or opening_store.active_session_id != session_id:
@@ -18102,7 +18101,6 @@ class ChatScreen(BaseAppScreen):
                 opened
                 and self._console_chat_store is opening_store
                 and opening_store.active_session_id == session_id
-                and composer is not None
                 and self._console_composer_or_none() is composer
                 and self._console_visible_draft_session_id == session_id
                 and composer.commit_captured_draft(stash)

@@ -990,6 +990,22 @@ def _present_console_trajectory(screen: Any, launch: ConsoleTrajectoryLaunch) ->
     )
 
 
+def _sync_console_character_reaction_label(screen: Any) -> None:
+    """Publish current accepted reaction text without waiting for avatar IO."""
+    from textual.css.query import NoMatches, QueryError
+    from textual.widgets import Static
+
+    try:
+        widget = screen.query_one("#console-character-reaction-state", Static)
+    except (NoMatches, QueryError):
+        return
+    label = screen._session._manual_reaction_label_for_current_actor()
+    text = f"Reaction: {label} (manual)" if label else "Reaction: Automatic"
+    if str(widget.renderable) != text:
+        widget.update(text)
+        screen._request_console_context_allocation_reconcile()
+
+
 def _raw_cli_active_session_id(screen: Any) -> str:
     """Return the active Console session, creating the ordinary default if needed."""
     return str(screen._ensure_console_chat_store().ensure_session().id)
@@ -2197,6 +2213,7 @@ def build_console_controllers(
         reaction_preview_coordinator_accessor=(
             lambda: _reaction_preview_coordinator(screen)
         ),
+        sync_reaction_label=lambda: _sync_console_character_reaction_label(screen),
         refresh_character_avatar=(
             lambda **kwargs: (
                 screen._character._refresh_active_character_avatar_if_scope_changed(
