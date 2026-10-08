@@ -680,8 +680,11 @@ def _pending_mcp_acquirer():
     acquire = _related_member_acquirer()
     if (
         acquire is None
+        or sys.modules.get("tldw_chatbook.MCP.recovery_activation") is not activation
+        or getattr(sys.modules.get("tldw_chatbook.MCP"), "recovery_activation", None)
+        is not activation
         or activation.acquire_storage is not acquire
-        or vars(activation) is not activation._PENDING_OBSERVATION_NAMESPACE
+        or vars(activation) is not getattr(activation, "_PENDING_OBSERVATION_NAMESPACE", None)
     ):
         return None
     for name, function, bodies in activation._PENDING_OBSERVATION_BINDINGS:
