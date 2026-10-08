@@ -8,7 +8,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import threading
-from types import CodeType
+from types import CodeType, MethodType
 
 import pytest
 from textual.worker import Worker
@@ -134,8 +134,9 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
         and node.test.id == "snapshots"
     )
     config = HookPermissions = ConsoleHooksController = _HookRefreshFlight = None
+    ChatScreen = None
     hook_codes = {}
-    hook_facts = {"frames": {}, "returns": {}}
+    hook_facts = {"frames": {}, "returns": {}, "joins": {}}
     if route == "hooks":
         from tldw_chatbook import config
         from tldw_chatbook.Agents.hook_permissions import HookPermissions
@@ -150,6 +151,7 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
             visit=HookPermissions.visit_snapshot.__code__,
             snapshot=HookPermissions.snapshot.__code__,
             raw=raw_reader.__code__,
+            refresh=ConsoleHooksController.refresh.__code__,
         )
         for owner, name in (
             (HookPermissions, "visit_snapshot"),
@@ -197,8 +199,61 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
     )
     exact, inner, held, failures = {}, [], {}, []
     before_release = {}
-    flags = {"readiness_returns": 0, "armed": False}
+    flags = {"readiness_returns": 0, "armed": False, "attributed": False}
     tool = None
+
+    def observed_workers():
+        if route == "hooks":
+            flight = exact.get("hook_flight")
+            return (
+                tuple(
+                    row
+                    for joined, row in hook_facts["joins"].values()
+                    if joined is flight
+                )
+                if flight is not None
+                else ()
+            )
+        return exact.get("workers", ())
+
+    def observe_hook_join(frame, issuer):
+        if frame.f_locals.get("self") is not exact.get("hooks"):
+            return
+        flight = frame.f_locals.get("flight")
+        assert type(flight) is _HookRefreshFlight
+        assert flight.owner is exact["hook_owner"]
+        assert flight.reader.__self__ is exact["hook_owner"]
+        assert flight.reader.__func__ is HookPermissions.visit_snapshot
+        assert type(issuer) is asyncio.Task and issuer.get_loop() is owner_loop
+        manager = vars(exact["host"])["_workers"]
+        assert type(manager) is WorkerManager
+        assert vars(manager)["_app"] is exact["host"]
+        matches = tuple(
+            worker
+            for worker in manager
+            if type(worker) is Worker and vars(worker).get("_task") is issuer
+        )
+        assert len(matches) == 1  # Task identity, never group cardinality.
+        (worker,) = matches
+        values = vars(worker)
+        work = values["_work"]
+        assert values["_node"] is exact["console"]
+        assert values["group"] == "console-hook-refresh"
+        assert type(work) is MethodType
+        assert work.__self__ is exact["console"]
+        assert work.__func__ is ChatScreen._refresh_console_hooks
+        coroutine = issuer.get_coro()
+        assert coroutine.cr_code is Worker._run.__code__
+        assert coroutine.cr_frame.f_locals["self"] is worker
+        producer = flight.producer
+        assert type(producer) is asyncio.Task
+        assert producer.get_loop() is owner_loop and not producer.done()
+        row = (worker, values["_node"], issuer, work)
+        prior = hook_facts["joins"].get(issuer)
+        assert prior is None or (
+            prior[0] is flight and all(old is new for old, new in zip(prior[1], row))
+        )
+        hook_facts["joins"][issuer] = (flight, row)
 
     def closed(connection):
         try:
@@ -209,7 +264,11 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
 
     def hold(code, line_or_offset, value=None):
         if code is capture_console_view_workers.__code__:
-            if flags["armed"] and value[0] is exact.get("host") and value[1] is None:
+            if (
+                flags["attributed"]
+                and value[0] is exact.get("host")
+                and value[1] is None
+            ):
                 # Character widgets also drain their own workers on unmount.
                 # Only the original whole-host capture owns this exit oracle.
                 exact["shutdown_capture"] = value
@@ -370,19 +429,39 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
             frame = sys._getframe(1)
             try:
                 captured = frame.f_locals.get("captured")
-                if flags["armed"] and captured is exact.get("shutdown_capture"):
+                if flags["attributed"] and captured is exact.get("shutdown_capture"):
                     assert captured[0] is exact["host"]
                     assert captured[2] is exact["manager"]
                     assert captured[3] is owner_loop
                     assert captured[4] is threading.current_thread()
-                    exact["shutdown_capture_contains_worker"] = any(
-                        worker is exact["worker"]
-                        and node is exact["console"]
-                        and task is exact["task"]
-                        and work is exact["work"]
-                        for worker, node, task, work in captured[5]
+                    required = observed_workers()
+                    exact["shutdown_capture_contains_worker"] = bool(required) and all(
+                        any(
+                            all(
+                                actual is expected
+                                for actual, expected in zip(row, candidate)
+                            )
+                            for candidate in captured[5]
+                        )
+                        for row in required
                     )
                     shutdown_entered.set()
+            finally:
+                del frame
+            return
+        if (
+            route == "hooks"
+            and flags["armed"]
+            and not release.is_set()
+            and code is hook_codes["refresh"]
+        ):
+            frame = sys._getframe(1)
+            try:
+                observe_hook_join(frame, asyncio.current_task())
+            except BaseException as error:
+                # A failed observation must fail qualification without breaking
+                # the original worker or its physical cleanup.
+                failures.append("hook_join_" + type(error).__name__)
             finally:
                 del frame
             return
@@ -686,12 +765,15 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
                 await finish_body.wait()
             # This oracle is before Runtime/creator fixture cleanup.
             host_returned.set()
-            observed_task = exact.get("task")
+            observed_tasks = tuple(row[2] for row in observed_workers())
             exact["post_host_before_creator_cleanup"] = {
                 "held_callback_live": bool(held) and not release.is_set(),
-                "exact_task_present": observed_task is not None,
+                "exact_task_present": bool(observed_tasks),
+                "observed_outer_task_count": len(observed_tasks),
                 "outer_task_terminal": (
-                    None if observed_task is None else observed_task.done()
+                    None
+                    if not observed_tasks
+                    else all(task.done() for task in observed_tasks)
                 ),
                 "observed_inner_task_count": len(inner),
                 "inner_tasks_terminal": (
@@ -736,7 +818,15 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
     path = Path(__file__).resolve()
     data = path.read_bytes()
     _stat, compiled = rewrite._rewrite_test(path, request.config)
-    for function in (closed, hold, hook_started, yielded, host_owner):
+    for function in (
+        observed_workers,
+        observe_hook_join,
+        closed,
+        hold,
+        hook_started,
+        yielded,
+        host_owner,
+    ):
         expected = _nested(compiled, function.__code__)
         assert expected is not None and _shape(expected) == _shape(function.__code__)
         closure = function.__closure__
@@ -806,6 +896,9 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
         for code in outer_codes:
             sys.monitoring.set_local_events(tool, code, sys.monitoring.events.PY_YIELD)
         if route == "hooks":
+            sys.monitoring.set_local_events(
+                tool, hook_codes["refresh"], sys.monitoring.events.PY_YIELD
+            )
             event = sys.monitoring.events.PY_START
             assert sys.monitoring.register_callback(tool, event, hook_started) is None
             pin.registered[event] = hook_started
@@ -850,29 +943,6 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
                 )
                 assert type(context_issuer) is asyncio.Task
                 assert context_issuer.get_loop() is owner_loop
-            workers = [
-                worker
-                for worker in manager
-                if type(worker) is Worker
-                and (
-                    vars(worker).get("_task") is context_issuer
-                    if route == "context"
-                    else vars(worker).get("group") == group
-                )
-                and vars(worker).get("_node") is exact["console"]
-            ]
-            assert len(workers) == 1
-            worker = workers[0]
-            values = vars(worker)
-            task, work = values["_task"], values["_work"]
-            if route == "context":
-                group = values["group"]
-                assert type(group) is str  # noqa: E721 - exact original Worker group.
-                assert task is context_issuer
-            assert (
-                type(task) is asyncio.Task
-                and task.get_loop() is asyncio.get_running_loop()
-            )
             if route == "hooks":
                 hooks = exact["hooks"]
                 flight = hooks._refresh_flight
@@ -888,25 +958,86 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
                 assert not producer.done()
                 inner.append(producer)
                 exact.update(hook_flight=flight, hook_producer=producer)
-            waiter = getattr(task, "_fut_waiter", None)
-            exact.update(
-                worker=worker, task=task, work=work, manager=manager, waiter=waiter
+                # Every original refresh Task observed joining this exact flight
+                # is required; a cancelled exclusive predecessor still owns it.
+                for candidate in tuple(manager):
+                    if type(candidate) is not Worker:
+                        continue
+                    values = vars(candidate)
+                    if (
+                        values.get("group") != group
+                        or values.get("_node") is not exact["console"]
+                    ):
+                        continue
+                    issuer = values.get("_task")
+                    assert (
+                        type(issuer) is asyncio.Task and issuer.get_loop() is owner_loop
+                    )
+                    awaited = issuer.get_coro()
+                    while awaited is not None:
+                        if getattr(awaited, "cr_code", None) is hook_codes["refresh"]:
+                            frame = awaited.cr_frame
+                            if (
+                                frame is not None
+                                and frame.f_locals.get("flight") is flight
+                            ):
+                                observe_hook_join(frame, issuer)
+                            break
+                        awaited = getattr(awaited, "cr_await", None) or getattr(
+                            awaited, "gi_yieldfrom", None
+                        )
+                rows = observed_workers()
+                assert rows, "No original Worker joined the held hook flight"
+                assert not failures
+            else:
+                workers = tuple(
+                    worker
+                    for worker in manager
+                    if type(worker) is Worker
+                    and (
+                        vars(worker).get("_task") is context_issuer
+                        if route == "context"
+                        else vars(worker).get("group") == group
+                    )
+                    and vars(worker).get("_node") is exact["console"]
+                )
+                assert len(workers) == 1
+                (worker,) = workers
+                values = vars(worker)
+                task, work = values["_task"], values["_work"]
+                if route == "context":
+                    group = values["group"]
+                    assert type(group) is str  # noqa: E721 - exact original Worker group.
+                    assert task is context_issuer
+                rows = ((worker, values["_node"], task, work),)
+            assert all(
+                type(task) is asyncio.Task
+                and task.get_loop() is owner_loop
+                and not task.done()
+                for _worker, _node, task, _work in rows
             )
+            assert all(worker in manager for worker, _node, _task, _work in rows)
+            exact.update(workers=rows, manager=manager)
+            flags["attributed"] = True
             before_release.update(
-                exact_worker_id=id(worker),
                 exact_node_id=id(exact["console"]),
-                exact_work_id=id(work),
-                exact_task_id=id(task),
                 exact_manager_id=id(manager),
                 group=group,
-                task_loop_current=task.get_loop() is asyncio.get_running_loop(),
-                worker_task_same=vars(worker).get("_task") is task,
-                worker_work_same=vars(worker).get("_work") is work,
-                worker_node_same=vars(worker).get("_node") is exact["console"],
-                task_done=task.done(),
-                task_cancelling=task.cancelling(),
-                exact_waiter_id=None if waiter is None else id(waiter),
-                waiter_done=None if waiter is None else waiter.done(),
+                exact_workers=[
+                    {
+                        "worker_id": id(worker),
+                        "node_id": id(node),
+                        "work_id": id(work),
+                        "task_id": id(task),
+                        "task_loop_current": task.get_loop() is owner_loop,
+                        "worker_task_same": vars(worker).get("_task") is task,
+                        "worker_work_same": vars(worker).get("_work") is work,
+                        "worker_node_same": vars(worker).get("_node") is node,
+                        "task_done": task.done(),
+                        "task_cancelling": task.cancelling(),
+                    }
+                    for worker, node, task, work in rows
+                ],
                 inner_tasks=[
                     {
                         "id": id(item),
@@ -985,11 +1116,20 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
             ]
             done, _ = await asyncio.wait({owner_task}, timeout=0.35)
             ended_while_held = host_returned.is_set()
-            logical_terminal_while_held = task.done()
+            observed_tasks = tuple(row[2] for row in observed_workers())
+            assert observed_tasks
+            logical_terminal_while_held = any(task.done() for task in observed_tasks)
             before_release.update(
                 host_returned=ended_while_held,
-                outer_done_after_exit_request=task.done(),
-                outer_cancelling_after_exit_request=task.cancelling(),
+                outer_done_after_exit_request=logical_terminal_while_held,
+                observed_outer_tasks_after_exit_request=[
+                    {
+                        "id": id(task),
+                        "done": task.done(),
+                        "cancelling": task.cancelling(),
+                    }
+                    for task in observed_tasks
+                ],
             )
             # Preserve the causal boundary even if later creator cleanup fails.
             print(
@@ -1009,6 +1149,10 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
             )
         finally:
             body_error = sys.exception()
+            if body_error is not None:
+                # Qualification failures must not throw from the monitoring
+                # callbacks during the original host's cleanup.
+                flags["attributed"] = False
             finish_body.set()
             release.set()
             mounted_task.cancel()
@@ -1030,7 +1174,7 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
                                 "before_release": before_release,
                                 "bootstrap_mounted": mounted.is_set(),
                                 "exact_callback_observed": bool(held),
-                                "exact_task_present": "task" in exact,
+                                "exact_task_present": bool(observed_workers()),
                                 "actual_host_return_observed": host_returned.is_set(),
                                 "post_host_before_creator_cleanup": exact.get(
                                     "post_host_before_creator_cleanup"
@@ -1040,7 +1184,19 @@ async def test_original_finite_presentation_callback_retires_before_host_return(
                         )
                     )
         assert not failures
-        assert task.done() and all(item.done() for item in inner)
+        required = observed_workers()
+        assert required and all(row[2].done() for row in required)
+        assert all(item.done() for item in inner)
+        captured = exact["shutdown_capture"]
+        # Include original joiners observed after initial attribution as well;
+        # a late worker cannot silently disappear from the membership oracle.
+        assert all(
+            any(
+                all(actual is expected for actual, expected in zip(row, candidate))
+                for candidate in captured[5]
+            )
+            for row in required
+        ), "original host omitted a joined original worker"
         if route == "readiness":
             assert not held["raw_state"].active
             with storage._lock:
