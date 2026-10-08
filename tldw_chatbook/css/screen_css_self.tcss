@@ -8,6 +8,12 @@
  * Edit those declarations, then re-run build_css.py.
  * ======================================== */
 
+/* ===== WIDGET: StudyScreen (UI/Screens/study_screen.py) ===== */
+
+    StudyScreen #study-section-bar {
+        height: auto;
+    }
+
 /* ===== WIDGET: TraceFiltersDialog (UI/Widgets/trace_filter_bar.py) ===== */
 
     TraceFiltersDialog { align: center middle; background: $background 70%; }

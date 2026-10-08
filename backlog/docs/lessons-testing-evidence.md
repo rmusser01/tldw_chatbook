@@ -419,6 +419,27 @@ reaches the unchanged geometry assertions; restoring the actual retired bare
 the compact-height assertion fail. A plugin-assisted pass is useful diagnosis,
 not the final qualification of a guard intended to run in CI.
 
+## A finding verified on the review's commit may already be fixed on your base -- diff the two before designing the RED (TASK-34000.4, 2026-10-04)
+
+**Incident.** The task said a regression test for the Library Media "Export…"
+freeze "fails on current dev (by timing out)", and the plan asked for that RED
+on the wave's base, 8c4dfe59a2. The review had run on 2d34cbf80d. Between the
+two, 3cee32b3d0 (task-31249, landed the evening of the review) had already
+moved the Export projection off the press dispatch. On the base the new test
+passed 4/4 and a live click opened Export -- the P0 was gone before the fix
+task started, and a RED "on base" could only have been faked.
+
+**What to do.** Before writing the first test, run `git log
+<review-commit>..<base> -- <the files the task names>` and try the symptom
+live on the base. If it no longer reproduces, say so first in the report, and
+show the test's teeth where the defect still exists: restore the old line
+(Edit-based, restored the same way) and show the bounded failure, and
+reproduce the symptom live on a `git archive` export of the review's commit
+(`APP_WT=<export>`), next to the same clicks on the base and on the branch.
+What is left to do is then usually the part the earlier fix skipped -- here
+the hand-off at the widget, the guard for the class, and a test that fails
+instead of hanging.
+
 ## Compare against the branch's merge base, not whatever `origin/dev` is now
 
 **TASK-33005 final fix wave, 2026-10-02.** The branch was rebased onto
@@ -705,6 +726,23 @@ service export crashed before filename selection despite passing policy-count
 tests. Construct the actual validated payload in presentation fixtures and
 retain at least one real capture → review → publication journey. Fixing only
 the fixture's field spelling would still leave its contract unvalidated.
+
+**TASK-34000.6, 2026-10-05 -- the same shape, five and a half months wide.**
+`flashcards_handler.py` spread `**self._scope_arguments()` (`scope_type`,
+`workspace_id`) into `StudyScopeService.list_flashcards` and
+`create_flashcard`, which take neither. Every fake in
+`test_study_flashcards_screen.py` (three classes) and `test_study_dashboard.py`
+declared those keywords on its own `list_flashcards`, so 40+ Flashcards Pilot
+tests stayed green from the parity merge (54b9ca6a17, 2026-04-20) to the
+2026-10-02 UX review, while selecting or creating a deck in the real app raised
+an unhandled `TypeError` and exited it. What caught it: a Pilot test that wires
+the PRODUCTION `StudyScopeService` over a real in-memory DB
+(`test_study_flashcards_real_service_contract.py`), and a guard that derives
+every handler keyword by AST and checks it against `inspect.signature` of the
+real class (`Tests/Architecture/test_study_handler_service_keywords.py`). A
+fake's signature is a claim about the real one; when you write a fake for a
+seam, copy the real signature (or assert it with `inspect.signature`) rather
+than the consumer's call.
 
 ## A reused widget ID cannot identify the action that was pressed
 
@@ -17236,6 +17274,23 @@ about screens or widgets. Then check whether your PR touches
 clean `dev` before touching your feature. Two green runs -- feature commit
 alone green, dummy section on `dev` red -- settle it in about five minutes and
 stop you from redesigning something that was never broken.
+
+**Addendum (2026-10-05, TASK-34000.5).** The same admission refusal is not a
+Tests/UI-only shape. The root-level config suites that `monkeypatch.setenv
+("TLDW_CONFIG_PATH", <tmp file>)` and then call the SHARED module's
+`load_settings(force_reload=True)` -- `test_config_mcp_defaults.py` (4 of 5),
+`test_config_library_defaults.py`, `test_config_console_defaults.py`, and
+`Tests/App/test_submit_library_ingest_job.py` (38 of 146) -- were red on wave
+base 3027850197 with `raw_source_selection_changed` at fixture setup, before
+any assertion; it took three recipe probes to establish that the file's
+content (a `[database]` sentinel table was the first suspect) had nothing to
+do with it. A new config-loader test must use the fresh-module recipe from
+the start: `Tests/Backup_Recovery/config_test_support.install_config_source
+(monkeypatch)` after the `setenv`, then `fresh.load_settings(force_reload=
+True)` -- `Tests/test_config_model_catalog_defaults.py` is the worked example
+and runs in ~3 s. `Tests/test_config_load_settings_table_guard.py` and
+`Tests/Library/test_ingest_analysis_load_settings.py` are written that way.
+
 ### An AST guard that greps a dumped statement list passes on an unawaited call (PR #2813)
 
 **What happened.** `test_every_replacement_progress_timer_retires_its_predecessor`

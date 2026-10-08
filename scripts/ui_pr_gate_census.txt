@@ -150,6 +150,25 @@ Tests/UI/test_approval_batch_geometry.py
 # out. Appended, so no other file changes shard.
 Tests/UI/test_library_note_autosave_recovers.py
 
+# (TASK-34000 wave 1b: these two blocks sit here, not at the end, on purpose --
+# every PR appends at the end and the tail conflicted on each rebase.)
+# TASK-34000.4: Library Media Export… opens Export instead of freezing the app;
+# real-app, bounded polls (4 tests: mouse/keyboard x default/eager task
+# factory). The guard's real-screen tests are deliberately NOT here
+# (test_library_surface_swap_refused_on_real_screen.py): with them this file
+# measured 58 s, at the lane's 60 s budget.
+Tests/UI/test_library_media_export_no_freeze.py
+
+# TASK-34000.6: Study ▸ Flashcards against the REAL StudyScopeService (local
+# over an in-memory DB, workspace over the real ServerStudyService) plus the
+# deck/card crash paths (2 tests; 16.7 s and 18.2 s pytest / 23.3 s and
+# 25.2 s wall locally, two runs, bounded polls). The six geometry
+# parametrizations (dashboard buttons / Flashcards controls at 160x45, 160x70,
+# 120x36) are deliberately NOT here (test_study_controls_geometry.py, 35 s
+# pytest / 43 s wall): all eight together measured 24-26 s pytest / 28-30 s
+# wall, too close to the lane's 60 s budget.
+Tests/UI/test_study_flashcards_real_service_contract.py
+
 # TASK-33620.9: durable rename publication through the mounted rail menu.
 Tests/UI/test_console_rename_consistency.py
 

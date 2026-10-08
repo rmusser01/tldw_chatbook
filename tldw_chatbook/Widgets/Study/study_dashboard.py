@@ -44,8 +44,17 @@ class StudyDashboard(Widget):
         margin-bottom: 1;
     }
 
+    /* TASK-34000.6 (S-05): Textual's Horizontal/Vertical default to
+       `height: 1fr`. Inside this auto-height card that made the columns row
+       take every remaining screen row (29 of them at 160x45, measured) and
+       pushed the actions row below the screen edge. */
+    .study-dashboard-columns {
+        height: auto;
+    }
+
     .study-dashboard-column {
         width: 1fr;
+        height: auto;
         margin-right: 1;
     }
 
@@ -70,7 +79,7 @@ class StudyDashboard(Widget):
             yield Static(
                 "Global study", id="study-scope-summary", classes="study-dashboard-meta"
             )
-            with Horizontal():
+            with Horizontal(classes="study-dashboard-columns"):
                 with Vertical(classes="study-dashboard-column"):
                     yield Static("Due Today", classes="study-dashboard-heading")
                     yield Static(

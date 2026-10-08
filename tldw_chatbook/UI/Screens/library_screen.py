@@ -809,8 +809,10 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_NOTES_RAIL_ROWS,
     LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS,
     LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES,
+    LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY,
     LIBRARY_STUDY_HANDOFF_MODES,
     LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
+    LIBRARY_STUDY_HANDOFF_READY_COPY,
     LIBRARY_STUDY_HANDOFF_TITLES_CAP,
     LIBRARY_NAV_MODE_TO_ROW_ID,
     LIBRARY_STUDY_HANDOFF_ROW_IDS,
@@ -12219,9 +12221,11 @@ class LibraryScreen(BaseAppScreen):
             # landing inside the window must suppress its whole-screen
             # fallback rather than race a duplicate-id canvas into the
             # mount (review round, M3).
+            # Before the try: a refusal (TASK-34000.4) is not a repair
+            # failure to count and swallow -- the await could never return.
+            outgoing = self.children_safe_to_await_removing(canvas_host)
             self._library_canvas_projection_depth += 1
             try:
-                outgoing = tuple(canvas_host.children)
                 for child in outgoing:
                     child.display = False
                 if outgoing:
@@ -12392,7 +12396,7 @@ class LibraryScreen(BaseAppScreen):
         caller can hold ``_library_canvas_projection_depth`` across every
         one of this region's early-return paths (review round, M3).
         """
-        outgoing = tuple(canvas_host.children)
+        outgoing = self.children_safe_to_await_removing(canvas_host)
         try:
             for child in outgoing:
                 child.display = False
@@ -12512,6 +12516,12 @@ class LibraryScreen(BaseAppScreen):
         Returns:
             None.
         """
+        # Deferred import (ADR-097 boot census and pre-import payload have no headroom).
+        from ..Navigation.surface_swap_guard import (
+            SurfaceSwapSelfAwaitError,
+            log_refused_surface_swap,
+        )
+
         if not self.is_mounted:
             # Parity with the retired unconditional refresh: an unmounted
             # screen simply records the recompose request for mount time.
@@ -12574,6 +12584,16 @@ class LibraryScreen(BaseAppScreen):
             self._library_canvas_projection_depth += 1
             try:
                 await self.recompose()
+            except SurfaceSwapSelfAwaitError as error:
+                # Awaited on the pump of a widget the recompose removes
+                # (TASK-34000.4): refused before any teardown. The same
+                # rebuild on the screen's own pump completes, and it is
+                # this seam's documented fallback already.
+                log_refused_surface_swap(error, fallback="whole-screen refresh")
+                self.refresh(recompose=True)
+                if then is not None:
+                    then()
+                return
             finally:
                 self._finish_library_canvas_projection()
             if then is not None:
@@ -12611,6 +12631,9 @@ class LibraryScreen(BaseAppScreen):
                 rail_mode="selection",
                 then=then,
             )
+        except SurfaceSwapSelfAwaitError as error:
+            log_refused_surface_swap(error, fallback="whole-screen refresh")
+            result = LibraryEntryReconcileResult.FAILED
         except Exception:
             logger.debug(
                 "Targeted Library open-surface projection failed.", exc_info=True
@@ -12694,6 +12717,9 @@ class LibraryScreen(BaseAppScreen):
         self, generation: int, route_key: tuple[object, ...]
     ) -> LibraryEntryReconcileResult:
         """Project one current snapshot into the mounted rail and canvas."""
+        # Deferred import (ADR-097 boot census and pre-import payload have no headroom).
+        from ..Navigation.surface_swap_guard import SurfaceSwapSelfAwaitError
+
         pending = (generation, route_key)
         if not self.is_attached:
             return self._supersede_library_entry_reconcile(generation, route_key)
@@ -12885,7 +12911,7 @@ class LibraryScreen(BaseAppScreen):
                 canvas_host = self._library_entry_canvas_host()
                 if canvas_host is None:
                     raise NoMatches("Library canvas host is unavailable")
-                outgoing = tuple(canvas_host.children)
+                outgoing = self.children_safe_to_await_removing(canvas_host)
                 for child in outgoing:
                     child.display = False
                 if outgoing:
@@ -12901,6 +12927,10 @@ class LibraryScreen(BaseAppScreen):
                         generation, route_key
                     )
                 await canvas_host.mount(replacement)
+            except SurfaceSwapSelfAwaitError:
+                # Not a replacement failure to retry (TASK-34000.4): the
+                # await could never return. Loud, to whoever awaited it.
+                raise
             except Exception:
                 logger.debug("Library snapshot canvas replacement failed.")
                 return self._retry_or_fail_library_entry_reconcile(
@@ -14664,7 +14694,7 @@ class LibraryScreen(BaseAppScreen):
             "context": context_copy,
             "owner": LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
             "recovery": (
-                "Source snapshot is ready."
+                self._study_handoff_ready_copy()
                 if has_context
                 else (
                     "Import sources or create notes first, or open "
@@ -14672,6 +14702,25 @@ class LibraryScreen(BaseAppScreen):
                 )
             ),
         }
+
+    def _study_handoff_ready_copy(self) -> str:
+        """The readiness line for a hand-off that HAS a source snapshot.
+
+        TASK-34000.6 (S-05): "Source snapshot is ready." promised a
+        generation local mode cannot run (Study refuses with "Source
+        generation requires server mode."). In local mode the line says what
+        needs a server and what still works by hand; server mode keeps the
+        ready line.
+        """
+        if self._runtime_active_source() == "server":
+            return LIBRARY_STUDY_HANDOFF_READY_COPY
+        return LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY
+
+    def _runtime_active_source(self) -> str:
+        """``"local"`` or ``"server"`` from the app's runtime policy state."""
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
+        return str(getattr(runtime_state, "active_source", "local") or "local").lower()
 
     def _library_rag_panel_state(self) -> LibraryRagPanelState:
         # B2: explicit selection is every real source type NOT toggled off;
@@ -16060,9 +16109,7 @@ class LibraryScreen(BaseAppScreen):
         """
         runtime_policy = getattr(self.app_instance, "runtime_policy", None)
         runtime_state = runtime_policy.state if runtime_policy is not None else None
-        active_source = str(
-            getattr(runtime_state, "active_source", "local") or "local"
-        ).lower()
+        active_source = self._runtime_active_source()
         server_label = None
         if active_source == "server":
             server_label = getattr(

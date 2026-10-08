@@ -2698,6 +2698,17 @@ def _load_settings_uncached(
         # [skills] disabled_builtins is read from app_config on every skills
         # read (TASK-32954); without this a disabled built-in returned on restart.
         "skills": copy.deepcopy(toml_config_data.get("skills", {})),
+        # [analysis_defaults] is the Library's analysis provider/model/call
+        # shape: the Media reader's Generate, bulk Analyze and
+        # Analyze-after-import all resolve it from app_config through
+        # Library/ingest_analysis.py, and the Media viewer's analysis panel
+        # seeds its inputs from it. It was never carried over, so analysis
+        # reported "no provider configured" for every user (TASK-34000.5,
+        # review finding L-02). Tests/test_config_load_settings_table_guard.py
+        # fails on the next table a reader needs that this dict drops.
+        "analysis_defaults": copy.deepcopy(
+            toml_config_data.get("analysis_defaults", {})
+        ),
         # Single User
         "SINGLE_USER_FIXED_ID": single_user_fixed_id,
         # Auth
