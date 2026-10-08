@@ -97,7 +97,6 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     CredentialSanitizer,
     PII_DETECTOR_UNAVAILABLE,
 )
-from tldw_chatbook.Chat.session_usage import session_usage
 from tldw_chatbook.Chat.console_trace_custom_pii import (
     redact_pii_value_for_ruleset_revision,
 )
@@ -7674,8 +7673,12 @@ def _record_gateway_native_usage(payload: Mapping[str, Any]) -> None:
     ``_maybe_record_usage``'s extraction. Call ONLY where the gateway
     parsed its OWN httpx response; generators relayed from
     ``chat_api_call`` are recorded inside their providers and must not be
-    recorded again. Never raises.
+    recorded again. Never raises. The import is deferred off the boot path
+    (UI-ready module census ratchets down, never up); usage lines are a
+    handful per response, so the sys.modules hit is noise.
     """
+    from tldw_chatbook.Chat.session_usage import session_usage
+
     session_usage().record_provider_payload(payload.get("usage"))
 
 

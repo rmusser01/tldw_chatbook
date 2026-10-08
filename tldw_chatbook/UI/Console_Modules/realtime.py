@@ -36,7 +36,6 @@ from tldw_chatbook.Chat.console_voice_input import (
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage, as_seconds
-from tldw_chatbook.Chat.session_usage import session_usage
 from tldw_chatbook.LLM_Calls.realtime import RealtimeCallbacks, RealtimeSessionConfig
 from tldw_chatbook.Utils.persistent_diagnostics import (
     persist_event,
@@ -1288,7 +1287,11 @@ class ConsoleRealtimeController:
             return
         # Session ledger boundary tap (issue #365): realtime usage events
         # arrive on the websocket session and never flow through any other
-        # tap. `record_exact` never raises.
+        # tap. `record_exact` never raises. The import is deferred off the
+        # boot path (UI-ready module census ratchets down, ADR-097); this
+        # handler runs once per realtime reply.
+        from tldw_chatbook.Chat.session_usage import session_usage
+
         session_usage().record_exact(usage)
         store = self._chat_store_accessor()
         try:

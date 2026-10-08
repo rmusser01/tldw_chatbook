@@ -24,7 +24,6 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
     validate_continuation_restore,
 )
-from tldw_chatbook.Chat.session_usage import record_stream_terminal_usage
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     ProviderPayloadValidators,
     TOOL_FUNCTION_NAME,
@@ -74,6 +73,9 @@ class MoonshotResolution:
     retries: int
     retry_delay: float
     streaming: bool
+
+
+_record_terminal_usage = None  # deferred-import cache (issue #365, ADR-097 boot census)
 
 
 class MoonshotFinishPolicy:
@@ -129,7 +131,12 @@ class MoonshotStream(Iterator[dict[str, Any]]):
             # Session ledger boundary tap (issue #365): terminal-turn usage
             # records only at natural exhaustion; a consumer Stop skips it
             # (cancelled streams undercount by policy). Never raises.
-            record_stream_terminal_usage(self._stream)
+            global _record_terminal_usage
+            if _record_terminal_usage is None:
+                from tldw_chatbook.Chat.session_usage import (
+                    record_stream_terminal_usage as _record_terminal_usage,  # deferred: boot census
+                )
+            _record_terminal_usage(self._stream)
             raise
         for choice in event.get("choices", ()):
             if isinstance(choice, dict) and isinstance(choice.get("delta"), dict):

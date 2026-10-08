@@ -42,8 +42,6 @@ from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.Chat.console_settings_durability import (
     ConsoleSettingsDurabilityOwner,
 )
-from tldw_chatbook.Chat.session_usage import session_usage
-from tldw_chatbook.Widgets.session_summary_dialog import SessionSummaryDialog
 from tldw_chatbook.config import (
     get_cli_config_path,
     get_cli_setting,
@@ -2106,6 +2104,12 @@ class LifecycleMixin:
     async def _show_session_summary_before_exit(self) -> None:
         """Show the optional quit-time usage summary, hard-capped so exit
         always proceeds (issue #365; spec "Quit-Flow Integration")."""
+        # Quit-only imports, deferred off the boot path: the UI-ready
+        # module census ratchets down and never rises
+        # (Tests/Performance/test_ui_ready_module_census.py).
+        from tldw_chatbook.Chat.session_usage import session_usage
+        from tldw_chatbook.Widgets.session_summary_dialog import SessionSummaryDialog
+
         try:
             duration = self._session_summary_duration_seconds()
             dialog = SessionSummaryDialog(

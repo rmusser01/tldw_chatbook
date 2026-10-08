@@ -55,7 +55,6 @@ from tldw_chatbook.Chat.Chat_Deps import (
 )
 from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
 from tldw_chatbook.Chat.provider_continuation import ProviderContinuationCheckpoint
-from tldw_chatbook.Chat.session_usage import session_usage
 from tldw_chatbook.config import (
     get_cli_setting,
     get_runtime_config_snapshot,
@@ -339,7 +338,7 @@ def _responses_stream_to_chat_sse(response, *, model: str):
                 completed_usage = (event.get("response") or {}).get("usage")
                 if isinstance(completed_usage, dict):
                     chunk["usage"] = completed_usage
-                    session_usage().record_provider_payload(
+                    _session_ledger().record_provider_payload(
                         completed_usage, provider="openai", model=model
                     )
                 yield f"data: {json.dumps(chunk)}\n\n"
@@ -905,7 +904,7 @@ def chat_with_openai(
                             # OpenAI's SSE usually includes double newlines.
                             yield line if line.endswith("\n") else line + "\n"
                     if openai_stream_final_usage:
-                        session_usage().record_provider_payload(
+                        _session_ledger().record_provider_payload(
                             openai_stream_final_usage,
                             provider="openai",
                             model=final_model,
@@ -1022,7 +1021,7 @@ def chat_with_openai(
                     labels={"model": final_model},
                 )
 
-            session_usage().record_provider_payload(
+            _session_ledger().record_provider_payload(
                 usage,
                 provider="openai",
                 model=final_model,
@@ -1309,6 +1308,18 @@ def _openai_stream_line_usage(line: str) -> dict | None:
     except Exception:
         pass
     return None
+
+
+def _session_ledger():
+    """Deferred session-usage ledger accessor (issue #365).
+
+    Local import keeps ``Chat.session_usage`` off the boot path -- the
+    UI-ready module census ratchets down and never rises (ADR-097). The
+    taps run once per completed response, so the sys.modules hit is noise.
+    """
+    from tldw_chatbook.Chat.session_usage import session_usage
+
+    return session_usage()
 
 
 def _estimate_prompt_text(input_data: Any) -> str:
@@ -2180,7 +2191,7 @@ def chat_with_anthropic(
                         # GeneratorExit, and work under that signal must not
                         # yield or re-enter the parser.
                         if usage_accumulator:
-                            session_usage().record_provider_payload(
+                            _session_ledger().record_provider_payload(
                                 usage_accumulator,
                                 provider="anthropic",
                                 model=current_model,
@@ -2315,7 +2326,7 @@ def chat_with_anthropic(
                     labels={"model": current_model},
                 )
 
-            session_usage().record_provider_payload(
+            _session_ledger().record_provider_payload(
                 usage,
                 provider="anthropic",
                 model=current_model,
@@ -3289,7 +3300,7 @@ def chat_with_cohere(
                     labels={"model": final_model},
                 )
 
-            session_usage().record_provider_payload(
+            _session_ledger().record_provider_payload(
                 usage_data,
                 provider="cohere",
                 model=final_model,
@@ -3934,7 +3945,7 @@ def chat_with_google(
                                     f"Google Gemini: Could not decode JSON line: {safe_llm_error_detail(json_str)}"
                                 )
                     if stream_final_usage:
-                        session_usage().record_provider_payload(
+                        _session_ledger().record_provider_payload(
                             stream_final_usage,
                             provider="google",
                             model=current_model,
@@ -4064,7 +4075,7 @@ def chat_with_google(
                     "total_tokens": usage_meta.get("totalTokenCount"),
                 }
                 normalized_response["usage"] = normalized_usage
-                session_usage().record_provider_payload(
+                _session_ledger().record_provider_payload(
                     normalized_usage,
                     provider="google",
                     model=current_model,
@@ -4653,7 +4664,7 @@ def chat_with_huggingface(
                     labels={"model": final_model_for_payload},
                 )
 
-            session_usage().record_provider_payload(
+            _session_ledger().record_provider_payload(
                 usage,
                 provider="huggingface",
                 model=final_model_for_payload,
@@ -4858,7 +4869,7 @@ def chat_with_moonshot(
     # Streaming results are stream objects, not mappings; usage there arrives
     # on the wire during iteration, so only the non-streaming dict is tapped.
     if isinstance(result, Mapping):
-        session_usage().record_provider_payload(
+        _session_ledger().record_provider_payload(
             result.get("usage"),
             provider="moonshot",
             model=model or "",
@@ -4944,7 +4955,7 @@ def chat_with_zai(
     # Streaming results are stream objects, not mappings; usage there arrives
     # on the wire during iteration, so only the non-streaming dict is tapped.
     if isinstance(result, Mapping):
-        session_usage().record_provider_payload(
+        _session_ledger().record_provider_payload(
             result.get("usage"),
             provider="zai",
             model=model or "",
