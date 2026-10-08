@@ -1086,3 +1086,82 @@ Scoped formatting and lint checks pass; bootstrap's 13 existing E721/E731 findin
 are identical to its saved baseline and excluded from that scoped check. Final
 independent source review found no remaining blocker. POSIX-specific CI and the
 combined application timing sample remain outstanding.
+
+## Combined application timing after task23 and task24
+
+`control-parent-integrated-send-1` uses the original minimally instrumented
+three-Send fixture on clean combined HEAD
+`d97510c202918a51e9567c1c1669f49765b7c486`. No optional function-span observer is
+loaded. All 7,828 Python source hashes and HEAD remain unchanged. The run passes
+in 83.234s driver / 76.72s pytest, with three saved user turns and three replies,
+three complete linked traces, and zero remaining dispatch checkpoints. The owned
+native Job is empty at normal parent exit; tree, identity, pipe tasks and private
+profile retire normally, with zero force, overflow or PID races.
+
+| Measured interval (seconds) | Send1 | Send2 | Send3 |
+| --- | ---: | ---: | ---: |
+| Action to provider adapter | 9.141634 | 8.710774 | 9.299418 |
+| Action to controller entry | 1.450203 | 2.081731 | 2.296478 |
+| Durable commit body | .359961 | .208315 | .209540 |
+| Action to durable commit completion | 2.791011 | 3.231549 | 3.627809 |
+| Commit completion to trace reservation entry | 5.935990 | 4.903601 | 3.767843 |
+| Trace reservation body | .186524 | .324053 | 1.454944 |
+| Maximum Send heartbeat delay | .714115 | .285889 | .403179 |
+
+Typing heartbeat maximum is .284907s; startup reaches 1.863500s and initial idle
+3.803818s. First Send's action-dispatched stage returns at 1.449650s; subsequent
+awaiting-review stages return at .011871s and .008459s. These stage returns are
+not paint measurements. Neither the one-second Send nor 100ms input target is met.
+The earlier minimally instrumented baseline on `b678c396` was
+12.620 / 10.626 / 11.735s. Intervening display/Context source changes prevent
+attributing the combined timing difference solely to these filesystem changes.
+
+Remaining source observations are mapped, not silently removed: six pre-active
+selection/participant checks, three outer/nested guarded method entries, the
+reader operation check and the actual file-open check account for 11 selections.
+The twelfth witness is the separate readable/recovery approval check, including
+restored mapping, workspace and owner approval. The caller-side participant field
+lookup before the source-lock gate contains a potential pure duplicate, but fresh
+post-lock validation, recovery approval and actual file-effect gates remain
+required. The measured postcommit interval now takes priority for current phase
+attribution; operation counts alone do not identify all of its elapsed delay.
+
+
+## Current function attribution on combined task23/task24 source
+
+`control-parent-integrated-spans-1` runs the existing original-function span
+observer on unchanged combined HEAD `d97510c202918a51e9567c1c1669f49765b7c486`.
+All 7,829 Python hashes remain unchanged; the extra file relative to the preceding
+sample is the peer's Collections regression, with no intervening product edit.
+It passes in 64.141s driver time, with three saved turns/replies, three complete
+linked traces and zero checkpoints. Native Job/tree/identity/pipes/profile retire
+normally, zero force/overflow/PID races. The observer records 60 original code
+objects, current bindings/sources, zero event overflow and zero unfinished admission
+entries; monitoring retires. The optional deeper preparation-detail switch is off.
+
+| Inclusive measured interval (seconds) | Send1 | Send2 | Send3 |
+| --- | ---: | ---: | ---: |
+| Action to provider adapter | 7.190675 | 7.861561 | 6.448245 |
+| Configuration capture | .946 | 2.076 | 1.286 |
+| Commit body | .249 | .146 | .195 |
+| Commit completion to trace reservation entry | 4.024365 | 3.318833 | 3.127000 |
+| Postcommit prompt history | .269 | .285 | .319 |
+| Postcommit hook admission | .234 | .289 | .596 |
+| Tool-provider composition | 1.408 | 1.035 | .891 |
+| Agent run-log writer binding | .292 | .367 | .096 |
+
+These are inclusive spans: nested recovery, controller, bridge and gateway
+intervals overlap and must not be added. Adapter elapsed includes all work and
+scheduling, while the table isolates selected original function lifetimes. The
+same product's earlier minimally instrumented sample was 8.711-9.299s, so neither
+this lower sample nor the optional instrumentation establishes an isolated saving.
+Typing heartbeat still reaches .377s and Send maxima .406/.395/.332s. Both original
+responsiveness targets remain unmet.
+
+The largest individually identified preparation body after commit is still
+stock tool-provider composition. Together with the precommit configuration capture
+and the native object census, this justifies investigating nested MCP guarded
+helper validation under one synchronous source owner. Separate post-lock source
+validation, restored-owner approval, actual destination/open/write gates and
+positive native retirement remain required. No check is removed based on timing
+alone; direct/custom calls and corrupt/missing-file behavior need causal controls.
