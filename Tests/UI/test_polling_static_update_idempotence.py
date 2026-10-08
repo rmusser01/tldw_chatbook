@@ -180,3 +180,85 @@ async def test_buddy_inbox_poll_keeps_title_error_and_observes_recovery(monkeypa
             == "Buddy · Renamed workspace"
         )
         assert str(modal.query_one("#buddy-inbox-error", Static).renderable) == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unavailable", [False, True])
+async def test_buddy_conversation_poll_keeps_unchanged_text(monkeypatch, unavailable):
+    from Tests.UI.test_buddy_conversation_modal import Harness
+    from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
+    from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
+
+    host = Harness()
+    async with host.run_test(size=(100, 36)) as pilot:
+        binding = BuddyBinding.for_session(host.target)
+        modal = open_buddy_conversation(host, binding, allow_voice=False)
+        await pilot.pause()
+        runtime = host.console_runtime
+        try:
+            if unavailable:
+                host.console_runtime = None
+            modal.refresh_projection()
+            calls = observe_updates(
+                monkeypatch,
+                {
+                    "buddy-conversation-title",
+                    "buddy-activity",
+                    "buddy-reply-notice",
+                    "buddy-transcript",
+                },
+            )
+            resolutions = []
+            original = modal.coordinator.resolve
+
+            def resolve(*args, **kwargs):
+                resolutions.append(True)
+                return original(*args, **kwargs)
+
+            monkeypatch.setattr(modal.coordinator, "resolve", resolve)
+            for _ in range(8):
+                modal.refresh_projection()
+            assert len(resolutions) >= 8
+            assert calls == [], f"Unchanged conversation repaints: {calls}"
+            modal.coordinator.notices[binding] = "Changed notice"
+            modal.refresh_projection()
+            assert (
+                str(modal.query_one("#buddy-reply-notice", Static).renderable)
+                == "Changed notice"
+            )
+            assert calls == ["buddy-reply-notice"]
+            assert modal.query_one("#buddy-send", Button).disabled is unavailable
+        finally:
+            host.console_runtime = runtime
+
+
+@pytest.mark.asyncio
+async def test_buddy_conversation_restores_same_transcript_after_unavailable():
+    from Tests.UI.test_buddy_conversation_modal import Harness
+    from tldw_chatbook.Chat.console_chat_store import ConsoleMessageRole
+    from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
+    from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
+
+    host = Harness()
+    host.store.append_message(
+        host.target.id, role=ConsoleMessageRole.ASSISTANT, content="Retained reply"
+    )
+    async with host.run_test(size=(100, 36)) as pilot:
+        binding = BuddyBinding.for_session(host.target)
+        modal = open_buddy_conversation(host, binding, allow_voice=False)
+        await pilot.pause()
+        transcript = modal.query_one("#buddy-transcript", Static)
+        assert str(transcript.renderable) == "Assistant: Retained reply"
+        runtime = host.console_runtime
+        try:
+            host.console_runtime = None
+            modal.refresh_projection()
+            assert str(transcript.renderable) == ""
+            assert modal.query_one("#buddy-send", Button).disabled
+        finally:
+            host.console_runtime = runtime
+        modal.refresh_projection()
+        assert str(transcript.renderable) == "Assistant: Retained reply"
+        assert not modal.query_one("#buddy-send", Button).disabled
+        assert host.store.active_session_id == host.other.id
+        assert host.other.draft == "Unrelated Console draft"

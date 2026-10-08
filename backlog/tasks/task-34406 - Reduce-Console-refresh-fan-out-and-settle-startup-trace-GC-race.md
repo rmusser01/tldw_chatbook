@@ -89,6 +89,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #69 Worker-navigated Console test windows retain their original navigation context and complete original host-owned finite Console workers before returning, including the next-Send runtime gate test.
 - [x] #70 Received-Send controls select the intended workspace through the original registry and wait for original attachment before drafting, preserving the setup timeout and original draft assertions.
 - [x] #71 Storage census anti-vacuity checks match the actual POSIX/helper and Windows/native implementations while retaining every cost ceiling; CI retains census data and failure assertions for diagnosis.
+- [x] #72 Buddy conversation polling preserves unchanged text without layout updates and restores its transcript after the same target becomes available again, while original availability and decision checks continue.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -1493,3 +1494,13 @@ AC71 plan: current-storage-unit-ratchet-1 on Windows reaches exactly one origina
 ### AC71 platform measurement checkpoint (2026-10-08)
 
 storage-census-platform-green-1 passes all three targeted cases, including the original Windows storage-unit ratchet and both platform-ceiling variants (118.924s pytest,124.157s driver). Source and HEAD remained unchanged, no original workers remained after fixture teardown, and the diagnostic process tree retired without force. This corrects a POSIX-only lower-bound assumption on Windows; every upper cost limit is unchanged and no application speedup is claimed. Perf Guard now retains its existing census and the same test's JUnit output on failure, allowing the separate Linux failure to be attributed. Changed-line Ruff and diff whitespace checks pass. The shared startup-liveness failures and intermittent Notes retirement failures remain open.
+
+
+AC72 plan: the original five-Hz Buddy conversation refresh unconditionally updates title, activity, notice and unavailable transcript. It also clears the transcript on unavailability without invalidating its last-transcript key, so restoring the same target with unchanged messages can leave the transcript blank. Add mounted controls over the original Buddy coordinator/controller/store for unchanged available/unavailable states and same-target recovery; then compare displayed text before updating and synchronize the existing transcript key with unavailability. Preserve source resolution, decision projection/allowances, buttons, timers, scroll following and drafts. Verify those controls and existing mounted decision-owner controls. ADR required:no; local presentation repair under existing Buddy ownership, no new cache/service or authority boundary.
+
+
+### AC72 Buddy conversation presentation repaired (2026-10-08)
+
+buddy-conversation-poll-red-1 reproduced all three original defects: eight unchanged available polls requested24 Static updates, unavailable polls32, and restoring the same original runtime left the retained assistant reply invisible. Local guards now compare the actual displayed title/activity/notice/empty transcript before updates; clearing an unavailable view invalidates the existing transcript key so recovery republishes the same content. Original resolution, decisions, controls and timer cadence remain. buddy-conversation-poll-green-1 passes all13 focused polling and original typed/mixed decision-owner controls (10.87s pytest,16.891s driver), with frozen source/HEAD, zero unfinished original workers and normal diagnostic custody. Ruff and whitespace checks pass. The changed module adds no styles or new ownership; no ADR required. Repeated display work is removed on shared Python paths; an isolated latency saving or three-OS result is not claimed.
+
+Cold trust follow-up: cold-sql-receipt-baseline-1 atbe8115f315 failed both routes during setup because the original trust service was already initialized. Neither reached Send or a causal receipt assertion. The peer owns original pre-mount/attach warming attribution and authentic cold setup; do not count this result as causal RED or reset live services to force it.
