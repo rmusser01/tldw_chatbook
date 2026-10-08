@@ -16834,7 +16834,9 @@ class ChatScreen(BaseAppScreen):
             self.call_after_refresh(self._restore_console_workbench_focus)
             self.set_timer(0.2, self._restore_console_workbench_focus)
         self.run_worker(
-            self._skill._refresh_console_skill_candidates(), exclusive=False
+            self._skill._refresh_console_skill_candidates(),
+            exclusive=False,
+            group="console-skill-discovery",
         )
         # task-13: the Environment panel's local-tier poll. Same audited
         # create/stop pairing as the cost-TTL and transcript-sync timers
@@ -23927,7 +23929,9 @@ class ChatScreen(BaseAppScreen):
             from ..Console_Modules.character_context import character_view_resume_work
 
             self.run_worker(
-                self._skill._refresh_console_skill_candidates(), exclusive=False
+                self._skill._refresh_console_skill_candidates(),
+                exclusive=False,
+                group="console-skill-discovery",
             )
             self.run_worker(  # The Character widget owns initial load.
                 character_view_resume_work(self._character_context, self),

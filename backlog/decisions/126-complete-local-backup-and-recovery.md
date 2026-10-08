@@ -2514,6 +2514,76 @@ original completed PR budgets or certify broader platform/capture coverage.
 
 The existing async transcript refresh awaits one stock marker read through the existing finite preparation-read owner. Both original anchor/snapshot queries share the captured AgentRuns database and one counted worker interval. The original public synchronous/custom/memory route remains available. Runtime disposal observes physical read retirement; repeated cancellation cannot abandon the worker. The worker closes only its newly acquired exact connection after leaving the counted interval, preserving a borrowed connection or a foreign replacement. The loop rechecks Runtime, coordinator, bridge, database, selected conversation and publication revision before caching; stale results publish nothing and the next existing refresh retries. No new scheduler, timer, permission cache, or performance-limit change is introduced.
 
+
+### TASK-34406: stock Console skill trust setup belongs to App shutdown
+
+The Console's original local-context call enters the scope policy gate before
+the local content-source wrapper evaluates its lazy trust factory. That factory
+performs the original trust-service setup synchronously; constructing the local
+facade lazily does not keep that setup off the shared loop. The existing async
+ensure retains its exact physical builder callback and singleflight lock through
+repeated cancellation. The stock Console route must actually use that ensure and
+must keep the issued work in the original App's shutdown custody.
+
+Select only the definition-time original Console controller, exact App class and
+inherited service slots, scope facade, local wrapper/content-source functions,
+factory lambda code/globals/defaults/closure, original worker dispatch/wait, and
+current configuration source/publication tags. Reuse the existing private finite
+metadata checker after qualifying its defining source. Malformed keys, containers,
+functions and module metadata decline without invoking foreign callbacks. Exact
+instance, facade, local-service, lock, captured policy/server collaborators and
+loop/thread owners remain current through the callback and loop publication.
+Custom fetch/getter/scheduling/source compositions and services already ready at
+selection retain the preceding direct route. No source check performs setup IO.
+
+There is no existing post-policy setup hook in the scope `_call`. The selected
+Console call therefore passes one private preparation tuple through the original
+`get_context` to `_call`, which awaits it immediately after its unchanged scope
+policy gate. It then invokes the unchanged local getter and body. Both policy
+checks retain their original count, order, errors and fresh state; no permission
+verdict is captured or reused. A denied scope policy starts no builder. The
+rejected controller-first prefetch would have run setup before a denial that
+originally prevented it. Ordinary callers do not pass the private tuple.
+
+The preparation uses the exact App's original worker manager, with group
+`console-skill-trust-setup`, nonexclusive work and the existing retained ensure
+body. Name the two original mount/resume discovery workers
+`console-skill-discovery`, preserving their existing nonexclusive work. Add both
+groups to the existing finite manager-wide Console shutdown selection. Captured
+issued Tasks, including detached discovery nodes and the App setup node, remain
+owned until the original callback and Task physically settle before Runtime
+disposal and creator close. A cancelled or terminal logical Worker is insufficient.
+
+An App ready/injected winner installed during setup retains the original ensure
+semantics. A ready local trust slot installed during the held setup remains the
+original local getter's fresh winner; setup never assigns the local slot. The
+subsequent context is produced afresh by the original local body, without a
+prepared context, policy result or permission cache. Changed source or remaining
+owner inputs refuse stale setup publication. Direct/custom actions keep their
+original APIs and live checks.
+
+Acceptance requires the source/refusal controls on real defining classes and
+held original-builder controls on the real App: denied builder count zero,
+cold/ready/custom routes, fresh injected winners, exact App manager selection,
+repeated cancellation, physical callback/Future/lock retirement, original
+shutdown/Runtime/creator close, original observer/source guards, and global drain.
+The import-only controls do not establish App or native lifetime acceptance.
+Original whole startup and Send performance limits remain independent and unchanged.
+This is a narrow refinement of existing ADR-126 finite callback custody, with no
+new security authority, service framework, runtime dependency or permission TTL.
+
+The checked ensure uses the existing private physical preparation-read producer,
+not a detachable inner asyncio Task. Before the first await it registers the
+same handle with the captured original ConsoleRuntime preparation-read set.
+The exact plain Runtime/App identity, undisposed state and absence of an issued
+Console shutdown task are admission and publication fences. After shutdown
+begins the stock route refuses; it cannot fall back to synchronous lazy setup.
+Worker validation uses captured plain fields and source metadata only; loop-only
+owner validation remains before issue and after physical completion. This closes
+the gap after the shutdown worker snapshot and before Runtime disposal. Custom
+and non-Console ensure callers retain their existing contracts.
+
+
 ### Qualified Console pricing presentation (2026-10-07)
 
 An original held-model-reader control observed synchronous Console pricing gap-fill enter the models.dev enablement config reader on the UI thread. The existing finite readiness worker may prepare an immutable detached pricing catalog for its exact checked display owner. Only stock catalog construction, configured-price resolution and usage arithmetic qualify. The display catalog is passed explicitly to the current-price and historical-total calculations; it is never installed globally and never participates in Send or capability/vision caches. Direct, subclassed, replaced and injected catalog readers retain their existing native route.

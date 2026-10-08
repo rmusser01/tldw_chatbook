@@ -360,3 +360,17 @@ def test_skills_scope_service_reports_known_unsupported_capabilities():
             "affected_action_ids": [],
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_custom_scope_context_keeps_original_call_signature():
+    """An ordinary inherited get_context must not add private setup kwargs."""
+    calls = []
+
+    class CustomScope(SkillsScopeService):
+        async def _call(self, *, mode, action_id, method_name, args=(), kwargs=None):
+            calls.append((mode, action_id, method_name, args, kwargs))
+            return {"available_skills": []}
+
+    assert await CustomScope().get_context(mode="local") == {"available_skills": []}
+    assert calls == [("local", "skills.context.list.server", "get_context", (), None)]
