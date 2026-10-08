@@ -626,3 +626,31 @@ all native owner baselines, or explicitly close the HookPermissions owner. The
 review arrived as the run finished. These counts remain diagnostic attribution;
 no stronger internal cleanup claim or product pass follows from the process exit.
 A future causal control must include those small ownership checks.
+
+
+## Retirement-qualified isolated hook read
+
+The integration owner repeated the one warmed original snapshot at frozen
+`3ddb59e8fe` with the small missing ownership qualification added. The original
+`_current`, `raw._check` and `HookPermissions.close` identities are pinned along
+with all measured stage/counter callbacks. Before and after, the exact issued
+identity sets for leases, pending acquisitions, raw/core operations, retiring
+holds and raw states are equal. The baseline has one pre-existing live lease;
+the other sets are empty. After observation retirement, the original owner close
+sets its closed flag. No source change, overflow or forced process retirement
+occurs. Driver exit is zero; all counter buckets match the earlier snapshot.
+
+This qualifies that one read against its observed baseline, while preserving
+the separate six-live-lease limitation in the post-App census sample. It is not
+a claim of zero global native ownership. Evidence: integration-owned
+`deepseek-uat/3ddb-hook-snapshot-retirement-probe.json` and
+`3ddb-one-hook-retirement-census-1.{source,custody}.json`.
+
+The qualified partition remains 572 configuration/locking, 383 hook-store lock,
+75 permission-state read and 50 default-directory native open attempts. The
+main latency repair remains unimplemented; no permission snapshot is reused
+across awaited stages and no guard, reconciliation or directory effect is
+removed on this evidence alone. Quiet three-Send timings remain the acceptance
+comparison. The independent source lane is reviewing a finite preparation
+contract under existing owners rather than selecting the small ruled-out
+shortcuts.
