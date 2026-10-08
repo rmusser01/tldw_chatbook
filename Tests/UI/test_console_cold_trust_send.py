@@ -18,6 +18,60 @@ from Tests.UI.test_console_received_intent_feedback import (
 pytestmark = [pytest.mark.asyncio, pytest.mark.bootstrap_profile]
 
 
+@pytest.fixture(autouse=True)
+def original_trust_construction_observations(record_property):
+    """Attribute first construction across original app creation and attachment."""
+    from tldw_chatbook import app_service_wiring as wiring
+
+    originals = (
+        inspect.getattr_static(
+            wiring.ServiceWiringMixin, "_build_local_skill_trust_service"
+        ),
+        inspect.getattr_static(
+            wiring.ServiceWiringMixin, "ensure_local_skill_trust_service"
+        ),
+        wiring._prepare_console_skill_trust_service,
+    )
+    codes = {function.__code__: function.__name__ for function in originals}
+    observed = []
+    started_at = time.perf_counter()
+
+    def started(code, _offset):
+        if code not in codes or len(observed) >= 12:
+            return
+        frame = sys._getframe(1)
+        path = []
+        try:
+            while frame is not None and len(path) < 18:
+                path.append((frame.f_globals.get("__name__"), frame.f_code.co_name))
+                frame = frame.f_back
+            observed.append(
+                {
+                    "original": codes[code],
+                    "thread": threading.current_thread().name,
+                    "seconds_from_observer_install": time.perf_counter() - started_at,
+                    "callers": path,
+                }
+            )
+        finally:
+            del frame
+
+    monitoring = sys.monitoring
+    tool = next(value for value in range(6) if monitoring.get_tool(value) is None)
+    monitoring.use_tool_id(tool, "cold-trust-original-startup-origin")
+    try:
+        monitoring.register_callback(tool, monitoring.events.PY_START, started)
+        for code in codes:
+            monitoring.set_local_events(tool, code, monitoring.events.PY_START)
+        yield observed
+    finally:
+        for code in codes:
+            monitoring.set_local_events(tool, code, 0)
+        monitoring.register_callback(tool, monitoring.events.PY_START, None)
+        monitoring.free_tool_id(tool)
+        record_property("original_trust_construction_origins", observed)
+
+
 @pytest.mark.parametrize("route", ["enter", "send-button"])
 async def test_cold_stock_send_receives_before_original_configuration_sql(
     route, monkeypatch, record_property
