@@ -210,6 +210,7 @@ The biggest page, and where to start.
 | **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. For **Anthropic** a **Sign in with** select comes first: **API key** or **Claude subscription**. The subscription uses the credential Claude Code already holds (the macOS Keychain, or `~/.claude/.credentials.json`); Chatbook reads it, never stores or refreshes it, and requests bill your Claude plan rather than API credits. While it is chosen, **API key** and **Env var** stay visible but disabled, so switching back loses nothing, and the status line reads "Checking Claude subscription credential…" and then "Credential source: Claude subscription (not verified)", or says the credential is missing or expired and to log in with Claude Code. It follows the choice as soon as you make it, before Save. Like any field here it is an unsaved edit until **Save**. |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
 | **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
+| **Session summary on quit** | **Show session usage summary when quitting** and **Summary duration (seconds)** (1–30, default 3). These **write immediately**. When enabled, confirming a quit (Ctrl+Q) briefly shows total session tokens and elapsed session time before the app exits; any key skips it. Off by default. |
 | **Generation defaults** (collapsed) | Around fourteen sampling and transport fields — temperature, top-p/top-k, token caps, seed, penalties, reasoning and thinking controls, streaming — that apply **only to the provider + model above**. Each states its range in its placeholder and its own error text, and focusing one shows its plain-language help and range in the inspector. A field is shown only when the selected provider + model request actually carries it; the rest are hidden, not greyed, and one line names them (for Anthropic: "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary, Verbosity."). For llama.cpp and other strict local templates the **Reasoning effort** list leaves out levels the request would drop, such as "minimal"; a value saved before stays selected as "minimal (not supported here)" until you change it. Global fallbacks live under Console Behavior. |
 
 Use **Tab** to reach the discovered-model list, arrow keys to move, and
@@ -239,10 +240,21 @@ editing keeps the active generation field in view.
 
 Automatic refresh shows whether changes are saving, saved, or could not be saved.
 If a write fails, your choices remain visible when you leave this category and
-return; choose **Retry** after making the config file writable. The interval
-accepts fractional hours; **0** refreshes on every launch. Empty, negative, and
-invalid values explain how to recover without replacing the saved interval.
-Changing these controls does not record startup consent.
+return; choose **Retry** after making the config file writable.
+
+**Session summary on quit** is a farewell screen, not a dashboard: after you
+confirm a quit, the app briefly overlays a small card with the session's
+token total and elapsed time, then exits. Any keypress skips it immediately,
+and the screen auto-dismisses after the configured duration either way — it
+appears only after shutdown cleanup has finished, so it never delays saving
+or exit. Token totals are exact where the provider reports usage; char-based
+estimates fold in (marked "includes estimates") when it doesn't. Embeddings
+are not counted. The toggle and duration write to the
+`[session_summary]` section of `config.toml` and default to off.
+
+The refresh interval accepts fractional hours; **0** refreshes on every launch.
+Empty, negative, and invalid values explain how to recover without replacing
+the saved interval. Changing these controls does not record startup consent.
 
 **Test Provider** (**t**) checks your current draft before saving, then lists
 the provider's models. Nothing is generated and nothing is saved. A URL-based

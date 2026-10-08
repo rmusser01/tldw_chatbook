@@ -132,6 +132,9 @@ def _log_usage_metrics(model: str, usage: dict[str, Any]) -> None:
         "openrouter_api_total_tokens", usage.get("total_tokens", 0),
         labels={"model": model},
     )
+    from tldw_chatbook.Chat.session_usage import session_usage  # deferred: boot census (ADR-097)
+
+    session_usage().record_provider_payload(usage, provider="openrouter", model=model)
 
 
 def _log_error_metrics(model: str, duration: float, exc: BaseException) -> None:

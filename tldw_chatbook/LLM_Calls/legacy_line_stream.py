@@ -26,6 +26,9 @@ from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatStream, HostedChatTurn
 _DONE_SENTINEL = "data: [DONE]\n\n"
 
 
+_record_terminal_usage = None  # deferred-import cache (issue #365, ADR-097 boot census)
+
+
 class LegacyLineStream(Iterator[str]):
     """Re-serialize engine stream events as legacy raw SSE lines."""
 
@@ -43,6 +46,18 @@ class LegacyLineStream(Iterator[str]):
             event = next(self._stream)
         except StopIteration:
             self._sentinel_sent = True
+            # Session ledger boundary tap (issue #365): the terminal turn's
+            # usage is final only at natural exhaustion; groq/deepseek/
+            # mistral/openrouter streaming returns this shim BEFORE their
+            # `_log_usage_metrics` funnel, so this is the only place those
+            # streams record. A consumer Stop (close without exhaustion)
+            # skips this -- cancelled streams undercount by policy.
+            global _record_terminal_usage
+            if _record_terminal_usage is None:
+                from tldw_chatbook.Chat.session_usage import (
+                    record_stream_terminal_usage as _record_terminal_usage,  # deferred: boot census
+                )
+            _record_terminal_usage(self._stream)
             return _DONE_SENTINEL
         return f"data: {json.dumps(event)}\n"
 

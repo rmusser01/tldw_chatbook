@@ -18831,3 +18831,19 @@ do not prove unchanged provider input.
 PR2995 Qodo finding4182699992 claimed that agents could never request provider/model/preset because NEW_CHAT_TOOL_SCHEMA listed only five fields. An independent review traced the actual Console first-request plan: build_chat_create_schema adds routed presets and opted-in overrides, and native/text serializers retain those dynamic properties. Unconditionally adding the fields would violate ADR147/219 disclosure gates.
 
 For a tool-discovery claim, inspect the runtime schema builder, its live call-site inputs and the provider serializer before editing a static constant. The false-positive disposition and source links are recorded in https://github.com/rmusser01/tldw_chatbook/pull/2995#discussion_r4183161209 and the final Task27 review. No executed provider matrix or new test run was claimed.
+
+## Per-site tap tests stayed green while the composition bug silenced the
+feature: contract-test the seam's SHAPE (issue #365, 2026-10-07)
+
+Five task reviews approved every usage tap; the whole-branch review then
+found the two gateway-native taps passed the FULL response body where
+`ProviderUsage.from_provider_payload` wants the BARE usage dict — it never
+unwraps a nested `"usage"` key — so Console usage (the feature's primary
+surface) silently recorded nothing and a Console-only session would read
+"No usage recorded this session". Every unit test passed because each
+tested its own site with the payload shape that site was (wrongly)
+assumed to receive; nothing pinned what shape the shared seam accepts.
+**When many call sites feed one parser, pin the parser's accepted SHAPE
+with a contract test (full body records nothing; extracted dict records
+once) — and make the plan's live end-to-end run part of the evidence
+before shipping a user-visible surface.**

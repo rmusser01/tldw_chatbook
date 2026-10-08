@@ -338,6 +338,9 @@ def _responses_stream_to_chat_sse(response, *, model: str):
                 completed_usage = (event.get("response") or {}).get("usage")
                 if isinstance(completed_usage, dict):
                     chunk["usage"] = completed_usage
+                    _session_ledger().record_provider_payload(
+                        completed_usage, provider="openai", model=model
+                    )
                 yield f"data: {json.dumps(chunk)}\n\n"
             elif event_type == "error":
                 yield f"data: {payload_text}\n\n"
@@ -883,12 +886,29 @@ def chat_with_openai(
                             response, model=final_model
                         )
                         return
+                    # `stream_options.include_usage` is requested above, so
+                    # the final chunk carries usage; OpenAI-compatible
+                    # gateways sometimes emit CUMULATIVE usage per chunk, so
+                    # keep the last seen and record ONCE at normal loop end
+                    # (a consumer Stop records nothing -- cancelled streams
+                    # undercount by policy).
+                    openai_stream_final_usage = None
                     for line in response.iter_lines(decode_unicode=True):
                         if line and line.strip():
+                            if '"usage"' in line:
+                                usage_candidate = _openai_stream_line_usage(line)
+                                if usage_candidate is not None:
+                                    openai_stream_final_usage = usage_candidate
                             # Pass through OpenAI's SSE lines directly.
                             # Ensure they end with \n\n if not already.
                             # OpenAI's SSE usually includes double newlines.
                             yield line if line.endswith("\n") else line + "\n"
+                    if openai_stream_final_usage:
+                        _session_ledger().record_provider_payload(
+                            openai_stream_final_usage,
+                            provider="openai",
+                            model=final_model,
+                        )
                 except requests.exceptions.RequestException as e_request:
                     logger.opt(exception=True).error(
                         f"OpenAI: RequestException during stream: {e_request}"
@@ -1000,6 +1020,16 @@ def chat_with_openai(
                     or 0,
                     labels={"model": final_model},
                 )
+
+            _session_ledger().record_provider_payload(
+                usage,
+                provider="openai",
+                model=final_model,
+                fallback_texts=(
+                    _estimate_prompt_text(input_data),
+                    _completion_text_from_response(response_data),
+                ),
+            )
 
             logger.debug("OpenAI: Non-streaming request successful.")
             if use_responses_api:
@@ -1228,6 +1258,81 @@ def _contains_extended_ttl(obj: Any) -> bool:
     if isinstance(obj, list):
         return any(_contains_extended_ttl(item) for item in obj)
     return False
+
+
+def _completion_text_from_response(response_data: Any) -> str:
+    """Best-effort completion text for token estimates. Never raises."""
+    try:
+        choices = response_data.get("choices")
+        if choices:
+            message = choices[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+            if isinstance(content, list):
+                return "".join(
+                    part.get("text", "")
+                    for part in content
+                    if isinstance(part, dict)
+                )
+        content_blocks = response_data.get("content")
+        if isinstance(content_blocks, list):
+            return "".join(
+                part.get("text", "")
+                for part in content_blocks
+                if isinstance(part, dict)
+            )
+    except Exception:
+        pass
+    return ""
+
+
+def _openai_stream_line_usage(line: str) -> dict | None:
+    """Extract a usage dict from an OpenAI SSE line, best-effort.
+
+    ``stream_options.include_usage`` is requested for chat-completions
+    streams, so the final chunk carries usage; the substring guard at the
+    call site avoids parsing every delta chunk (a false substring hit
+    parses to a payload without a usage dict and returns None). The caller
+    keeps the LAST seen usage and records once at normal loop end --
+    OpenAI-compatible gateways sometimes emit cumulative usage per chunk.
+    """
+    try:
+        data = line.removeprefix("data:").strip()
+        if not data or data == "[DONE]":
+            return None
+        payload = json.loads(data)
+        usage = payload.get("usage")
+        if isinstance(usage, dict) and usage:
+            return usage
+    except Exception:
+        pass
+    return None
+
+
+def _session_ledger():
+    """Deferred session-usage ledger accessor (issue #365).
+
+    Local import keeps ``Chat.session_usage`` off the boot path -- the
+    UI-ready module census ratchets down and never rises (ADR-097). The
+    taps run once per completed response, so the sys.modules hit is noise.
+    """
+    from tldw_chatbook.Chat.session_usage import session_usage
+
+    return session_usage()
+
+
+def _estimate_prompt_text(input_data: Any) -> str:
+    """Best-effort prompt text for token estimates. Never raises.
+
+    Estimates only apply when the response carried no usage payload
+    (rare); base64 image parts can inflate the char count, which the
+    summary marks via the "includes estimates" qualifier.
+    """
+    try:
+        return json.dumps(input_data)
+    except Exception:
+        return ""
 
 
 #: The shortest credential form ``_credential_redacted_detail`` masks literally.
@@ -2081,6 +2186,16 @@ def chat_with_anthropic(
                                 )
 
                     if output_captured:
+                        # Record BEFORE the yield and never from `finally`:
+                        # Console Stop closes this generator with
+                        # GeneratorExit, and work under that signal must not
+                        # yield or re-enter the parser.
+                        if usage_accumulator:
+                            _session_ledger().record_provider_payload(
+                                usage_accumulator,
+                                provider="anthropic",
+                                model=current_model,
+                            )
                         yield _usage_sse_chunk()
                 except (
                     requests.exceptions.ChunkedEncodingError
@@ -2210,6 +2325,13 @@ def chat_with_anthropic(
                     usage.get("cache_creation_input_tokens") or 0,
                     labels={"model": current_model},
                 )
+
+            _session_ledger().record_provider_payload(
+                usage,
+                provider="anthropic",
+                model=current_model,
+                fallback_texts=(_estimate_prompt_text(input_data), full_assistant_content),
+            )
 
             return normalized_response
 
@@ -3178,6 +3300,13 @@ def chat_with_cohere(
                     labels={"model": final_model},
                 )
 
+            _session_ledger().record_provider_payload(
+                usage_data,
+                provider="cohere",
+                model=final_model,
+                fallback_texts=(_estimate_prompt_text(input_data), text),
+            )
+
             return openai_compatible_response
 
     except requests.exceptions.HTTPError as e:
@@ -3702,6 +3831,9 @@ def chat_with_google(
                 # for synthesizing OpenAI tool_calls[].index (Gemini streams
                 # functionCall parts WHOLE, one complete fragment per call).
                 next_tool_position = 0
+                # Gemini usageMetadata is cumulative across chunks; keep the
+                # latest converted usage and record it once at stream end.
+                stream_final_usage = None
                 try:
                     for line in response.iter_lines(decode_unicode=True):
                         if line and line.strip().startswith("data:"):
@@ -3712,6 +3844,8 @@ def chat_with_google(
                                 chunk_usage = _gemini_usage_to_openai(
                                     data_chunk_outer.get("usageMetadata")
                                 )
+                                if chunk_usage is not None:
+                                    stream_final_usage = chunk_usage
                                 candidates = data_chunk_outer.get("candidates", [])
                                 if candidates:
                                     candidate = candidates[0]
@@ -3810,6 +3944,12 @@ def chat_with_google(
                                 logger.warning(
                                     f"Google Gemini: Could not decode JSON line: {safe_llm_error_detail(json_str)}"
                                 )
+                    if stream_final_usage:
+                        _session_ledger().record_provider_payload(
+                            stream_final_usage,
+                            provider="google",
+                            model=current_model,
+                        )
                 except requests.exceptions.ChunkedEncodingError as e:
                     logger.opt(exception=True).error(
                         f"Google Gemini: ChunkedEncodingError during stream: {e}"
@@ -3929,11 +4069,18 @@ def chat_with_google(
                 k in usage_meta
                 for k in ["promptTokenCount", "candidatesTokenCount", "totalTokenCount"]
             ):
-                normalized_response["usage"] = {
+                normalized_usage = {
                     "prompt_tokens": usage_meta.get("promptTokenCount"),
                     "completion_tokens": usage_meta.get("candidatesTokenCount"),
                     "total_tokens": usage_meta.get("totalTokenCount"),
                 }
+                normalized_response["usage"] = normalized_usage
+                _session_ledger().record_provider_payload(
+                    normalized_usage,
+                    provider="google",
+                    model=current_model,
+                    fallback_texts=(_estimate_prompt_text(input_data), assistant_content),
+                )
 
             # Log non-streaming success metrics
             duration = time.time() - start_time
@@ -4517,6 +4664,16 @@ def chat_with_huggingface(
                     labels={"model": final_model_for_payload},
                 )
 
+            _session_ledger().record_provider_payload(
+                usage,
+                provider="huggingface",
+                model=final_model_for_payload,
+                fallback_texts=(
+                    _estimate_prompt_text(input_data),
+                    _completion_text_from_response(result),
+                ),
+            )
+
             return result
 
     except requests.exceptions.HTTPError as e:
@@ -4709,6 +4866,18 @@ def chat_with_moonshot(
         time.time() - started_at,
         labels=labels,
     )
+    # Streaming results are stream objects, not mappings; usage there arrives
+    # on the wire during iteration, so only the non-streaming dict is tapped.
+    if isinstance(result, Mapping):
+        _session_ledger().record_provider_payload(
+            result.get("usage"),
+            provider="moonshot",
+            model=model or "",
+            fallback_texts=(
+                _estimate_prompt_text(input_data),
+                _completion_text_from_response(result),
+            ),
+        )
     return result
 
 
@@ -4783,6 +4952,18 @@ def chat_with_zai(
         time.time() - started_at,
         labels=labels,
     )
+    # Streaming results are stream objects, not mappings; usage there arrives
+    # on the wire during iteration, so only the non-streaming dict is tapped.
+    if isinstance(result, Mapping):
+        _session_ledger().record_provider_payload(
+            result.get("usage"),
+            provider="zai",
+            model=model or "",
+            fallback_texts=(
+                _estimate_prompt_text(input_data),
+                _completion_text_from_response(result),
+            ),
+        )
     return result
 
 
