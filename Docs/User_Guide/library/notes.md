@@ -847,8 +847,10 @@ healthy wording the same way once the folder is resolved. Typing in a synced
 note never holds its folder: Chatbook saves the note while you type, and a save
 that lands while the folder is still writing the previous save to the file is
 settled on the next pass with no click -- the folder records the baseline it
-can prove (the journal's digest and the bytes on disk), writes the newer text,
-and the row stays "✓ Up to date"; a save never waits for a sync, on this folder
+can prove (the journal's digest and the bytes on disk) and writes the newer
+text; while a long burst of typing is being caught up the row may briefly read
+"◌ Changes available" before it returns to "✓ Up to date", with nothing to
+press; a save never waits for a sync, on this folder
 or any other, so a note switch, Back or a rail switch is never delayed by a
 folder's pass (TASK-34000.51). The one thing that still waits is a change on
 both sides -- the file edited on disk while the note was edited in Chatbook --
