@@ -11866,3 +11866,75 @@ _RUN_LOG_PROBE_SOURCE = (
         )
     ),
 )
+
+
+# Definition-time source of the optional finite Compact display read.
+_COMPACT_MODEL_CONFIG_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (globals(), name, globals()[name])
+        for name in (
+            "get_cli_providers_and_models",
+            "load_settings",
+            "_load_settings_guarded",
+            "_load_settings_uncached",
+            "_settings_cache_hit",
+            "_get_effective_config_path",
+            "current_config_identity",
+            "resolve_provider_name",
+            "_normalize_provider_lookup_key",
+            "normalize_provider_config_key",
+            "_config_participants",
+        )
+    )
+    + tuple(
+        (vars(_config_participants), name, vars(_config_participants)[name])
+        for name in ("operation",)
+    )
+    + ((sys.modules, _config_participants.__name__, _config_participants),),
+    tuple(
+        (
+            namespace,
+            name,
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+            vars(function).get("__wrapped__"),
+        )
+        for namespace, name, function in (
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "get_cli_providers_and_models",
+                    "load_settings",
+                    "_load_settings_guarded",
+                    "_load_settings_uncached",
+                    "_settings_cache_hit",
+                    "_get_effective_config_path",
+                    "current_config_identity",
+                    "resolve_provider_name",
+                    "_normalize_provider_lookup_key",
+                    "normalize_provider_config_key",
+                )
+            ),
+            *(
+                (vars(function), "__wrapped__", function.__wrapped__)
+                for function in (_load_settings_guarded, _load_settings_uncached)
+            ),
+            (vars(_config_participants), "operation", _config_participants.operation),
+            (
+                vars(_config_participants.operation),
+                "__wrapped__",
+                _config_participants.operation.__wrapped__,
+            ),
+        )
+    ),
+)
