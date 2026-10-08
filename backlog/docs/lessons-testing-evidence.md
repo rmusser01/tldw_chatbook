@@ -19166,3 +19166,20 @@ established causal RED; unchanged checks then passed after the narrow repair.
 ### Hidden ancestor text is not a visible failure (2026-10-08)
 
 During the Console priced-Send investigation, a test text dump included the default “Trace capture blocked” card because it checked each widget's display flag but ignored hidden ancestors. Two observations of the original trace failure handlers recorded no entry. Observation at the original waiter failure showed an idle controller, no recovery checkpoint, and hook review still running. Check effective visibility and original state/handler evidence before attributing a timeout to text from a UI dump; the dump alone did not establish a trace failure.
+
+## Original-body observers can still change the measured workload
+
+**TASK-34563.4, 2026-10-08.** An optional scalar-only parent-metadata observer
+counted 1,375 native open attempts for an isolated warm hook read. The same node
+with the observer off counted 1,008, matching an earlier multi-node control.
+Both retained the same product sources, one parent establishment, 34 descriptor
+closes, valid payloads and positive native retirement. Callback review found no
+direct native operations, and all instrumented opens/unwinds reconciled. The
+367-attempt difference therefore remains an observation-associated/state gap;
+no captured evidence identifies ACL drift or admission confirmation as its cause.
+
+**What to do.** Preserving original bodies and reconciling event counts proves
+what happened in that observed run, not equivalence to an observer-free workload.
+Keep a matching observer-off control, distinguish direct callback overhead from
+possible timing-sensitive state changes, and retain unresolved differences. Do
+not convert instrumented counts or nested elapsed time into promised savings.

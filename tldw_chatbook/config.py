@@ -10893,11 +10893,14 @@ def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple | None:
     A path that is not a directory, or sits under one the user cannot search,
     raises here; the memo then steps aside so the resolution reports it as it
     always has (``PrivatePathError``), rather than a raw ``OSError`` escaping.
+    One fresh snapshot shares ancestor visits across these requested paths.
     """
-    from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+    if not paths:
+        return ()
+    from tldw_chatbook.Backup_Recovery.storage_admission import _observe_stamps
 
     try:
-        return tuple(_posture(path) for path in paths)
+        return _observe_stamps(paths, ())[0]
     except OSError:
         return None
 

@@ -1833,3 +1833,62 @@ component/effect partition. Source review also identified conditional repeated
 default-root filesystem selection (OPT35), outside the explicit-directory test.
 The review list preserves these limits rather than turning them into promises.
 No further full Send run or product optimization follows from this diagnostic.
+
+
+Source follow-up selects OPT36 for bounded task34563.28 qualification. The stock
+config posture helper loops over `_posture`, which invokes the existing native
+snapshot on a singleton; the complete requested tuple can use that same helper
+once. This consolidates overlapping work without a new cache or authority
+record. Preserve OSError fallback, empty/ordered/duplicate/missing results and
+original memo invalidation/creation brackets. The bound companion path remains
+unchanged. Existing b4a detail has 19 default-hook getter spans: their nested
+get_user_data_dir bodies take roughly .033-.246s while nested companion checks
+take .0006-.0055s. These nested elapsed values expose a remainder but do not
+record the return branch; they do not prove memo membership or expected savings.
+Use a direct original-body native count/retirement control first.
+
+
+Task28 causal baseline `user-dir-posture-red-1`: one intended failure only at
+`126 == 2 * 10` native-open assertion, after exact scalar-equivalent ordered
+stamps, duplicate positions, original callbacks and physical invalidity of all
+126 returned HANDLEs passed. Eleven requested entries span ten distinct native
+tree nodes but rebuild eleven trees (63 accumulated nodes). Recorded native
+starts: 126 opens/NTFS checks, 315 identity queries, 63 final metadata/security/
+token-owner queries. Driver5.250s/pytest2.057s, unchanged source/observer hashes,
+normal native tree/Job/identity/pipes/profile retirement and zero forced cleanup,
+overflow or lookup races. The reviewed implementation now uses the existing
+shared snapshot; GREEN and supported-host qualification are still pending.
+
+
+Task28 native GREEN/controls: `user-dir-posture-green-1` confirms 11-to-1 tree
+observations and 126-to-20 actual opens with identical requested stamp order,
+duplicates and exact descriptor bytes; every actual HANDLE is positively closed.
+The original tree primitive schedule also passes. That first 8-case batch has
+7 passes and one new fixture error before the changed-state read: WindowsOS
+fchmod accepts only private modes, so fchmod0755 is not a valid mutation tool.
+The fixture now uses the existing native DACL replacement, retaining the same
+inode, actual public-read exposure, original resolver count and private FD restore.
+Product code and assertions were not relaxed.
+
+`user-dir-posture-controls-1` passes the corrected memo control plus seven
+original controls: exact ACL changes, replacement after child observation,
+unavailable/changed related evidence, actual uncertain-close custody and bound
+profile directory creation/verification. Driver15.109s/pytest11.347s. Across the
+two bundles, all seven new and eight existing distinct controls pass. First
+GREEN driver13.359s/pytest9.531s. Both preserve audited source hashes and normal
+native tree/Job/identity/pipes/profile retirement, zero forced cleanup/overflow/
+lookup races. No deadline or callback is substituted to obtain passing results.
+The original uncertain-close test deliberately retains its exact failed handle,
+then reclaims only that test-owned handle; ordinary OSError-to-None fallback
+remains the pre-existing policy, not a claim of successful resource retirement.
+
+Product change is five additions/two removals in `_user_data_dir_stamps`; config
+SHA256 d7b3aae6f709aa18b30ad1113f4c681400e4b858158c68d62494fb2fa274e846.
+Every other config AST statement is unchanged; changed-helper lint is clean
+with the same 56 pre-existing file diagnostics. New tests pass Ruff/format and
+parse checks; independent source/plan/test reviews are clear. Task34563.28 stays
+In Progress for supported-host/integrated qualification. Original POSIX PERF07
+controls still need their supported hosts; no full suite was requested or run.
+The review list now has 36 stable IDs and retains OPT36 as implemented with
+these remaining limits. Overall one-second Send and 100ms feedback acceptance
+remain unmet.
