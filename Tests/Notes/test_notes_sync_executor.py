@@ -2193,6 +2193,135 @@ async def test_folder_owner_change_before_membership_stage_never_redirects_place
     assert store.get_binding("binding-1").note_version == 4
 
 
+_RESUMABLE_CRASH_POINTS = (
+    NotesSyncOperationState.RECOVERY_ADMITTED,
+    NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "live_version", (4, 6), ids=("control-same-version", "version-only-move")
+)
+@pytest.mark.parametrize(
+    "crash_at", _RESUMABLE_CRASH_POINTS, ids=("after-admission", "after-first-write")
+)
+async def test_update_note_of_a_version_only_moved_note_reconstructs_and_resumes(
+    tmp_path: Path,
+    live_version: int,
+    crash_at: NotesSyncOperationState,
+) -> None:
+    """TASK-34000.49 fix round 1: recovery must not keep the version proxy.
+
+    The binding was committed at note version 4 and content ``before``; the
+    live note still says ``before`` but its version moved on without a content
+    change (a keywords-only save, a title-only edit, a delete and restore).
+    ``_validate_initial`` admits that update_note on the content baseline alone,
+    so ``operation.expected_note_version`` (the live version at admission) and
+    the journaled binding's ``note_version`` are no longer equal by
+    construction -- and ``reconstruct_request`` used to require exactly that,
+    leaving any interruption after admission unrecoverable
+    (``recovery_authority_changed``, root published ``failed``). The journaled
+    binding, the journaled payload against the baseline digest and the exact
+    re-observe on resume carry the invariant; the version clause is gone.
+    """
+
+    store, database = _execution_store(tmp_path)
+    notes = FakeNoteAuthority(_note(content="before", version=live_version))
+    files = FakeFilesystem(_file(content="after"))
+    request = _request(
+        action=NotesSyncActionKind.UPDATE_NOTE, note=notes.snapshot, file=files.snapshot
+    )
+
+    def crash(stage: NotesSyncOperationState) -> None:
+        if stage is crash_at:
+            raise InjectedCrash
+
+    with pytest.raises(InjectedCrash):
+        await NotesSyncExecutor(
+            store, notes, files, recovery_capacity_bytes=2048, after_stage=crash
+        ).execute(request)
+    operation = store.get_operation("operation-1")
+    assert operation.state is crash_at
+    assert operation.expected_note_version == live_version
+    assert store.get_binding("binding-1").note_version == 4
+
+    reopened = NotesSyncExecutor(
+        NotesDeviceStateStore(database), notes, files, recovery_capacity_bytes=2048
+    )
+    reconstructed = await reopened.reconstruct_request("operation-1")
+    assert isinstance(reconstructed, NotesSyncExecutionRequest)
+    assert reconstructed.note is not None
+    assert reconstructed.note.version == live_version
+    result = await reopened.resume(reconstructed)
+
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
+    assert notes.snapshot.content == "after"
+    assert notes.snapshot.version == live_version + 1
+    assert notes.replace_calls == 1
+    assert files.replace_calls == 0
+    binding = store.get_binding("binding-1")
+    assert binding.note_version == notes.snapshot.version
+    assert binding.content_digest == _digest("after")
+    assert store.list_incomplete_operations() == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("crash_at", "refusal"),
+    (
+        (NotesSyncOperationState.RECOVERY_ADMITTED, "stale_observation"),
+        (NotesSyncOperationState.FIRST_AUTHORITY_APPLIED, "postcondition_failed"),
+    ),
+    ids=("after-admission", "after-first-write"),
+)
+async def test_update_note_of_a_version_only_moved_note_still_refuses_a_content_move_on_resume(
+    tmp_path: Path,
+    crash_at: NotesSyncOperationState,
+    refusal: str,
+) -> None:
+    """Negative control: the note's CONTENT moved after the crash -> refused.
+
+    Same version-only-moved note, same interruption; then the note is edited
+    in the app before the resume. Nothing is written on either side, both
+    texts stay where they were typed, and the binding row is untouched: the
+    guards that remain at reconstruction and on resume still stop for review.
+    """
+
+    store, database = _execution_store(tmp_path)
+    notes = FakeNoteAuthority(_note(content="before", version=6))
+    files = FakeFilesystem(_file(content="after"))
+    request = _request(
+        action=NotesSyncActionKind.UPDATE_NOTE, note=notes.snapshot, file=files.snapshot
+    )
+
+    def crash(stage: NotesSyncOperationState) -> None:
+        if stage is crash_at:
+            raise InjectedCrash
+
+    with pytest.raises(InjectedCrash):
+        await NotesSyncExecutor(
+            store, notes, files, recovery_capacity_bytes=2048, after_stage=crash
+        ).execute(request)
+    writes_before = notes.replace_calls
+    typed = "typed in the app"
+    notes.snapshot = _note(content=typed, version=notes.snapshot.version + 1)
+
+    reopened = NotesSyncExecutor(
+        NotesDeviceStateStore(database), notes, files, recovery_capacity_bytes=2048
+    )
+    result = await reopened.resume(await reopened.reconstruct_request("operation-1"))
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.reason_code == refusal
+    assert notes.replace_calls == writes_before
+    assert files.replace_calls == 0
+    assert notes.snapshot.content == typed
+    assert files.snapshot.text == "after"
+    binding = store.get_binding("binding-1")
+    assert (binding.note_version, binding.content_digest) == (4, _digest("before"))
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("direction", "action"),

@@ -618,9 +618,14 @@ def _note_matches_baseline(
     (``note != request.note`` in ``_validate_initial`` / ``_classify``) carry
     the "note is still what we synced" invariant on their own.
     ``binding.note_version`` is the note's version at the last baseline
-    commit; it is compared only against journal-recorded binding facts
-    (``reviewed.get("note_version")``, ``operation.expected_note_version``)
-    and is never a precondition against the live note. A soft-delete and
+    commit; it is compared only against the journal-recorded copy of the
+    binding itself (``reviewed.get("note_version")`` in
+    ``_binding_matches_reviewed``) and is never a precondition against the
+    live note -- neither the observed ``note.version`` nor the admitted
+    ``expected_note_version`` recorded on the operation, which is the live
+    version at admission and so a note fact, not a binding fact
+    (``reconstruct_request`` used to require the two to be equal, which
+    made an interrupted update_note unrecoverable). A soft-delete and
     restore, a keywords-only save or a title-only edit all move the version
     without touching the content, and the digest-only reconciler never
     re-bases a binding for them -- comparing the version here wedged every
@@ -1375,6 +1380,14 @@ class NotesSyncExecutor:
                     and (
                         # TASK-34000.2: the payload is the RAW note; a
                         # baseline may keep it raw or in represented form.
+                        # TASK-34000.49: the admitted note's version
+                        # (operation.expected_note_version) is NOT required
+                        # to equal the journaled binding's note_version --
+                        # a version-only move is admitted on the content
+                        # baseline, and the journaled binding
+                        # (_binding_matches_reviewed above), this payload
+                        # digest and the exact re-observe on resume carry
+                        # the invariant.
                         reviewed_binding.get("content_digest")
                         not in {
                             payload_digest,
@@ -1383,8 +1396,6 @@ class NotesSyncExecutor:
                                 self._decoded_binding_serialization(reviewed_binding),
                             ),
                         }
-                        or operation.expected_note_version
-                        != reviewed_binding.get("note_version")
                     )
                 )
                 or self.stable_identity_digest(current_file)
@@ -5554,6 +5565,16 @@ class NotesSyncExecutor:
         note: NotesSyncNoteSnapshot,
         file: _FileSnapshot,
     ) -> bool:
+        """Whether the binding describes ``note``/``file`` as just committed.
+
+        The update_file arm checks the FILE against the binding only: it
+        relies on every caller having first run ``_require_desired`` /
+        ``_require_keep_both_desired`` / ``_classify_restore`` (the exact
+        re-observe of the admitted note). Do not re-add a note-version
+        clause here "for safety" -- see ``_note_matches_baseline``
+        (TASK-34000.49).
+        """
+
         digest_matches = (
             _note_matches_baseline(note, binding.content_digest, binding.serialization)
             if request.action_kind is NotesSyncActionKind.UPDATE_NOTE
