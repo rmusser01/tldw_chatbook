@@ -1313,3 +1313,51 @@ permission loading can return defaults without opening a file, and corrupt-load
 recovery can rename a file. Final source validation and each actual effect gate
 must therefore remain. Supported-host qualification is still tracked by the
 integration owner; task25 remains In Progress until that evidence is complete.
+
+## Task26: one owner for the stock permission payload read
+
+The named Console payload reader now uses its existing checked source scope
+instead of opening two additional nested load scopes. The original payload body,
+mutation lock, readable/recovery check, actual file/backup gates, final native
+validation and source receipt remain. Custom skipped members retain their ordinary
+route. Definition-time metadata covers only those omitted calls, including the
+raw scope/check and their actual package/module join; custom descriptors are
+rejected before binding. No read cache or lease crosses an await.
+
+The unchanged checked-load baseline (`owned-permission-load-red-1`) records 621
+native open attempts, 574 successful opens and 23 objects. On the final product,
+`owned-permission-isolated-count-1` records 529 attempts, 486 successful opens and
+the same 23 objects: 92 fewer attempts (14.8%). The existing source scope count
+falls from three to one; reader, file and final checks remain one each. Fresh
+selection/witness counts fall from 9/10 to 7/8. The two independent acquisitions,
+full payload, member order and physical descriptor/lease retirement remain.
+The final isolated run passes in 8.547s driver / 4.750s pytest with unchanged
+source, normal Job/tree/identity/pipes/profile retirement and zero diagnostic
+capacity or ancestry misses. This is an operation-count result, not Send timing.
+
+The first 19-case integrated batch also exposed why count comparisons must retain
+the admission evidence. Its count recorded 952 attempts with the same four raw
+checks and 7/8 observations. Every additional attempt was inside the direct
+related-member acquisition (56 to 479): its original reuse check observed an
+actual temporary-profile parent permission change (mode 0700 to 0744 and changed
+ACL), declined reuse and performed ordinary admission. The final quiet count
+has unchanged posture and accepts reuse again. The modifying actor is not
+established. Preserve both records and the original refusal; do not treat that
+423-attempt fallback as a product improvement or a reason to relax identity.
+Final local task26 verification covers 109 distinct passing controls (26 new,
+83 existing). Shared preparation/provider composition and corrected custom-guard
+controls pass 61/61; standalone snapshot, source semantics, cancellation and
+actual Console wiring pass 25/25. The original new batch supplies the remaining
+count/normalization/default/corrupt/custom/source-drift controls. Final effect
+controls include the real inactive restored-source path and exact native read-FD
+close uncertainty, with physical custody retained on uncertainty. New test-only
+expectation corrections preserve original error categories and distinguish a
+generator's first entry from its resume; no product or budget was changed to
+obtain those passes. Every batch has unchanged-source and normal containment
+retirement receipts, with zero forced cleanup/identity overflow/races.
+
+Root reviewed both implementation lanes before integration and repaired the
+independent reviews' direct compatibility findings. Scoped static checks pass;
+all original raw module statements and `_checked_read` remain AST-identical.
+Task26 AC1–3 are checked; AC4 and the original performance targets stay open
+until combined application timing and supported-host verification complete.

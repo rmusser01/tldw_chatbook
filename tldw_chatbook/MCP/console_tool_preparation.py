@@ -302,9 +302,7 @@ async def prepare_console_tools(
         return None
     captured = snapshot._CapturedSources(service, capture_catalog=include_mcp_catalog)
     with service._producer_lifetime.operation():
-        payload = await snapshot._owned_worker(
-            lambda: captured.permission_call(lambda owner: captured.permission_reader())
-        )
+        payload = await snapshot._owned_worker(captured.read_permission_payload)
         captured.require_current()
         require_pipeline_current()
         killed = bool(payload.get("kill_switch", False))

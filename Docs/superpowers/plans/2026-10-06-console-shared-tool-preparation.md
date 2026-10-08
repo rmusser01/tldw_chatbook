@@ -177,3 +177,73 @@ repaired cases with unchanged deadlines and zero final diagnostic overflow.
 Registration and source-category source review plus targeted lint/format pass.
 TASK-34563.25 and the phase-attribution report retain exact evidence and limitations;
 supported-host qualification, integrated Send timing and latency acceptance stay open.
+
+## Stock permission load consolidation after measured task25 integration
+
+ADR required: no new ADR; existing ADR-222 and ADR-126 apply.
+ADR path: backlog/decisions/222-console-send-preparation-and-io-ownership.md;
+backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: consolidate nested preparation within the existing synchronous source
+owner, preserving its final validation and actual effect gates.
+
+[TASK-34563.26](../../../backlog/tasks/task-34563.26%20-%20Consolidate-stock-MCP-permission-loading-within-its-source-owner.md)
+records the reviewed API, exact three-lane file ownership and causal verification
+plan. Exact combined d5247a2d quiet Send remains 7.635 / 7.887 / 7.809 seconds;
+the three guarded MCP reads total about one second per Send under the existing
+detail observer. Parent and child timings overlap.
+
+Keep `_checked_read(source, zero_argument_callback)` and its final check intact.
+A named `_CapturedSources.read_permission_payload()` passes the current issued
+operation explicitly to a qualified private original-load body. Captured stock
+method/body and actual lock identities decline custom entry and reject later
+drift. The real mutation fence, readable/recovery, actual reader/file/backup and
+uncertain-persistence behavior remain. No ambient exemption or new owner ledger.
+Tests precede implementation; root reviews causal RED on the real checked-load
+route before releasing product work, integrates the two implementation lanes and
+coordinates all native verification sequentially with UAT. The remaining latency
+and supported-host requirements are not relaxed.
+
+Task26 causal RED: `owned-permission-load-red-1` on unchanged saved product
+fails only the intended nested-scope assertion (three observed, one required).
+The actual checked permission read completes all prior full-payload, original
+member order, reader/file/final-check, two independent acquisitions and physical
+FD/lease-retirement assertions. It records six full checks, nine source selections,
+ten witnesses and one readable approval, with 621 native open attempts. This is
+an actual checked-load baseline, not the standalone getter's 575-attempt census.
+Driver 8.234 seconds / pytest 4.847 seconds; ten selected product/fixture hashes
+remain unchanged, native Job/tree/identity/pipes/profile retire normally, zero
+force, identity overflow or races. Native census capacity overflow is zero;
+three bounded ancestry depth misses limit caller attribution. No bound changed.
+Root reviewed this evidence before releasing both product implementation lanes.
+
+Task26 combined-draft review control: `owned-permission-scope-red-1` passes the
+original-body count test and fails only the new custom nested-refusal control
+(`DID NOT RAISE`). Counts fall from 621 to 529 native attempts, 574 to 486
+successful opens, with the same 23 objects. Scope checks fall from three to one;
+the reader, file and final checks remain one each, source selections seven,
+witnesses eight. Driver 9.844 seconds / pytest 6.425 seconds; all 12 selected
+source hashes stay unchanged, normal Job/tree/identity/pipes/profile retirement,
+zero force/identity overflow/races and zero count-observer ancestry misses.
+This is not final compatibility or latency acceptance.
+
+The custom guard failure justifies a defining-module identity row for only the
+omitted raw scope wrapper/body and raw check. Before stock issuance a replaced
+guard keeps its original route; late drift refuses. Independent review also
+requires checking the class descriptor before binding a skipped member, so a
+custom property is not invoked during pure qualification. These repairs do not
+expand into transitive callback qualification; retained callbacks still execute
+inside their existing effect and recovery boundaries.
+Existing integration probes observe the original public `load` body, which this
+change deliberately bypasses. Root owns the minimal probe relocation in
+Tests/Chat/test_console_async_mcp_snapshot.py to the original `_load_locked` body
+used by both routes. Keep the real owner/thread/custody observations, barriers,
+counts, deadlines and cleanup assertions unchanged. This preserves verification
+of actual payload work rather than manufacturing a call to an obsolete wrapper.
+Task26 final local integration: 109 distinct targeted controls pass after both
+product lanes are frozen. Original inactive restored-policy behavior and exact
+read-FD uncertainty are exercised, not simulated by returning defaults. Final
+isolated census is 529 native attempts versus 621 baseline; the same product's
+952-attempt batch sample includes 423 opens from an actual profile-parent posture
+change that correctly declined admission reuse. The report and task retain both
+receipts and all initial test-expectation corrections. Scoped static checks pass;
+combined Send timing and supported-host qualification remain open.

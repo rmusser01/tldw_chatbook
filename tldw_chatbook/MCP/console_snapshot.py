@@ -35,6 +35,7 @@ from .permission_store import (
     MCPPermissionStore,
     EffectiveToolState,
     _CONSOLE_STANDARD_METHODS as _permission_methods,
+    _CONSOLE_OWNED_LOAD_HELPERS as _permission_load_helpers,
     _CONSOLE_CONTROLLER_PERMISSION_MODULE as _permission_switch_module,
     _CONSOLE_CONTROLLER_PERMISSION_CLASS as _permission_switch_class,
     _CONSOLE_CONTROLLER_PERMISSION_METHODS as _permission_switch_methods,
@@ -114,6 +115,25 @@ def _same_callback(current: Any, original: Any) -> bool:
 _LOCAL_CATALOG_METHODS = ("get_external_servers", "_project_external_catalog")
 _STORE_CATALOG_METHODS = ("get_catalog_bundle", "get_external_catalog", "load")
 _PERMISSION_METHODS = ("load", "mark_config_changed", "get_kill_switch")
+
+
+def _owned_permission_load_helpers_current() -> bool:
+    """Qualify directly consumed owned-load helpers before invoking them."""
+    if (
+        sys.modules.get(_permission_switch_module.__name__)
+        is not _permission_switch_module
+        or not _controller_inputs_checker_current()
+    ):
+        return False
+    namespace = vars(_permission_switch_module)
+    return all(
+        namespace.get(name) is function
+        and function.__code__ is code
+        and function.__globals__ is defining
+        and defining is namespace
+        and _controller_inputs_current(function, inputs)
+        for name, function, code, defining, inputs in _permission_load_helpers
+    )
 
 
 def standard_local_catalog_sources(local: Any, store: Any) -> bool:
@@ -420,6 +440,40 @@ class _CapturedSources:
                 self.require_current()
         return self.permission
 
+    def read_permission_payload(self):
+        """Load stock policy within the existing checked source operation."""
+        permission = self.permission_owner()
+        reader = self.permission_reader
+        helpers = {name: function for name, function, *_ in _permission_load_helpers}
+        captured = None
+        if _owned_permission_load_helpers_current():
+            captured = helpers["_capture_console_owned_load"](permission)
+
+        def read():
+            self.require_current()
+            if captured is None:
+                return reader()
+            if not _owned_permission_load_helpers_current() or not helpers[
+                "_console_owned_load_current"
+            ](permission, captured):
+                raise RecoveryRequired("mcp_source_selection_changed")
+            return helpers["_load_in_owned_scope"](
+                permission, getattr(raw._local, "operation", None), captured
+            )
+
+        result, receipt = _checked_read(permission, read)
+        self.require_current()
+        if (
+            receipt != self.permission_identity
+            or captured is not None
+            and (
+                not _owned_permission_load_helpers_current()
+                or not helpers["_console_owned_load_current"](permission, captured)
+            )
+        ):
+            raise RecoveryRequired("mcp_source_selection_changed")
+        return result
+
     def permission_call(self, call):
         permission = self.permission_owner()
         result, receipt = _checked_read(permission, lambda: call(permission))
@@ -466,9 +520,7 @@ async def read_console_kill_switch(
         raise RecoveryRequired("mcp_source_selection_changed")
     captured.require_current()
     with service._producer_lifetime.operation():
-        payload = await _owned_worker(
-            lambda: captured.permission_call(lambda owner: captured.permission_reader())
-        )
+        payload = await _owned_worker(captured.read_permission_payload)
         captured.require_current()
         return bool(payload.get("kill_switch", False))
 
@@ -515,7 +567,7 @@ async def capture_console_definition_maximum(
     run_native = _owned_worker if _run_native is None else _run_native
 
     def read_sources():
-        payload = captured.permission_call(lambda owner: captured.permission_reader())
+        payload = captured.read_permission_payload()
         bundle = None
         if not bool(payload.get("kill_switch", False)):
             bundle, receipt = _checked_read(
@@ -733,6 +785,10 @@ _CONTROLLER_PRECHECK_FUNCTIONS = tuple(
         ("standard_console_catalog_sources", standard_console_catalog_sources),
         ("_owned_worker", _owned_worker),
         ("_checked_read", _checked_read),
+        (
+            "_owned_permission_load_helpers_current",
+            _owned_permission_load_helpers_current,
+        ),
         ("read_console_kill_switch", read_console_kill_switch),
     )
 )
@@ -749,6 +805,7 @@ _CONTROLLER_PRECHECK_METHODS = tuple(
         "_method_bindings",
         "require_current",
         "permission_owner",
+        "read_permission_payload",
         "permission_call",
     )
     for function in (vars(_CapturedSources)[name],)

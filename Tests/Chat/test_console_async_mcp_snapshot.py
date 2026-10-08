@@ -34,7 +34,8 @@ class _MaximumProbe(catalog_controls._ReadProbe):
     def __init__(self, store, permissions, **kwargs):
         super().__init__(store, **kwargs)
         self.permissions = permissions
-        self.permission_code = inspect.unwrap(MCPPermissionStore.load).__code__
+        # Both the public and owned routes execute this original payload body.
+        self.permission_code = inspect.unwrap(MCPPermissionStore._load_locked).__code__
         self.permission_threads = []
         self.permission_calls = []
         self.permission_callers = []

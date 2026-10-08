@@ -19126,3 +19126,19 @@ process retirement before restoring access or removing the profile.
 ### A finite callback can contain more than one storage authority
 
 TASK-34406, 2026-10-07: moving deferred Collections setup off the UI loop initially wrapped the entire original constructor sequence in a database-only operation. The actual offline-store constructor then failed with operation_path_outside_scope while creating its separate archive directory. Keep finite callback/connection ownership separate from resource authorization; preserve each original operation's admission rather than broadening or reusing a database-only scope for filesystem work. Removing only the added outer scope allowed all21 focused responsiveness, native ownership and wiring controls to pass.
+
+## Native read counts must retain the reason admission reuse declined
+
+**TASK-34563.26, 2026-10-07.** One frozen owned permission read made 529 native
+open attempts in isolation but 952 in a broader test batch. Both had the same
+four raw checks, seven source selections and eight witnesses. The original
+acquisition evidence accounted for every extra attempt: the temporary profile
+parent changed from 0700 to 0744 with a changed ACL, so reuse declined and the
+related-member acquisition used 479 opens instead of 56. The final quiet run
+returned to 529 with unchanged posture. The modifying actor was not established.
+
+**What to do.** Compare recorded source/admission evidence alongside counts.
+Keep real permission/identity drift on its ordinary validation route and report
+that sample separately; a green count test or identical function-call totals do
+not establish equivalent native work. Do not weaken freshness or change limits
+to manufacture a cleaner performance result.

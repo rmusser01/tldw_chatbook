@@ -1330,6 +1330,41 @@ def _scope(
                     raise
 
 
+# Only these raw guard calls are omitted by the named stock permission load.
+# Capture their defining identities before any Console consumer can replace them.
+_CONSOLE_PERMISSION_LOAD_GUARDS = tuple(
+    (
+        name,
+        callback,
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                sys.modules[function.__globals__["__name__"]],
+                (
+                    function.__defaults__,
+                    function.__kwdefaults__,
+                    tuple(function.__kwdefaults__.items())
+                    if function.__kwdefaults__ is not None
+                    else (),
+                    function.__closure__,
+                    tuple(
+                        (cell, cell.cell_contents)
+                        for cell in (function.__closure__ or ())
+                    ),
+                ),
+            )
+            for function in functions
+        ),
+    )
+    for name, callback, functions in (
+        ("_scope", _scope, (_scope, _scope.__wrapped__)),
+        ("_check", _check, (_check,)),
+    )
+)
+
+
 def _selected(operation):
     return _check(operation).selected
 
