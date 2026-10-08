@@ -2589,3 +2589,22 @@ and non-Console ensure callers retain their existing contracts.
 An original held-model-reader control observed synchronous Console pricing gap-fill enter the models.dev enablement config reader on the UI thread. The existing finite readiness worker may prepare an immutable detached pricing catalog for its exact checked display owner. Only stock catalog construction, configured-price resolution and usage arithmetic qualify. The display catalog is passed explicitly to the current-price and historical-total calculations; it is never installed globally and never participates in Send or capability/vision caches. Direct, subclassed, replaced and injected catalog readers retain their existing native route.
 
 The existing checked display source, owner, settings revision and one-second lifetime govern publication and use. Source replacement refuses the projection before the display body and uses the existing nonblocking native retry path. Semantic pricing changes invalidate display publication and historical totals; equal metadata preserves memo reuse. Hand-maintained direct/pattern prices and local-provider zero rates keep precedence over upstream gap-fill. Disabled or absent upstream data retains honest unknown pricing. No busy lock is interpreted as disabled. Existing capture, permission, persistence and native-lifetime gates remain unchanged.
+
+
+### Passive Console refresh does not gate transcript publication (2026-10-07)
+
+A source-current completed Send persisted its reply while the general UI refresh
+waited for disposable readiness data before reaching transcript publication. A
+held-original-reader regression reproduced this dependency after the native
+configuration scope had retired, separating it from live authority lock refusal.
+
+Keep the original fresh core, retrieval, tab and roleplay work before transcript
+publication. Roleplay materializes message projections and must still run first.
+Publish the transcript once before any cold passive rail refusal. Transcript and
+control presentation already schedule their checked reads through `inputs()`;
+the general refresh must not synchronously await those reads as a prerequisite.
+Explicit modal warming and live Send/action checks retain their existing behavior.
+The post-transcript rail check, current-owner refusal and delayed full-refresh
+retry remain. Pending presentation cannot grant authority or publish old-owner
+settings. This changes scheduling within the existing display boundary, with no
+new worker, timer, cache, dependency or relaxed performance limit.

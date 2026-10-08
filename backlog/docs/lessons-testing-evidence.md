@@ -19077,3 +19077,17 @@ TASK-34563.15, 2026-10-07: the new removed-screen receipt test preserved custody
 ## Compare native identities through the installed filesystem interface (TASK-34563.22, 2026-10-07)
 
 The task34563.22 returned-parent regression first failed before its mutation: `Path.stat()` and the installed Windows `raw.os.fstat()` reported the same inode but different device identifiers, because the guarded Windows interface projects native metadata into its own stat representation. Comparing `raw.os.stat()` with `raw.os.fstat()` and creating the private replacement through `raw.os.mkdir(..., 0o700)` reached the intended native operation. Keep identity and mode assertions inside the same actual installed filesystem interface; ordinary pathlib metadata is not interchangeable with this projection. A subsequent native parent rename was refused in that Windows config-scope fixture, so retain the exact rename case for POSIX and distinguish it from the portable real-descriptor substitution control. Do not label either setup failure a reproduced product race.
+
+
+## An early Send status is not the provider reply (TASK-34406, 2026-10-07)
+
+The leading-dollar skill UI test used the fake reply `accepted` and waited for
+that substring anywhere in the screen. After early Send acknowledgement and
+transcript refresh were repaired, it matched the accepted status before skill
+substitution had run, then failed on the empty execution list. Give fake replies
+distinct content and verify the assistant row as well as its rendered text.
+The corrected test retained its original deadline and still exposed Send
+preparation latency; changing the fixture was not evidence that Send was fixed.
+Also, this screen's text collector includes children of hidden recovery rows:
+the built-in `Trace capture blocked` placeholder alone is not a capture failure.
+Inspect the actual active state or original exception before assigning that cause.

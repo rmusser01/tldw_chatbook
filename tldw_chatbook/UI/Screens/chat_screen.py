@@ -18621,9 +18621,9 @@ class ChatScreen(BaseAppScreen):
             # stable metadata observations expire within two seconds. Actions
             # and commits retain their independent fresh native scope checks.
             await self._character_context.refresh_presentation_if_scope_changed(self)
-            # Tab publication can create/activate a session. Capture and
-            # warm the current target after it suspends; rail visibility
-            # still derives fresh state after transcript publication (PR #660).
+            # Tab publication can create/activate a session. Read the
+            # current target after it suspends; rail visibility still derives
+            # fresh state after transcript publication (PR #660).
             #
             # TASK-22201: the workspace-context builds of one tick (the rail
             # states here, the workspace-context push, the control bar's and
@@ -18639,46 +18639,27 @@ class ChatScreen(BaseAppScreen):
                 self, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
             )
             with read_snapshot.scope(), self._workspace.tick_workspace_build_scope():
-                # Publish current membership before a cold display read. Read
-                # the current controller/store only after publication suspends.
                 await self._sync_console_native_session_tabs()
-                controller = self._console_chat_controller
-                store = self._console_chat_store
-                if (
-                    controller is not None
-                    and store is not None
-                    and store.active_session_id
-                ):
-                    await read_snapshot.warm(controller, store.active_session_id)
-                if self._sync_console_rail_and_controls() is False:
-                    self._console_control_bar_replay_whole_sync = True
-                    self._request_console_control_bar_sync(delayed=True)
-                    return
-                # Settings failures may arrive after Apply has returned:
-                # ordinary first persistence and temporary-chat promotion
-                # both update the session ledger on their own later path.
-                # Project that current-session truth during the existing
-                # general sync so switches and delayed writes cannot leave
-                # the mounted recovery rows stale. This is deliberately a
-                # direct DOM sync: it starts no worker and emits no toast.
-                self._sync_console_settings_recovery_surfaces()
-                self._sync_console_live_work_readiness_rows()
-                self._sync_console_mode_bar()
-                # Re-read after readiness suspension; interleaved owner
-                # changes require their own fresh warm before later UI reads.
-                controller = self._console_chat_controller
-                store = self._console_chat_store
-                if (
-                    controller is not None
-                    and store is not None
-                    and store.active_session_id
-                ):
-                    await read_snapshot.warm(controller, store.active_session_id)
+                # Roleplay materializes current message projections. Keep its
+                # fresh authority check before publishing those messages.
                 if not sync_live_state(self._dispatch_active_console_roleplay_refresh):
                     return
                 self._sync_console_workspace_context()
                 project_instruction_ui.sync_project_instruction_status_for_screen(self)
+                # Passive settings refresh may be slow. Transcript/controls
+                # already schedule their checked reads through inputs(); a cold
+                # rail must not hold a completed reply behind that worker.
                 await self._sync_native_console_transcript()
+                if self._sync_console_rail_and_controls() is False:
+                    self._console_control_bar_replay_whole_sync = True
+                    self._request_console_control_bar_sync(delayed=True)
+                    return
+                # Delayed persistence and temporary-chat promotion update the
+                # session ledger after Apply returns. Read the current owner
+                # after transcript publication before updating these surfaces.
+                self._sync_console_settings_recovery_surfaces()
+                self._sync_console_live_work_readiness_rows()
+                self._sync_console_mode_bar()
                 # Transcript publication suspends, so settings ownership must
                 # be checked again before deriving and publishing the rail.
                 if (

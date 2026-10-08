@@ -1,6 +1,8 @@
 """The original post-transcript rail refresh keeps checked display ownership."""
 
 import asyncio
+import sys
+import threading
 from contextlib import nullcontext
 from types import MethodType, SimpleNamespace
 
@@ -10,20 +12,31 @@ from Tests.UI.test_console_checked_display_scope import _actual_calls, _screen, 
 from tldw_chatbook.Widgets.Console import (
     console_project_instructions as project_instruction_ui,
 )
+from tldw_chatbook.Backup_Recovery import (
+    raw_participants as raw,
+    storage_admission as storage,
+)
+from tldw_chatbook.UI.Console_Modules import console_spend_projection as spend
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mutation", ["none", "before-controls", "after-transcript"])
+@pytest.mark.parametrize(
+    "mutation", ["none", "before-controls", "after-transcript", "cold-read"]
+)
 async def test_final_rail_refresh_after_transcript_rechecks_display_owner(
     tmp_path, monkeypatch, mutation
 ):
     database, store, controller, screen, tasks = _screen(tmp_path)
     stage, mappings, published, timers = ["before"], [], [], []
     replaced = False
+    transcript_called = asyncio.Event()
+    roleplay_calls = []
     rail = object()
+    calls = None
+    display_native_counts = []
 
     def noop(*_args, **_kwargs):
         pass
@@ -32,7 +45,12 @@ async def test_final_rail_refresh_after_transcript_rechecks_display_owner(
         await asyncio.sleep(0)
 
     def current_rail():
+        before = (calls["main_scopes"], calls["main_opens"]) if calls else None
         mappings.append((stage[0], screen._provider_readiness_app_config()))
+        if before is not None:
+            display_native_counts.append(
+                (calls["main_scopes"] - before[0], calls["main_opens"] - before[1])
+            )
         return rail
 
     def replace_once(where):
@@ -44,7 +62,9 @@ async def test_final_rail_refresh_after_transcript_rechecks_display_owner(
     async def transcript():
         await asyncio.sleep(0)
         replace_once("after-transcript")
+        assert roleplay_calls, "transcript preceded the live roleplay refresh"
         stage[0] = "after"
+        transcript_called.set()
 
     screen._console_sync_in_progress = screen._console_sync_requested = False
     screen._console_chat_controller = controller
@@ -84,6 +104,9 @@ async def test_final_rail_refresh_after_transcript_rechecks_display_owner(
         "_dispatch_console_rail_preference_prune",
     ):
         setattr(screen, name, noop)
+    screen._dispatch_active_console_roleplay_refresh = lambda: roleplay_calls.append(
+        True
+    )
     screen._sync_console_native_session_tabs = settled
     screen._sync_native_console_transcript = transcript
     screen._current_console_rail_state = current_rail
@@ -110,16 +133,103 @@ async def test_final_rail_refresh_after_transcript_rechecks_display_owner(
             setattr(screen, name, MethodType(getattr(ChatScreen, name), screen))
         screen.set_timer = lambda delay, callback: timers.append((delay, callback))
         screen.call_after_refresh = lambda callback: timers.append((None, callback))
+        if mutation == "cold-read":
+            # Hold the return of the original checked reader after its native
+            # scope retires. This isolates display latency from live authority
+            # checks: no reader, lock, permission or data result is replaced.
+            entered, release = threading.Event(), threading.Event()
+            reader, reader_code = (
+                projection.read_current,
+                projection.read_current.__code__,
+            )
+            previous_main, previous_thread = sys.getprofile(), threading.getprofile()
+            assert previous_main is None and previous_thread is None
+            observer_failures = []
+
+            def observe(frame, event, _argument):
+                if (
+                    event == "return"
+                    and frame.f_code is reader_code
+                    and frame.f_locals.get("projection") is projection
+                    and not entered.is_set()
+                ):
+                    # A profile "return" also reports an exceptional exit
+                    # with None. Only a successful original checked result can
+                    # establish this intervention point.
+                    result = _argument
+                    if type(result) is not spend.ConsoleReadinessConfigRead:
+                        observer_failures.append(
+                            "checked reader did not return a result"
+                        )
+                        return
+                    proof = result._display_proof
+                    request = projection._read_request
+                    if not (
+                        type(proof) is spend._CheckedDisplayProof
+                        and request is not None
+                        and proof.projection is projection
+                        and proof.screen is screen
+                        and proof.reader is reader
+                        and proof.owner is request[2]
+                        and proof.value is result.value
+                        and result.source_before
+                        == result.source_after
+                        == proof.source
+                        == request[2][0]
+                    ):
+                        observer_failures.append("checked reader proof did not match")
+                        return
+                    active = frame.f_locals.get("active")
+                    with storage._lock:
+                        if active is None or active in raw._states:
+                            observer_failures.append(
+                                "checked operation had not retired"
+                            )
+                            return
+                    entered.set()
+                    if not release.wait(10):
+                        observer_failures.append("checked reader hold expired")
+
+            sync = None
+            threading.setprofile_all_threads(observe)
+            try:
+                # A real owner replacement makes the prior display ineligible.
+                screen.app_instance.app_config = dict(screen.app_instance.app_config)
+                assert projection.run(lambda: None) is False
+                assert await asyncio.to_thread(entered.wait, 10)
+                assert projection.pending and not projection._settled.is_set()
+                sync = asyncio.create_task(
+                    ChatScreen._sync_native_console_chat_ui(screen)
+                )
+                await asyncio.wait_for(transcript_called.wait(), 2)
+                assert not release.is_set() and projection.pending
+                assert roleplay_calls == [True]
+                assert not published, "cold settings published a rail"
+            finally:
+                release.set()
+                try:
+                    if sync is not None:
+                        await sync
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                finally:
+                    threading.setprofile_all_threads(previous_thread)
+                    sys.setprofile(previous_main)
+            assert not observer_failures
+            assert projection.read_current is reader and reader.__code__ is reader_code
+            return
+
         # Use the full original asynchronous refresh and its actual checked
         # source/native readers. Only unrelated UI regions are inert here.
         with _actual_calls() as calls:
             await ChatScreen._sync_native_console_chat_ui(screen)
         after = [mapping for phase, mapping in mappings if phase == "after"]
-        if mutation != "before-controls":
-            assert stage == ["after"], "did not reach the original transcript await"
-            assert any(phase == "before" for phase, _ in mappings)
-        assert calls["main_scopes"] == 0, calls
-        assert calls["main_opens"] == 0, calls
+        assert stage == ["after"], "cold rail prevented transcript publication"
+        assert roleplay_calls == [True]
+        # Core and roleplay deliberately retain their two fresh live operations.
+        # The display callbacks must add no native scope or filesystem work.
+        assert calls["main_scopes"] == 2, calls
+        assert calls["main_opens"] > 0, calls
+        assert all(counts == (0, 0) for counts in display_native_counts)
         if mutation != "none":
             assert not after and not published
             assert screen._console_control_bar_replay_whole_sync
@@ -141,7 +251,7 @@ async def test_final_rail_refresh_after_transcript_rechecks_display_owner(
             assert not screen._console_sync_requested
             assert not timers
         else:
-            assert after == [projection.value]
+            assert after == [projection.value, projection.value]
             assert after[0] is projection.value
             assert published == [rail]
             assert not timers
