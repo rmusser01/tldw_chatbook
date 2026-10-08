@@ -844,6 +844,7 @@ def _resume_session(screen: ChatScreen) -> session_module.ConsoleSessionControll
         sync_chat_core_state=unused,
         sync_temporary_chip=unused,
         sync_settings_summary=unused,
+        sync_system_prompt_preview=unused,
         sync_control_bar=unused,
         sync_command_popup=unused,
         note_follow_intent=unused,

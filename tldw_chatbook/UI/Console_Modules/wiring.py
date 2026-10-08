@@ -2119,6 +2119,7 @@ def build_console_controllers(
         sync_chat_core_state=lambda: screen._sync_console_chat_core_state(),
         sync_temporary_chip=lambda: screen._sync_console_temporary_chip(),
         sync_settings_summary=lambda: screen._sync_console_settings_summary(),
+        sync_system_prompt_preview=lambda: screen._sync_console_rail_system_line(),
         sync_control_bar=lambda: screen._sync_console_control_bar(),
         sync_command_popup=lambda: screen._sync_console_command_popup(),
         note_follow_intent=lambda: screen._note_console_follow_intent(),

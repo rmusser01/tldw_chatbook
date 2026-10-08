@@ -78,6 +78,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #58 Removing the native chat owner immediately clears stale cost presentation without configuration IO or creating a replacement owner; active draft edits cancel only their own idle spend refresh.
 - [x] #59 Successful keyboard rewind consumes only its captured command after the picker opens, preserving later typing and changed-chat/composer revisions; refused or failed opening keeps the captured draft.
 - [x] #60 Host shutdown retains the original composer prompt-history file read through repeated cancellation, with native source and lease retirement before returning.
+- [x] #61 Applying or clearing the current system prompt immediately updates its local sidebar preview even when checked readiness presentation is deferred.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -1347,3 +1348,13 @@ AC60 original red confirms host drain omits the composer worker while the actual
 ### AC60 history shutdown checkpoint (2026-10-08)
 
 The original composer history group now participates in host shutdown. No new worker, source bypass or native-close replacement is introduced. history-host-and-late-worker-red-1 proves the missing group against a held original native JSONL read, while the mounted observer independently identifies the same warm-load worker as issued before, but omitted from, both host captures. history-host-and-system-editor-green-1 passes21 targeted checks including the new held-native regression, all existing default-history controls, host-group controls, affected mounted rewind cases and three system-editor actions. No original Textual workers remain in the diagnostic; source/HEAD are frozen; native/process/pipe retirement completes with zero force/overflow/lookup races. One original system-editor Apply test still fails: settings update, but sidebar retains its old text at the existing observation deadline. This remains open, with no import-causality or whole-task completion claim. Independent source review passes. New original history control is included in Windows/macOS/Linux CI; those new results are pending. ADR126 applies; no new ADR.
+
+
+AC61 plan: original system-editor Apply updates session settings while the sidebar still reads System:none. The session action currently delegates its local text preview only through the configuration-gated settings summary; that checked presentation may defer. Add an explicit existing-Screen preview callback at the session action after the store accepts the value, preserving checked readiness and source authority for all other summary/control state. Reproduce apply/clear with the readiness summary explicitly deferred, retain the original modal assertion/deadline, and cover callback wiring. ADR required:no; routine publication repair within existing explicit Session-to-Screen dependency wiring, no changed source or permission boundary.
+
+
+### AC61 system-prompt preview checkpoint (2026-10-08)
+
+Session Apply/Clear publishes the existing local preview through an explicit late-bound Screen callback immediately after accepted settings, before the unchanged core/readiness/control refreshes. Both deferred-summary controls fail before the fix with Previous prompt retained. system-preview-green-1 passes all seven original/new Apply/Clear/Cancel/open/save controls, including the original Apply deadline. No pending original Textual workers; frozen source/HEAD; normal native/process/pipe retirement with zero force/overflow/lookup races. Source review and changed-line Ruff pass; scoped formatting preserves AST. Both actual constructor sites are wired. ADR required:no, established Session-to-Screen publication boundary only.
+
+Latest quiet d221 probe completes three user messages, three assistant replies, three complete traces and three revision links with zero dispatch checkpoints. It fails unchanged native-open budget:68203/60296/53591 versus40000. Provider entry10.643/10.102/9.395s; Send heartbeat max.576/.545/.431s. Native/process/pipe retirement clean0force/overflow/races. These measurements do not establish before/after latency improvement. Repeated UI config operation entries at sync_live_state are measured, but they protect actual controller/store/roleplay mutation and must not be replaced with disposable display authority wholesale. Remaining slowdown work is open.

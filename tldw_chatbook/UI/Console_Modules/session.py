@@ -877,6 +877,7 @@ class ConsoleSessionController:
         sync_chat_core_state: Callable[[], Any],
         sync_temporary_chip: Callable[[], None],
         sync_settings_summary: Callable[[], None],
+        sync_system_prompt_preview: Callable[[], None],
         sync_control_bar: Callable[[], None],
         sync_command_popup: Callable[[], None],
         note_follow_intent: Callable[[], None],
@@ -1020,6 +1021,8 @@ class ConsoleSessionController:
                 (DOM).
             sync_settings_summary: `ChatScreen._sync_console_settings_
                 summary` (DOM).
+            sync_system_prompt_preview: Publish the accepted local system-prompt
+                text without waiting for checked readiness presentation.
             sync_control_bar: `ChatScreen._sync_console_control_bar` (DOM);
                 the moved body calls it with no arguments, matching the
                 original `self._sync_console_control_bar()` call shape.
@@ -1118,6 +1121,7 @@ class ConsoleSessionController:
         self._sync_chat_core_state_fn = sync_chat_core_state
         self._sync_temporary_chip_fn = sync_temporary_chip
         self._sync_settings_summary_fn = sync_settings_summary
+        self._sync_system_prompt_preview = sync_system_prompt_preview
         self._sync_control_bar_fn = sync_control_bar
         self._sync_command_popup_fn = sync_command_popup
         self._note_follow_intent_fn = note_follow_intent
@@ -4954,6 +4958,7 @@ class ConsoleSessionController:
                 "could not be saved -- it may not survive a reload.",
                 severity="warning",
             )
+        self._sync_system_prompt_preview()
         self._sync_console_chat_core_state()
         self._sync_console_settings_summary()
         self._sync_console_control_bar()

@@ -284,6 +284,7 @@ async def test_console_system_prompt_modal_apply_updates_settings_and_rail_previ
         assert not _rail_system_line_is_dim(console)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_system_prompt_modal_clear_resets_settings_and_rail_to_none():
     app = _build_test_app()
@@ -934,3 +935,35 @@ def test_system_prompt_modal_and_rail_line_css_pinned_in_source_and_bundle():
             text, "#console-rail-system-line.console-rail-system-line-dim {"
         )
         assert "color: $ds-text-muted;" in dim_block
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("prompt", ["Be concise.", None])
+async def test_system_prompt_preview_updates_before_deferred_readiness_summary(
+    prompt, monkeypatch
+):
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(180, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        store.set_session_system_prompt(session_id, "Previous prompt.")
+        console._sync_console_rail_system_line()
+        assert _rail_system_line_text(console) == "System: Previous prompt."
+        # Readiness refresh may queue a checked worker and return immediately.
+        # Its completion must not own publication of already-applied local text.
+        deferred = []
+        monkeypatch.setattr(
+            console, "_sync_console_settings_summary", lambda: deferred.append(True)
+        )
+        console._session._apply_console_session_system_prompt(prompt)
+        assert deferred
+        assert store.session_settings(session_id).system_prompt == prompt
+        assert _rail_system_line_text(console) == (
+            "System: Be concise." if prompt else "System: none"
+        )
+        assert _rail_system_line_is_dim(console) is (prompt is None)
