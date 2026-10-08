@@ -124,14 +124,7 @@ class ConsoleControlBar(Vertical):
         self._set_recovery_height(False)
 
     def _set_recovery_height(self, visible: bool) -> None:
-        """Set the exact bar height for its recovery-row visibility.
-
-        TASK-33620.5: runs on every 0.2 s Console sync tick. Each class change
-        synchronously re-applies CSS to the bar and all its descendants, so
-        the unconditional remove-then-add cost 20-100 ms per settled tick.
-        The classes are set in one atomic update, which Textual skips when
-        they are unchanged.
-        """
+        """Set the exact bar height for its recovery-row visibility."""
         height = 2 if visible else 1
         classes = {name for name in self.classes if not name.startswith("h-")}
         classes.add(f"h-{height}")
