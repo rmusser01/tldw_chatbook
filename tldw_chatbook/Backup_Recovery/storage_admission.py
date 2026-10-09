@@ -102,16 +102,24 @@ class _Operation:
             self.lease._key,
         )
 
-    def check(self, path=None):
+    def check(self, path=None, *, fence=True):
+        """Check issued state; with ``fence``, also natively re-prove ``path``.
+
+        ``fence=False`` keeps every in-memory provenance/lexical-path check and
+        skips only the native parent-identity and resolution walk. Only a
+        single acquisition that already fenced this exact path uses it
+        (TASK-34601 amendment to ADR-126).
+        """
         with _lock:
             expected = _check_operation_state(self)
-        if path is not None:
+        fenced = path is not None and fence
+        if fenced:
             selected = lexical_path(path)
             parent = os.stat(expected[3].parent)
             resolved = selected.resolve() if selected == expected[3] else None
         with _lock:
             _check_operation_state(self, expected, path)
-            if path is not None and (
+            if fenced and (
                 selected != expected[3]
                 or resolved != expected[4]
                 or (parent.st_dev, parent.st_ino) != expected[5]
@@ -137,12 +145,12 @@ def _check_operation_state(operation, expected=None, path=None):
     return current
 
 
-def _check_operation(operation, path=None):
+def _check_operation(operation, path=None, *, fence=True):
     # Thread-local discovery is not authority. Never dispatch a caller-supplied
     # validation callback or an instance-shadowed method.
     if type(operation) is not _Operation:
         raise bootstrap.RecoveryRequired("operation_provenance_invalid")
-    return _Operation.check(operation, path)
+    return _Operation.check(operation, path, fence=fence)
 
 
 @contextmanager
@@ -244,6 +252,8 @@ class _Acquisition:
         self.scope_roots = None
         self.cancel = threading.Event()
         self.operation = getattr(_operation_local, "operation", None)
+        # Paths this one attempt already natively fenced (thread-confined).
+        self._fenced_paths = set()
         with _lock:
             if self.operation is not None:
                 _check_operation(self.operation)
@@ -257,7 +267,16 @@ class _Acquisition:
         if self.operation is not None:
             if path is None:
                 raise bootstrap.RecoveryRequired("operation_path_outside_scope")
-            return _check_operation(self.operation, path)
+            # One native parent/resolution fence per path per acquisition: the
+            # bracket checks before and after the lease count repeat only the
+            # in-memory provenance, lexical-path, pause and cancel checks
+            # (TASK-34601 amendment to ADR-126; previously 3-4 drive-root walks).
+            selected = lexical_path(path)
+            proof = _check_operation(
+                self.operation, path, fence=selected not in self._fenced_paths
+            )
+            self._fenced_paths.add(selected)
+            return proof
         elif _pause is not None:
             raise bootstrap.RecoveryRequired("storage_locally_paused")
 
