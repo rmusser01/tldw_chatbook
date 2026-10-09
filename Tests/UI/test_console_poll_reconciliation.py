@@ -182,6 +182,13 @@ async def test_ordinary_preparing_polls_do_not_repeat_live_core_reconciliation(
     record_property,
 ):
     """Report deferred rows separately from completed, unchanged poll work."""
+    from tldw_chatbook.UI.Console_Modules import poll_cadence
+
+    # Lever L2: the routine full pass still lands every
+    # CONSOLE_POLL_FULL_SYNC_INTERVAL_SECONDS (Tests/UI/test_console_poll_
+    # cadence.py proves that cadence). Pin it out of this short window so the
+    # observed rows measure only unchanged routine polls, deterministically.
+    monkeypatch.setattr(poll_cadence, "CONSOLE_POLL_FULL_SYNC_INTERVAL_SECONDS", 3600.0)
     async with _received_console_case(
         monkeypatch, "poll-reconciliation", durable=True
     ) as case:
@@ -413,10 +420,15 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
     from textual.worker import Worker
     from textual.worker_manager import WorkerManager
     from textual.widgets import Button
+    from tldw_chatbook.UI.Console_Modules import poll_cadence
     from tldw_chatbook.Widgets.Console.console_session_surface import (
         ConsoleSessionSurface,
     )
 
+    # Lever L2: this control's subject is the poll's ORIGINAL full pass, so
+    # route every tick there. The light pass's own replay contract is
+    # Tests/UI/test_console_poll_cadence.py's late-full controls.
+    monkeypatch.setattr(poll_cadence, "CONSOLE_POLL_FULL_SYNC_INTERVAL_SECONDS", 0.0)
     async with _received_console_case(
         monkeypatch, f"late-full-poll-{preparing_display}", durable=True
     ) as case:
