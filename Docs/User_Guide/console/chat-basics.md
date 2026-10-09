@@ -589,9 +589,10 @@ say — the transcript jumps to it: the message is drawn at the top, with
 the messages after it below, and the rest load as you scroll (**End** goes
 to the newest). When such a jump, or an **Undo** of fewer messages, brings
 back more than a screen of messages below the selected one, they are drawn
-a screen at a time: the scrollbar grows for a moment, and Console keeps
-responding meanwhile. If you were following the newest message, the view
-returns to it once they are all drawn, unless you scrolled in the meantime.
+a screen at a time: the scrollbar's thumb shrinks as each screen arrives,
+and Console keeps responding meanwhile. If you were following the newest
+message, the view returns to it once they are all drawn, unless you
+scrolled in the meantime.
 
 The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
 text-response **< / >** controls when applicable, **Fork**,
