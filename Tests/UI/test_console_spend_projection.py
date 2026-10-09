@@ -41,7 +41,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 pytestmark = pytest.mark.bootstrap_profile
 
 
-def _context_state(*, request_tokens: int | None = 1_000):
+def _context_state(*, request_tokens: int | None = 1_000, verified: bool | None = None):
     return build_console_context_control_state(
         settings=ConsoleSessionSettings(
             provider="anthropic", model="claude-sonnet-4-6", max_tokens=1_000
@@ -50,6 +50,7 @@ def _context_state(*, request_tokens: int | None = 1_000):
             used_tokens=request_tokens,
             token_limit=10_000,
             label="context",
+            token_limit_verified=verified,
         ),
     )
 
@@ -327,6 +328,29 @@ def test_nonempty_tracker_failure_is_unavailable_but_true_empty_is_zero():
     # Context fullness belongs to the shared estimator, including tool budgets.
     assert empty_state.label.startswith("Context ")
     assert empty_state.label.split(" · ", 1)[1] == "Current $0.00 · On next send —"
+
+
+@pytest.mark.parametrize("verified", (True, False))
+def test_context_meter_calls_an_assumed_window_unknown(verified: bool) -> None:
+    """TASK-33007 #12: safe input from a fallback window is assumed, not known."""
+    state = build_console_spend_cost_state(
+        ConsoleCostSnapshot(None, 0, False, False, 0),
+        ConsoleCacheState.NONE,
+        None,
+        None,
+        None,
+        "2026-09-04",
+        True,
+        _context_state(verified=verified),
+        False,
+        False,
+        3.0,
+        "",
+    )
+
+    context_line = state.tooltip.splitlines()[0]
+    assert context_line.startswith("Context: ~1,000 / ")
+    assert context_line.endswith("(assumed; window unknown)") is not verified
 
 
 def test_idle_refresh_coalesces_and_uses_late_bound_callbacks():
