@@ -456,7 +456,7 @@
 
 /* TASK-34000.25 (fix round 1): the primary row holds two label-sized groups
    (Find · Note · Read later | Use in Console · More). Wide enough for the
-   whole row they sit side by side; narrower than the derived threshold (`is-stacked`)
+   whole row they sit side by side; narrower than the derived threshold (`library-media-reader-toolbar-stacked`)
    (`LibraryMediaViewer._primary_toolbar_one_row_min_width`, applied from the
    viewer's own `on_resize`) the second group drops under the first, so
    "More ▴" never clips. The `.ds-toolbar` gutter is untouched. */
@@ -464,7 +464,7 @@
     height: auto;
 }
 
-#library-media-reader-primary-toolbar.is-stacked {
+#library-media-reader-primary-toolbar.library-media-reader-toolbar-stacked {
     layout: vertical;
 }
 

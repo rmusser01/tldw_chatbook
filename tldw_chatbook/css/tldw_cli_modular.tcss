@@ -10974,10 +10974,6 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
     layout: vertical;
 }
 
-#library-media-reader-primary-toolbar.is-stacked {
-    layout: vertical;
-}
-
 .library-notes-folder-row.is-selected,
 .library-notes-tree-note-row.is-selected {
     text-style: bold;

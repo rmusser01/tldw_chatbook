@@ -454,7 +454,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             return
         toolbar.set_class(
             self._primary_toolbar_stacked(self.content_region.width or self.size.width),
-            "is-stacked",
+            "library-media-reader-toolbar-stacked",
         )
 
     def _compose_primary_toolbar(self) -> ComposeResult:
@@ -466,7 +466,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         answer is layout, not padding: the buttons compose in two groups
         inside one toolbar container that lays them side by side
         (``layout: horizontal``) when the Reader is wide enough for the full
-        row, and one group under the other (``is-stacked``) when it is not --
+        row, and one group under the other (``library-media-reader-toolbar-stacked``) when it is not --
         the threshold is derived from the labels themselves
         (:meth:`_primary_toolbar_one_row_min_width`) and applied from this
         widget's own ``on_resize``, so no size is special-cased and the
@@ -477,7 +477,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         )
         primary.set_class(
             self._primary_toolbar_stacked(self.content_region.width or self.size.width),
-            "is-stacked",
+            "library-media-reader-toolbar-stacked",
         )
         with primary:
             with Horizontal(
