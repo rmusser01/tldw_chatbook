@@ -44,6 +44,8 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 #: AC#5 names these two; each is RED on the base for its own reason.
 GATED_SIZES = [(120, 36), (160, 45)]
 

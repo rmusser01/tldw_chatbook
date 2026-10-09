@@ -10,7 +10,12 @@ Covered here:
 - the Info tab survives the round trip too (AC#2's "tab");
 - a REAL external edit still produces the conflict, the conflict-state note
   is NOT retained (the rail press is vetoed) and keeps its Overwrite / Reload
-  choices (AC#3's "unless");
+  choices (AC#3's "unless"); and its positive twin -- unsaved text left
+  inside the debounce comes back, the next autosave saves it and no false
+  "changed elsewhere" is rendered (AC#3 / Review Focus 5; moved here from
+  the gated core on the PR #3055 review, Minor 7: two autosaves plus a round
+  trip was the lane's slowest arm, and the core still REDs the base through
+  its New-note arm);
 - ``n`` inside the Find input types an ``n`` and creates nothing; the footer
   advertises ``n note`` only in a settled local Reader; a server detail
   refuses the key with the button's reason (AC#4's gate);
@@ -27,6 +32,7 @@ import pytest
 from textual.widgets import Button, Input, TextArea
 
 from Tests.UI.library_quit_guard_support import (
+    _NotesProfile,
     _armed_editor,
     _new_blank_note,
     _scaled_autosave,
@@ -37,7 +43,9 @@ from Tests.UI.library_quit_guard_support import (
 from Tests.UI.test_library_media_reader_flow import _reader_key_fake
 from Tests.UI.test_library_rail_switch_keeps_reader_and_note import (
     LOADED_ID,
+    MEDIA_UUID,
     _assert_editor_surfaces_painted,
+    _assert_no_conflict_rendered,
     MEDIA_ROW,
     NOTE_BODY,
     NOTE_TITLE,
@@ -47,6 +55,7 @@ from Tests.UI.test_library_rail_switch_keeps_reader_and_note import (
     _host,
     _library,
     _loaded_rows,
+    _media_items,
     _open_media_item,
     _rail,
     _reader_scroll_y,
@@ -55,7 +64,15 @@ from Tests.UI.test_library_rail_switch_keeps_reader_and_note import (
     _select_reader_mode,
     _session,
 )
-from Tests.UI.test_library_shell import _wait_for_selector
+from Tests.UI.test_library_shell import (
+    LibraryHarness,
+    _build_test_app,
+    _seed_conversations,
+    _wait_for_selector,
+)
+from tldw_chatbook.Library.library_media_source_link import (
+    MEDIA_SOURCE_UNTITLED_TITLE,
+)
 from tldw_chatbook.UI.Screens.library_screen import LibraryScreen
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
@@ -63,6 +80,8 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
 from tldw_chatbook.Widgets.Library.library_media_viewer import (
     MEDIA_TAKE_NOTE_EXTERNAL_REASON,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 COMPACT = (100, 30)
 
@@ -145,6 +164,56 @@ async def test_a_real_external_edit_still_conflicts_and_the_conflict_note_is_not
         assert screen.query_one(NOTE_BODY, TextArea).text == "alpha beta"
         # The DB keeps the external text until the user chooses.
         assert profile.note(note_id)["content"] == "edited elsewhere"
+    profile.db.close_connection()
+
+
+# --- AC#3 / Review Focus 5: unsaved text survives, and no false conflict ------
+
+
+@pytest.mark.asyncio
+async def test_returning_to_a_retained_note_never_reports_a_false_conflict(
+    tmp_path, monkeypatch
+):
+    """Type, switch to Media inside the debounce, return: the text is still
+    there, the next autosave saves it, and the DB row's version equals the
+    snapshot's at every step -- so a conflict can only come from a real
+    external write."""
+    _scaled_autosave(monkeypatch)
+    host, profile = _host(tmp_path)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _library(host, pilot)
+        await _new_blank_note(screen, pilot)
+        note_id = _session(screen).note_id
+        assert _session(screen).version == profile.note(note_id)["version"]
+
+        await _type_at_end(pilot, screen.query_one(NOTE_BODY, TextArea), "alpha")
+        await _until(pilot, lambda: _saved(screen), "the first autosave")
+        assert profile.note(note_id)["content"] == "alpha"
+        assert _session(screen).version == profile.note(note_id)["version"]
+
+        # The dirty arm: leave inside the debounce, with unsaved text.
+        await _type_at_end(pilot, screen.query_one(NOTE_BODY, TextArea), " beta")
+        assert _session(screen).dirty
+        await _rail(screen, pilot, "media")
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        await _rail(screen, pilot, "notes")
+
+        await _until(
+            pilot,
+            lambda: bool(screen.query(NOTE_BODY)),
+            "the note editor to be open again after the round trip",
+            timeout=5.0,
+        )
+        assert _session(screen).note_id == note_id
+        assert screen.query_one(NOTE_BODY, TextArea).text == "alpha beta"
+        assert _session(screen).version == profile.note(note_id)["version"]
+
+        await _until(pilot, lambda: _saved(screen), "the autosave after the return")
+        assert _session(screen).in_conflict is False
+        assert screen._notes_state.autosave_state != "conflict"
+        _assert_no_conflict_rendered(screen)
+        assert profile.note(note_id)["content"] == "alpha beta"
+        assert _session(screen).version == profile.note(note_id)["version"]
     profile.db.close_connection()
 
 
@@ -242,6 +311,77 @@ async def test_the_note_button_is_disabled_with_its_reason_for_a_server_detail()
         assert live.disabled is False
         assert live.tooltip == "Take a note from this document (n)"
         assert str(live.label) == "Note"
+
+
+def test_the_one_row_threshold_counts_the_note_label_as_composed():
+    """PR #3055 review (Minor 3): a server detail composes "○ Note", two
+    cells wider than "Note", and the stacking threshold counts the label it
+    composes -- it never under-counts the row.
+
+    RED on bbc7c2c6d2: both viewers counted the plain "Note".
+    """
+    from tldw_chatbook.Library.library_media_viewer_state import (
+        build_library_media_viewer_state,
+    )
+    from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
+
+    state = build_library_media_viewer_state(
+        {"media_id": "server:1", "title": "Server item", "type": "article", "content": "text"}
+    )
+    external = LibraryMediaViewer(state, external_detail=True)
+    local = LibraryMediaViewer(state, external_detail=False)
+    assert "○ Note" in external._primary_toolbar_labels()
+    assert "Note" in local._primary_toolbar_labels()
+    assert (
+        external._primary_toolbar_one_row_min_width()
+        == local._primary_toolbar_one_row_min_width() + 2
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_untitled_document_names_its_note_and_its_link_the_same_way(tmp_path):
+    """PR #3055 review (Minor 5): a document with no title gets ONE fallback
+    name -- the note's title and the source line's link text are the same
+    string, read from the DB row.
+
+    Through the Items row the two already agreed on the base: the row's own
+    "Untitled media" fallback becomes the session's ``selected_title`` and
+    feeds both. The seam's own fallback is reached only when the session
+    carries no title either, so the session title is blanked here to pin
+    THAT branch. RED on bbc7c2c6d2 with the blank session title: the note
+    was titled "Untitled" (``LIBRARY_NOTE_BLANK_SEED_TITLE``) while its
+    first line linked "Untitled media".
+    """
+    from dataclasses import replace
+
+    app = _build_test_app()
+    items = _media_items()
+    items[0]["title"] = ""
+    _seed_conversations(app, [], media=items)
+    profile = _NotesProfile(tmp_path)
+    app.chachanotes_db = profile.db
+    app.notes_scope_service = profile.scope_service
+    app.notes_service = profile.interop
+    host = LibraryHarness(app)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _library(host, pilot)
+        body = await _open_media_item(screen, pilot)
+        assert not str(screen._media_state.detail.get("title") or ""), "sanity: untitled"
+        screen._media_state.reader_session = replace(
+            screen._media_state.reader_session, selected_title="", loaded_title=""
+        )
+        screen.set_focus(body.scroller)
+        await pilot.pause()
+
+        await pilot.press("n")
+
+        await _armed_editor(screen, pilot)
+        await pilot.pause()
+        row = profile.note(_session(screen).note_id)
+        link = f"[{MEDIA_SOURCE_UNTITLED_TITLE}](media://{MEDIA_UUID})"
+        assert row["content"].startswith(link), row["content"]
+        assert row["title"] == MEDIA_SOURCE_UNTITLED_TITLE, row["title"]
+    profile.db.close_connection()
 
 
 # --- AC#1: the existing flush and veto rules ---------------------------------

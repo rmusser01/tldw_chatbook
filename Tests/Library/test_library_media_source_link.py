@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.Library.library_media_source_link import (
+    MEDIA_SOURCE_UNTITLED_TITLE,
     MediaSourceLinkError,
     media_source_line,
     media_source_uuid,
@@ -32,8 +33,15 @@ def test_source_line_is_one_line_with_brackets_escaped():
 
 
 def test_blank_title_still_renders_a_readable_link():
-    assert media_source_line("", UUID).startswith("[Untitled media](media://")
-    assert media_source_line(None, UUID).startswith("[Untitled media](media://")
+    """The link text is the ONE untitled fallback the note's title shares
+    (PR #3055 review, Minor 5)."""
+    assert MEDIA_SOURCE_UNTITLED_TITLE == "Untitled media"
+    assert media_source_line("", UUID).startswith(
+        f"[{MEDIA_SOURCE_UNTITLED_TITLE}](media://"
+    )
+    assert media_source_line(None, UUID).startswith(
+        f"[{MEDIA_SOURCE_UNTITLED_TITLE}](media://"
+    )
 
 
 @pytest.mark.parametrize(

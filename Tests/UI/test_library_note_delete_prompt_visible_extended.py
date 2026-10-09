@@ -39,6 +39,8 @@ from tldw_chatbook.Notes.Notes_Library import NotesInteropService
 from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.notes_scope_service import NotesScopeService
 
+pytestmark = pytest.mark.bootstrap_profile
+
 #: AC#1's remaining sizes: the short-height stage, the size the review called
 #: good (a regression pin), and the widest desk size.
 EXTRA_SIZES = [(160, 30), (160, 45), (235, 52)]

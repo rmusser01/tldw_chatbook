@@ -7,8 +7,9 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
-from typing import Any, Callable, Literal
+from typing import Any, Callable, ClassVar, Literal
 
+from loguru import logger
 from rich.cells import cell_len
 from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
@@ -1120,6 +1121,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         create_running: Whether a Create request is currently in flight.
         create_status: Visible Create completion or recovery status.
     """
+
+    #: PR #3055 review (Important 1): the compose-time surface gating has
+    #: fallen through to the post-refresh path at least once this process.
+    #: Class-level so the WARNING is logged once, not once per note opened.
+    _pending_lookup_warned: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -3416,9 +3422,50 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 )
         # Every root above is composed and still unmounted: gate the whole
         # tree from the state now, before the first frame can paint it.
-        self._apply_editor_surface_gates(
-            presentation_state, _pending_widget_lookup(roots)
-        )
+        try:
+            self._apply_editor_surface_gates(
+                presentation_state, _pending_widget_lookup(roots)
+            )
+        except NoMatches as exc:
+            self._defer_editor_surface_gates(exc)
+
+    def _defer_editor_surface_gates(self, exc: NoMatches) -> None:
+        """Gate the editor one refresh late when the compose-time lookup misses.
+
+        PR #3055 review (Important 1): ``_pending_widget_lookup`` reads
+        Textual's private compose-time registry (``_pending_children``). If
+        a Textual change empties that index, the first gated selector raises
+        ``NoMatches`` INSIDE ``compose`` -- and a compose exception means the
+        Notes editor cannot mount at all (the nav-freeze shape). Ruling:
+        never raise out of compose and never skip the gates. Log once at
+        WARNING (the selector only, no note content) and run the same
+        ``_apply_editor_surface_gates`` over the mounted tree after the
+        first refresh -- one frame late, still correct. The fast-lane
+        contract test keeps the loud pin on the attribute's name.
+
+        Args:
+            exc: The miss, for the one-time log line.
+        """
+        if not LibraryNotesCanvas._pending_lookup_warned:
+            LibraryNotesCanvas._pending_lookup_warned = True
+            logger.warning(
+                "Library note editor: compose-time surface gating could not "
+                "resolve its nodes ({}); gating after the first refresh instead",
+                exc,
+            )
+        self.call_after_refresh(self._apply_editor_surface_gates_after_mount)
+
+    def _apply_editor_surface_gates_after_mount(self) -> None:
+        """The deferred half of :meth:`_defer_editor_surface_gates`."""
+        state = self.presentation_state
+        if state is None or self.mode != "editor":
+            return
+        try:
+            self._apply_editor_surface_gates(state, self.query_one)
+        except NoMatches:
+            # Recomposed away between the miss and the refresh; the next
+            # compose gates its own tree.
+            return
 
     def _compose_delete_confirmation(self) -> ComposeResult:
         """Mount the delete prompt where task-32268 requires it: in Danger."""

@@ -538,6 +538,18 @@ pure helpers directly, cover the real entry points in subprocesses, and import
 the app inside a `@pytest.mark.bootstrap_profile` test body when a test needs
 it. Then check the file collected together with its neighbours, not only alone.
 
+**PR #3055 (TASK-34000 adapt batch), 2026-10-09: a local plugin that adds
+`bootstrap_profile` to every Tests/UI item hides a NEW file's missing marker until
+CI fails.** The batch's four new gated Pilot files (and their `_extended` siblings)
+shipped without `pytestmark = pytest.mark.bootstrap_profile`; every local run went
+through the scratch `-p w1b_bootstrap_plugin`, which stamps the marker onto every
+`Tests/UI` item, so all eight files were green locally and every test in CI shards
+3 and 4 died at setup with `RecoveryRequired: raw_source_selection_changed`. The
+plugin masks exactly this failure. A new mounted-app file carries the marker itself
+(see `Tests/UI/test_library_media_export_no_freeze.py`), and the evidence that
+counts for a NEW file is one plain `pytest <file> -n0` run from the worktree root
+with no plugin on `PYTHONPATH` -- as CI runs it.
+
 ## A local red wall of `RecoveryRequired` hides the guard you meant to run
 
 **TASK-33003.1 review round 1, 2026-09-28.** The task's AC#4 guard

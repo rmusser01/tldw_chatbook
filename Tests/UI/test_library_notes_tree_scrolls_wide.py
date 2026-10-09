@@ -40,6 +40,8 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 #: Enough notes that the tree pages (20 rows per page) and the pager is the
 #: 21st row -- so the list always has more rows than the pane at the sizes
 #: the task names, and the LAST child is a control a user must reach.

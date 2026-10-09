@@ -18,7 +18,18 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["MediaSourceLinkError", "media_source_line", "media_source_uuid"]
+__all__ = [
+    "MEDIA_SOURCE_UNTITLED_TITLE",
+    "MediaSourceLinkError",
+    "media_source_line",
+    "media_source_uuid",
+]
+
+#: The one fallback title for a document with no title: both the link text
+#: of the source line and the title of the note that carries it (PR #3055
+#: review, Minor 5 -- a note titled "Untitled" whose first line linked
+#: "Untitled media" named the same document two ways).
+MEDIA_SOURCE_UNTITLED_TITLE = "Untitled media"
 
 #: RFC 4122 text form, the shape ``Client_Media_DB_v2`` writes to ``Media.uuid``.
 _UUID_RE = re.compile(
@@ -57,7 +68,7 @@ def _link_title(title: object) -> str:
     """One-line link text: Markdown's link brackets and newlines escaped."""
     text = " ".join(str(title or "").split())
     if not text:
-        text = "Untitled media"
+        text = MEDIA_SOURCE_UNTITLED_TITLE
     return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
 
 

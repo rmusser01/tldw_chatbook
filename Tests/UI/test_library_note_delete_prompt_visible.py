@@ -50,6 +50,8 @@ from Tests.UI.test_library_shell import (
 )
 from tldw_chatbook.Widgets.Library.library_notes_canvas import DELETE_CONFIRM_COPY
 
+pytestmark = pytest.mark.bootstrap_profile
+
 #: AC#4 names these two; each is RED on the base for a different reason.
 GATED_SIZES = [(120, 36), (80, 24)]
 

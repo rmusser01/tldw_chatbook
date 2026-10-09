@@ -150,15 +150,25 @@ def widget_has_visible_region(widget: Widget) -> bool:
 
 
 def _scrolling_could_reveal(widget: Widget) -> bool:
-    """Whether the nearest ancestor that clips ``widget`` can scroll it in.
+    """Whether EVERY ancestor that clips ``widget`` can scroll it in.
 
-    Walks up from the widget to the first ancestor whose content region
-    does not contain the widget's region; the widget is revealable when
-    that ancestor may scroll on every axis the widget overflows it on. A
-    scrollable pane scrolled past a control answers True; a fixed-width
-    row whose control is laid out past its right edge answers False.
+    Walks up from the widget through each ancestor whose content region
+    does not contain the region in hand; the widget is revealable only when
+    each such ancestor may scroll on every axis it is overflowed on. A
+    scrollable pane scrolled past a control answers True; a fixed-width row
+    whose control is laid out past its right edge answers False.
+
+    PR #3055 review (Important 2): the walk does not stop at the first
+    scrollable ancestor. Scrolling that pane brings the control into the
+    pane's CONTENT REGION at best, so from there up the question is whether
+    that region is itself visible -- the region in hand becomes the pane's
+    content region and the walk continues. A scrollable pane laid out past
+    the edge of a parent that cannot scroll (a pane past the terminal edge,
+    or inside a fixed row) therefore answers False: nothing it scrolls is
+    ever painted.
     """
     region = widget.region
+    revealable = False
     for ancestor in widget.ancestors:
         if not isinstance(ancestor, Widget):
             continue
@@ -171,8 +181,9 @@ def _scrolling_could_reveal(widget: Widget) -> bool:
             return False
         if outside_y and not ancestor.allow_vertical_scroll:
             return False
-        return True
-    return False
+        revealable = True
+        region = container
+    return revealable
 
 
 def widget_is_clipped_beyond_reach(widget: Widget) -> bool:

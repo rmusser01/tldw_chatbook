@@ -50,6 +50,8 @@ from tldw_chatbook.Widgets.Library.library_notes_canvas import (
     _header_shape,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 SECOND_ROW = "#library-note-header-second-row"
 PRIMARY = "#library-note-primary-actions"
 

@@ -913,7 +913,14 @@ scrolling ancestor could reveal: clipped by a non-scrollable ancestor on an axis
 cannot scroll (`_scrolling_could_reveal` in `Widgets/workbench_focus.py`). Measure
 visibility against the compositor's clip (`screen.find_widget(w).clip`), not
 `screen.region`: a control past its own pane's edge is inside the screen and still
-unseeable.
+unseeable. And "a scrollable ancestor clips it" is not the end of the walk (PR #3055
+review, Important 2): the first version returned True at the first scrollable
+clipping ancestor, so a control scrolled out of a pane that was ITSELF laid out past
+a non-scrollable parent's edge counted as revealable and F6 landed on it
+(`test_workbench_focus_passes_over_a_scrolled_out_control_whose_pane_is_itself_clipped`).
+Scrolling brings the control into that pane's content region at best, so continue the
+walk with that region in hand: every clipping ancestor has to be scrollable on the
+overflowed axis.
 
 Two measurements from the same task worth keeping: (1) a content-sized compact
 `Button` is `len(label) + 4` cells on the wide stage -- `padding: 0 1` plus

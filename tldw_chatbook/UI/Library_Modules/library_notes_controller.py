@@ -3576,6 +3576,7 @@ class LibraryNotesController:
         self._arm_library_note_editor()
         if self._library_note_session.untouched_create_token is not None:
             self._focus_library_note_caret_for_create()
+
     def _focus_library_note_caret_for_create(self) -> None:
         """Land the caret where the latest create asked (TASK-34000.25).
 
@@ -3596,6 +3597,7 @@ class LibraryNotesController:
             return
         body.move_cursor(body.document.end)
         body.focus()
+
     def _start_library_note_from_media_source(
         self, *, title: str, content: str
     ) -> None:
@@ -5816,6 +5818,7 @@ class LibraryNotesController:
             return
         prompt.scroll_visible(animate=False, immediate=True, force=True)
         self._focus_library_note_control_in_place("#library-note-delete-cancel")
+
     def _focus_library_note_control(self, selector: str) -> None:
         """Focus one stable note control when its presentation is visible."""
         self._focus_library_control(selector)

@@ -4173,6 +4173,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "f5417abeafdd3e28d617",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/Library/library_notes_canvas.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "37d31a6b847dd21cf9c7",
       "owner": "TASK-494",

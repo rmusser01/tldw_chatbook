@@ -21,11 +21,12 @@ real ``LibraryHarness`` boot per test (``CSS_PATH`` = the app bundle), the
 Notes side backed by a REAL ChaChaNotes database behind the real Notes scope
 service (``Tests/UI/library_quit_guard_support._NotesProfile``), so every
 data-integrity claim is read from the DB, not from widget text. The slower
-arms (the Info-tab round trip, the real-external-edit conflict twin, ``n``
-inside the Find input, the server-item refusal, the vetoed title, the
-untouched-blank GC and ‹ Back at 100x30) live in
-``test_library_rail_switch_keeps_reader_and_note_extended.py``, outside the
-lane.
+arms (the Info-tab round trip, the real-external-edit conflict twin and its
+positive twin -- the dirty-return arm with two autosaves, moved out on the
+PR #3055 review for lane headroom -- ``n`` inside the Find input, the
+server-item refusal, the vetoed title, the untouched-blank GC and ‹ Back at
+100x30) live in ``test_library_rail_switch_keeps_reader_and_note_extended.py``,
+outside the lane.
 """
 
 from __future__ import annotations
@@ -53,6 +54,8 @@ from Tests.UI.test_library_shell import (
 from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentBody,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 #: The review's wide repro size.
 SIZE = (160, 45)
@@ -415,56 +418,6 @@ def _assert_editor_surfaces_painted(screen, mode: str) -> None:
     assert not _painted(screen, "#library-note-bulk-status")
     assert not _painted(screen, "#library-note-wide-utilities")
     assert not _painted(screen, "#library-note-delete-confirmation")
-
-
-# --- AC#3 / Review Focus 5: unsaved text survives, and no false conflict ------
-
-
-@pytest.mark.asyncio
-async def test_returning_to_a_retained_note_never_reports_a_false_conflict(
-    tmp_path, monkeypatch
-):
-    """Type, switch to Media inside the debounce, return: the text is still
-    there, the next autosave saves it, and the DB row's version equals the
-    snapshot's at every step -- so a conflict can only come from a real
-    external write."""
-    _scaled_autosave(monkeypatch)
-    host, profile = _host(tmp_path)
-    async with host.run_test(size=SIZE) as pilot:
-        screen = await _library(host, pilot)
-        await _new_blank_note(screen, pilot)
-        note_id = _session(screen).note_id
-        assert _session(screen).version == profile.note(note_id)["version"]
-
-        await _type_at_end(pilot, screen.query_one(NOTE_BODY, TextArea), "alpha")
-        await _until(pilot, lambda: _saved(screen), "the first autosave")
-        assert profile.note(note_id)["content"] == "alpha"
-        assert _session(screen).version == profile.note(note_id)["version"]
-
-        # The dirty arm: leave inside the debounce, with unsaved text.
-        await _type_at_end(pilot, screen.query_one(NOTE_BODY, TextArea), " beta")
-        assert _session(screen).dirty
-        await _rail(screen, pilot, "media")
-        await _wait_for_selector(screen, pilot, "#library-media-canvas")
-        await _rail(screen, pilot, "notes")
-
-        await _until(
-            pilot,
-            lambda: bool(screen.query(NOTE_BODY)),
-            "the note editor to be open again after the round trip",
-            timeout=5.0,
-        )
-        assert _session(screen).note_id == note_id
-        assert screen.query_one(NOTE_BODY, TextArea).text == "alpha beta"
-        assert _session(screen).version == profile.note(note_id)["version"]
-
-        await _until(pilot, lambda: _saved(screen), "the autosave after the return")
-        assert _session(screen).in_conflict is False
-        assert screen._notes_state.autosave_state != "conflict"
-        _assert_no_conflict_rendered(screen)
-        assert profile.note(note_id)["content"] == "alpha beta"
-        assert _session(screen).version == profile.note(note_id)["version"]
-    profile.db.close_connection()
 
 
 def _assert_no_conflict_rendered(screen) -> None:

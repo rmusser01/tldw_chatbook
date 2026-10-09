@@ -33997,6 +33997,7 @@ class LibraryScreen(BaseAppScreen):
         """
         # Deferred: a pure module the boot path never needs (ADR-097).
         from tldw_chatbook.Library.library_media_source_link import (
+            MEDIA_SOURCE_UNTITLED_TITLE,
             MediaSourceLinkError,
             media_source_line,
         )
@@ -34028,8 +34029,10 @@ class LibraryScreen(BaseAppScreen):
                 )
             return
         self._notes_state.shortcut_status = f"Note from {title} — Media keeps your place"
+        # The same fallback the source line's link text uses: one name for
+        # an untitled document, in the title and in the first line.
         self._start_library_note_from_media_source(
-            title=title or LIBRARY_NOTE_BLANK_SEED_TITLE,
+            title=title or MEDIA_SOURCE_UNTITLED_TITLE,
             content=source_line + "\n\n",
         )
 

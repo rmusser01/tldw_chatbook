@@ -928,7 +928,11 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: owner decision: the Reader's `n` names the veto when a retained
     #: note's exit flush refuses (review M-2) and the restore budget's
     #: comment says what it counts (M-3). No new method.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36965, 1343),
+    #: 2026-10-09, PR #3055 review (Minor 5): 36965 -> 36968 (+3), same
+    #: owner decision: the Reader's Note action titles an untitled document
+    #: with the source line's own `MEDIA_SOURCE_UNTITLED_TITLE` (one import
+    #: line, one two-line comment). No new method.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36968, 1343),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

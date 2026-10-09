@@ -415,14 +415,16 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         ``_compose_primary_toolbar`` composes; a label change there is a
         threshold change here.
 
-        This deliberately over-counts: More is always its open "More \u25b4"
-        form (even for external details where it may not open) and Note is
-        the plain label (not "\u25cb Note"). It errs safe -- at worst the
-        row stacks a little early, it never overflows the pane.
+        This deliberately over-counts More: always its open "More \u25b4"
+        form (even for external details where it may not open). Note is
+        counted exactly as composed -- "\u25cb Note" (+2 cells) for a server
+        detail, plain "Note" otherwise -- so the threshold never under-counts
+        the row (PR #3055 review, Minor 3). It errs safe -- at worst the row
+        stacks a little early, it never overflows the pane.
         """
         return (
             "Find",
-            "Note",
+            library_disabled_action_label("Note", self.external_detail),
             "Remove later" if self.viewer.read_later else "Read later",
             "Use in Console",
             "More \u25b4",

@@ -32,6 +32,8 @@ from Tests.UI.test_library_shell import (
     _wait_for_selector,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _wheel(widget: Widget, delta_y: int) -> events.MouseScrollDown | events.MouseScrollUp:
     cls = events.MouseScrollDown if delta_y > 0 else events.MouseScrollUp
