@@ -1,11 +1,11 @@
 ---
 id: TASK-34650
 title: Fix review-B non-Console efficiency findings
-status: In Progress
+status: Done
 assignee:
   - '@Robert'
 created_date: '2026-10-07 02:57'
-updated_date: '2026-10-07 02:59'
+updated_date: '2026-10-09 06:11'
 labels:
   - performance
 dependencies: []
@@ -20,7 +20,7 @@ Implement the 24 efficiency defects unique to the 2026-10-06 review-B performanc
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 RAG conversation content assembly bounded with order preserved,B4 semantic model constructed once per process,Notes sync identity fallback O(B+F) digests per pass,Ingestion chunk analysis bounded concurrency order-preserving,Research gate overlaps scrape+summarize under semaphore,conversations(last_modified DESC,id DESC) index serves browse pages,Prompts_DB searches use FTS subquery+batch keywords+LIMIT,In-memory vector store uses dict index+matrix cosine+OrderedDict LRU,UI legacy widgets debounced and render-capped,Video store single snapshot per save and RecoveredMedia reuse per call,Fork commit and history import statement counts bounded,All targeted tests green with counted evidence
-- [ ] #2 The rebased PR preserves dev changes, all confirmed code-review findings are resolved, and targeted regression checks plus required CI pass before merge.
+- [x] #2 The rebased PR preserves dev changes, all confirmed code-review findings are resolved, and targeted regression checks plus required CI pass before merge.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -86,4 +86,6 @@ Final local verification: **255 passed** across all 30 PR-added regression files
 
 A broader targeted integration run reported **1,045 passed / 26 failed** before pin reconciliation. Two index-census and three manifest failures were repaired and verified above. Eighteen admission-sensitive fixture cases passed in a separate process with the existing bootstrap-profile marker. Two unchanged RAG fixture failures were reproduced against pinned `dev`: profile B is never constructed after raw-source admission fails, and the public-search fixture omits the required search configuration. The remaining query-plan failure is inherited from dev's v75 hook-receipt schema: its assistant/parent message locators lack indexes. These baseline issues were not hidden by weakening production admission or readiness guards.
 
-Required GitHub checks and merge evidence remain pending publication of this reviewed head. No full-suite sweep, native-terminal session or live provider/model download was requested.
+GitHub validation: reviewed code head `6352503461b9a44ff0d3b713680b98d82012763d` passed the [Derived Artifacts workflow](https://github.com/rmusser01/tldw_chatbook/actions/runs/37889728610): PR Fast Lane, all four UI Fast Lane shards, and the required source-artifact gate. The [UI latency guardrails](https://github.com/rmusser01/tldw_chatbook/actions/runs/37889728651) also passed. No new actionable PR review comments were posted.
+
+Recorded the concrete false embedding-count incident in `backlog/docs/lessons-testing-evidence.md`: caller forwarding is not evidence about the real engine's expensive work. The final completion note changes documentation only; its published head must pass the same required gate before merge. No full-suite sweep, native-terminal session or live provider/model download was requested.
