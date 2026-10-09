@@ -15,6 +15,7 @@ from textual.widget import Widget
 from textual.widgets import Button
 
 from Tests.UI.test_library_notes_tree_scrolls_wide import (
+    COMPACT_SIZES,
     DOWN_PRESSES,
     _assert_never_scrolls_horizontally,
     _many_notes,
@@ -351,3 +352,23 @@ async def test_compact_tall_layout_has_exactly_one_scroll_owner() -> None:
         assert _scrolled_ancestors(lst) == []
         last = lst.children[-1]
         assert lst.region.contains_region(last.region)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", COMPACT_SIZES, ids=lambda s: f"{s[0]}x{s[1]}")
+async def test_compact_sizes_still_scroll_and_never_scroll_horizontally(size) -> None:
+    """AC#3: the compact sizes keep their scrolling (a regression pin --
+    green on the base) and never scroll horizontally. The wide sizes get the
+    same horizontal pin inside ``test_wide_notes_list_is_a_scroll_owner``."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations(), notes=_many_notes())
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=size) as pilot:
+        screen, lst = await _open_notes_tree(host, pilot)
+        assert screen._notes_state.compact is True
+        assert lst.allow_vertical_scroll is True
+        lst.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        assert lst.scroll_y > 0
+        _assert_never_scrolls_horizontally(size, screen, lst)

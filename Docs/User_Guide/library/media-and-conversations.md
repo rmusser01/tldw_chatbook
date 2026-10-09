@@ -465,9 +465,10 @@ while you move through items. An open item also survives a trip through the
 Library rail: press Notes (or any other rail row) and come back, and the
 Reader shows the same item on the same tab at the same place, with its Items
 row still marked `loaded` — only **‹ Back** (or Escape, in the narrower
-layouts where it leaves the Reader) returns you to the list. Missing analysis or highlights produces an
-item-specific empty state; it does not silently switch modes. Leaving **Read**
-for another mode and returning drops you back at the same place in the text —
+layouts where it leaves the Reader) returns you to the list. Missing analysis
+or highlights produces an item-specific empty state; it does not silently
+switch modes. Leaving **Read** for another mode and returning drops you back
+at the same place in the text —
 the reading position is restored even though the rendered body has to lay out
 again first.
 
@@ -604,7 +605,7 @@ painted-text tests at 235x52 and 100x30, matching the Export gate's inline
 
 *Verified against fix/media-wave5-h @ a4682f17e — 2026-09-06 (task-31633
 AC#3: More opened live at 235x52 and at 100x30 over a seeded document.
-At 235x52 the five actions paint on one row and the "Read" tab row moves
+At 235x52 the four actions paint on one row and the "Read" tab row moves
 down exactly one line; at 100x30 they wrap to two rows and the body moves
 two. Before this change the disclosure was a full-height Vertical that
 displaced the tab row and body by 19 rows behind ~16 blank ones. The

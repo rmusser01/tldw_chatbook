@@ -34015,7 +34015,7 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify(f"Could not take a note: {exc}", severity="warning")
             return
-        self._capture_library_media_loaded_progress()
+        # Reading position is captured by the rail seam (keep_media_reader).
         await self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
         if self._library_selected_row_id != LIBRARY_ROW_CREATE_NOTE:
             # A retained note's exit flush refused (validation, conflict, a

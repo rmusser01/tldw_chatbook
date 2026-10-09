@@ -397,6 +397,14 @@ async def test_n_note_round_trip_at_120x36_restores_the_scroll(tmp_path):
             screen.query_one("#library-media-viewer-content", LibraryMediaContentBody),
             LibraryMediaContentBody,
         )
+        # Back to Notes: the retained editor returns with its stacked header
+        # (Save and Use in Console inside the work pane at 120x36).
+        await _rail(screen, pilot, "notes")
+        pane = screen.query_one("#library-note-work-pane")
+        for control in ("#library-note-save", "#library-note-use-in-console"):
+            assert pane.region.contains_region(
+                screen.query_one(control).region
+            ), f"{control} left the work pane after the retained return"
     profile.db.close_connection()
 
 

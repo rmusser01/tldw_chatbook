@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
-from textual._compositor import MapGeometry
 from textual.css.query import NoMatches, QueryError
 from textual.dom import NoScreen
 from textual.errors import NoWidget
 from textual.widget import Widget
+
+if TYPE_CHECKING:
+    from textual._compositor import MapGeometry
 
 
 @dataclass(frozen=True)

@@ -414,6 +414,11 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         when the longer twin genuinely would not fit. Mirrors the strings
         ``_compose_primary_toolbar`` composes; a label change there is a
         threshold change here.
+
+        This deliberately over-counts: More is always its open "More \u25b4"
+        form (even for external details where it may not open) and Note is
+        the plain label (not "\u25cb Note"). It errs safe -- at worst the
+        row stacks a little early, it never overflows the pane.
         """
         return (
             "Find",
