@@ -511,6 +511,16 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
         logger.debug(f"Full API response data: {response}")
         if response.status_code == 200:
             response_data = response.json()
+            # Session ledger embeddings bucket (issue #365 deferred idea):
+            # kept separate from the LLM total so ingestion-heavy sessions
+            # don't swamp the "how much did I chat" number. Deferred import
+            # (boot census, ADR-097); once per embeddings call.
+            try:
+                from tldw_chatbook.Chat.session_usage import session_usage
+
+                session_usage().record_embeddings(response_data.get("usage"))
+            except Exception:
+                pass
             if "data" in response_data and len(response_data["data"]) > 0:
                 embedding = response_data["data"][0]["embedding"]
                 logger.debug("OpenAI Embeddings: Embeddings retrieved successfully")
@@ -1346,15 +1356,38 @@ def _session_ledger():
     return session_usage()
 
 
+def _strip_image_parts(input_data: Any) -> Any:
+    """Replace image parts with a short placeholder (never mutates input).
+
+    Base64 image payloads would inflate a char-based estimate by orders
+    of magnitude; the placeholder keeps the estimate anchored to the
+    text that actually went over the wire.
+    """
+    if not isinstance(input_data, list):
+        return input_data
+    cleaned = []
+    for message in input_data:
+        if isinstance(message, dict) and isinstance(message.get("content"), list):
+            content = [
+                "[image omitted from token estimate]"
+                if isinstance(part, dict)
+                and ("image_url" in part or "image" in part or "input_image" in part)
+                else part
+                for part in message["content"]
+            ]
+            message = {**message, "content": content}
+        cleaned.append(message)
+    return cleaned
+
+
 def _estimate_prompt_text(input_data: Any) -> str:
     """Best-effort prompt text for token estimates. Never raises.
 
     Estimates only apply when the response carried no usage payload
-    (rare); base64 image parts can inflate the char count, which the
-    summary marks via the "includes estimates" qualifier.
+    (rare); image parts are replaced by placeholders first.
     """
     try:
-        return json.dumps(input_data)
+        return json.dumps(_strip_image_parts(input_data))
     except Exception:
         return ""
 

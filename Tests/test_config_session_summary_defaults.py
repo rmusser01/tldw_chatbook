@@ -40,7 +40,7 @@ def test_duration_loader_clamps_and_defaults(monkeypatch):
 
         return setting
 
-    for duration, expected in [(0, 1), (1, 1), (3, 3), (30, 30), (99, 30), (-5, 1)]:
+    for duration, expected in [(0, 1), (1, 1), (3, 3), (30, 30), (99, 30), (-5, 1), (2.9, 3)]:
         monkeypatch.setattr(app_lifecycle, "get_cli_setting", _make_setting(duration))
         assert harness._session_summary_duration_seconds() == expected
 

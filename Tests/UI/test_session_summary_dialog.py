@@ -100,3 +100,36 @@ async def test_dialog_auto_dismisses_after_duration():
                 break
             await asyncio.sleep(0.05)
         assert dismissed, "auto-close timer never fired"
+
+
+def _elapsed_dialog(seconds_ago: float, snapshot=None) -> SessionSummaryDialog:
+    return SessionSummaryDialog(
+        snapshot or SessionUsageSnapshot(exact_tokens=10, estimated_tokens=0, calls=1),
+        started_at=time.perf_counter() - seconds_ago,
+        duration_seconds=30,
+    )
+
+
+def test_format_elapsed_uses_day_unit_past_24h():
+    from tldw_chatbook.Widgets.session_summary_dialog import _format_elapsed
+
+    assert _format_elapsed(25 * 3600) == "1d 1h session"
+    assert _format_elapsed(3 * 86400 + 2 * 3600) == "3d 2h session"
+    assert _format_elapsed(4320) == "1h 12m session"
+    assert _format_elapsed(90) == "1m session"
+
+
+async def test_dialog_renders_embedding_line():
+    app = _DialogApp(
+        _dialog(
+            duration=30,
+            snapshot=SessionUsageSnapshot(
+                exact_tokens=100, estimated_tokens=0, calls=2, embeddings_tokens=512
+            ),
+        )
+    )
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        svg = _visible_text(app.export_screenshot())
+        assert "100 tokens" in svg
+        assert "512 embedding tokens" in svg

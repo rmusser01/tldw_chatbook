@@ -36,6 +36,7 @@ class SessionUsageSnapshot:
     exact_tokens: int = 0
     estimated_tokens: int = 0
     calls: int = 0
+    embeddings_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
@@ -50,6 +51,7 @@ class SessionUsageLedger:
         self._exact = 0
         self._estimated = 0
         self._calls = 0
+        self._embeddings = 0
 
     def record_exact(self, usage: Optional[ProviderUsage]) -> None:
         """Add a provider-reported (exact) usage record."""
@@ -68,7 +70,13 @@ class SessionUsageLedger:
     def record_estimate(
         self, prompt_text: Optional[str], completion_text: Optional[str]
     ) -> None:
-        """Add a char-based (~4 chars/token) estimate record."""
+        """Add a char-based (~4 chars/token) estimate record.
+
+        Both texts absent means nothing to estimate -- a no-op, not a
+        phantom two-token record from ``estimate_tokens("")``.
+        """
+        if prompt_text is None and completion_text is None:
+            return
         try:
             total = estimate_tokens(prompt_text or "") + estimate_tokens(
                 completion_text or ""
@@ -76,6 +84,24 @@ class SessionUsageLedger:
             with self._lock:
                 self._estimated += total
                 self._calls += 1
+        except Exception:  # noqa: BLE001
+            pass
+
+    def record_embeddings(self, usage_payload: Any) -> None:
+        """Add an embedding-call usage payload (kept out of the LLM total).
+
+        Embedding tokens are real spend but swamp the "how much did I
+        chat" signal, so they accrue to their own bucket and the summary
+        shows them as a separate line. Never raises.
+        """
+        try:
+            usage = ProviderUsage.from_provider_payload(
+                usage_payload, provider="openai", model="embeddings"
+            )
+            if usage is None or usage.total_tokens <= 0:
+                return
+            with self._lock:
+                self._embeddings += usage.total_tokens
         except Exception:  # noqa: BLE001
             pass
 
@@ -112,6 +138,7 @@ class SessionUsageLedger:
                 exact_tokens=self._exact,
                 estimated_tokens=self._estimated,
                 calls=self._calls,
+                embeddings_tokens=self._embeddings,
             )
 
 
