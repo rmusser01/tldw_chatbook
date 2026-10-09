@@ -1142,6 +1142,36 @@ is exact only while no rule reaches another node, so pin that with a fidelity te
 `Tests/UI/test_console_long_chat_bounds.py` has both: one walks every loaded rule, the
 other restyles the whole subtree and compares every computed style.
 
+## A batch of new widgets is laid out two or three times; pace by settled layout, not by size (TASK-33628.5.1, 2026-10-09)
+
+**Incident.** After the Console stopped mounting every later row, Undo of a
+3,000-message Delete still blocked the loop for 196-316 ms (harness, 160x48),
+and the same at 60 messages. It mounted one load-shaped window, 64 rows and
+about 520 widgets, in one batch. Counting arrange-cache misses per
+`Compositor.reflow` (wrap `textual.widget.arrange`) showed three passes of
+400-466 misses each. The first was the batch's own layout. The second was the
+relayout each new widget's `virtual_size` asks for: it is a `layout=True`
+reactive that `_size_updated` sets inside the pass. The third came after the
+transcript's scrollbar reappeared and changed its width. A relayout with
+nothing new cost 6-7 ms at 1,074 widgets. Mounting a screenful per batch
+helped only once each batch waited for the passes of the one before it.
+Gated on "the last row has a size", one pass still re-arranged two batches
+(158 ms, 299 misses), because the relayout requests were still in flight.
+
+**What to do.** To spread a large mount, start each batch only when nothing
+is pending: no `_layout_required` on the container's nodes or its screen,
+seen at two checks a poll apart. A widget clears its flag only as it posts
+the request to the screen, and by the next poll the screen holds it.
+`Tests/UI/test_console_undo_restore_pacing.py` records the flags at each
+mount; dropping the check fails it. Two more traps:
+- `call_after_refresh` queues on `app.screen`, the top screen. While a modal
+  is up, a transcript's callback waits on the modal's idle, not on the
+  screen being laid out.
+- The app's own `event_loop_stall` records start at 250 ms, so they cannot
+  show a block moving from 240 to 120 ms. A thread that pings the loop with
+  `call_soon_threadsafe` every 5 ms measures what input would wait, and it
+  holds no frames.
+
 ## A node's `@on` handlers run BEFORE its `on_<message>` method — `event.stop()` cannot un-run either (phase C task 3, 2026-09-09)
 
 Phase C moved 16 canvas-origin `@on` rows from `LibraryScreen` onto
