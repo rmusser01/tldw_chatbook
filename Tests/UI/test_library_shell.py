@@ -9799,13 +9799,19 @@ async def test_library_shell_media_back_returns_to_list():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_rail_reentry_resets_to_list():
-    """Re-entering Browse Media from the rail must show the list, not a stale viewer.
+async def test_library_shell_media_rail_reentry_restores_the_open_item_and_back_lists():
+    """Re-entering Browse Media from the rail restores the open Reader; ‹ Back
+    is the way to the list (TASK-34000.25, review finding S-02).
 
-    A rail-row press is always a fresh entry into a content type. If the
-    media viewer was left open on a previous visit, navigating away via
-    another rail row and then pressing "Browse Media" again must land on
-    the media list -- not resume the previously opened item's viewer.
+    This pin used to say the opposite ("a rail-row press is always a fresh
+    entry ... must land on the media list, not resume the previously opened
+    item's viewer"). That rule cost the researcher's note-taking loop the
+    item, its tab and its scroll on every rail switch, and left the Items
+    row marked ``loaded`` beside an empty Reader (L-16). The new contract:
+    a settled local item survives the round trip beside its ``loaded`` row,
+    and the explicit exit -- ``‹ Back`` / Escape, one seam
+    (``_exit_library_media_viewer``) -- still returns to the list, after
+    which a rail round trip is a fresh entry again.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -9820,6 +9826,14 @@ async def test_library_shell_media_rail_reentry_resets_to_list():
 
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._media_state.reader_session.pending_request is None
+                and screen._media_state.reader_session.loaded_id == "local:media:1"
+            ),
+            message="the Reader never settled on the first item",
+        )
 
         screen.query_one("#library-row-browse-conversations").press()
         await pilot.pause()
@@ -9830,7 +9844,32 @@ async def test_library_shell_media_rail_reentry_resets_to_list():
         await pilot.pause()
 
         assert screen.query_one("#library-media-list")
-        assert not screen.query("#library-media-viewer-title")
+        assert screen.query("#library-media-viewer-title"), (
+            "the Reader lost the open item on re-entry"
+        )
+        assert screen._media_state.view == "viewer"
+        assert screen._media_state.reader_session.loaded_id == "local:media:1"
+        loaded_rows = [
+            row.id
+            for row in screen.query(".library-media-row").results(Button)
+            if " · loaded" in str(row.label)
+        ]
+        assert loaded_rows == ["library-media-row-1"]
+
+        # ‹ Back (compact-only at this size -- the same seam the button and
+        # Escape share) returns to the list; the next round trip is fresh.
+        screen._exit_library_media_viewer()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._media_state.view == "list"
+        screen.query_one("#library-row-browse-conversations").press()
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._media_state.view == "list"
+        assert screen.query_one("#library-media-list")
 
 
 @pytest.mark.asyncio

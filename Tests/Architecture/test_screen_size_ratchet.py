@@ -915,7 +915,16 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: resolved reader width (`apply_work_width`) and the footer's Enter
     #: chip is withheld for a task-row control with no visible region.
     #: Re-set to the exact measurement, never above it.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36726, 1337),
+    #: 2026-10-09, TASK-34000.25: 36726/1337 -> 36956/1343, owner decision
+    #: (same 2026-10-04 ruling). This task's code, +230 lines / +6 methods:
+    #: the rail seam keeps a settled local Media item and a New-note note
+    #: across a rail press (`_rail_switch_keeps_media_reader`, the S-02
+    #: reset-block rewrite, the return-leg restore), the Reader's Note action
+    #: (`handle_/action_/_take_library_media_note` and two one-line
+    #: delegators), the `library_media_take_note` gate, key and footer chip,
+    #: and the restore owner's layout-signal wait. Re-set to the exact
+    #: measurement, never above it.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36956, 1343),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

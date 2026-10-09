@@ -44,6 +44,10 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentSearchControls,
 )
 
+#: TASK-34000.25: why the Reader's Note action is off for a server detail --
+#: one string for the button's tooltip and the key's refusal.
+MEDIA_TAKE_NOTE_EXTERNAL_REASON = "Notes beside server items need server support"
+
 
 #: task-31635 (critique #5 item 12): when the Media list load failed and
 #: left NO rows behind (see ``_library_media_list_unselectable``), there is
@@ -428,6 +432,23 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 find.disabled = True
                 find.tooltip = find_reason
             yield find
+            # TASK-34000.25 (reading-desk design §4.5): take a note from the
+            # open document without re-finding it on the way back. Refused
+            # with its reason for a server detail -- the note names the
+            # item by its local ``Media.uuid`` (§5.1), which a server detail
+            # does not carry, and reading progress is local-only (design
+            # non-goal). The key (``n``) shares the gate the button reads.
+            note = Button(
+                library_disabled_action_label("Note", self.external_detail),
+                id="library-media-take-note",
+                compact=True,
+            )
+            if self.external_detail:
+                note.disabled = True
+                note.tooltip = MEDIA_TAKE_NOTE_EXTERNAL_REASON
+            else:
+                note.tooltip = "Take a note from this document (n)"
+            yield note
             if not self.external_detail:
                 yield Button(
                     "Remove later" if self.viewer.read_later else "Read later",

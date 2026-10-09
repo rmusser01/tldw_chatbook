@@ -454,6 +454,19 @@
     padding: $ds-space-0;
 }
 
+/* TASK-34000.25: the primary row gained "Note" (reading-desk §4.5). Its five
+   label-sized buttons need exactly 46 cells -- Find 6, Note 6, Read later 12,
+   Use in Console 16, More 6 -- and the Reader's content is 46 wide at the
+   100x30 compact size the toolbar test pins, so the row's decorative 1-cell
+   side gutter was the one cell that pushed More past the pane edge
+   (measured: More at x=95..101 inside a content region ending at x=100).
+   Both Reader rows drop the gutter so they stay aligned; the mode row fits
+   either way. */
+#library-media-reader-primary-toolbar,
+#library-media-reader-mode-toolbar {
+    padding: $ds-space-0;
+}
+
 /* task-4025: the Trash view's rows share the media list's row contract
    verbatim (one comma-joined rule, not a forked copy) -- the trash rows
    keep their OWN class only so `_focus_library_list_entry`'s

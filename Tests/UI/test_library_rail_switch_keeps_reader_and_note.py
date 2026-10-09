@@ -1,0 +1,402 @@
+"""TASK-34000.25: Library rail switches keep the open media reader and a new
+note, and the Media reader gains a Note action (review finding S-02).
+
+The reader and the note editor share one work pane, so a researcher
+switches rail rows constantly -- and every switch threw state away in both
+directions. On the base (``d2c074cb87``):
+
+- ``_select_library_rail_row_after_source_admission`` resets Media to the
+  list on every rail press ("A rail-row press is always a fresh entry"), so
+  Media ▸ open item ▸ rail Notes ▸ rail Media shows "Select a media item to
+  read it here." beside a row still marked ``loaded`` (L-16);
+- the Notes retention gate requires ``session_blank_id is None``, and a
+  note born from New note keeps that id until an EXPLICIT Save (an autosave
+  deliberately does not clear it), so a New-note note with autosaved content
+  is flushed and closed by the next rail press;
+- ``n`` in the Media reader does nothing: the bare ``n`` branch in ``on_key``
+  is gated on ``library_notes_new``, false on the Media row.
+
+This is the lean PR-gated core (``scripts/ui_pr_gate_census.txt``): one
+real ``LibraryHarness`` boot per test (``CSS_PATH`` = the app bundle), the
+Notes side backed by a REAL ChaChaNotes database behind the real Notes scope
+service (``Tests/UI/library_quit_guard_support._NotesProfile``), so every
+data-integrity claim is read from the DB, not from widget text. The slower
+arms (the Info-tab round trip, the real-external-edit conflict twin, ``n``
+inside the Find input, the server-item refusal, the vetoed title, the
+untouched-blank GC and ‹ Back at 100x30) live in
+``test_library_rail_switch_keeps_reader_and_note_extended.py``, outside the
+lane.
+"""
+
+from __future__ import annotations
+
+import pytest
+from textual.widgets import Button, Input, TextArea
+
+from Tests.UI.library_quit_guard_support import (
+    _NotesProfile,
+    _armed_editor,
+    _new_blank_note,
+    _scaled_autosave,
+    _type,
+    _type_at_end,
+    _until,
+)
+from Tests.UI.test_library_shell import (
+    LibraryHarness,
+    _active_library_screen,
+    _build_test_app,
+    _seed_conversations,
+    _wait_for_library_shell,
+    _wait_for_selector,
+)
+from tldw_chatbook.Widgets.Library.library_media_content import (
+    LibraryMediaContentBody,
+)
+
+#: The review's wide repro size.
+SIZE = (160, 45)
+
+MEDIA_UUID = "4b0e1c2d-7a53-4f0e-9b61-2c8d5e7f9a10"
+MEDIA_TITLE = "A field guide to Markdown tables"
+MEDIA_ROW = "#library-media-row-1"
+LOADED_ID = "local:media:1"
+VIEWER_TITLE = "#library-media-viewer-title"
+NOTE_BODY = "#library-note-body"
+NOTE_TITLE = "#library-note-title"
+
+#: Well past the viewport at 160x45, so a restored offset is a real restore.
+SCROLL_Y = 10
+
+
+def _media_items() -> list[dict]:
+    """Two local items; the first is long enough to scroll and carries a uuid."""
+    body = "\n".join(
+        f"Paragraph {n} of the field guide, one plain line of prose." for n in range(1, 160)
+    )
+    return [
+        {
+            "id": "media-1",
+            "uuid": MEDIA_UUID,
+            "title": MEDIA_TITLE,
+            "type": "article",
+            "last_modified": "2026-07-06T08:00:00Z",
+            "author": "Jordan Lee",
+            "keywords": ["markdown"],
+            "content": body,
+            "version": 1,
+        },
+        {
+            "id": "media-2",
+            "uuid": "0f1e2d3c-4b5a-4968-8776-5544332211aa",
+            "title": "Product Demo Video",
+            "type": "video",
+            "last_modified": "2026-07-06T10:00:00Z",
+            "author": "Morgan Lee",
+            "keywords": ["demo"],
+            "content": "Full transcript: the product demo video walks through the new dashboard.",
+            "version": 2,
+        },
+    ]
+
+
+def _host(tmp_path) -> tuple[LibraryHarness, _NotesProfile]:
+    """The Library screen over a real notes DB and the static media service."""
+    app = _build_test_app()
+    _seed_conversations(app, [], media=_media_items())
+    profile = _NotesProfile(tmp_path)
+    app.chachanotes_db = profile.db
+    app.notes_scope_service = profile.scope_service
+    app.notes_service = profile.interop
+    return LibraryHarness(app), profile
+
+
+async def _library(host, pilot):
+    screen = _active_library_screen(host)
+    await _wait_for_library_shell(screen, pilot)
+    return screen
+
+
+async def _open_media_item(screen, pilot) -> LibraryMediaContentBody:
+    """Browse Media, open the first item, wait for the Reader to settle."""
+    screen.query_one("#library-row-browse-media", Button).press()
+    row = await _wait_for_selector(screen, pilot, MEDIA_ROW)
+    row.press()
+    await _wait_for_selector(screen, pilot, VIEWER_TITLE)
+
+    def _settled() -> bool:
+        session = screen._media_state.reader_session
+        return (
+            session.pending_request is None
+            and session.loaded_id == LOADED_ID
+            and screen._media_state.detail is not None
+        )
+
+    await _until(pilot, _settled, "the Reader to settle on the first item")
+    await pilot.pause()
+    return screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
+
+
+async def _scroll_reader(screen, pilot, body: LibraryMediaContentBody, y: int) -> None:
+    """Scroll the Read body to ``y`` once it has laid out enough to get there.
+
+    The Raw view builds its wrap index on its own layout pass, a pump or two
+    after the session settles, so an immediate ``scroll_to`` clamps to 0
+    (``test_library_media_reader_scroller_resolution.py``).
+    """
+    await _until(
+        pilot,
+        lambda: body.scroller.max_scroll_y >= y,
+        f"the Read body to lay out past y={y} (max {body.scroller.max_scroll_y})",
+        timeout=10.0,
+    )
+    body.scroller.scroll_to(y=y, animate=False, immediate=True)
+    await _until(
+        pilot,
+        lambda: int(body.scroller.scroll_y) == y,
+        f"the Reader to scroll to y={y} (max {body.scroller.max_scroll_y})",
+        timeout=5.0,
+    )
+
+
+async def _rail(screen, pilot, row_id: str) -> None:
+    screen.query_one(f"#library-row-browse-{row_id}", Button).press()
+    await pilot.pause()
+    await pilot.pause()
+
+
+def _reader_scroll_y(screen) -> int | None:
+    try:
+        body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
+    except Exception:  # noqa: BLE001 -- absent while the Reader shows its empty state
+        return None
+    return int(body.scroller.scroll_y)
+
+
+def _loaded_rows(screen) -> list[str]:
+    return [
+        str(row.id)
+        for row in screen.query(".library-media-row").results(Button)
+        if " · loaded" in str(row.label)
+    ]
+
+
+def _saved(screen) -> bool:
+    snapshot = screen._library_note_session.snapshot
+    return (
+        snapshot is not None
+        and not snapshot.dirty
+        and not snapshot.saving
+        and screen._notes_state.autosave_state == "saved"
+    )
+
+
+def _session(screen):
+    snapshot = screen._library_note_session.snapshot
+    assert snapshot is not None, "no note session is open"
+    return snapshot
+
+
+# --- AC#2 / AC#5: the open item survives Media -> Notes -> Media -------------
+
+
+@pytest.mark.asyncio
+async def test_media_item_survives_a_rail_round_trip(tmp_path):
+    """The same item, the Read tab and the scroll offset come back; the row's
+    ``loaded`` marker names exactly that item (L-16)."""
+    host, profile = _host(tmp_path)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _library(host, pilot)
+        body = await _open_media_item(screen, pilot)
+        screen.query_one("#library-media-reader-select-info", Button).press()
+        await _until(
+            pilot,
+            lambda: screen._media_state.reader_session.mode == "info",
+            "the Info tab",
+        )
+        screen.query_one("#library-media-reader-select-read", Button).press()
+        await _until(
+            pilot,
+            lambda: screen._media_state.reader_session.mode == "read",
+            "the Read tab",
+        )
+        body = screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
+        await _scroll_reader(screen, pilot, body, SCROLL_Y)
+
+        await _rail(screen, pilot, "notes")
+        await _wait_for_selector(screen, pilot, ".library-notes-tree-note-row")
+        await _rail(screen, pilot, "media")
+
+        assert screen.query(VIEWER_TITLE), (
+            "the Reader shows its empty state after the round trip: "
+            f"view={screen._media_state.view!r}"
+        )
+        session = screen._media_state.reader_session
+        assert session.loaded_id == LOADED_ID
+        assert session.mode == "read"
+        assert screen._media_state.view == "viewer"
+        await _until(
+            pilot,
+            lambda: _reader_scroll_y(screen) == SCROLL_Y,
+            f"the reading position to be restored (now {_reader_scroll_y(screen)})",
+            timeout=10.0,
+        )
+        assert _loaded_rows(screen) == [MEDIA_ROW.lstrip("#")]
+    profile.db.close_connection()
+
+
+# --- AC#1 / AC#5: a New-note note with autosaved text survives ---------------
+
+
+@pytest.mark.asyncio
+async def test_new_note_with_saved_content_survives_a_rail_round_trip(
+    tmp_path, monkeypatch
+):
+    """Capture 28: the note created from New note stays open with its text."""
+    _scaled_autosave(monkeypatch)
+    host, profile = _host(tmp_path)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _library(host, pilot)
+        await _new_blank_note(screen, pilot)
+        note_id = _session(screen).note_id
+        await _type_at_end(pilot, screen.query_one(NOTE_BODY, TextArea), "s02 paper notes")
+        await _until(pilot, lambda: _saved(screen), "the autosave to land")
+        assert profile.note(note_id)["content"] == "s02 paper notes"
+
+        await _rail(screen, pilot, "media")
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        await _rail(screen, pilot, "notes")
+
+        await _until(
+            pilot,
+            lambda: bool(screen.query(NOTE_BODY)),
+            "the note editor to be open again after the round trip",
+            timeout=5.0,
+        )
+        assert screen._notes_state.view == "editor"
+        assert _session(screen).note_id == note_id
+        assert screen.query_one(NOTE_BODY, TextArea).text == "s02 paper notes"
+        assert screen.query_one(NOTE_TITLE, Input).value in {"", "Untitled"}
+        # AC#3, the live sequence (nothing typed after the return): the
+        # review's false "changed elsewhere" render was the rebuilt work
+        # pane's conflict callout, composed visible and hidden only by a
+        # later presentation sync that an untouched note never triggered.
+        await pilot.pause()
+        await pilot.pause()
+        _assert_no_conflict_rendered(screen)
+        assert _session(screen).in_conflict is False
+    profile.db.close_connection()
+
+
+# --- AC#3 / Review Focus 5: unsaved text survives, and no false conflict ------
+
+
+@pytest.mark.asyncio
+async def test_returning_to_a_retained_note_never_reports_a_false_conflict(
+    tmp_path, monkeypatch
+):
+    """Type, switch to Media inside the debounce, return: the text is still
+    there, the next autosave saves it, and the DB row's version equals the
+    snapshot's at every step -- so a conflict can only come from a real
+    external write."""
+    _scaled_autosave(monkeypatch)
+    host, profile = _host(tmp_path)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _library(host, pilot)
+        await _new_blank_note(screen, pilot)
+        note_id = _session(screen).note_id
+        assert _session(screen).version == profile.note(note_id)["version"]
+
+        await _type_at_end(pilot, screen.query_one(NOTE_BODY, TextArea), "alpha")
+        await _until(pilot, lambda: _saved(screen), "the first autosave")
+        assert profile.note(note_id)["content"] == "alpha"
+        assert _session(screen).version == profile.note(note_id)["version"]
+
+        # The dirty arm: leave inside the debounce, with unsaved text.
+        await _type_at_end(pilot, screen.query_one(NOTE_BODY, TextArea), " beta")
+        assert _session(screen).dirty
+        await _rail(screen, pilot, "media")
+        await _wait_for_selector(screen, pilot, "#library-media-canvas")
+        await _rail(screen, pilot, "notes")
+
+        await _until(
+            pilot,
+            lambda: bool(screen.query(NOTE_BODY)),
+            "the note editor to be open again after the round trip",
+            timeout=5.0,
+        )
+        assert _session(screen).note_id == note_id
+        assert screen.query_one(NOTE_BODY, TextArea).text == "alpha beta"
+        assert _session(screen).version == profile.note(note_id)["version"]
+
+        await _until(pilot, lambda: _saved(screen), "the autosave after the return")
+        assert _session(screen).in_conflict is False
+        assert screen._notes_state.autosave_state != "conflict"
+        _assert_no_conflict_rendered(screen)
+        assert profile.note(note_id)["content"] == "alpha beta"
+        assert _session(screen).version == profile.note(note_id)["version"]
+    profile.db.close_connection()
+
+
+def _assert_no_conflict_rendered(screen) -> None:
+    """Neither the conflict callout nor the status line says 'changed elsewhere'.
+
+    The callout (``#library-note-conflict-region``) is always composed and
+    shown by ``display``; the review's false render is a VISIBLE one, so the
+    claim is about the compositor, not the DOM.
+    """
+    region = screen.query_one("#library-note-conflict-region")
+    assert region.display is False, "the conflict callout is displayed"
+    assert region not in screen._compositor.visible_widgets, (
+        "the conflict callout is painted"
+    )
+    assert "changed elsewhere" not in screen._notes_controller._library_note_status_line()
+
+
+# --- AC#4: `n` in the Reader creates a note naming the document --------------
+
+
+@pytest.mark.asyncio
+async def test_n_in_the_reader_creates_a_note_naming_the_document_and_the_reader_keeps_its_place(
+    tmp_path,
+):
+    """A note titled after the document, its first line the media:// source
+    link, the caret after it; back on Media the item is at the same place."""
+    host, profile = _host(tmp_path)
+    async with host.run_test(size=SIZE) as pilot:
+        screen = await _library(host, pilot)
+        body = await _open_media_item(screen, pilot)
+        await _scroll_reader(screen, pilot, body, SCROLL_Y)
+        screen.set_focus(body.scroller)
+        await pilot.pause()
+        rows_before = len(profile.rows())
+
+        await pilot.press("n")
+
+        await _armed_editor(screen, pilot)
+        await pilot.pause()
+        snapshot = _session(screen)
+        assert screen.query_one(NOTE_TITLE, Input).value == MEDIA_TITLE
+        source_line = f"[{MEDIA_TITLE}](media://{MEDIA_UUID})"
+        note_body = screen.query_one(NOTE_BODY, TextArea)
+        assert note_body.text.startswith(source_line + "\n\n"), note_body.text
+        assert note_body.cursor_location == note_body.document.end
+        assert len(profile.rows()) == rows_before + 1
+        row = profile.note(snapshot.note_id)
+        assert row["title"] == MEDIA_TITLE
+        assert row["content"].startswith(source_line)
+        assert "Note from" in screen._notes_controller._library_note_status_line()
+
+        await _type(pilot, "x")
+        await _rail(screen, pilot, "media")
+
+        assert screen.query(VIEWER_TITLE), "the Reader lost the item after n"
+        assert screen._media_state.reader_session.loaded_id == LOADED_ID
+        await _until(
+            pilot,
+            lambda: _reader_scroll_y(screen) == SCROLL_Y,
+            f"the reading position to be restored (now {_reader_scroll_y(screen)})",
+            timeout=10.0,
+        )
+        assert _loaded_rows(screen) == [MEDIA_ROW.lstrip("#")]
+    profile.db.close_connection()

@@ -167,7 +167,18 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # 200x50 and 235x52 with the rail open, the long title, 200x24, the
 # 235 -> 120 -> 235 round trip, the delete prompt while stacked) stay in
 # test_library_note_header_fits_pane_extended.py, outside the lane.
-MINIMUM_FILES = 158
+# TASK-34000.25 (2026-10-09) raised it to 159:
+# Tests/UI/test_library_rail_switch_keeps_reader_and_note.py -- a rail round
+# trip keeps the open Media item (tab, scroll, the row's loaded marker) and a
+# New-note note with autosaved text; a dirty note switched inside the
+# debounce comes back with its text, the next autosave saves it and the DB
+# version equals the snapshot's at every step; `n` in the Reader creates a
+# note titled after the document whose first line is the media:// source
+# link; 4 tests, about 29 s locally. The slower arms (the Info tab, the real
+# external-edit conflict, `n` inside Find, the server-item refusal, the
+# untouched-blank GC, the vetoed title, Back at 100x30, 120x36) stay in
+# test_library_rail_switch_keeps_reader_and_note_extended.py, outside the lane.
+MINIMUM_FILES = 159
 
 
 def read_census(path: Path) -> list[str]:

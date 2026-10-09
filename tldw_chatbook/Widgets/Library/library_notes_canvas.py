@@ -3060,6 +3060,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 id="library-note-primary-actions", classes="ds-toolbar"
             )
             primary_actions.add_class("h-auto")
+            # TASK-34000.25 (S-02's false "changed elsewhere"): the four
+            # display-gated surfaces compose FROM the state, the same rule
+            # ``apply_session_state`` applies later. The mount-time apply
+            # never runs (``is_mounted`` is still False inside ``on_mount``),
+            # so a freshly composed editor showed every surface as composed
+            # -- the conflict callout under "Saved" -- until the next sync,
+            # which a rail return to a retained, untouched note never sent.
+            primary_actions.display = not (
+                presentation_state.conflict or presentation_state.confirming_delete
+            )
             edit_label, preview_label, info_label = _HEADER_MODE_LABELS
             save_label, use_in_console_label, _discard_label = _HEADER_TASK_LABELS
             with primary_actions:
@@ -3278,7 +3288,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             markup=False,
         )
 
-        with Vertical(id="library-note-wide-utilities"):
+        wide_utilities = Vertical(id="library-note-wide-utilities")
+        wide_utilities.display = False  # TASK-34000.25: as the sync always leaves it
+        with wide_utilities:
             # task-32642 AC#3: the Keywords label and field that used to sit
             # here are now in `#library-note-editor-region`, displayed. This
             # container stays `display = False` and keeps only the duplicate
@@ -3320,7 +3332,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     compact=True,
                 )
 
-        with Vertical(id="library-note-conflict-region"):
+        conflict_region = Vertical(id="library-note-conflict-region")
+        conflict_region.display = presentation_state.conflict  # TASK-34000.25
+        with conflict_region:
             yield Static(
                 "This note changed elsewhere — Overwrite saves your text; "
                 "Reload discards it.",
@@ -3348,7 +3362,12 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
 
     def _compose_delete_confirmation(self) -> ComposeResult:
         """Mount the delete prompt where task-32268 requires it: in Danger."""
-        with Vertical(id="library-note-delete-confirmation"):
+        delete_confirmation = Vertical(id="library-note-delete-confirmation")
+        presentation_state = self.presentation_state
+        delete_confirmation.display = bool(  # TASK-34000.25: composed from state
+            presentation_state is not None and presentation_state.confirming_delete
+        )
+        with delete_confirmation:
             yield Static(
                 delete_confirm_copy(synced=False),
                 id="library-note-delete-confirm-copy",
@@ -3590,6 +3609,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """
         # Shallow title/authority nodes can precede nested toolbar children.
         # Retain updates until the mount hook can apply them to the whole tree.
+        #
+        # Known (TASK-34000.25): Textual flips ``_is_mounted`` only AFTER the
+        # ``Mount`` handler returns, so the call ``on_mount`` makes through
+        # ``_apply_post_compose_state`` takes this early return and applies
+        # nothing -- a freshly composed editor shows its surfaces exactly as
+        # ``_compose_editor`` composed them until the next sync. Widening
+        # the guard to ``is_attached`` changed two pinned behaviours (the
+        # emptied-blank GC on Back, the compact Preview scroll memory), so
+        # the compose itself now reads the display-gated flags from the
+        # state (see ``_compose_editor``), and this guard is left as it was.
         if self.mode != "editor" or not self.is_mounted or not self._children_ready:
             self.presentation_state = state
             self.compact = state.compact

@@ -13,6 +13,7 @@ from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.geometry import Size
+from textual.message import Message
 from textual.scroll_view import ScrollView
 from textual.selection import Selection
 from textual.strip import Strip
@@ -39,6 +40,25 @@ class VirtualizedRawContent(ScrollView):
     the rows currently in the viewport are rendered on each repaint,
     regardless of document size.
     """
+
+    class Indexed(Message):
+        """A wrap index was (re)built, so the view now has its real height.
+
+        TASK-34000.25: the index is built on the FIRST ``Resize`` (never at
+        mount, where the width is still 0), and a reading-position restore
+        that runs before it clamps to the top -- counting screen refreshes
+        cannot wait for it, because Textual's ``call_after_refresh`` is two
+        message hops, not a layout pass. Bubbles to the content body, which
+        hands a deferred restore to it (``run_when_laid_out``).
+        """
+
+        def __init__(self, view: "VirtualizedRawContent") -> None:
+            super().__init__()
+            self.view = view
+
+        @property
+        def control(self) -> "VirtualizedRawContent":
+            return self.view
 
     # Test-only instrumentation; asserting harness wall time is meaningless
     # because pilot.pause() costs ~30 ms per call.
@@ -234,6 +254,10 @@ class VirtualizedRawContent(ScrollView):
         self.virtual_size = Size(0, self.wrap_index.virtual_height)
         self._apply_height_cap()
         self.refresh()
+        # TASK-34000.25: the one moment a deferred reading-position restore
+        # can land on this view (see ``Indexed``); posted after the height
+        # above is claimed, so a handler reading ``max_scroll_y`` sees it.
+        self.post_message(self.Indexed(self))
 
     def _visible_row_cap(self) -> int:
         """Return how many rows this widget may occupy.
