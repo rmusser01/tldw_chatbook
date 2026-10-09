@@ -39,8 +39,9 @@ GitHub's native merge queue needs an organization-owned repository, and this one
 - A retry re-runs the failed run in its own check suite (spec V3), at most once per head. When the deciding queue-tick is
   inside the failed run, it wakes a tick through a queue kick (`derived-artifacts.yml` on `dev`, input `wait_run`; GitHub
   only dispatches a workflow whose file is on `main`), and that tick waits for the run to complete.
-- Eviction causes: "branch refuses the CI dispatch" is replaced by a refused re-run of a failed run (`evict-rerun`) and
-  "no CI run the queue can start" (`evict-no-run`, also what a refused re-run of a cancelled run gives). An unclassified
+- Eviction causes: "branch refuses the CI dispatch" is replaced by a refused re-run on a retry (`evict-rerun`, whether
+  the run failed or its retry attempt was cancelled) and "no CI run the queue can start" (`evict-no-run`, also what a
+  refused re-run of a cancelled run gives on the start path). An unclassified
   re-run error counts as a refusal the second time on one head. A transient error (5xx, 429, rate limit, network) never
   evicts.
 - The dispatch-safe rule above no longer serves the queue. It still keeps manual dispatches safe.

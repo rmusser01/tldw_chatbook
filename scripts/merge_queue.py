@@ -71,6 +71,11 @@ RERUN_REFUSAL_403_TEXT = "month ago"
 # ponytail: a run still live after this is a GitHub fault; the tick decides anyway and the next event recovers.
 WAIT_RUN_TRIES = 50
 WAIT_RUN_DELAY_S = 6.0
+# Both queue jobs time out at 10 minutes, and a job killed mid-action can leave a held run nobody
+# approves. A queue run takes on no further front, and starts no young-head wait that would end,
+# past this; it wakes a fresh run instead. One front's worst case after it (an UNKNOWN settle of
+# 2 minutes, then about a minute of start and re-run polls) still fits.
+RUN_BUDGET = timedelta(minutes=4)
 
 
 @dataclass(frozen=True)
@@ -185,7 +190,9 @@ def decide_front(pr: PrState, now: datetime) -> Action:
         key=lambda c: c.completed_at or now,
     )
     if not finished:
-        if now - pr.head_committed_at <= YOUNG_HEAD:
+        # A commit dated in the future (the author's clock) is not young: waiting for it would
+        # stall the line until that clock's time. `start` looks again for the run anyway.
+        if timedelta(0) <= now - pr.head_committed_at <= YOUNG_HEAD:
             return Action("wait", "head is under 3 minutes old; its own run may not be visible yet", slug="young")
         return Action("start", "no required-check run on the up-to-date head")
     latest = finished[-1]
@@ -691,6 +698,7 @@ def wait_for_run(gh: GhApi, run_id: int, sleep: Callable[[float], None], log: Ca
         try:
             if gh.rest("GET", f"repos/{REPO}/actions/runs/{run_id}").get("status") not in LIVE_RUN_STATUSES:
                 return
+            error = None
         except GhError as exc:  # a failed read is retried within the bound, never fatal
             error = exc
         sleep(WAIT_RUN_DELAY_S)
@@ -745,7 +753,8 @@ def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[
 
     Returns:
         `started` (by this run, or by a racing queue run whose re-run made GitHub refuse this
-        one), or `refused` (GitHub will not re-run it).
+        one), `pending` (re-run, but not live after the approval polls: the caller wakes a tick
+        once it has recorded the attempt), or `refused` (GitHub will not re-run it).
 
     Raises:
         GhError: A transient error, or the first unknown one on this head (see RERUN_REFUSALS).
@@ -776,22 +785,30 @@ def _rerun(gh: GhApi, pr: PrState, run: dict, failed_only: bool, log: Callable[[
         if gh.rest("GET", f"repos/{REPO}/actions/runs/{run['id']}").get("status") in LIVE_RUN_STATUSES:
             break
     else:
-        # A held run never executes, so its own queue-tick never comes: wake one to approve it.
-        _best_effort(log, "wake a queue tick", lambda: wake(gh))
+        # Still held (or already over): it may never run its own queue-tick, so the caller wakes
+        # one -- after recording the retry, so a failed comment cannot chain wakes.
+        log(f"  #{pr.number}: re-ran run {run['id']}; not live yet")
+        return "pending"
     log(f"  #{pr.number}: re-ran run {run['id']}")
     return "started"
 
 
+def _wake_best_effort(gh: GhApi, log: Callable[[str], None]) -> None:
+    _best_effort(log, "wake a queue tick", lambda: wake(gh))
+
+
 def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -> bool:
-    # Best-effort: a merge fires both push:dev and pull_request:closed, so two racing runs can
-    # evict the same PR and the second disarm hits an already-disarmed PR.
-    _best_effort(log, f"disarm #{pr.number}", lambda: gh.graphql(DISARM_MUTATION, id=pr.node_id))
+    # Comment first: if the job dies between the two calls the PR stays armed and the next run
+    # evicts it again (the comment is deduplicated), instead of being disarmed with no reason given.
     links = "".join(f"\n- {u}" for u in action.links)
     comment_once(
         gh, pr.number, f"evict-{action.slug}", pr.head_sha,
         f"Merge queue: removed from the line ({action.reason}). Auto-merge is now off. Fix the cause, then "
         f"re-arm with `gh pr merge {pr.number} --auto --merge` to rejoin at the back.{links}",
     )
+    # Best-effort: a merge fires both push:dev and pull_request:closed, so two racing runs can
+    # evict the same PR and the second disarm hits an already-disarmed PR.
+    _best_effort(log, f"disarm #{pr.number}", lambda: gh.graphql(DISARM_MUTATION, id=pr.node_id))
     log(f"  evicted #{pr.number}: {action.reason}")
     return True
 
@@ -832,12 +849,15 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
     if new_head is None:
         log(f"  rebase of #{pr.number} accepted but the head never moved")
         # If the branch moves later, its new head's runs are held and nothing would wake the
-        # queue to approve them. One kick per head; after that the next event recovers it.
+        # queue to approve them: one kick per head. A second unmoved rebase evicts, or every
+        # later event would rebase again and the line would never move.
         if comment_once(gh, pr.number, "rebase-unmoved", pr.head_sha,
                         "Merge queue: the rebase onto dev was accepted, but the branch has not moved yet; "
-                        "a queue run will look again shortly."):
-            _best_effort(log, "wake a queue tick", lambda: wake(gh))
-        return False
+                        "a queue run will look again shortly, then remove it from the line if it still has not."):
+            _wake_best_effort(gh, log)
+            return False
+        return _evict(gh, pr, Action("evict", "rebase onto dev was accepted twice but the branch never moved",
+                                     slug="rebase"), log)
     old_runs = runs_on(gh, pr.head_sha)
     # The new head's pull_request runs arrive held for approval (spec F4); approving them is what
     # makes its required check count (V4). Approve before cancelling anything on the old head:
@@ -855,7 +875,7 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
                      lambda rid=run["id"]: gh.rest("POST", f"repos/{REPO}/actions/runs/{rid}/cancel"))
     if not approved:
         # The PR's own runs stay held, so no queue-tick will run for it: wake one.
-        _best_effort(log, "wake a queue tick", lambda: wake(gh))
+        _wake_best_effort(gh, log)
     started = "approved its CI" if approved else "its CI is not approved yet; a woken tick approves it"
     comment_once(
         gh, pr.number, "rebased", new_head,
@@ -901,9 +921,12 @@ def _start(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[
             return False
         cancelled = next((r for r in runs if r.get("conclusion") == "cancelled"), None)
         if cancelled is not None:
-            if _rerun(gh, pr, cancelled, False, log, sleep) == "started":
-                return False
-            break
+            outcome = _rerun(gh, pr, cancelled, False, log, sleep)
+            if outcome == "refused":
+                break
+            if outcome == "pending":
+                _wake_best_effort(gh, log)
+            return False
     return _evict(gh, pr, Action(
         "evict", "no CI run on this head that the queue can start; push a commit, or close and reopen the PR",
         slug="no-run"), log)
@@ -957,7 +980,8 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
             return False
         return _evict(gh, pr, Action("evict", "required check failed again after its retry", action.links,
                                      "failed-twice"), log)
-    if _rerun(gh, pr, run, action.suite_id is not None and not cancelled, log, sleep) == "refused":
+    outcome = _rerun(gh, pr, run, action.suite_id is not None and not cancelled, log, sleep)
+    if outcome == "refused":
         return _evict(gh, pr, Action("evict", "required check failed once and GitHub refused to re-run it",
                                      action.links, "rerun"), log)
     comment_once(
@@ -965,6 +989,8 @@ def _retry(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], s
         f"Merge queue: the required check failed once on `{pr.head_sha[:10]}`; re-running it. "
         f"Failed run: {action.links[0]}",
     )
+    if outcome == "pending":
+        _wake_best_effort(gh, log)
     return False
 
 
@@ -1113,12 +1139,18 @@ def run(
     if mode not in ("dry", "on"):
         log("merge queue is off (MERGE_QUEUE is not 'dry' or 'on')")
         return []
+    started = now()
     if wait_run:
         wait_for_run(gh, wait_run, sleep, log)
     prs = read_prs(gh)
     comment_unqueued(gh, prs, mode, log)
     decisions: list[tuple[int, Action]] = []
-    for pr in line_of(prs)[:MAX_FRONTS_PER_RUN]:
+    for index, pr in enumerate(line_of(prs)[:MAX_FRONTS_PER_RUN]):
+        if index and now() - started > RUN_BUDGET:
+            log(f"run budget spent before #{pr.number}; a fresh queue run continues")
+            if mode == "on":
+                _wake_best_effort(gh, log)
+            break
         pr = settle_unknown(gh, pr, sleep)
         if pr.armed_at is None:
             continue
@@ -1127,15 +1159,18 @@ def run(
             # A tick woken right after a rebase whose held runs had not appeared, or an arm right
             # after a push, can land before GitHub lists the head's run, and nothing may wake the
             # queue again for this head. Wait out the window once and decide again.
-            # Capped: the commit date comes from the author's clock and can lie in the future.
-            left = (pr.head_committed_at + YOUNG_HEAD - now()).total_seconds()
-            sleep(min(max(0.0, left), YOUNG_HEAD.total_seconds()) + 1)
-            fresh = settle_unknown(gh, read_pr(gh, pr.number), sleep)
-            if fresh.armed_at != pr.armed_at:
-                # Disarmed, or re-armed at the back of the line, meanwhile; that event wakes a
-                # fresh queue run, which reads the line again.
-                break
-            pr, action = _decide(gh, fresh, mode, now, log)
+            pause = max(0.0, (pr.head_committed_at + YOUNG_HEAD - now()).total_seconds()) + 1
+            if now() - started + timedelta(seconds=pause) > RUN_BUDGET:
+                log(f"#{pr.number}: no budget left to wait out its young head; a fresh queue run will")
+                _wake_best_effort(gh, log)
+            else:
+                sleep(pause)
+                fresh = settle_unknown(gh, read_pr(gh, pr.number), sleep)
+                if fresh.armed_at != pr.armed_at:
+                    # Disarmed, or re-armed at the back of the line, meanwhile; that event wakes a
+                    # fresh queue run, which reads the line again.
+                    break
+                pr, action = _decide(gh, fresh, mode, now, log)
         decisions.append((pr.number, action))
         log(f"#{pr.number}: {action.kind} - {action.reason}")
         left_line = action.kind == "evict"

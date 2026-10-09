@@ -286,8 +286,25 @@ def test_rebase_refused_on_conflict_evicts():
 def test_evicted_front_hands_over_in_the_same_run():
     gh = FakeGh([_node(1, state="DIRTY"), _node(2, armed="2026-10-03T11:00:00Z")])
     _run(gh)
-    assert gh.calls[0] == ("disarm", "PR_1")
+    assert [c[0] for c in gh.calls[:2]] == ["comment", "disarm"] and gh.calls[1] == ("disarm", "PR_1")
     assert ("rebase", "PR_2", OLD) in gh.calls
+
+
+def test_an_eviction_comments_before_it_disarms():
+    """Review round 4 of #3039: a job killed between the two calls must leave the PR armed (the next
+    run evicts it again), never disarmed with no reason given. A failed comment therefore disarms nothing."""
+    gh = FakeGh([_node(1, state="DIRTY")])
+    original = gh.rest
+
+    def rest(method, path, fields=None):
+        if method == "POST" and path.endswith("/comments"):
+            raise mq.GhError("gh: Server Error (HTTP 502)")
+        return original(method, path, fields)
+
+    gh.rest = rest
+    with pytest.raises(mq.GhError, match="502"):
+        _run(gh)
+    assert not any(c[0] == "disarm" for c in gh.calls)
 
 
 def test_rebase_whose_held_runs_never_appear_wakes_a_tick_and_says_so():
@@ -507,9 +524,10 @@ def test_rebase_approves_only_after_the_new_head_appears():
     assert OLD not in comment[2]
 
 
-def test_rebase_whose_head_never_moves_wakes_one_tick_per_head():
-    """Review round 3 of #3039: if the branch moves after the poll, its new head's runs are held and
-    nothing would wake the queue to approve them. One kick per head; then the next event recovers it."""
+def test_rebase_whose_head_never_moves_wakes_one_tick_then_evicts():
+    """Review rounds 3-4 of #3039: if the branch moves after the poll, its new head's runs are held and
+    nothing would wake the queue to approve them, so it kicks one tick. A second unmoved rebase on the
+    same head evicts; otherwise every later event would rebase again and the line would never move."""
     sleeps = []
     gh = FakeGh([_node(1)], rebase_lag=None)
     mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
@@ -520,7 +538,9 @@ def test_rebase_whose_head_never_moves_wakes_one_tick_per_head():
 
     again = FakeGh([_node(1)], rebase_lag=None, comments={1: [gh.calls[1][2]]})
     _run(again)
-    assert [c[0] for c in again.calls] == ["rebase"]
+    assert [c[0] for c in again.calls] == ["rebase", "comment", "disarm"]
+    assert f"<!-- merge-queue:evict-rebase:{OLD} -->" in again.calls[1][2]
+    assert not any(c[0] == "dispatch" for c in again.calls)
 
 
 def test_blocked_green_evicts_only_with_unresolved_threads():
@@ -1097,13 +1117,43 @@ def test_a_young_head_without_a_run_is_decided_again_after_the_window():
     assert slept == [121.0]
 
 
-def test_the_young_head_sleep_is_capped_at_the_window():
-    """Review round 3 of #3039: the commit date comes from the author's clock; a head dated hours
-    ahead must not sleep the queue job into its timeout."""
+def test_a_head_dated_in_the_future_is_not_young():
+    """Review rounds 3-4 of #3039: the commit date comes from the author's clock. A head dated hours
+    ahead must neither sleep the queue job into its timeout nor stall the line until that time;
+    `start` looks again for its run instead."""
     slept = []
     future = _node(1, state="BLOCKED", committed="2026-10-03T15:00:00Z")
-    mq.run(FakeGh([future]), "on", now=lambda: NOW, sleep=slept.append, log=lambda m: None)
-    assert slept[0] == mq.YOUNG_HEAD.total_seconds() + 1
+    gh = FakeGh([future], late_runs={OLD: [_required_run(88)]})
+    decisions = mq.run(gh, "on", now=lambda: NOW, sleep=slept.append, log=lambda m: None)
+    assert decisions[0][1].kind == "start"
+    assert slept == [] and gh.calls == [], "no young-head sleep; the run that appeared is left to finish"
+
+
+def test_a_run_past_its_budget_hands_the_next_front_to_a_fresh_run():
+    """Review round 4 of #3039: both queue jobs time out at 10 minutes. Once a run has spent its
+    budget it takes on no further front; it wakes a fresh run instead."""
+    clock = iter([NOW] + [NOW + mq.RUN_BUDGET + timedelta(seconds=1)] * 50)
+    gh = FakeGh([_node(1, state="DIRTY"), _node(2, armed="2026-10-03T11:00:00Z")])
+    decisions = mq.run(gh, "on", now=lambda: next(clock), sleep=lambda s: None, log=lambda m: None)
+    assert [n for n, _ in decisions] == [1]
+    assert ("dispatch", "derived-artifacts.yml", {"ref": "dev"}) in gh.calls
+    assert not any(c[0] == "rebase" for c in gh.calls)
+    dry = FakeGh([_node(1, state="DIRTY"), _node(2, armed="2026-10-03T11:00:00Z")])
+    clock = iter([NOW] + [NOW + mq.RUN_BUDGET + timedelta(seconds=1)] * 50)
+    assert [n for n, _ in mq.run(dry, "dry", now=lambda: next(clock), sleep=lambda s: None, log=lambda m: None)] == [1]
+    assert dry.calls == []
+
+
+def test_a_young_wait_that_would_overrun_the_budget_is_handed_to_a_fresh_run():
+    """The young-head wait starts only if it ends within the run's budget; otherwise a woken run waits."""
+    started, later = NOW, NOW + timedelta(minutes=2)
+    clock = iter([started] + [later] * 50)
+    slept = []
+    young = _node(1, state="BLOCKED", committed="2026-10-03T12:01:00Z")
+    gh = FakeGh([young])
+    decisions = mq.run(gh, "on", now=lambda: next(clock), sleep=slept.append, log=lambda m: None)
+    assert decisions[0][1].slug == "young" and slept == []
+    assert gh.calls == [("dispatch", "derived-artifacts.yml", {"ref": "dev"})]
 
 
 @pytest.mark.parametrize("armed", [None, "2026-10-03T11:59:30Z"], ids=["disarmed", "re-armed"])
@@ -1141,9 +1191,31 @@ def test_a_rerun_that_stays_held_wakes_a_tick_to_approve_it():
 
     gh.rest = rest
     _run(gh)
-    assert ("dispatch", "derived-artifacts.yml", {"ref": "dev"}) in gh.calls
-    assert any(c[0] == "comment" and f"merge-queue:retry:{OLD}" in c[2] for c in gh.calls)
+    retry = next(i for i, c in enumerate(gh.calls) if c[0] == "comment" and f"merge-queue:retry:{OLD}" in c[2])
+    assert gh.calls.index(("dispatch", "derived-artifacts.yml", {"ref": "dev"})) > retry, "wake after the marker"
     assert not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_a_failed_retry_comment_never_wakes_a_tick():
+    """Review round 4 of #3039: the wake used to fire before the retry marker existed. With the comment
+    failing, each woken tick found no marker, re-ran and woke again: an unbounded kick chain."""
+    broken = _pr_run(31, 531, conclusion="startup_failure")
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [broken]})
+    original = gh.rest
+
+    def rest(method, path, fields=None):
+        if method == "POST" and path.endswith("/comments"):
+            raise mq.GhError("gh: You have exceeded a secondary rate limit (HTTP 403)")
+        out = original(method, path, fields)
+        if path.endswith("/rerun"):
+            gh._set_run(31, status="completed", conclusion="startup_failure")  # over at once, never live
+        return out
+
+    gh.rest = rest
+    with pytest.raises(mq.GhError, match="secondary rate limit"):
+        _run(gh)
+    assert ("rerun", "31", "all") in gh.calls
+    assert not any(c[0] == "dispatch" for c in gh.calls)
 
 
 def test_a_403_that_mentions_a_month_is_not_a_refusal():
@@ -1156,13 +1228,14 @@ def test_a_403_that_mentions_a_month_is_not_a_refusal():
     assert not any(c[0] == "disarm" for c in gh.calls)
 
 
-@pytest.mark.parametrize("failures", [1, None], ids=["one-blip", "never-readable"])
-def test_a_wait_run_read_error_is_retried_within_the_bound(failures):
-    """Review rounds 2-3 of #3039: a failed read neither kills the tick nor ends the wait early (the
-    woken tick would then decide while the run is still live, stand down, and stall the line).
+@pytest.mark.parametrize("reads_then", ["blip-then-done", "never-readable", "blip-then-live"])
+def test_a_wait_run_read_error_is_retried_within_the_bound(reads_then):
+    """Review rounds 2-4 of #3039: a failed read neither kills the tick nor ends the wait early (the
+    woken tick would then decide while the run is still live, stand down, and stall the line). It
+    sleeps like any other read, and a later good read clears it from the final log line.
 
     Args:
-        failures: How many reads fail before the run reads completed; None for every read.
+        reads_then: What the reads return after (or instead of) a first failed read.
     """
     gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check()]})
     original = gh.rest
@@ -1171,19 +1244,22 @@ def test_a_wait_run_read_error_is_retried_within_the_bound(failures):
     def rest(method, path, fields=None):
         if method == "GET" and path.endswith("/actions/runs/70"):
             reads.append(path)
-            if failures is None or len(reads) <= failures:
+            if reads_then == "never-readable" or len(reads) == 1:
                 raise mq.GhError("gh: Server Error (HTTP 502)")
-            return {"id": 70, "status": "completed"}
+            return {"id": 70, "status": "completed" if reads_then == "blip-then-done" else "in_progress"}
         return original(method, path, fields)
 
     gh.rest = rest
-    lines = []
-    decisions = mq.run(gh, "on", now=lambda: NOW, sleep=lambda s: None, log=lines.append, wait_run=70)
+    lines, slept = [], []
+    decisions = mq.run(gh, "on", now=lambda: NOW, sleep=slept.append, log=lines.append, wait_run=70)
     assert decisions[0][1].kind == "wait"
-    if failures is None:
-        assert len(reads) == mq.WAIT_RUN_TRIES and any("last read failed" in line for line in lines)
-    else:
-        assert len(reads) == 2 and not any("deciding anyway" in line for line in lines)
+    if reads_then == "blip-then-done":
+        assert len(reads) == 2 and slept == [mq.WAIT_RUN_DELAY_S]
+        assert not any("deciding anyway" in line for line in lines)
+        return
+    assert len(reads) == mq.WAIT_RUN_TRIES and slept == [mq.WAIT_RUN_DELAY_S] * mq.WAIT_RUN_TRIES
+    final = next(line for line in lines if "deciding anyway" in line)
+    assert ("last read failed" in final) == (reads_then == "never-readable")
 
 
 @pytest.mark.parametrize(("value", "expected"), [("70", 70), (" 71 ", 71), ("", None), ("x", None)])
@@ -1200,3 +1276,12 @@ def test_main_passes_the_wait_run_input_to_the_pass(monkeypatch, value, expected
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     assert mq.main() == 0
     assert seen == [expected]
+
+
+def test_a_cancelled_run_rerun_that_is_not_live_wakes_a_tick():
+    """The start path's re-run of a cancelled run can be held too; nothing else would wake the queue."""
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("cancelled", suite=800)]},
+                runs={OLD: [_pr_run(80, 800, conclusion="cancelled")]}, run_status={80: [HELD_AGAIN]})
+    _run(gh)
+    assert gh.calls.index(("rerun", "80", "all")) < gh.calls.index(("dispatch", "derived-artifacts.yml", {"ref": "dev"}))
+    assert not any(c[0] == "disarm" for c in gh.calls)

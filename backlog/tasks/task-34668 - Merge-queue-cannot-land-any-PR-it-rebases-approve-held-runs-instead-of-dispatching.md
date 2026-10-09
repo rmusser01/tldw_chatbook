@@ -79,4 +79,12 @@ Independent review round 3. Fixed:
 7. The month-old refusal matched any 403 mentioning 'month'; it now needs 'month ago'.
 8. Doc drift: ADR-218 eviction causes (a refused re-run of a cancelled run evicts as evict-no-run), spec sections 6, 7, 8 and 11.
 Test-harness trap: a parametrize id 'live' made Tests/conftest.py skip the test as --run-live (it matches item.keywords); ids renamed to 'running'.
+Independent review round 4: no critical or major findings. Fixed all seven minor ones:
+1. The re-run wake fired before the retry marker, so a failing comment POST could chain kicks. _rerun now returns 'pending' and the caller wakes after recording the attempt.
+2. A rebase accepted but never landing re-rebased on every event forever. The second unmoved rebase on a head evicts (evict-rebase).
+3. One run could exceed the 10-minute job timeout across several fronts. A 4-minute run budget: no further front and no young-head wait that would end past it; a fresh run is woken instead. _evict now comments before it disarms, so a killed job never disarms silently.
+4. A head dated in the future stalled the line until the author's clock time. Future dates are not young; start looks for the run (this replaces round 3's sleep cap, now dead code).
+5-6. wait_for_run: the sleep after a failed read is pinned, and a later good read clears the remembered error from the log line.
+7. Doc drift: ADR-218 eviction causes per path; spec section 8 on what wakes after an approval failure.
+Mutation check: 32 mutants of the round-2 to round-4 guards, all killed.
 <!-- SECTION:NOTES:END -->
