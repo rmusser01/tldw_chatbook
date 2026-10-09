@@ -42,6 +42,8 @@ _ADVANCED = (
     ("settings-advanced-context-window", "Context window"),
     ("settings-advanced-saved-models", "Saved model list"),
     ("settings-advanced-catalog-refresh", "Catalog refresh"),
+    # dev's task-34384 setting, ported into Phase 7's Advanced on rebase.
+    ("settings-advanced-session-summary", "Session summary on quit"),
     ("settings-advanced-custom-endpoints", "Custom endpoints"),
     ("settings-snapshot-controls", "Prompt-cache snapshots"),
 )
@@ -105,7 +107,7 @@ def _prompts(selection: SelectionList) -> list[str]:
 @pytest.mark.asyncio
 @private_profile_test
 async def test_advanced_follows_model_defaults_as_closed_one_row_disclosures(request):
-    """AC#1, AC#2, AC#8: after Model defaults, the Advanced header, then five
+    """AC#1, AC#2, AC#8: after Model defaults, the Advanced header, then the
     closed one-row disclosures in order, each titled with a summary; Prompt-
     cache snapshots is no longer above Connect; the card and its groups draw
     no frame while other categories keep theirs."""
@@ -120,10 +122,11 @@ async def test_advanced_follows_model_defaults_as_closed_one_row_disclosures(req
         at = children.index(defaults)
         assert children[at + 1] is header
         assert str(header.render()) == "Advanced"
-        assert [child.id for child in children[at + 2 : at + 7]] == [
+        end = at + 2 + len(_ADVANCED)
+        assert [child.id for child in children[at + 2 : end]] == [
             disclosure_id for disclosure_id, _name in _ADVANCED
         ]
-        assert children[at + 7 :] == []
+        assert children[end:] == []
         connect = screen.query_one("#settings-provider-connect-title")
         assert children.index(connect) == 0
         for disclosure_id, name in _ADVANCED:
@@ -605,3 +608,42 @@ async def test_a_context_window_override_reads_saved_and_reset_stages_detected(r
         assert reset.disabled
         assert str(source.render()) == "edited *"
         assert str(help_line.render()) == f"detected {detected:,}"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_session_summary_on_quit_is_a_one_row_disclosure_that_says_its_state(
+    request, monkeypatch
+):
+    """Rebase onto dev: task-34384 added "Session summary on quit" inside the
+    card Phase 7 rebuilt. It joins Advanced as a closed one-row disclosure
+    whose title says its state, keeps its instant-apply writes, and re-says
+    the state when toggled."""
+    writes: list[dict] = []
+    monkeypatch.setattr(
+        settings_screen_module,
+        "save_settings_to_cli_config",
+        lambda values: writes.append(values) or True,
+    )
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        disclosure_id = "settings-advanced-session-summary"
+        assert _title(screen, disclosure_id) == (
+            "Session summary on quit · applies immediately · Off"
+        )
+        disclosure = screen.query_one(f"#{disclosure_id}", Collapsible)
+        assert disclosure.collapsed and disclosure.region.height == 1
+
+        disclosure.collapsed = False
+        await pilot.pause()
+        enabled = screen.query_one("#settings-session-summary-enabled", Checkbox)
+        enabled.value = True
+        await pilot.pause()
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert _title(screen, disclosure_id) == (
+            "Session summary on quit · applies immediately · On · 3 s"
+        )
+        assert writes and writes[-1]["session_summary"]["enabled"] is True
