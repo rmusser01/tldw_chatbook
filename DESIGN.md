@@ -83,6 +83,12 @@ components:
     textColor: "{colors.text-primary}"
     rounded: "{rounded.terminal-tall}"
     padding: "1 2 cells"
+  destination-header-inline:
+    backgroundColor: "{colors.panel}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.none}"
+    padding: "0 1 cell"
+    height: "1 cell"
   panel:
     backgroundColor: "{colors.panel}"
     textColor: "{colors.text-primary}"
@@ -328,6 +334,11 @@ fields (task-1586):
 ### Destination Header
 
 The destination header is a product contract, not decoration. It carries title, one-line purpose, readiness, authority, primary action, and blocked recovery when needed. It uses `$ds-surface-panel`, `border: tall $ds-action-focus`, `padding: 1 2`, and bold text.
+
+**Destination header variants.** A destination may use one of these instead, keyed by its own id or class in its own sheet:
+
+- **Inline one-row header (Lab, Roleplay).** One row with no border and `padding: 0 1` (`destination-header-inline` above): the title, a subtitle, optional chips, and the authority chip last. Chips are words, never a dot or a badge: an unsaved chip driven by the destination's one draft predicate (Roleplay: **Unsaved changes**), and a blocked chip that names a destination-wide block and its recovery (Roleplay: **No chat provider · Settings ›**). Chip words take the readable status foregrounds (`$ds-status-warning-readable`, `$ds-status-error-readable`), never the decorative status hues, which fall below AA on the panel in many themes. The authority chip says where the data lives (Roleplay: **Local**, or **Server: \<label\> · read-only**); it is never a "Ready" badge. Readiness may sit beside the destination's primary action in its work pane instead of in the header, and the one-line purpose may live in the destination's navigation. The subtitle stays visible at every terminal height. Lab: `.lab-header-inline` (`css/features/_lab.tcss`). Roleplay: `#personas-header.personas-header-inline` (`css/features/_roleplay.tcss`; the Roleplay frame spec of 2026-10-02, §1.3).
+- **Console's one-row header ([ADR-210](backlog/decisions/210-console-region-ownership.md)).** One row carrying the workspace, authority and actions, with no title or purpose line: ADR-210's own exception, written into this section by its migration step 8 (TASK-33627). Whichever of that step and this list lands second rebases onto the other.
 
 ### Recovery Callout
 
