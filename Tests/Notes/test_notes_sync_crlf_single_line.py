@@ -35,9 +35,16 @@ import pytest
 
 from Tests.Notes.notes_sync_tail_edit_support import Vault, build_owner
 from tldw_chatbook.Notes import notes_sync_filesystem
+from tldw_chatbook.Notes.note_folder_repository import LocalNoteFolderRepository
 from tldw_chatbook.Notes.notes_device_state_store import (
     NotesDeviceStateStore,
     NotesSyncBindingRecord,
+)
+from tldw_chatbook.Notes.notes_scope_service import ScopeType
+from tldw_chatbook.Notes.notes_sync_authority import NotesScopeSyncAuthority
+from tldw_chatbook.Notes.notes_sync_executor import (
+    NotesSyncExecutionRequest,
+    NotesSyncExecutor,
 )
 from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFilesystemPartialError,
@@ -45,6 +52,8 @@ from tldw_chatbook.Notes.notes_sync_filesystem import (
 )
 from tldw_chatbook.Notes.notes_sync_models import (
     NotesSyncActionKind,
+    NotesSyncDirection,
+    NotesSyncOperationState,
     NotesSyncSerializationProfile,
 )
 from tldw_chatbook.Notes.notes_sync_reconciler import ManagedPlacementEffectKind
@@ -526,3 +535,167 @@ async def test_a_wedged_root_whose_file_changed_meanwhile_settles_to_a_review(
         assert plan.safe_actions == ()
     finally:
         await owner.shutdown()
+
+
+# --- Fix round 1 (review Important 2): the landed-target rule is scoped ---------
+#
+# ``_cleanup_names_the_landed_target`` applies to the two kinds a settle can
+# close. A create_file whose post-write check raised the same handle shape
+# keeps the Recovery path 9413696ea1 has, exactly: the cleanup stays pending
+# and Recovery refuses with ``recovery_authority_changed``. The production
+# runtime plans a CREATE_FILE only from a stored CANDIDATE row, which the
+# executor's ``_require_new_candidate_owner`` then refuses, so this pin runs
+# the real executor over the real store, filesystem and note authority
+# (the shape ``test_notes_sync_tail_edit.py`` uses for its executor pin).
+
+
+def _disabled_rule(monkeypatch: pytest.MonkeyPatch):
+    """Context: the newline rule off (a no-op on a build without it)."""
+
+    patch = monkeypatch.context()
+    context = patch.__enter__()
+    if hasattr(notes_sync_filesystem, "proven_profile"):
+        context.setattr(
+            notes_sync_filesystem,
+            "proven_profile",
+            lambda observed, _text, _recorded: observed,
+        )
+    return patch
+
+
+async def _executor_wedge(
+    vault: Vault,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    kind: NotesSyncActionKind,
+):
+    """Run one request with the rule off; return (executor, store, filesystem, result)."""
+
+    if kind is NotesSyncActionKind.CREATE_FILE:
+        assert vault.database.add_note("second", SINGLE_LINE, "note-2") == "note-2"
+        LocalNoteFolderRepository(vault.database).reconcile_managed(
+            owner_id="root-1",
+            desired=(("folder-1", "note-1"), ("folder-1", "note-2")),
+        )
+    else:
+        vault.edit_note(SINGLE_LINE)
+    store = NotesDeviceStateStore(vault.state_path)
+    filesystem = PosixNotesSyncFilesystem(vault.root)
+    filesystem.__enter__()
+    authority = NotesScopeSyncAuthority(
+        vault.scope_service,
+        scope=ScopeType.LOCAL_NOTE,
+        user_id="user-1",
+        note_scope_id="local_note",
+    )
+    executor = NotesSyncExecutor(
+        store, authority, filesystem, recovery_capacity_bytes=1024 * 1024
+    )
+    if kind is NotesSyncActionKind.CREATE_FILE:
+        note = await authority.observe("note-2")
+        request = NotesSyncExecutionRequest(
+            operation_id="operation-create",
+            root_id="root-1",
+            logical_folder_id="folder-1",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            binding_id="binding-2",
+            observation_token="observation-create",
+            action_kind=NotesSyncActionKind.CREATE_FILE,
+            note=note,
+            file=None,
+            desired_title=note.title,
+            recovery_id="recovery-operation-create",
+            recovery_expires_at=2**62,
+            candidate_relative_path="second.md",
+            candidate_serialization=NotesSyncSerializationProfile(
+                False, "crlf", False, 0o644
+            ),
+        )
+    else:
+        note = await authority.observe("note-1")
+        request = NotesSyncExecutionRequest(
+            operation_id="operation-update",
+            root_id="root-1",
+            logical_folder_id="folder-1",
+            direction=NotesSyncDirection.BIDIRECTIONAL,
+            binding_id="binding-1",
+            observation_token="observation-update",
+            action_kind=NotesSyncActionKind.UPDATE_FILE,
+            note=note,
+            file=filesystem.observe("quotes.md"),
+            desired_title=note.title,
+            recovery_id="recovery-operation-update",
+            recovery_expires_at=2**62,
+        )
+    patch = _disabled_rule(monkeypatch)
+    try:
+        result = await executor.execute(request)
+    finally:
+        patch.__exit__(None, None, None)
+    assert (result.state, result.reason_code) == (
+        NotesSyncOperationState.NEEDS_ATTENTION,
+        "replacement_postcondition_failed",
+    )
+    metadata = _recovery_metadata(vault, request.operation_id)
+    assert metadata["cleanup_pending"] is True
+    assert metadata["cleanup_identity"] is None
+    assert metadata["cleanup_relative_path"] == metadata["file_relative_path"]
+    return executor, store, filesystem, request.operation_id
+
+
+async def test_a_create_wedged_by_the_same_handle_keeps_todays_recovery_path(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Identical on 9413696ea1: the create's cleanup is still pending and
+    Recovery refuses it; the created file is never deleted."""
+
+    executor, store, filesystem, operation_id = await _executor_wedge(
+        vault, monkeypatch, kind=NotesSyncActionKind.CREATE_FILE
+    )
+    try:
+        created = vault.root / "second.md"
+        assert created.read_bytes() == b"just one line"
+        assert vault.incomplete() == [
+            ("create_file", "needs_attention", "replacement_postcondition_failed")
+        ]
+
+        assert executor.cleanup_pending(operation_id) is True
+        with pytest.raises(RuntimeError, match="recovery_authority_changed"):
+            await executor.resolve_filesystem_cleanup(operation_id)
+        with pytest.raises(RuntimeError, match="recovery_authority_changed"):
+            await executor.settle_attention(operation_id)
+
+        assert vault.incomplete() == [
+            ("create_file", "needs_attention", "replacement_postcondition_failed")
+        ]
+        assert created.read_bytes() == b"just one line"
+        assert executor.cleanup_pending(operation_id) is True
+    finally:
+        filesystem.__exit__(None, None, None)
+        store.close()
+
+
+async def test_an_update_wedged_by_the_same_handle_is_settled_not_cleaned_up(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The settleable twin at the executor level (AC#5): no cleanup pending,
+    the settle proves the bytes and closes the entry; nothing deleted."""
+
+    executor, store, filesystem, operation_id = await _executor_wedge(
+        vault, monkeypatch, kind=NotesSyncActionKind.UPDATE_FILE
+    )
+    try:
+        assert vault.file.read_bytes() == b"just one line"
+        assert executor.cleanup_pending(operation_id) is False
+
+        result = await executor.settle_attention(operation_id)
+
+        assert result.state is NotesSyncOperationState.COMPLETED
+        assert vault.incomplete() == []
+        assert vault.file.read_bytes() == b"just one line"
+        binding = store.get_binding("binding-1")
+        assert binding.serialization.newline == "crlf"
+        assert binding.content_digest == _digest(b"just one line")
+    finally:
+        filesystem.__exit__(None, None, None)
+        store.close()

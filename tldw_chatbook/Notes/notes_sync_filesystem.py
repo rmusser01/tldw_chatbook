@@ -231,6 +231,32 @@ def proven_profile(
     )
 
 
+def _requested_write_profile(
+    expected: NotesSyncFileSnapshot,
+    profile: NotesSyncSerializationProfile | None,
+) -> NotesSyncSerializationProfile:
+    """Return the profile a ``replace`` writes under.
+
+    With no profile asked for, the reviewed state's own parse -- the
+    pre-TASK-34000.48 behaviour, byte for byte. A requested profile must be
+    one the reviewed state proves: the same BOM, final-newline rule and mode,
+    and the same newline unless the reviewed text carries no line ending.
+
+    Raises:
+        TypeError: If ``profile`` is not a profile.
+        NotesSyncFilesystemError: ``replacement_profile_unproven`` otherwise;
+            nothing has been written.
+    """
+
+    if profile is None:
+        return expected.observation.serialization
+    if type(profile) is not NotesSyncSerializationProfile:
+        raise TypeError("profile must be a NotesSyncSerializationProfile.")
+    if proven_profile(expected.observation.serialization, expected.text, profile) != profile:
+        raise NotesSyncFilesystemError("replacement_profile_unproven")
+    return profile
+
+
 def represented_digest(text: str, profile: NotesSyncSerializationProfile) -> str:
     """Return the content digest a file would carry after writing ``text``.
 
@@ -389,14 +415,7 @@ class PosixNotesSyncFilesystem:
         metadata_issue = self._metadata_issue(expected.reviewed_state)
         if metadata_issue is not None:
             raise NotesSyncFilesystemError(metadata_issue)
-        requested = expected.observation.serialization if profile is None else profile
-        if type(requested) is not NotesSyncSerializationProfile:
-            raise TypeError("profile must be a NotesSyncSerializationProfile.")
-        profile = proven_profile(
-            expected.observation.serialization, expected.text, requested
-        )
-        if profile != requested:
-            raise NotesSyncFilesystemError("replacement_profile_unproven")
+        profile = _requested_write_profile(expected, profile)
         payload = self.serialize(text, profile)
         try:
             self._root.replace_bytes(
