@@ -1340,6 +1340,7 @@ def build_console_controllers(
         query_handoff=(
             lambda handoff: screen.open_console_character_switcher_query(handoff.query)
         ),
+        run_active=lambda: screen._console_run_active(),  # TASK-33620.15.1
     )
 
     async def _seed_console_fleet_history(wake) -> None:

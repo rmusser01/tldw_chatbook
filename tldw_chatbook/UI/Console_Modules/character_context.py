@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, replace
 from enum import StrEnum
@@ -41,6 +42,11 @@ CONSOLE_CHARACTER_ROW_LIMIT = 5
 CONSOLE_CHARACTER_SEARCH_LIMIT = 8
 CONSOLE_CHARACTER_REPAIR_CANDIDATE_LIMIT = 20
 _SCOPE_CAPTURE_ATTEMPTS = 3
+#: TASK-33620.15.1: during a run, recheck a settled scope's database at most
+#: this often. Every 0.2 s tick made two worker DB calls, each worker opening a
+#: fresh connection (a private SQLite helper process) -- the busiest worker
+#: work, live, between a send's acceptance and its provider call.
+SCOPE_RECHECK_DURING_RUN_SECONDS = 1.0
 
 
 class ConsoleCharacterOperationPhase(StrEnum):
@@ -257,8 +263,10 @@ class ConsoleCharacterContextController:
         ),
         query_handoff_capability: ConsoleCharacterQueryHandoffCapability | None = None,
         query_handoff: Callable[[ConsoleCharacterQueryHandoff], None] | None = None,
+        run_active: Callable[[], bool] | None = None,
     ) -> None:
         self._progress_counts = progress_counts
+        self._run_active = run_active
         self._database_accessor = database_accessor
         self._current_character_accessor = current_character_accessor
         self._open_conversation_accessor = open_conversation_accessor
@@ -280,6 +288,7 @@ class ConsoleCharacterContextController:
         self.return_reveal = False
         self._browse_snapshot: ConsoleCharacterBrowseSnapshot | None = None
         self._activation_cancellation: asyncio.Event | None = None
+        self._settled_scope: tuple[float, _ConsoleCharacterScopeSnapshot] | None = None
         self.state = ConsoleCharacterContextState()
 
     def _publish(self, state: ConsoleCharacterContextState) -> None:
@@ -435,7 +444,48 @@ class ConsoleCharacterContextController:
         self._generation += 1
         self._publish(replace(self.state, scope_fingerprint=None))
 
+    def _settled_recently(self) -> bool:
+        """Whether a sync may skip the database scope read (TASK-33620.15.1).
+
+        True only during a run (the 0.2 s ticks keep coming), while the last
+        settled check is under the recheck interval old, its fingerprint is
+        still the published one, and the ambient scope (database handle,
+        current character, open chat) has not moved. Outside a run every
+        check reads, as before.
+        """
+        settled = self._settled_scope
+        if settled is None or self._run_active is None or not self._run_active():
+            return False
+        checked_at, snapshot = settled
+        fingerprint = snapshot.fingerprint
+        current = (
+            None
+            if fingerprint.current_character_id is None
+            else (fingerprint.current_character_id, fingerprint.current_character_label)
+        )
+        return (
+            time.monotonic() - checked_at < SCOPE_RECHECK_DURING_RUN_SECONDS
+            and fingerprint == self.state.scope_fingerprint
+            and self._ambient_scope_matches(
+                snapshot.database, current, fingerprint.open_conversation_id
+            )
+        )
+
     async def refresh_if_scope_changed(self, *, force: bool = False) -> bool:
+        """Reload the projection when its scope changed.
+
+        During a run a settled, unmoved scope skips its database read for up
+        to ``SCOPE_RECHECK_DURING_RUN_SECONDS`` (``_settled_recently``).
+
+        Args:
+            force: Reload even when the scope is unchanged.
+
+        Returns:
+            True when a reload ran.
+        """
+        if not force and self._settled_recently():
+            return False
+        self._settled_scope = None
         try:
             snapshot = await self._capture_scope()
         except _ConsoleCharacterScopeChanged:
@@ -445,6 +495,7 @@ class ConsoleCharacterContextController:
             return True
         else:
             if not force and snapshot.fingerprint == self.state.scope_fingerprint:
+                self._settled_scope = (time.monotonic(), snapshot)
                 return False
         await self.refresh()
         return True
