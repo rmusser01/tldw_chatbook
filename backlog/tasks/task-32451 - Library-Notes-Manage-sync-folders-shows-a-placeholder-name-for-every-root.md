@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-11 16:10'
-updated_date: '2026-10-09 16:40'
+updated_date: '2026-10-09 17:05'
 labels:
   - library
   - notes
@@ -83,8 +83,20 @@ harness with the seeded "VSync" root: 160x45 and 100x30 both title the row `VSyn
 either run's log. Captures: `qa/notes-library-ux-review-2026-10-02/fixes/task-32451/`.
 
 **Trade-offs.** No new DB read on the render path (names resolve on the maintenance path at startup/activation).
-An ACTIVE root whose folder row is entirely missing (not soft-deleted) falls to "Sync folder (setting up)"; the
-status line carries the real problem. The size ratchet row for the controller rose 2375 -> 2378 (owner ruling).
+The size ratchet row for the controller rose 2375 -> 2378 (owner ruling).
+
+**Fix round 1 (review 1, Important 1).** A root WITH a folder id is never titled "setting up". Fallback table:
+no folder id + PAUSED `migration_review_required` -> "Migrated notes — review to finish setup"; no folder id,
+otherwise -> "Sync folder (setting up)"; folder id set and the adapter returned no name (row gone from
+`note_folders`, or a blank name) -> "Sync folder (missing from Notes)"; the name read raised, or the adapter has no
+`root_display_name` route -> "Sync folder (name unavailable)"; a soft-deleted folder still gives its real name.
+Pinned by four new pure tests (row hard-deleted, blank name, raising read, fake adapter with a folder id), RED on
+edb4a879c9, and documented in the guide paragraph. **Known limitation (review 1, Minor 1).** Names are read at
+startup, setup review and activation only; a managed folder renamed in the Notes tree keeps its old row title
+until the next start. The repository refuses a rename on a subtree holding managed notes
+(`_require_manual_folder_subtree`), so this reaches only a managed folder with no managed notes or an out-of-band
+write; no in-process rename signal reaches the runtime today, and adding polling or UI-thread I/O for it was
+ruled out, so it is recorded here rather than fixed.
 
 **Files.** `tldw_chatbook/Notes/notes_sync_runtime.py`, `tldw_chatbook/UI/Library_Modules/
 library_notes_sync_controller.py`, `Tests/Notes/test_notes_sync_root_display_name.py` (new; FAST_LANE + workflow),
