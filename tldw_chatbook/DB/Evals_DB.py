@@ -221,6 +221,11 @@ class EvalsDB:
 
         self.client_id = client_id
         self._local = threading.local()
+        # Protect memo publication from readers that overlap a committed
+        # result or run-group change. Never hold this lock during SQLite IO.
+        self._rg_failure_lock = threading.Lock()
+        self._rg_failure_generation = 0
+        self._rg_failure_counts: Dict[str, Tuple[int, int]] | None = None
 
         # Initialize database schema
         try:
@@ -272,6 +277,8 @@ class EvalsDB:
                 conn.close()
                 raise
             self._local.connection = conn
+            # A retired connection may be reopening a recovered database.
+            self.invalidate_run_group_failure_cache()
         return conn
 
     @_core_transaction
@@ -1780,6 +1787,8 @@ class EvalsDB:
 
                     with conn:
                         conn.execute(query, values)
+                    if "run_group_id" in updates:
+                        self.invalidate_run_group_failure_cache()
 
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
         """Get evaluation run by ID."""
@@ -1963,7 +1972,10 @@ class EvalsDB:
                         labels={"table": "eval_results"},
                     )
 
-                    return result_id
+                # Invalidate after the result and completed-samples update
+                # commit together, including any rail read during the write.
+                self.invalidate_run_group_failure_cache()
+                return result_id
 
             except Exception as e:
                 duration = time.time() - start_time
@@ -2035,10 +2047,19 @@ class EvalsDB:
         Returns:
             ``{run_group_id: (total_cells, errored_cells)}``. A run group
             with zero stored cells (nothing captured yet) has no entry
-            here at all -- callers should treat a missing key as
-            ``(0, 0)``, never as "all failed".
+        here at all -- callers should treat a missing key as
+        ``(0, 0)``, never as "all failed".
+
+        The instance memo is invalidated after result and run-group
+        mutations commit. A reader overlapping a commit can return its
+        snapshot, but cannot publish it as the memo for subsequent calls.
         """
         with self.connection() as conn:
+            # Even a cache hit retains the repository's admission fence.
+            with self._rg_failure_lock:
+                if self._rg_failure_counts is not None:
+                    return self._rg_failure_counts
+                generation = self._rg_failure_generation
             cursor = conn.execute(
                 """
             SELECT
@@ -2054,10 +2075,25 @@ class EvalsDB:
             GROUP BY r.run_group_id
             """
             )
-            return {
+            counts = {
                 row["group_id"]: (row["total_cells"], row["errored_cells"])
                 for row in cursor.fetchall()
             }
+            with self._rg_failure_lock:
+                if generation == self._rg_failure_generation:
+                    self._rg_failure_counts = counts
+            return counts
+
+    def invalidate_run_group_failure_cache(self) -> None:
+        """Drop the memoized ``run_group_cell_failure_counts`` result.
+
+        Call after committing changes to ``eval_results`` or its joined
+        ``eval_runs.run_group_id`` / ``deleted_at`` fields. The generation
+        also prevents an older reader from restoring the invalidated memo.
+        """
+        with self._rg_failure_lock:
+            self._rg_failure_generation += 1
+            self._rg_failure_counts = None
 
     def get_run_results(
         self, run_id: str, limit: int = 1000, offset: int = 0

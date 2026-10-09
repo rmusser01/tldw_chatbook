@@ -182,6 +182,22 @@ def test_genuine_v71_preserves_archived_rows_columns_indexes_and_triggers(
         )
         assert any(row[1] == "idx_conversations_archive" for row in schema_before)
         assert any(row[0] == "trigger" for row in schema_before)
+        # v79 (ADR-216) is the first post-v71 step that adds conversations
+        # indexes: migration may add exactly these two and nothing else.
+        browse_order_indexes = (
+            (
+                "index",
+                "idx_conversations_last_modified",
+                "CREATE INDEX idx_conversations_last_modified\n"
+                "  ON conversations(last_modified DESC, id DESC)",
+            ),
+            (
+                "index",
+                "idx_conversations_archived_browse_order",
+                "CREATE INDEX idx_conversations_archived_browse_order\n"
+                "  ON conversations(archived, last_modified DESC, id DESC)",
+            ),
+        )
     current = CharactersRAGDB(path, "archive-after-voice")
     try:
         connection = current.get_connection()
@@ -200,12 +216,13 @@ def test_genuine_v71_preserves_archived_rows_columns_indexes_and_triggers(
                 "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'conversations' ORDER BY type, name"
             )
         )
-        # ADR-224 (v78->v79) is the ONE intentional conversations-schema
-        # change after v72: the sargable keyset index. Strip exactly that
-        # row and the v72 preservation guarantee still pins everything else.
+        # Two intentional conversations-schema changes after v72: ADR-224's
+        # sargable keyset index (v78->v79, conversations only) and ADR-216's
+        # browse-order pair (v79->v80). Strip exactly the sargable row and
+        # the v72 preservation guarantee still pins everything else.
         assert tuple(
             row for row in schema_after if row[1] != "idx_conv_char_lm"
-        ) == schema_before
+        ) == tuple(sorted(schema_before + browse_order_indexes))
         assert any(row[1] == "idx_conv_char_lm" for row in schema_after)
     finally:
         current.close_connection()

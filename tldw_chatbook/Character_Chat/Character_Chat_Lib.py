@@ -3332,14 +3332,17 @@ def load_chat_history_from_file_and_save_to_db(
                 )
                 if not new_conv_id:
                     raise CharactersRAGDBError("Failed to import chat history.")
-                parent_id = None
+                # Bulk path (review-B B25): one batched import instead of the
+                # per-message add_message replay. The batch chains parents in
+                # order and produces byte-identical rows; validation runs
+                # before any write, so a malformed message fails the import
+                # exactly as before (the outer transaction rolls back).
                 for staged in staged_messages:
                     staged["conversation_id"] = new_conv_id
-                    staged["parent_message_id"] = parent_id
-                    new_message_id = db.add_message(staged)
-                    if not new_message_id:
-                        raise CharactersRAGDBError("Failed to import chat history.")
-                    parent_id = str(new_message_id)
+                message_ids = db.add_message_import_batch(staged_messages)
+                if not message_ids or any(not mid for mid in message_ids):
+                    raise CharactersRAGDBError("Failed to import chat history.")
+                parent_id = message_ids[-1]
                 db.set_conversation_active_leaf(new_conv_id, parent_id)
             return str(new_conv_id), None
 

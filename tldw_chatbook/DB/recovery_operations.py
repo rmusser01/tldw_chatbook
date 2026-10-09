@@ -1407,6 +1407,8 @@ _SUBSCRIPTIONS_SCHEMA += tuple(
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS:
+        return ((80,),)
     if schema in _SUBSCRIPTIONS_SARGABLE_SCHEMAS:
         return ((79,),)
     if schema in _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS:
@@ -1525,7 +1527,11 @@ _AGENT_RUNS_MIGRATION_22_23 = (
     "INSERT INTO schema_version (version) VALUES (23)",
 )
 
-from .recovery_core_schema import _fleet_progress_catalog, _sargable_catalog
+from .recovery_core_schema import (
+    _browse_order_catalog,
+    _fleet_progress_catalog,
+    _sargable_catalog,
+)
 
 _SUBSCRIPTIONS_FLEET_PROGRESS_SCHEMAS = tuple(
     _fleet_progress_catalog(schema)
@@ -1542,4 +1548,14 @@ _SUBSCRIPTIONS_SARGABLE_SCHEMAS = tuple(
 )
 _SUBSCRIPTIONS_SCHEMA += tuple(
     (2, schema) for schema in _SUBSCRIPTIONS_SARGABLE_SCHEMAS
+)
+
+# ADR-216: v80 appends the browse-order indexes to every shared v79 catalog
+# (stamp 80).
+_SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS = tuple(
+    _browse_order_catalog(schema)
+    for schema in _SUBSCRIPTIONS_SARGABLE_SCHEMAS
+)
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (2, schema) for schema in _SUBSCRIPTIONS_BROWSE_ORDER_SCHEMAS
 )

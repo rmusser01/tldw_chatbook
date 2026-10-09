@@ -25,11 +25,20 @@ from ..Chatbooks.database_paths import (
     get_private_chatbooks_dir,
     secure_chatbook_directory,
 )
+from ..Library.library_pager_state import (
+    library_pager_layout,
+    simple_library_pager_display,
+)
 from ..Utils.Utils import truncate
 from ..Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:
     from ..app import TldwCli
+
+#: B22: at most this many cards/list items are mounted per content rebuild.
+#: The full match set stays in state; the "Load more" control renders the
+#: next slice into the same container. Module constant per repo convention.
+CHATBOOK_RENDER_PAGE_SIZE = 60
 
 
 class ChatbookCard(Container):
@@ -408,6 +417,8 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         # exports at the old location are not moved by this change.
         self._export_path = get_private_chatbooks_dir()
         self._search_debounce_timer: Timer | None = None
+        # B22: how many pages of the current match set are mounted.
+        self._rendered_pages = 1
 
     def compose(self) -> ComposeResult:
         # Header
@@ -484,6 +495,18 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
             # Content container (will be populated based on chatbooks)
             yield Container(id="chatbooks-container")
 
+            # B22: the pager control is mounted once and toggled -- the
+            # imperative `_rebuild_content_view` cannot remount an id'd
+            # widget per render (pending async removals keep the id
+            # registered, so a remount trips DuplicateIds).
+            load_more = Button(
+                "Load more",
+                id="chatbooks-load-more",
+                variant="default",
+            )
+            load_more.display = False
+            yield load_more
+
         # Stats bar
         with Container(classes="stats-bar"):
             yield Static(
@@ -533,7 +556,27 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
         self._update_content()
 
     def _update_content(self) -> None:
-        """Update the content display."""
+        """Update the content display (paged -- B22).
+
+        Every fresh render (new data, filter, search, or view mode) starts
+        back at the first page of the current match set; only "Load more"
+        advances the page without resetting it.
+        """
+        self._rendered_pages = 1
+        self._rebuild_content_view()
+
+    def _show_more_chatbooks(self) -> None:
+        """Mount the next page of the current match set (B22)."""
+        self._rendered_pages += 1
+        self._rebuild_content_view()
+
+    def _rebuild_content_view(self) -> None:
+        """Mount up to ``_rendered_pages * CHATBOOK_RENDER_PAGE_SIZE`` items.
+
+        The full match set is computed unchanged (``_filter_chatbooks``);
+        only the mounted slice is bounded, with a "Load more" control for
+        the remainder.
+        """
         container = self.query_one("#chatbooks-container", Container)
         container.remove_children()
 
@@ -546,38 +589,73 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
             self.query_one("#section-title", Static).update(
                 "No chatbooks found" if self.search_query else "Recent Chatbooks"
             )
-        else:
-            self.query_one("#section-title", Static).update(
-                f"Found {len(filtered)} chatbooks"
-                if self.search_query
-                else "Recent Chatbooks"
-            )
+            self._mount_load_more_control(total=0, shown=0)
+            return
 
-            if self.view_mode == "grid":
-                # Grid view. `container` is already attached (it comes from
-                # `query_one`), so mount the (still-unattached) grid into it
-                # FIRST -- only then is the grid itself attached and safe to
-                # mount cards into. `Widget.mount()` raises `MountError`
-                # synchronously when called on a widget that isn't attached
-                # yet (task-671).
-                grid = Grid(classes="chatbooks-grid")
-                container.mount(grid)
-                for cb_data in filtered:
-                    card = ChatbookCard(cb_data)
-                    grid.mount(card)
-            else:
-                # List view -- same attach-before-populate ordering as above.
-                list_view = ListView(classes="chatbooks-list")
-                container.mount(list_view)
-                for cb_data in filtered:
-                    # Same unconditional-ellipsis bug as the grid card above.
-                    description = truncate(
-                        cb_data.get("description") or "No description",
-                        50,
-                        marker="...",
-                    )
-                    item = ListItem(Static(f"📚 {cb_data['name']} - {description}"))
-                    list_view.mount(item)
+        self.query_one("#section-title", Static).update(
+            f"Found {len(filtered)} chatbooks"
+            if self.search_query
+            else "Recent Chatbooks"
+        )
+
+        shown = filtered[: self._rendered_pages * CHATBOOK_RENDER_PAGE_SIZE]
+
+        if self.view_mode == "grid":
+            # Grid view. `container` is already attached (it comes from
+            # `query_one`), so mount the (still-unattached) grid into it
+            # FIRST -- only then is the grid itself attached and safe to
+            # mount cards into. `Widget.mount()` raises `MountError`
+            # synchronously when called on a widget that isn't attached
+            # yet (task-671).
+            grid = Grid(classes="chatbooks-grid")
+            container.mount(grid)
+            for cb_data in shown:
+                card = ChatbookCard(cb_data)
+                grid.mount(card)
+        else:
+            # List view -- same attach-before-populate ordering as above.
+            list_view = ListView(classes="chatbooks-list")
+            container.mount(list_view)
+            for cb_data in shown:
+                # Same unconditional-ellipsis bug as the grid card above.
+                description = truncate(
+                    cb_data.get("description") or "No description",
+                    50,
+                    marker="...",
+                )
+                item = ListItem(Static(f"📚 {cb_data['name']} - {description}"))
+                list_view.mount(item)
+
+        self._mount_load_more_control(total=len(filtered), shown=len(shown))
+
+    def _mount_load_more_control(self, *, total: int, shown: int) -> None:
+        """Show the "Load more" control when a further page exists (B22).
+
+        The control is mounted once in ``compose()`` and toggled here.
+        Control-row visibility goes through the house one-page rule
+        (``library_pager_layout``): a match set that fits the mounted slice
+        renders no pager chrome at all.
+        """
+        load_more = self.query_one("#chatbooks-load-more", Button)
+        remaining = total - shown
+        if remaining > 0:
+            pager = simple_library_pager_display(
+                range_copy=f"{shown} of {total}",
+                page=self._rendered_pages,
+                total_pages=max(
+                    1,
+                    (total + CHATBOOK_RENDER_PAGE_SIZE - 1)
+                    // CHATBOOK_RENDER_PAGE_SIZE,
+                ),
+                has_previous=False,
+                has_next=True,
+            )
+            layout = library_pager_layout(pager)
+            if not layout.controls_hidden and not pager.next_disabled:
+                load_more.label = f"Load more ({remaining} remaining)"
+                load_more.display = True
+                return
+        load_more.display = False
 
     def _filter_chatbooks(self) -> List[Dict[str, Any]]:
         """Filter chatbooks based on search query."""
@@ -679,6 +757,8 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
 
         if button_id in ["view-grid", "view-list"]:
             self.view_mode = "grid" if button_id == "view-grid" else "list"
+        elif button_id == "chatbooks-load-more":
+            self._show_more_chatbooks()
         elif button_id in ["empty-create-btn", "create-action"]:
             await self.action_create_chatbook()
         elif button_id in ["empty-import-btn", "import-action"]:

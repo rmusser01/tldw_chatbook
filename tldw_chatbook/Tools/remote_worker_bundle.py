@@ -2283,7 +2283,11 @@ def list_directory(path: str, *, workspace_root: Path, max_entries: int=MAX_LIST
 def _list_relative_directory(relative: Path, *, workspace: Path, max_entries: int, sensitive_exclusions: tuple[SensitiveExclusion, ...], display_path: str | None=None) -> str:
     """List a pinned-root-relative directory without opening an absolute path."""
     target = workspace / relative
-    if not _relative_target_is_safe(relative, workspace, sensitive_exclusions, is_directory=True) or not target.is_dir():
+    try:
+        resolved_workspace: Path | None = workspace.resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved_workspace = None
+    if not _relative_target_is_safe(relative, workspace, sensitive_exclusions, is_directory=True, resolved_workspace=resolved_workspace) or not target.is_dir():
         raise LocalToolError(f'not a directory: {display_path or relative}')
     scanned: list[Path] = []
     scan_capped = False
@@ -2292,7 +2296,7 @@ def _list_relative_directory(relative: Path, *, workspace: Path, max_entries: in
             scan_capped = True
             break
         entry_relative = _workspace_relative_path(entry, workspace)
-        if not _relative_target_is_safe(entry_relative, workspace, sensitive_exclusions, is_directory=entry.is_dir()):
+        if not _relative_target_is_safe(entry_relative, workspace, sensitive_exclusions, is_directory=entry.is_dir(), resolved_workspace=resolved_workspace):
             continue
         scanned.append(entry)
     entries = sorted(scanned, key=lambda p: (p.is_file(), p.name.lower()))
@@ -2789,6 +2793,10 @@ def _glob_relative_files(pattern: str, *, workspace: Path, max_results: int, sen
     """Glob from the pinned working directory using only relative I/O paths."""
     heap: list[tuple[float, Path]] = []
     total = 0
+    try:
+        resolved_workspace: Path | None = workspace.resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved_workspace = None
     for p in workspace.glob(pattern):
         try:
             if not p.is_file():
@@ -2798,7 +2806,7 @@ def _glob_relative_files(pattern: str, *, workspace: Path, max_results: int, sen
                 continue
             rendered = norm.relative_to(workspace)
             if validate_targets:
-                if not _relative_target_is_safe(rendered, workspace, sensitive_exclusions, is_directory=False):
+                if not _relative_target_is_safe(rendered, workspace, sensitive_exclusions, is_directory=False, resolved_workspace=resolved_workspace):
                     continue
             elif _is_relative_sensitive_path(rendered, sensitive_exclusions, is_directory=False):
                 continue
@@ -2859,12 +2867,16 @@ def _grep_relative_files(pattern: str, *, workspace: Path, mode: str, max_result
         raise LocalToolError('max_results must be >= 1')
     shown: list[str] = []
     total = 0
+    try:
+        resolved_workspace: Path | None = workspace.resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved_workspace = None
     for p in workspace.rglob('*'):
         try:
             if not p.is_file() or p.stat().st_size > _MAX_GREP_FILE_BYTES:
                 continue
             relative = _workspace_relative_path(p, workspace)
-            if not _relative_target_is_safe(relative, workspace, sensitive_exclusions, is_directory=False):
+            if not _relative_target_is_safe(relative, workspace, sensitive_exclusions, is_directory=False, resolved_workspace=resolved_workspace):
                 continue
         except OSError:
             continue
@@ -2889,12 +2901,20 @@ def _grep_relative_files(pattern: str, *, workspace: Path, mode: str, max_result
         shown.append(f'… ({total - max_results} more, truncated)')
     return '\n'.join(shown) if shown else f'(no matches for {pattern!r})'
 
-def _relative_target_is_safe(relative: Path, workspace: Path, exclusions: tuple[SensitiveExclusion, ...], *, is_directory: bool) -> bool:
-    """Require both lexical and resolved targets to be admissible for I/O."""
+def _relative_target_is_safe(relative: Path, workspace: Path, exclusions: tuple[SensitiveExclusion, ...], *, is_directory: bool, resolved_workspace: Path | None=None) -> bool:
+    """Require both lexical and resolved targets to be admissible for I/O.
+
+    ``resolved_workspace`` accepts a precomputed ``workspace.resolve()``
+    (review-B B27) so per-entry callers -- grep/glob/list walks -- resolve
+    the workspace once per operation instead of once per entry. Omitted, the
+    workspace is resolved here as before; the decision is identical either
+    way.
+    """
     try:
         if _is_relative_sensitive_path(relative, exclusions, is_directory=is_directory):
             return False
-        resolved_workspace = workspace.resolve()
+        if resolved_workspace is None:
+            resolved_workspace = workspace.resolve()
         resolved = (workspace / relative).resolve()
         if not resolved.is_relative_to(resolved_workspace):
             return False
@@ -5309,4 +5329,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("0096373750b3e01d4d52237177f1727acf0c263967b958e07140d6f5e22a8cf7")
+BUNDLE_SHA256 = _enter_worker_exchange("2873ee9cdf369ff64c059f79021dadf22e9550379f11edb022bb8d20c7974285")

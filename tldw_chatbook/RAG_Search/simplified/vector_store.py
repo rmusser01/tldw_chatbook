@@ -22,6 +22,7 @@ except ImportError:
 import json
 import time
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional, Protocol, Sequence, Union
@@ -1034,13 +1035,30 @@ class InMemoryVectorStore:
         self.max_documents = max_documents
         self.max_collections = max_collections
         self.memory_threshold_mb = memory_threshold_mb
+        # Search and indexing run in different worker threads.
+        self._lock = threading.RLock()
         self.ids: List[str] = []
         self.embeddings: List[Union[np.ndarray, List[float]]] = []
         self.documents: List[str] = []
         self.metadata: List[dict] = []
 
-        # Track access order for LRU eviction
-        self._access_order: List[str] = []
+        # Track access order for LRU eviction. Review-B B3: an OrderedDict
+        # (front = least recently used) replaces the plain list, so an LRU
+        # touch is O(1) `move_to_end` instead of an O(n) `list.remove`.
+        self._access_order: "OrderedDict[str, None]" = OrderedDict()
+        # Review-B B3: id -> index into the parallel lists above, so the
+        # dedupe check and in-place replace in `add` are dict lookups
+        # instead of O(n) `in`/`index` scans. Rebuilt wherever the parallel
+        # lists shift (eviction, delete_document).
+        self._index_by_id: Dict[str, int] = {}
+        # Review-B B3: cached (n, d) float32 matrix over `self.embeddings`
+        # plus per-row norms, so a cosine search is ONE matmul over
+        # pre-normalized rows instead of a per-vector Python loop that
+        # recomputed the query norm for every candidate. Appended on add;
+        # invalidated (and rebuilt lazily on the next search) wherever the
+        # row set shifts -- replace, eviction, delete_document, clear.
+        self._matrix: Optional["np.ndarray"] = None
+        self._row_norms: Optional["np.ndarray"] = None
 
         # Collection support (for compatibility) with access tracking
         self._collections: Dict[str, Dict[str, Any]] = {}
@@ -1134,96 +1152,162 @@ class InMemoryVectorStore:
         metadata: List[dict],
     ) -> None:
         """Add documents to memory with LRU eviction and memory pressure handling."""
-        if len(ids) == 0:
-            return
+        with self._lock:
+            if len(ids) == 0:
+                return
 
-        # Check memory pressure before adding
-        if self._check_memory_pressure():
-            self._evict_for_memory_pressure()
+            # Check memory pressure before adding
+            if self._check_memory_pressure():
+                self._evict_for_memory_pressure()
 
-        # Handle embeddings based on numpy availability
-        if NUMPY_AVAILABLE:
-            if not isinstance(embeddings, np.ndarray) or embeddings.dtype != np.float32:
-                embeddings = np.asarray(embeddings, dtype=np.float32)
+            # Handle embeddings based on numpy availability
+            if NUMPY_AVAILABLE:
+                if not isinstance(embeddings, np.ndarray) or embeddings.dtype != np.float32:
+                    embeddings = np.asarray(embeddings, dtype=np.float32)
 
-            # Validate and store embedding dimension
-            if self._embedding_dim is None and embeddings.shape[1] > 0:
-                self._embedding_dim = embeddings.shape[1]
-                logger.info(f"Detected embedding dimension: {self._embedding_dim}")
-            elif (
-                self._embedding_dim is not None
-                and embeddings.shape[1] != self._embedding_dim
-            ):
-                raise ValueError(
-                    f"Embedding dimension mismatch: expected {self._embedding_dim}, got {embeddings.shape[1]}. "
-                    f"All embeddings must have the same dimension."
-                )
-        else:
-            # Without numpy, ensure embeddings is a list
-            if not isinstance(embeddings, list):
-                raise TypeError(
-                    "Without numpy, embeddings must be provided as a list of lists"
-                )
-
-            # Validate embedding dimensions for lists
-            if embeddings:
-                # Check first embedding to establish dimension
-                if self._embedding_dim is None and len(embeddings[0]) > 0:
-                    self._embedding_dim = len(embeddings[0])
+                # Validate and store embedding dimension
+                if self._embedding_dim is None and embeddings.shape[1] > 0:
+                    self._embedding_dim = embeddings.shape[1]
                     logger.info(f"Detected embedding dimension: {self._embedding_dim}")
-
-                # Validate all embeddings have the same dimension
-                for i, emb in enumerate(embeddings):
-                    if len(emb) != self._embedding_dim:
-                        raise ValueError(
-                            f"Embedding dimension mismatch at index {i}: expected {self._embedding_dim}, got {len(emb)}. "
-                            f"All embeddings must have the same dimension."
-                        )
-
-        # Add documents, updating existing ones
-        for i, id_val in enumerate(ids):
-            if id_val in self.ids:
-                # Update existing
-                idx = self.ids.index(id_val)
-                self.embeddings[idx] = embeddings[i]
-                self.documents[idx] = documents[i]
-                self.metadata[idx] = metadata[i]
-                # Update access order
-                if id_val in self._access_order:
-                    self._access_order.remove(id_val)
-                self._access_order.append(id_val)
+                elif (
+                    self._embedding_dim is not None
+                    and embeddings.shape[1] != self._embedding_dim
+                ):
+                    raise ValueError(
+                        f"Embedding dimension mismatch: expected {self._embedding_dim}, got {embeddings.shape[1]}. "
+                        f"All embeddings must have the same dimension."
+                    )
             else:
-                # Check if we need to evict due to document limit
-                if len(self.ids) >= self.max_documents:
-                    # Evict least recently used
-                    self._evict_lru()
+                # Without numpy, ensure embeddings is a list
+                if not isinstance(embeddings, list):
+                    raise TypeError(
+                        "Without numpy, embeddings must be provided as a list of lists"
+                    )
 
-                # Add new
-                self.ids.append(id_val)
-                self.embeddings.append(embeddings[i])
-                self.documents.append(documents[i])
-                self.metadata.append(metadata[i])
-                self._access_order.append(id_val)
+                # Validate embedding dimensions for lists
+                if embeddings:
+                    # Check first embedding to establish dimension
+                    if self._embedding_dim is None and len(embeddings[0]) > 0:
+                        self._embedding_dim = len(embeddings[0])
+                        logger.info(f"Detected embedding dimension: {self._embedding_dim}")
 
-        self._add_count += len(ids)
-        logger.debug(
-            f"Added {len(ids)} documents to in-memory store (current size: {len(self.ids)})"
-        )
+                    # Validate all embeddings have the same dimension
+                    for i, emb in enumerate(embeddings):
+                        if len(emb) != self._embedding_dim:
+                            raise ValueError(
+                                f"Embedding dimension mismatch at index {i}: expected {self._embedding_dim}, got {len(emb)}. "
+                                f"All embeddings must have the same dimension."
+                            )
+
+            # Add documents, updating existing ones. Review-B B3: the dedupe
+            # check is a dict lookup (was an O(n) `in` scan + O(n) `index`).
+            new_rows: List[Union[np.ndarray, List[float]]] = []
+            for i, id_val in enumerate(ids):
+                idx = self._index_by_id.get(id_val)
+                if idx is not None:
+                    # Update existing
+                    self.embeddings[idx] = embeddings[i]
+                    self.documents[idx] = documents[i]
+                    self.metadata[idx] = metadata[i]
+                    # Update access order (O(1) move, was a list remove+append)
+                    self._access_order.move_to_end(id_val)
+                    # A replaced row invalidates the cached matrix (its norms
+                    # are stale); rebuilt lazily on the next search.
+                    self._matrix = None
+                    self._row_norms = None
+                else:
+                    # Check if we need to evict due to document limit
+                    if len(self.ids) >= self.max_documents:
+                        # Evict least recently used
+                        self._evict_lru()
+
+                    # Add new
+                    self.ids.append(id_val)
+                    self.embeddings.append(embeddings[i])
+                    self.documents.append(documents[i])
+                    self.metadata.append(metadata[i])
+                    self._index_by_id[id_val] = len(self.ids) - 1
+                    self._access_order[id_val] = None
+                    new_rows.append(embeddings[i])
+
+            # Review-B B3: append the new rows to the cached matrix in ONE
+            # step per `add` call (a batched index never pays per-vector
+            # numpy calls). An invalidated matrix stays None and is rebuilt
+            # lazily by the next search.
+            if new_rows and self._matrix is not None and NUMPY_AVAILABLE:
+                try:
+                    stacked = np.vstack(
+                        [
+                            self._matrix,
+                            np.asarray(new_rows, dtype=np.float32).reshape(
+                                len(new_rows), -1
+                            ),
+                        ]
+                    )
+                    self._matrix = stacked
+                    self._row_norms = np.linalg.norm(stacked, axis=1)
+                except (ValueError, TypeError):
+                    # Ragged rows (should be impossible past the dimension
+                    # check above): fall back to a full lazy rebuild.
+                    self._matrix = None
+                    self._row_norms = None
+
+            self._add_count += len(ids)
+            logger.debug(
+                f"Added {len(ids)} documents to in-memory store (current size: {len(self.ids)})"
+            )
+
+    def _default_collection_cosine_cache(self):
+        """Return the cached ``(matrix, row_norms)`` for cosine searches.
+
+        Review-B B3. The cache is appended on ``add`` and invalidated on
+        any structural change (replace, eviction, ``delete_document``,
+        ``clear``); this helper rebuilds it lazily from the parallel lists
+        when invalid. Returns ``(None, None)`` when there is nothing to
+        search (keeps the caller on the plain empty-return path).
+
+        Returns:
+            Tuple of the (n, d) float32 matrix over ``self.embeddings`` and
+            the (n,) float32 row norms, or ``(None, None)`` when empty.
+        """
+        n = len(self.ids)
+        if n == 0:
+            return None, None
+        if (
+            self._matrix is not None
+            and self._row_norms is not None
+            and self._matrix.shape[0] == n
+        ):
+            return self._matrix, self._row_norms
+        rows = [
+            np.asarray(emb, dtype=np.float32).reshape(1, -1)
+            for emb in self.embeddings
+        ]
+        matrix = np.vstack(rows)
+        self._matrix = matrix
+        self._row_norms = np.linalg.norm(matrix, axis=1)
+        return self._matrix, self._row_norms
 
     def _evict_lru(self) -> None:
         """Evict the least recently used document."""
         if not self._access_order:
             return
 
-        # Get the least recently used ID
-        lru_id = self._access_order.pop(0)
-
-        # Remove from storage
-        idx = self.ids.index(lru_id)
+        # Review-B B3: the OrderedDict's front IS the LRU entry -- no list
+        # scan to find it. Removing the row still shifts the parallel lists
+        # after `idx`, so the id index is repaired for the tail (the same
+        # O(n) the old `.index`+`.pop` pair cost) and the matrix cache is
+        # invalidated for a lazy rebuild.
+        lru_id, _ = self._access_order.popitem(last=False)
+        idx = self._index_by_id.pop(lru_id)
         self.ids.pop(idx)
         self.embeddings.pop(idx)
         self.documents.pop(idx)
         self.metadata.pop(idx)
+        for shifted in range(idx, len(self.ids)):
+            self._index_by_id[self.ids[shifted]] = shifted
+        self._matrix = None
+        self._row_norms = None
 
         self._eviction_count += 1
         logger.debug(
@@ -1338,117 +1422,168 @@ class InMemoryVectorStore:
         Returns:
             List of matching ``SearchResult`` objects, most similar first.
         """
-        if "n_results" in kwargs:
-            top_k = int(kwargs.pop("n_results"))
-        if query_embedding_or_collection is None and "query_embedding" in kwargs:
-            query_embedding_or_collection = kwargs.pop("query_embedding")
-        if kwargs:
-            unexpected = ", ".join(sorted(kwargs.keys()))
-            raise TypeError(f"Unexpected search keyword argument(s): {unexpected}")
-        if query_embedding_or_collection is None:
-            raise TypeError("query_embedding is required")
+        with self._lock:
+            if "n_results" in kwargs:
+                top_k = int(kwargs.pop("n_results"))
+            if query_embedding_or_collection is None and "query_embedding" in kwargs:
+                query_embedding_or_collection = kwargs.pop("query_embedding")
+            if kwargs:
+                unexpected = ", ".join(sorted(kwargs.keys()))
+                raise TypeError(f"Unexpected search keyword argument(s): {unexpected}")
+            if query_embedding_or_collection is None:
+                raise TypeError("query_embedding is required")
 
-        collection_name: Optional[str] = None
-        if isinstance(query_embedding_or_collection, str):
-            collection_name = query_embedding_or_collection
-            query_embedding = query_embedding_or_top_k
-            if query_embedding is None or isinstance(query_embedding, int):
-                raise TypeError(
-                    "query_embedding is required when searching a named collection"
-                )
-        else:
-            query_embedding = query_embedding_or_collection
-            if isinstance(query_embedding_or_top_k, int):
-                top_k = query_embedding_or_top_k
+            collection_name: Optional[str] = None
+            if isinstance(query_embedding_or_collection, str):
+                collection_name = query_embedding_or_collection
+                query_embedding = query_embedding_or_top_k
+                if query_embedding is None or isinstance(query_embedding, int):
+                    raise TypeError(
+                        "query_embedding is required when searching a named collection"
+                    )
+            else:
+                query_embedding = query_embedding_or_collection
+                if isinstance(query_embedding_or_top_k, int):
+                    top_k = query_embedding_or_top_k
 
-        if collection_name is not None:
-            collection = self._collections.get(collection_name)
-            if not collection or not collection["embeddings"]:
+            if collection_name is not None:
+                collection = self._collections.get(collection_name)
+                if not collection or not collection["embeddings"]:
+                    return []
+                ids = collection["ids"]
+                embeddings = collection["embeddings"]
+                documents = collection["documents"]
+                metadata = collection["metadata"]
+                self._collection_access_time[collection_name] = time.time()
+            else:
+                if not self.embeddings:
+                    return []
+                ids = self.ids
+                embeddings = self.embeddings
+                documents = self.documents
+                metadata = self.metadata
+
+            if (
+                isinstance(query_embedding, list)
+                and len(query_embedding) == 1
+                and isinstance(query_embedding[0], (list, tuple))
+            ):
+                query_embedding = query_embedding[0]
+
+            if (
+                NUMPY_AVAILABLE
+                and isinstance(query_embedding, np.ndarray)
+                and query_embedding.ndim == 2
+                and query_embedding.shape[0] == 1
+            ):
+                query_embedding = query_embedding[0]
+
+            if not embeddings:
                 return []
-            ids = collection["ids"]
-            embeddings = collection["embeddings"]
-            documents = collection["documents"]
-            metadata = collection["metadata"]
-            self._collection_access_time[collection_name] = time.time()
-        else:
-            if not self.embeddings:
-                return []
-            ids = self.ids
-            embeddings = self.embeddings
-            documents = self.documents
-            metadata = self.metadata
 
-        if (
-            isinstance(query_embedding, list)
-            and len(query_embedding) == 1
-            and isinstance(query_embedding[0], (list, tuple))
-        ):
-            query_embedding = query_embedding[0]
+            # Handle query embedding conversion based on numpy availability
+            if NUMPY_AVAILABLE:
+                if not isinstance(query_embedding, np.ndarray):
+                    query_embedding = np.array(query_embedding)
+            else:
+                # Without numpy, ensure it's a list
+                if not isinstance(query_embedding, list):
+                    raise TypeError("Without numpy, query_embedding must be a list")
 
-        if (
-            NUMPY_AVAILABLE
-            and isinstance(query_embedding, np.ndarray)
-            and query_embedding.ndim == 2
-            and query_embedding.shape[0] == 1
-        ):
-            query_embedding = query_embedding[0]
-
-        if not embeddings:
-            return []
-
-        # Handle query embedding conversion based on numpy availability
-        if NUMPY_AVAILABLE:
-            if not isinstance(query_embedding, np.ndarray):
-                query_embedding = np.array(query_embedding)
-        else:
-            # Without numpy, ensure it's a list
-            if not isinstance(query_embedding, list):
-                raise TypeError("Without numpy, query_embedding must be a list")
-
-        # Compute similarities, skipping candidates outside the allowlist
-        # *before* ranking so a narrow scope can't be starved out by
-        # higher-similarity out-of-scope candidates being truncated first.
-        similarities = []
-        for i, emb in enumerate(embeddings):
-            if not _passes_metadata_allowlist(metadata[i], metadata_allowlist):
-                continue
-            similarity = self._compute_similarity(query_embedding, emb)
-            similarities.append((i, similarity))
-
-        # Sort by similarity (descending)
-        similarities.sort(key=lambda x: x[1], reverse=True)
-        top_results = similarities[:top_k]
-
-        # Convert to SearchResult
-        results = []
-        for idx, score in top_results:
-            # Update access order for LRU
-            id_val = ids[idx]
-            if collection_name is None:
-                if id_val in self._access_order:
-                    self._access_order.remove(id_val)
-                self._access_order.append(id_val)
-
-            # Normalize score to [0, 1] range for consistency
-            if self.distance_metric == "cosine":
-                normalized_score = (score + 1) / 2  # From [-1, 1] to [0, 1]
-            elif self.distance_metric == "l2":
-                # Convert negative distance to similarity
-                normalized_score = 1 / (1 + abs(score))
-            else:  # ip
-                normalized_score = max(0, min(1, score))  # Clamp to [0, 1]
-
-            results.append(
-                SearchResult(
-                    id=ids[idx],
-                    score=normalized_score,
-                    document=documents[idx],
-                    metadata=metadata[idx],
-                )
+            # Compute similarities, skipping candidates outside the allowlist
+            # *before* ranking so a narrow scope can't be starved out by
+            # higher-similarity out-of-scope candidates being truncated first.
+            #
+            # Review-B B3 fast path: for the numpy cosine metric over the
+            # default collection, one matmul over the cached matrix replaces
+            # the per-vector Python loop (which recomputed the QUERY norm for
+            # every candidate). The math is the same cosine the per-vector
+            # helper computes: rows pre-normalized by their cached norms, the
+            # query normalized once, zero vectors scoring 0.0, results clamped
+            # to [-1, 1]. Every other metric (l2/ip) and the no-numpy fallback
+            # keep the per-vector loop below, unchanged.
+            fast_path = (
+                NUMPY_AVAILABLE
+                and self.distance_metric == "cosine"
+                and collection_name is None
             )
+            if fast_path:
+                matrix, row_norms = self._default_collection_cosine_cache()
+                if matrix is not None:
+                    query_vec = np.asarray(query_embedding, dtype=np.float32).reshape(-1)
+                    if query_vec.shape[0] != matrix.shape[1]:
+                        # Dimension mismatch falls through to the per-vector
+                        # helper so its error surfaces exactly as before.
+                        fast_path = False
+                    else:
+                        query_norm = float(np.linalg.norm(query_vec))
+                        if metadata_allowlist is not None:
+                            allowed = [
+                                i
+                                for i in range(matrix.shape[0])
+                                if _passes_metadata_allowlist(
+                                    metadata[i], metadata_allowlist
+                                )
+                            ]
+                        else:
+                            allowed = list(range(matrix.shape[0]))
+                        if query_norm < 1e-6:
+                            # Zero query vector: no meaningful similarity to
+                            # anything (the per-vector helper returns 0.0).
+                            similarities = [(i, 0.0) for i in allowed]
+                        elif not allowed:
+                            similarities = []
+                        else:
+                            indices = np.asarray(allowed, dtype=np.intp)
+                            unit_query = query_vec / query_norm
+                            sims = matrix[indices] @ unit_query
+                            norms = row_norms[indices]
+                            # Zero-norm rows score 0.0, mirroring the
+                            # per-vector helper's zero-vector guard.
+                            sims = np.where(norms < 1e-6, 0.0, sims / norms)
+                            sims = np.clip(sims, -1.0, 1.0)
+                            similarities = list(zip(allowed, (float(s) for s in sims)))
 
-        self._search_count += 1
-        return results
+            if not fast_path:
+                similarities = []
+                for i, emb in enumerate(embeddings):
+                    if not _passes_metadata_allowlist(metadata[i], metadata_allowlist):
+                        continue
+                    similarity = self._compute_similarity(query_embedding, emb)
+                    similarities.append((i, similarity))
+
+            # Sort by similarity (descending)
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            top_results = similarities[:top_k]
+
+            # Convert to SearchResult
+            results = []
+            for idx, score in top_results:
+                # Update access order for LRU
+                id_val = ids[idx]
+                if collection_name is None:
+                    self._access_order.move_to_end(id_val)
+
+                # Normalize score to [0, 1] range for consistency
+                if self.distance_metric == "cosine":
+                    normalized_score = (score + 1) / 2  # From [-1, 1] to [0, 1]
+                elif self.distance_metric == "l2":
+                    # Convert negative distance to similarity
+                    normalized_score = 1 / (1 + abs(score))
+                else:  # ip
+                    normalized_score = max(0, min(1, score))  # Clamp to [0, 1]
+
+                results.append(
+                    SearchResult(
+                        id=ids[idx],
+                        score=normalized_score,
+                        document=documents[idx],
+                        metadata=metadata[idx],
+                    )
+                )
+
+            self._search_count += 1
+            return results
 
     def search_with_citations(
         self,
@@ -1519,20 +1654,21 @@ class InMemoryVectorStore:
     @activation_guarded
     def delete_collection(self, name: str) -> bool:
         """Delete a specific collection."""
-        deleted = False
-        if name in self._collections:
-            del self._collections[name]
-            if name in self._collection_access_time:
-                del self._collection_access_time[name]
-            logger.info(f"Deleted collection: {name}")
-            deleted = True
+        with self._lock:
+            deleted = False
+            if name in self._collections:
+                del self._collections[name]
+                if name in self._collection_access_time:
+                    del self._collection_access_time[name]
+                logger.info(f"Deleted collection: {name}")
+                deleted = True
 
-        # If it's the current collection, also clear main storage
-        if name == self._current_collection or name == "default":
-            self.clear()
-            deleted = True
+            # If it's the current collection, also clear main storage
+            if name == self._current_collection or name == "default":
+                self.clear()
+                deleted = True
 
-        return deleted
+            return deleted
 
     @activation_guarded
     def delete_document(self, doc_id: str) -> None:
@@ -1544,89 +1680,103 @@ class InMemoryVectorStore:
         Args:
             doc_id: The document id stored in each chunk's ``doc_id`` metadata.
         """
-        keep_indices = [
-            i
-            for i, meta in enumerate(self.metadata)
-            if not (isinstance(meta, dict) and meta.get("doc_id") == doc_id)
-        ]
-        if len(keep_indices) == len(self.ids):
-            return
+        with self._lock:
+            keep_indices = [
+                i
+                for i, meta in enumerate(self.metadata)
+                if not (isinstance(meta, dict) and meta.get("doc_id") == doc_id)
+            ]
+            if len(keep_indices) == len(self.ids):
+                return
 
-        keep_set = set(keep_indices)
-        removed_ids = {self.ids[i] for i in range(len(self.ids)) if i not in keep_set}
-        self.ids = [self.ids[i] for i in keep_indices]
-        self.embeddings = [self.embeddings[i] for i in keep_indices]
-        self.documents = [self.documents[i] for i in keep_indices]
-        self.metadata = [self.metadata[i] for i in keep_indices]
-        self._access_order = [
-            id_val for id_val in self._access_order if id_val not in removed_ids
-        ]
-        logger.debug(
-            f"Deleted {len(removed_ids)} chunks for document {doc_id} from in-memory store"
-        )
+            keep_set = set(keep_indices)
+            removed_ids = {self.ids[i] for i in range(len(self.ids)) if i not in keep_set}
+            self.ids = [self.ids[i] for i in keep_indices]
+            self.embeddings = [self.embeddings[i] for i in keep_indices]
+            self.documents = [self.documents[i] for i in keep_indices]
+            self.metadata = [self.metadata[i] for i in keep_indices]
+            # Review-B B3: the row set shifted wholesale -- rebuild the id
+            # index and the OrderedDict LRU together with the lists, and drop
+            # the matrix cache (rebuilt lazily on the next search).
+            self._index_by_id = {id_val: i for i, id_val in enumerate(self.ids)}
+            self._access_order = OrderedDict(
+                (id_val, None)
+                for id_val in self._access_order
+                if id_val not in removed_ids
+            )
+            self._matrix = None
+            self._row_norms = None
+            logger.debug(
+                f"Deleted {len(removed_ids)} chunks for document {doc_id} from in-memory store"
+            )
 
     @activation_guarded
     def clear(self) -> None:
         """Clear all data."""
-        self.ids.clear()
-        self.embeddings.clear()
-        self.documents.clear()
-        self.metadata.clear()
-        self._access_order.clear()
-        self._eviction_count = 0
-        self._memory_pressure_evictions = 0
-        logger.info("Cleared in-memory vector store")
+        with self._lock:
+            self.ids.clear()
+            self.embeddings.clear()
+            self.documents.clear()
+            self.metadata.clear()
+            self._access_order.clear()
+            self._index_by_id.clear()
+            self._matrix = None
+            self._row_norms = None
+            self._eviction_count = 0
+            self._memory_pressure_evictions = 0
+            logger.info("Cleared in-memory vector store")
 
     def get_collection_stats(self) -> dict:
         """Get stats."""
-        stats = {
-            "type": "in_memory",
-            "count": len(self.ids),
-            "max_documents": self.max_documents,
-            "max_collections": self.max_collections,
-            "distance_metric": self.distance_metric,
-            "memory_threshold_mb": self.memory_threshold_mb,
-            "add_count": self._add_count,
-            "search_count": self._search_count,
-            "eviction_count": self._eviction_count,
-            "collection_eviction_count": self._collection_eviction_count,
-            "memory_pressure_evictions": self._memory_pressure_evictions,
-            "collections_count": len(self._collections),
-            "memory_usage_pct": (len(self.ids) / self.max_documents * 100)
-            if self.max_documents > 0
-            else 0,
-        }
+        with self._lock:
+            stats = {
+                "type": "in_memory",
+                "count": len(self.ids),
+                "max_documents": self.max_documents,
+                "max_collections": self.max_collections,
+                "distance_metric": self.distance_metric,
+                "memory_threshold_mb": self.memory_threshold_mb,
+                "add_count": self._add_count,
+                "search_count": self._search_count,
+                "eviction_count": self._eviction_count,
+                "collection_eviction_count": self._collection_eviction_count,
+                "memory_pressure_evictions": self._memory_pressure_evictions,
+                "collections_count": len(self._collections),
+                "memory_usage_pct": (len(self.ids) / self.max_documents * 100)
+                if self.max_documents > 0
+                else 0,
+            }
 
-        # Add embedding dimension if we have data
-        if self.embeddings:
-            if NUMPY_AVAILABLE and hasattr(self.embeddings[0], "shape"):
-                stats["embedding_dimension"] = self.embeddings[0].shape[0]
-                # Estimate memory usage in MB
-                embedding_size = (
-                    self.embeddings[0].nbytes * len(self.embeddings) / (1024 * 1024)
-                )
-            else:
-                # For lists, get length of first embedding
-                stats["embedding_dimension"] = len(self.embeddings[0])
-                # Estimate memory usage for lists (8 bytes per float)
-                embedding_size = (
-                    len(self.embeddings) * len(self.embeddings[0]) * 8 / (1024 * 1024)
-                )
+            # Add embedding dimension if we have data
+            if self.embeddings:
+                if NUMPY_AVAILABLE and hasattr(self.embeddings[0], "shape"):
+                    stats["embedding_dimension"] = self.embeddings[0].shape[0]
+                    # Estimate memory usage in MB
+                    embedding_size = (
+                        self.embeddings[0].nbytes * len(self.embeddings) / (1024 * 1024)
+                    )
+                else:
+                    # For lists, get length of first embedding
+                    stats["embedding_dimension"] = len(self.embeddings[0])
+                    # Estimate memory usage for lists (8 bytes per float)
+                    embedding_size = (
+                        len(self.embeddings) * len(self.embeddings[0]) * 8 / (1024 * 1024)
+                    )
 
-            text_size = sum(len(doc) for doc in self.documents) / (1024 * 1024)
-            stats["estimated_memory_mb"] = embedding_size + text_size
+                text_size = sum(len(doc) for doc in self.documents) / (1024 * 1024)
+                stats["estimated_memory_mb"] = embedding_size + text_size
 
-        # Add current memory status
-        try:
-            stats["process_memory_mb"] = self._get_cached_memory_info()
+            # Add current memory status
+            try:
+                stats["process_memory_mb"] = self._get_cached_memory_info()
 
-            vm = psutil.virtual_memory()
-            stats["system_available_mb"] = vm.available / (1024 * 1024)
-            stats["system_percent_used"] = vm.percent
-        except Exception:
-            pass
+                vm = psutil.virtual_memory()
+                stats["system_available_mb"] = vm.available / (1024 * 1024)
+                stats["system_percent_used"] = vm.percent
+            except Exception:
+                pass
 
-        return stats
+            return stats
 
     @activation_guarded
     def add_documents(
@@ -1650,78 +1800,81 @@ class InMemoryVectorStore:
         Returns:
             True if successful
         """
-        # Store current collection
-        self._current_collection = collection_name
+        with self._lock:
+            # Store current collection
+            self._current_collection = collection_name
 
-        # Convert embeddings to numpy array if needed and numpy is available
-        if NUMPY_AVAILABLE:
-            embeddings = np.asarray(embeddings, dtype=np.float32)
+            # Convert embeddings to numpy array if needed and numpy is available
+            if NUMPY_AVAILABLE:
+                embeddings = np.asarray(embeddings, dtype=np.float32)
 
-        # Initialize collection if it doesn't exist
-        if collection_name not in self._collections:
-            # Check if we need to evict a collection
-            if len(self._collections) >= self.max_collections:
-                # Find and remove least recently used collection
-                lru_collection = min(
-                    self._collection_access_time.keys(),
-                    key=lambda k: self._collection_access_time.get(k, 0),
-                )
-                del self._collections[lru_collection]
-                del self._collection_access_time[lru_collection]
-                self._collection_eviction_count += 1
-                logger.debug(
-                    f"Evicted collection '{lru_collection}' (total evictions: {self._collection_eviction_count})"
-                )
+            # Initialize collection if it doesn't exist
+            if collection_name not in self._collections:
+                # Check if we need to evict a collection
+                if len(self._collections) >= self.max_collections:
+                    # Find and remove least recently used collection
+                    lru_collection = min(
+                        self._collection_access_time.keys(),
+                        key=lambda k: self._collection_access_time.get(k, 0),
+                    )
+                    del self._collections[lru_collection]
+                    del self._collection_access_time[lru_collection]
+                    self._collection_eviction_count += 1
+                    logger.debug(
+                        f"Evicted collection '{lru_collection}' (total evictions: {self._collection_eviction_count})"
+                    )
 
-            self._collections[collection_name] = {
-                "ids": [],
-                "embeddings": [],
-                "documents": [],
-                "metadata": [],
-            }
+                self._collections[collection_name] = {
+                    "ids": [],
+                    "embeddings": [],
+                    "documents": [],
+                    "metadata": [],
+                }
 
-        # Update access time
-        self._collection_access_time[collection_name] = time.time()
+            # Update access time
+            self._collection_access_time[collection_name] = time.time()
 
-        # Add to the main store (for backward compatibility)
-        self.add(ids, embeddings, documents, metadatas)
+            # Add to the main store (for backward compatibility)
+            self.add(ids, embeddings, documents, metadatas)
 
-        # Also track in collections with size limit per collection
-        collection = self._collections[collection_name]
+            # Also track in collections with size limit per collection
+            collection = self._collections[collection_name]
 
-        # Limit collection size to prevent unbounded growth
-        max_per_collection = self.max_documents // max(len(self._collections), 1)
+            # Limit collection size to prevent unbounded growth
+            max_per_collection = self.max_documents // max(len(self._collections), 1)
 
-        # If adding would exceed limit, remove oldest items
-        total_after_add = len(collection["ids"]) + len(ids)
-        if total_after_add > max_per_collection:
-            items_to_remove = total_after_add - max_per_collection
-            collection["ids"] = collection["ids"][items_to_remove:]
-            collection["embeddings"] = collection["embeddings"][items_to_remove:]
-            collection["documents"] = collection["documents"][items_to_remove:]
-            collection["metadata"] = collection["metadata"][items_to_remove:]
+            # If adding would exceed limit, remove oldest items
+            total_after_add = len(collection["ids"]) + len(ids)
+            if total_after_add > max_per_collection:
+                items_to_remove = total_after_add - max_per_collection
+                collection["ids"] = collection["ids"][items_to_remove:]
+                collection["embeddings"] = collection["embeddings"][items_to_remove:]
+                collection["documents"] = collection["documents"][items_to_remove:]
+                collection["metadata"] = collection["metadata"][items_to_remove:]
 
-        # Now add the new items
-        collection["ids"].extend(ids)
-        collection["embeddings"].extend(
-            list(embeddings) if isinstance(embeddings, np.ndarray) else embeddings
-        )
-        collection["documents"].extend(documents)
-        collection["metadata"].extend(metadatas)
+            # Now add the new items
+            collection["ids"].extend(ids)
+            collection["embeddings"].extend(
+                list(embeddings) if isinstance(embeddings, np.ndarray) else embeddings
+            )
+            collection["documents"].extend(documents)
+            collection["metadata"].extend(metadatas)
 
-        return True
+            return True
 
     def list_collections(self) -> List[str]:
         """List all collection names."""
-        return list(self._collections.keys())
+        with self._lock:
+            return list(self._collections.keys())
 
     def close(self) -> None:
         """Close the store and clean up resources."""
-        # For in-memory store, just clear everything
-        self.clear()
-        self._collections.clear()
-        self._collection_access_time.clear()
-        logger.info("InMemoryVectorStore closed")
+        with self._lock:
+            # For in-memory store, just clear everything
+            self.clear()
+            self._collections.clear()
+            self._collection_access_time.clear()
+            logger.info("InMemoryVectorStore closed")
 
 
 # Factory function for creating vector stores

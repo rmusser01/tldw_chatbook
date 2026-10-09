@@ -799,6 +799,15 @@ fake's signature is a claim about the real one; when you write a fake for a
 seam, copy the real signature (or assert it with `inspect.signature`) rather
 than the consumer's call.
 
+**PR #3043 / TASK-34650, 2026-10-08 — the same trap in a performance counter.**
+The scoped-search fake counted one embedding for each public `search()` call,
+so union-forwarding tests passed while the real engine still embedded once
+per allowlist entry. Real-engine tests with the actual in-memory store and a
+counter at the external embedding seam failed in both citation modes (two
+calls instead of one), then passed after the engine reused its vector. Count
+the expensive operation at its dependency seam while calling the real owner;
+keep caller-forwarding assertions limited to the forwarding contract.
+
 ## A reused widget ID cannot identify the action that was pressed
 
 **TASK-32778, 2026-09-18.** Holding a real Tool Profiles button event across

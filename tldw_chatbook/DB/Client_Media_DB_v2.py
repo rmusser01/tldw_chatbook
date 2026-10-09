@@ -2748,7 +2748,14 @@ class MediaDatabase:
             if library_summary
             else broad_select_parts
         )
-        count_select = "COUNT(DISTINCT m.id)"
+        # No DISTINCT needed here: every JOIN this builder can emit is 1:1
+        # (the single possible join is `media_fts fts ON fts.rowid = m.id`;
+        # media_fts is external-content FTS5 with content_rowid='id', so its
+        # rowid space IS Media.id, trigger-maintained). All keyword filters
+        # are correlated EXISTS/scalar subqueries and cannot multiply rows.
+        # A plain COUNT lets the index serve the scan without a dedup pass
+        # (B9).
+        count_select = "COUNT(m.id)"
         base_from = "FROM Media m"
         joins = []
         conditions = []
@@ -3142,8 +3149,11 @@ class MediaDatabase:
             else:  # Unrecognized sort_by or default
                 order_by_clause_str = default_order_by
 
-        # Finalize SELECT statement
-        final_select_stmt = f"SELECT DISTINCT {', '.join(base_select_parts)}"
+        # Finalize SELECT statement. No DISTINCT: the only join the builder
+        # emits is the 1:1 media_fts lookup (see the count_select comment),
+        # so DISTINCT only added a dedup pass that ran before LIMIT could
+        # short-circuit (B9).
+        final_select_stmt = f"SELECT {', '.join(base_select_parts)}"
 
         # --- Construct and Execute Queries ---
         join_clause = " ".join(list(dict.fromkeys(joins)))  # Unique joins

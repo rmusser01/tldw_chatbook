@@ -271,9 +271,20 @@ def _list_relative_directory(
 ) -> str:
     """List a pinned-root-relative directory without opening an absolute path."""
     target = workspace / relative
+    # review-B B27: one workspace resolution per listing (the target check
+    # and every entry check share it; None falls back to per-entry
+    # resolution when even this fails).
+    try:
+        resolved_workspace: Path | None = workspace.resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved_workspace = None
     if (
         not _relative_target_is_safe(
-            relative, workspace, sensitive_exclusions, is_directory=True
+            relative,
+            workspace,
+            sensitive_exclusions,
+            is_directory=True,
+            resolved_workspace=resolved_workspace,
         )
         or not target.is_dir()
     ):
@@ -288,7 +299,11 @@ def _list_relative_directory(
         # the WORK done, and a denied entry was still scanned.
         entry_relative = _workspace_relative_path(entry, workspace)
         if not _relative_target_is_safe(
-            entry_relative, workspace, sensitive_exclusions, is_directory=entry.is_dir()
+            entry_relative,
+            workspace,
+            sensitive_exclusions,
+            is_directory=entry.is_dir(),
+            resolved_workspace=resolved_workspace,
         ):
             continue
         scanned.append(entry)
@@ -1070,6 +1085,12 @@ def _glob_relative_files(
     """Glob from the pinned working directory using only relative I/O paths."""
     heap: list[tuple[float, Path]] = []  # min-heap of (mtime, normpath)
     total = 0
+    # review-B B27: one workspace resolution per walk (None falls back to the
+    # old per-entry resolution when even this fails).
+    try:
+        resolved_workspace: Path | None = workspace.resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved_workspace = None
     for p in workspace.glob(pattern):
         try:
             if not p.is_file():
@@ -1082,7 +1103,11 @@ def _glob_relative_files(
                 # The pinned worker validates a live link target immediately
                 # before disclosure, but keeps ``rendered`` for all I/O/output.
                 if not _relative_target_is_safe(
-                    rendered, workspace, sensitive_exclusions, is_directory=False
+                    rendered,
+                    workspace,
+                    sensitive_exclusions,
+                    is_directory=False,
+                    resolved_workspace=resolved_workspace,
                 ):
                     continue
             elif _is_relative_sensitive_path(
@@ -1174,13 +1199,24 @@ def _grep_relative_files(
     # skip the entry rather than failing the whole search.
     shown: list[str] = []
     total = 0
+    # review-B B27: resolve the workspace once for the whole walk instead of
+    # once per entry. If even the workspace resolution fails (pathological
+    # ancestry), None falls back to the old per-entry behavior exactly.
+    try:
+        resolved_workspace: Path | None = workspace.resolve()
+    except (OSError, RuntimeError, ValueError):
+        resolved_workspace = None
     for p in workspace.rglob("*"):
         try:
             if not p.is_file() or p.stat().st_size > _MAX_GREP_FILE_BYTES:
                 continue
             relative = _workspace_relative_path(p, workspace)
             if not _relative_target_is_safe(
-                relative, workspace, sensitive_exclusions, is_directory=False
+                relative,
+                workspace,
+                sensitive_exclusions,
+                is_directory=False,
+                resolved_workspace=resolved_workspace,
             ):
                 continue  # protected path — skipped BEFORE it is read
         except OSError:
@@ -1217,12 +1253,21 @@ def _relative_target_is_safe(
     exclusions: tuple[SensitiveExclusion, ...],
     *,
     is_directory: bool,
+    resolved_workspace: Path | None = None,
 ) -> bool:
-    """Require both lexical and resolved targets to be admissible for I/O."""
+    """Require both lexical and resolved targets to be admissible for I/O.
+
+    ``resolved_workspace`` accepts a precomputed ``workspace.resolve()``
+    (review-B B27) so per-entry callers -- grep/glob/list walks -- resolve
+    the workspace once per operation instead of once per entry. Omitted, the
+    workspace is resolved here as before; the decision is identical either
+    way.
+    """
     try:
         if _is_relative_sensitive_path(relative, exclusions, is_directory=is_directory):
             return False
-        resolved_workspace = workspace.resolve()
+        if resolved_workspace is None:
+            resolved_workspace = workspace.resolve()
         resolved = (workspace / relative).resolve()
         if not resolved.is_relative_to(resolved_workspace):
             return False

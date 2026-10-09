@@ -848,8 +848,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 364,
-      "diagnostic_digest": "37183c276a23d38bebcd",
+      "call_count": 365,
+      "diagnostic_digest": "e35b5637a05f476c5ae2",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1289,8 +1289,8 @@
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
     },
     {
-      "call_count": 269,
-      "diagnostic_digest": "95e7c342317acde74a73",
+      "call_count": 268,
+      "diagnostic_digest": "6c727270cd7b8e707b0d",
       "owner": "TASK-492",
       "path": "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -1479,7 +1479,7 @@
     },
     {
       "call_count": 90,
-      "diagnostic_digest": "efb136e268726f66c0f5",
+      "diagnostic_digest": "7b9c8f37c36d9bf1ed5a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1507,7 +1507,7 @@
     },
     {
       "call_count": 74,
-      "diagnostic_digest": "175deb80bbf453370c6c",
+      "diagnostic_digest": "c3652c50d9b35fa19e27",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Local_Ingestion/PDF_Processing_Lib.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -1528,7 +1528,7 @@
     },
     {
       "call_count": 11,
-      "diagnostic_digest": "5ea6e76c582dfbc165ef",
+      "diagnostic_digest": "1ffadfa65c98ed3e4c21",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Local_Ingestion/local_file_ingestion.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2011,7 +2011,7 @@
     },
     {
       "call_count": 39,
-      "diagnostic_digest": "f80c9995ce216f7c49a7",
+      "diagnostic_digest": "6abff4e1f1524cf81260",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/simplified/vector_store.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -3641,8 +3641,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "79438ba03fa0b785e937",
+      "call_count": 2,
+      "diagnostic_digest": "3a443443a252237a03ec",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Widgets/SmartContentTree.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4012,8 +4012,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 90,
-      "diagnostic_digest": "e578b3ab7307e9504191",
+      "call_count": 92,
+      "diagnostic_digest": "65ae9c8e20ad95a97204",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Web_Scraping/WebSearch_APIs.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -6901,7 +6901,7 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "fcd4f879297748d3",
+          "call_digest": "8edd80771e5d4729",
           "method": "debug",
           "path_expressions": [
             "file_path"
@@ -6995,7 +6995,8 @@
           "call_digest": "fb2e30658893e231",
           "method": "warning",
           "path_expressions": [
-            "file_path"
+            "file_path",
+            "summ_err"
           ],
           "scope": "_process_markup_or_plain_text",
           "status": "legacy_unreviewed"
@@ -7046,7 +7047,7 @@
           "status": "legacy_unreviewed"
         },
         {
-          "call_digest": "463ecc51392a45c7",
+          "call_digest": "1254268d985cc70e",
           "method": "debug",
           "path_expressions": [
             "file_path"
@@ -7426,15 +7427,6 @@
           ],
           "scope": "read_epub",
           "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "4bc5b2f5371f42b7",
-          "method": "debug",
-          "path_expressions": [
-            "item.file_name"
-          ],
-          "scope": "read_epub_filtered",
-          "status": "legacy_unreviewed"
         }
       ],
       "path": "tldw_chatbook/Local_Ingestion/Book_Ingestion_Lib.py"
@@ -7673,6 +7665,15 @@
           "status": "legacy_unreviewed"
         },
         {
+          "call_digest": "4b861aeefb98e40a",
+          "method": "warning",
+          "path_expressions": [
+            "summ_err"
+          ],
+          "scope": "process_pdf",
+          "status": "legacy_unreviewed"
+        },
+        {
           "call_digest": "eb2b3f7e31865685",
           "method": "warning",
           "path_expressions": [
@@ -7796,7 +7797,7 @@
     {
       "candidates": [
         {
-          "call_digest": "215fa37af86c1849",
+          "call_digest": "4bdc5d306a5187d4",
           "method": "error",
           "path_expressions": [
             "file_path"

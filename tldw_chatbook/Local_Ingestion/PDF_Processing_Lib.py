@@ -13,6 +13,7 @@
 ####################
 # Import necessary libraries
 import gc
+import threading
 from datetime import datetime
 import re
 from typing import Dict, Any, Optional, List, Union
@@ -154,6 +155,44 @@ def extract_text_and_format_from_pdf(pdf_path):
         raise
 
 
+# --- B13: per-process Docling converter singleton ---------------------------
+# ``DocumentConverter`` re-creates its layout/OCR models on every construction,
+# which used to happen once per parsed PDF. Construction is config-independent
+# (per-call OCR settings ride ``pipeline_options`` into ``convert``), so one
+# unkeyed singleton per process is correct; parse workers each construct once.
+_DOCLING_CONVERTER_LOCK = threading.Lock()
+_DOCLING_CONVERTER: Optional[Any] = None
+
+
+def get_docling_converter() -> Any:
+    """
+    Return the process-wide Docling ``DocumentConverter`` singleton.
+
+    Constructed lazily on first use (docling stays an optional dependency --
+    the caller is responsible for handling the ImportError when docling is
+    absent). Double-checked locking keeps concurrent first parses in a worker
+    thread pool from constructing duplicates.
+
+    Returns:
+        The shared ``docling.document_converter.DocumentConverter`` instance.
+    """
+    global _DOCLING_CONVERTER
+    if _DOCLING_CONVERTER is None:
+        with _DOCLING_CONVERTER_LOCK:
+            if _DOCLING_CONVERTER is None:
+                from docling.document_converter import DocumentConverter
+
+                _DOCLING_CONVERTER = DocumentConverter()
+    return _DOCLING_CONVERTER
+
+
+def _reset_docling_converter_for_tests() -> None:
+    """Clear the singleton so a subsequent parse constructs a fresh converter."""
+    global _DOCLING_CONVERTER
+    with _DOCLING_CONVERTER_LOCK:
+        _DOCLING_CONVERTER = None
+
+
 def docling_parse_pdf(
     pdf_path: str, enable_ocr: bool = False, ocr_language: str = "en"
 ):
@@ -197,7 +236,9 @@ def docling_parse_pdf(
         if enable_ocr and hasattr(pipeline_options, "ocr_lang"):
             pipeline_options.ocr_lang = ocr_language
 
-        converter = DocumentConverter()
+        # B13: reuse the per-process converter; per-call OCR settings still
+        # ride ``pipeline_options`` below.
+        converter = get_docling_converter()
         parsed_pdf = converter.convert(pdf_path, pipeline_options=pipeline_options)
         markdown_text = (
             parsed_pdf.document.export_to_markdown()
@@ -847,61 +888,101 @@ def process_pdf(
             chunk_summaries = []  # Store summaries of individual chunks
             summarized_chunks_for_result = []  # Store chunk data including the generated analysis
 
-            # Iterate through each chunk generated earlier
+            # --- B14: bounded-concurrency per-chunk analysis ---
+            # The LLM calls fan out under a small thread pool; every piece of
+            # observable state (``chunk_summaries``, per-chunk metadata,
+            # ``result["warnings"]``) is assembled back serially in chunk
+            # order below, so the result is identical to the historical serial
+            # loop -- only wall time changes. The per-chunk error isolation
+            # (marker metadata + warning, never an abort) lives inside
+            # ``_analyze_chunk`` exactly where the serial loop's try/except
+            # used to be.
+            from .analysis_concurrency import analyze_chunks_concurrently
+
+            chunk_texts = [chunk.get("text", "") for chunk in processed_chunks]
+            _batch_error_pairs: List[Any] = []  # (marker str, exception), worker-thread appends
+            _batch_error_lock = threading.Lock()
+
+            def _analyze_chunk(text: str) -> str:
+                # Mirrors the serial loop's per-chunk isolation: a failing
+                # chunk becomes the same ``[Summarization Error: ...]``
+                # marker instead of aborting the batch. The assembly step
+                # recovers the exact exception (for the warning text) via the
+                # marker's object identity, so a genuine analysis can never be
+                # mistaken for an error slot.
+                try:
+                    return analyze(
+                        api_name=api_name,
+                        input_data=text,
+                        custom_prompt_arg=custom_prompt,  # User's custom prompt, if any
+                        api_key=api_key,
+                        recursive_summarization=False,  # Summarize this single chunk first
+                        temp=None,  # Optional temperature parameter
+                        system_message=system_prompt,  # Optional system prompt
+                    )
+                except Exception as summ_err:
+                    marker = f"[Summarization Error: {str(summ_err)}]"
+                    with _batch_error_lock:
+                        _batch_error_pairs.append((id(marker), summ_err))
+                    return marker
+
+            # Indices of chunks with text (empty chunks are never analyzed).
+            _nonempty_indices = [i for i, t in enumerate(chunk_texts) if t]
+            _analyses: Dict[int, Any] = {}
+            if _nonempty_indices:
+                _nonempty_results = analyze_chunks_concurrently(
+                    [chunk_texts[i] for i in _nonempty_indices],
+                    _analyze_chunk,
+                )
+                _analyses = dict(zip(_nonempty_indices, _nonempty_results))
+            _error_exc_by_marker_id = dict(_batch_error_pairs)
+
+            # Serial assembly in chunk order (warnings/summaries keep the
+            # exact order the serial loop produced).
             for i, chunk in enumerate(processed_chunks):
-                chunk_text = chunk.get("text", "")  # Get the text content of the chunk
+                chunk_text = chunk_texts[i]
                 chunk_metadata: Dict[str, Any] = chunk.get(
                     "metadata", {}
                 )  # Get existing metadata
+                analysis_text = _analyses.get(i) if chunk_text else None
 
                 # Only summarize if the chunk has actual text content
                 if chunk_text:
-                    try:
-                        # Call the external summarization library function
-                        analysis_text = analyze(
-                            api_name=api_name,
-                            input_data=chunk_text,
-                            custom_prompt_arg=custom_prompt,  # User's custom prompt, if any
-                            api_key=api_key,
-                            recursive_summarization=False,  # Summarize this single chunk first
-                            temp=None,  # Optional temperature parameter
-                            system_message=system_prompt,  # Optional system prompt
-                        )
-
-                        # Check if the summarization returned a valid, non-empty string
-                        if (
-                            analysis_text
-                            and isinstance(analysis_text, str)
-                            and analysis_text.strip()
-                        ):
-                            chunk_summaries.append(analysis_text)
-                            # Add the generated analysis to the chunk's metadata
-                            chunk_metadata["analysis"] = analysis_text
-                            logger.debug(
-                                f"Summarized chunk {i + 1}/{len(processed_chunks)} for {filename}."
-                            )
-                        else:
-                            # Summarization returned empty or invalid result
-                            chunk_metadata["analysis"] = (
-                                None  # Indicate no analysis available
-                            )
-                            logger.debug(
-                                f"Summarization yielded empty result for chunk {i + 1} of {filename}."
-                            )
-
-                    except Exception as summ_err:
+                    summ_err = (
+                        _error_exc_by_marker_id.get(id(analysis_text))
+                        if analysis_text is not None
+                        else None
+                    )
+                    if summ_err is not None:
                         # Handle errors during the API call or summarization process
                         logger.opt(exception=True).warning(
                             f"Summarization failed for chunk {i + 1} of {filename}: {summ_err}"
                         )
                         # Store error information in the chunk's metadata
-                        chunk_metadata["analysis"] = (
-                            f"[Summarization Error: {str(summ_err)}]"
-                        )
+                        chunk_metadata["analysis"] = analysis_text
                         # Add a warning to the overall result
                         result["warnings"] = (result["warnings"] or []) + [
                             f"Summarization failed for chunk {i + 1}: {str(summ_err)}"
                         ]
+                    elif (
+                        analysis_text
+                        and isinstance(analysis_text, str)
+                        and analysis_text.strip()
+                    ):
+                        chunk_summaries.append(analysis_text)
+                        # Add the generated analysis to the chunk's metadata
+                        chunk_metadata["analysis"] = analysis_text
+                        logger.debug(
+                            f"Summarized chunk {i + 1}/{len(processed_chunks)} for {filename}."
+                        )
+                    else:
+                        # Summarization returned empty or invalid result
+                        chunk_metadata["analysis"] = (
+                            None  # Indicate no analysis available
+                        )
+                        logger.debug(
+                            f"Summarization yielded empty result for chunk {i + 1} of {filename}."
+                        )
                 else:
                     # Chunk had no text to summarize
                     chunk_metadata["analysis"] = None

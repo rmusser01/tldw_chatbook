@@ -60,6 +60,7 @@ from typing import (
     Iterable,
     Mapping,
     Callable,
+    NoReturn,
     TYPE_CHECKING,
 )
 
@@ -681,6 +682,24 @@ def _table_check_references_console_project_context(create_sql: str) -> bool:
 # ``message_trajectory_metadata`` is LOCAL-ONLY: no sync triggers, no sync
 # serialization. It records this device's own per-turn step observations for
 # the Console trajectory view.
+@dataclass(frozen=True)
+class _PreparedMessageInsert:
+    """A validated message INSERT, ready to execute (review-B B25).
+
+    Produced by :meth:`CharactersRAGDB._validated_message_insert`; shared by
+    the single-message writer and the import batch so both take exactly the
+    same validation path.
+    """
+
+    msg_id: str
+    role: str
+    conversation_id: str
+    sender: str
+    content: str
+    query: str
+    params: Tuple[Any, ...]
+
+
 @dataclass
 class TrajectoryRowWrite:
     """Input row for :meth:`CharactersRAGDB.upsert_trajectory_rows`.
@@ -746,7 +765,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 79  # ADR-224 sargable timestamp normalization.
+    _CURRENT_SCHEMA_VERSION = 80  # ADR-224 sargable timestamp normalization, then browse-order index.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8002,6 +8021,41 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v79_to_v80(self, conn: sqlite3.Connection) -> None:
+        """Add the conversations browse-order index (perf review B, B7).
+
+        Library browse pages order by ``last_modified DESC, id DESC`` and
+        take one page at a time; without this index every page sorted the
+        full filtered set in a TEMP B-TREE. Stacks on the ADR-224 v79
+        timestamp normalization, whose canonical UTC ``last_modified``
+        format is exactly what this index orders by.
+        """
+        self._require_migration_entry_version(conn, 79, "V79→V80")
+        migration_path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v79_to_v80_conversations_browse_order_index.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor,
+                    migration_path.read_text(encoding="utf-8"),
+                    "V79→V80",
+                )
+                result = cursor.execute(
+                    "UPDATE db_schema_version SET version = 80 WHERE schema_name = ? AND version = 79",
+                    (self._SCHEMA_NAME,),
+                )
+                if result.rowcount != 1:
+                    raise SchemaError(
+                        "Migration V79 to V80 version update was not applied."
+                    )
+            if self._get_db_version(conn) != 80:
+                raise SchemaError("Migration V79 to V80 version check failed.")
+        except (OSError, sqlite3.Error) as exc:
+            raise SchemaError("Migration from V79 to V80 failed.") from exc
+
     def _migrate_from_v77_to_v78(self, conn: sqlite3.Connection) -> None:
         """Add chat-owned pending progress without restoring live authority."""
         self._require_migration_entry_version(conn, 77, "V77→V78")
@@ -8320,6 +8374,7 @@ DELETE FROM keywords
                     76: self._migrate_from_v76_to_v77,
                     77: self._migrate_from_v77_to_v78,
                     78: self._migrate_from_v78_to_v79,
+                    79: self._migrate_from_v79_to_v80,
                 }
 
                 if current_db_version == 0:
@@ -13364,6 +13419,146 @@ DELETE FROM keywords
 
         return self._add_message_with_semantic_sidecars(msg_data)
 
+    def add_message_import_batch(
+        self,
+        staged_messages: Sequence[Dict[str, Any]],
+    ) -> List[str]:
+        """Bulk-insert staged chat-history messages as one chained import.
+
+        Strategy (review-B B25): the semantic-revision sidecar write is not
+        safely batchable outside its coordinator (``_claim_write_intent``,
+        graph-epoch fencing, and read-back contracts on the private
+        ``console_trace_semantic_revisions`` shape), so this keeps the
+        sanctioned per-message sidecar write and batches everything else:
+        validation is hoisted ahead of the transaction, the message INSERTs
+        run as one ``executemany``, the canonical read-back verification is
+        one chunked SELECT per 500 ids, and the whole batch shares one
+        immediate transaction (a savepoint when the caller already holds
+        one). Rows are byte-identical to repeated :meth:`add_message` calls
+        as issued by the chat-history importer: each message's
+        ``parent_message_id`` is overwritten with the previous message's id.
+
+        Args:
+            staged_messages: One dict per message, each carrying
+                ``conversation_id`` plus the fields :meth:`add_message`
+                accepts.
+
+        Returns:
+            The generated message ids in order.
+
+        Raises:
+            InputError: Same validation errors as :meth:`add_message`,
+                raised before any row is written.
+            ConflictError: If a staged id already exists.
+        """
+        staged_list = [dict(staged) for staged in staged_messages]
+        if not staged_list:
+            return []
+        prepared: List[_PreparedMessageInsert] = []
+        previous_id: Optional[str] = None
+        for staged in staged_list:
+            staged["parent_message_id"] = previous_id
+            prepared.append(self._validated_message_insert(staged))
+            previous_id = prepared[-1].msg_id
+        inserting = prepared[0]
+
+        def insert_params() -> Iterator[tuple[Any, ...]]:
+            nonlocal inserting
+            # SQLite consumes one tuple at a time; retain the failing row's
+            # identity without adding per-message queries to the batch.
+            for inserting in prepared:
+                yield inserting.params
+
+        try:
+            with self.transaction(immediate=True) as conn:
+                # One existence check per distinct conversation replaces the
+                # per-message check; same error, same in-transaction timing.
+                for conversation_id in dict.fromkeys(
+                    item.conversation_id for item in prepared
+                ):
+                    found = conn.execute(
+                        "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
+                        (conversation_id,),
+                    ).fetchone()
+                    if not found:
+                        raise InputError(
+                            f"Cannot add message: Conversation ID "
+                            f"'{conversation_id}' not found or deleted."
+                        )
+                queries = {item.query for item in prepared}
+                if len(queries) != 1:
+                    raise CharactersRAGDBError(
+                        "Import batch mixed message schemas; refusing to write."
+                    )
+                query = next(iter(queries))
+                try:
+                    conn.executemany(query, insert_params())
+                except sqlite3.IntegrityError as exc:
+                    self._translate_message_insert_integrity_error(
+                        inserting.msg_id, exc
+                    )
+                self._verify_import_batch_rows(conn, prepared)
+                for inserting in prepared:
+                    self._ensure_initial_semantic_revision(
+                        conn,
+                        message_id=inserting.msg_id,
+                        creation_reason="message_create",
+                    )
+        except sqlite3.IntegrityError as exc:
+            self._translate_message_insert_integrity_error(inserting.msg_id, exc)
+        logger.debug(
+            f"Added {len(prepared)} imported messages in one batch "
+            f"(conversation {prepared[0].conversation_id})."
+        )
+        return [item.msg_id for item in prepared]
+
+    @staticmethod
+    def _translate_message_insert_integrity_error(
+        msg_id: str, exc: sqlite3.IntegrityError
+    ) -> NoReturn:
+        """Re-raise a message INSERT integrity error as ``add_message`` does."""
+        if "UNIQUE constraint failed: messages.id" in str(exc):
+            raise ConflictError(
+                f"Message with ID '{msg_id}' already exists.",
+                entity="messages",
+                entity_id=msg_id,
+            ) from exc
+        raise CharactersRAGDBError(
+            f"Database integrity error adding message: {exc}"
+        ) from exc
+
+    def _verify_import_batch_rows(
+        self,
+        conn: sqlite3.Cursor,
+        prepared: Sequence[_PreparedMessageInsert],
+    ) -> None:
+        """Run the per-message canonical read-back in 500-id chunks."""
+
+        def fail() -> NoReturn:
+            raise InputError("Inserted message failed canonical validation.")
+
+        ids = [item.msg_id for item in prepared]
+        verified: Dict[str, tuple] = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            placeholders = ",".join("?" * len(chunk))
+            for row in conn.execute(
+                "SELECT id, conversation_id, sender, role, content, deleted "
+                f"FROM messages WHERE id IN ({placeholders})",
+                tuple(chunk),
+            ):
+                verified[row["id"]] = tuple(row)
+        for item in prepared:
+            row = verified.get(item.msg_id)
+            if row is None or row[1:] != (
+                item.conversation_id,
+                item.sender,
+                item.role,
+                item.content,
+                0,
+            ):
+                fail()
+
     def add_message_with_semantic_sidecars(
         self,
         msg_data: Dict[str, Any],
@@ -13390,41 +13585,18 @@ DELETE FROM keywords
             feedback=feedback,
         )
 
-    def _add_message_with_semantic_sidecars(
-        self,
-        msg_data: Dict[str, Any],
-        *,
-        attachments: Sequence[Mapping[str, Any]] = (),
-        generation_metadata: Sequence[Mapping[str, Any]] = (),
-        feedback: str | None = None,
-    ) -> Optional[str]:
-        """
-        Adds a new message to a conversation, optionally with image data.
+    def _validated_message_insert(
+        self, msg_data: Dict[str, Any]
+    ) -> _PreparedMessageInsert:
+        """Validate one message and build its INSERT (no database access).
 
-        `id` (UUID string) is auto-generated if not provided in `msg_data`.
-        Requires 'conversation_id', 'sender'. Message must have 'content' (text) or 'image_data'.
-        `client_id` defaults to DB instance's `client_id`. `version` is set to 1.
-        `timestamp` defaults to current UTC time if not provided; `last_modified` is set to current UTC time.
-
-        Verifies that the parent conversation (given by `conversation_id`) exists and is not deleted.
-        FTS updates (`messages_fts` for content) and `sync_log` entries are handled by SQL triggers.
-
-        Args:
-            msg_data: Dictionary with message data.
-                      Required: 'conversation_id', 'sender'. At least one of 'content' or 'image_data'.
-                      Optional: 'id', 'parent_message_id', 'content' (str),
-                                'image_data' (bytes), 'image_mime_type' (str, required if image_data present),
-                                'timestamp', 'ranking', 'client_id', 'role' (str).
-                      If 'role' is not provided, it will be auto-determined from 'sender'.
-
-        Returns:
-            The string UUID of the newly added message.
+        Extracted verbatim from :meth:`_add_message_with_semantic_sidecars`
+        so the import batch (review-B B25) can hoist validation ahead of the
+        write transaction without duplicating any rule.
 
         Raises:
-            InputError: If required fields are missing, if both 'content' and 'image_data' are absent,
-                        or if the parent conversation is not found or is deleted.
-            ConflictError: If a message with the provided 'id' (if any) already exists.
-            CharactersRAGDBError: For other database errors (e.g., FK violation for conversation_id).
+            InputError: Identical conditions and messages as
+                :meth:`_add_message_with_semantic_sidecars`.
         """
         msg_id = msg_data.get("id") or self._generate_uuid()
 
@@ -13542,6 +13714,56 @@ DELETE FROM keywords
                 ),
             )
         )
+        return _PreparedMessageInsert(
+            msg_id=msg_id,
+            role=role,
+            conversation_id=msg_data["conversation_id"],
+            sender=msg_data["sender"],
+            content=msg_data.get("content", ""),
+            query=query,
+            params=params,
+        )
+
+    def _add_message_with_semantic_sidecars(
+        self,
+        msg_data: Dict[str, Any],
+        *,
+        attachments: Sequence[Mapping[str, Any]] = (),
+        generation_metadata: Sequence[Mapping[str, Any]] = (),
+        feedback: str | None = None,
+    ) -> Optional[str]:
+        """
+        Adds a new message to a conversation, optionally with image data.
+
+        `id` (UUID string) is auto-generated if not provided in `msg_data`.
+        Requires 'conversation_id', 'sender'. Message must have 'content' (text) or 'image_data'.
+        `client_id` defaults to DB instance's `client_id`. `version` is set to 1.
+        `timestamp` defaults to current UTC time if not provided; `last_modified` is set to current UTC time.
+
+        Verifies that the parent conversation (given by `conversation_id`) exists and is not deleted.
+        FTS updates (`messages_fts` for content) and `sync_log` entries are handled by SQL triggers.
+
+        Args:
+            msg_data: Dictionary with message data.
+                      Required: 'conversation_id', 'sender'. At least one of 'content' or 'image_data'.
+                      Optional: 'id', 'parent_message_id', 'content' (str),
+                                'image_data' (bytes), 'image_mime_type' (str, required if image_data present),
+                                'timestamp', 'ranking', 'client_id', 'role' (str).
+                      If 'role' is not provided, it will be auto-determined from 'sender'.
+
+        Returns:
+            The string UUID of the newly added message.
+
+        Raises:
+            InputError: If required fields are missing, if both 'content' and 'image_data' are absent,
+                        or if the parent conversation is not found or is deleted.
+            ConflictError: If a message with the provided 'id' (if any) already exists.
+            CharactersRAGDBError: For other database errors (e.g., FK violation for conversation_id).
+        """
+        prepared = self._validated_message_insert(msg_data)
+        msg_id = prepared.msg_id
+        role = prepared.role
+
         try:
             # IMMEDIATE (task-21100 review): every hot `messages` writer reserves the
             # write lock up front. These methods read (conversation/version checks)
@@ -13559,13 +13781,13 @@ DELETE FROM keywords
             with self.transaction(immediate=True) as conn:
                 conv_cursor = conn.execute(
                     "SELECT 1 FROM conversations WHERE id = ? AND deleted = 0",
-                    (msg_data["conversation_id"],),
+                    (prepared.conversation_id,),
                 )
                 if not conv_cursor.fetchone():
                     raise InputError(
-                        f"Cannot add message: Conversation ID '{msg_data['conversation_id']}' not found or deleted."
+                        f"Cannot add message: Conversation ID '{prepared.conversation_id}' not found or deleted."
                     )
-                conn.execute(query, params)
+                conn.execute(prepared.query, prepared.params)
                 if attachments:
                     self._set_message_attachments_uncoordinated(
                         conn, msg_id, attachments
@@ -13583,10 +13805,10 @@ DELETE FROM keywords
                 ).fetchone()
                 if (
                     inserted is None
-                    or inserted["conversation_id"] != msg_data["conversation_id"]
-                    or inserted["sender"] != msg_data["sender"]
+                    or inserted["conversation_id"] != prepared.conversation_id
+                    or inserted["sender"] != prepared.sender
                     or inserted["role"] != role
-                    or inserted["content"] != msg_data.get("content", "")
+                    or inserted["content"] != prepared.content
                     or bool(inserted["deleted"])
                 ):
                     raise InputError("Inserted message failed canonical validation.")
@@ -13596,7 +13818,7 @@ DELETE FROM keywords
                     creation_reason="message_create",
                 )
             logger.debug(
-                f"Added message ID: {msg_id} to conversation {msg_data['conversation_id']} (Image: {'Yes' if msg_data.get('image_data') else 'No'})."
+                f"Added message ID: {msg_id} to conversation {prepared.conversation_id} (Image: {'Yes' if msg_data.get('image_data') else 'No'})."
             )
             return msg_id
         except sqlite3.IntegrityError as e:

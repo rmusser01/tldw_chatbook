@@ -273,6 +273,35 @@ class EvaluationOrchestrator:
                 )
             )
 
+    async def _store_result_off_loop(self, **store_kwargs) -> None:
+        """Persist one sample result without blocking the event loop.
+
+        ``store_result`` is a synchronous sqlite write; it used to run inline
+        inside the awaited ``progress_wrapper`` for every completed sample.
+        EvalsDB keeps thread-local connections, so for a file-backed database
+        the worker thread opens its own connection to the same file and the
+        hop through ``asyncio.to_thread`` is safe. For ``:memory:`` databases
+        each thread's connection is a private, empty database (the same trap
+        documented in ``Subscriptions/db_offload.py``), so the write stays on
+        the calling thread there.
+
+        Args:
+            **store_kwargs: Keyword arguments forwarded to
+                ``db.store_result`` unchanged.
+
+        Raises:
+            Exception: Whatever ``db.store_result`` raises, unchanged, so the
+                run's error path sees storage failures exactly as before.
+        """
+        db = self.db
+        # `is True`, not truthiness: a Mock database answers every attribute
+        # with a truthy Mock, and treating those as in-memory would keep the
+        # write on the event loop (see Subscriptions/db_offload.py).
+        if getattr(db, "is_memory_db", None) is True:
+            db.store_result(**store_kwargs)
+            return
+        await asyncio.to_thread(db.store_result, **store_kwargs)
+
     async def create_task_from_file(
         self, task_file_path: str, format_type: str = "auto"
     ) -> str:
@@ -581,8 +610,9 @@ class EvaluationOrchestrator:
             async def progress_wrapper(
                 completed: int, total: int, result: EvalSampleResult
             ):
-                # Store individual result
-                self.db.store_result(
+                # Store individual result. The write hops off the event loop
+                # (file-backed DBs); see _store_result_off_loop.
+                await self._store_result_off_loop(
                     run_id=run_id,
                     sample_id=result.sample_id,
                     input_data={"input": result.input_text},

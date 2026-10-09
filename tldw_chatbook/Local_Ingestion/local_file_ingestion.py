@@ -769,6 +769,43 @@ _DEFAULT_ANALYSIS_PROMPT = "Please provide a comprehensive summary of this docum
 #: would accrete state across calls.
 _CHUNK_WITH_DEFAULTS: Any = object()
 
+#: (B15) Upper bound on concurrently in-flight ``parse_local_file_for_ingest``
+#: calls in ``batch_ingest_files``' default (continue-on-error) path. Only the
+#: parse/analyze sub-stage runs in the pool -- persistence stays serial on the
+#: calling thread (see ``batch_ingest_files``' docstring for the safety-gate
+#: reasoning).
+_BATCH_PARSE_MAX_WORKERS = 4
+
+
+def _ingest_result_dict(payload: Dict[str, Any], media_id: Optional[int]) -> Dict[str, Any]:
+    """
+    Shape ``ingest_local_file``'s historical return dict from a parse payload.
+
+    Shared by ``ingest_local_file`` and ``batch_ingest_files``' staged path so
+    both produce byte-identical success results.
+
+    Args:
+        payload: The dict returned by ``parse_local_file_for_ingest``.
+        media_id: The id returned by ``persist_parsed_media`` (may be ``None``
+            on a duplicate-skip).
+
+    Returns:
+        The historical result dict (media_id/title/author/content_length/
+        chunks_created/keywords/analysis/file_type/file_path).
+    """
+    chunks = payload["chunks"]
+    return {
+        "media_id": media_id,
+        "title": payload["title"],
+        "author": payload["author"],
+        "content_length": len(payload["content"]),
+        "chunks_created": len(chunks) if chunks else 0,
+        "keywords": payload["keywords"],
+        "analysis": payload["analysis_content"],
+        "file_type": payload["file_type"],
+        "file_path": payload["file_path"],
+    }
+
 
 def _analysis_failure_reason(analysis: Any) -> Optional[str]:
     """Detect an in-band analysis failure string.
@@ -2285,18 +2322,7 @@ def ingest_local_file(
     payload = parse_local_file_for_ingest(str(file_path), options)
     media_id, _media_uuid, _message = persist_parsed_media(payload, media_db)
 
-    chunks = payload["chunks"]
-    return {
-        "media_id": media_id,
-        "title": payload["title"],
-        "author": payload["author"],
-        "content_length": len(payload["content"]),
-        "chunks_created": len(chunks) if chunks else 0,
-        "keywords": payload["keywords"],
-        "analysis": payload["analysis_content"],
-        "file_type": payload["file_type"],
-        "file_path": payload["file_path"],
-    }
+    return _ingest_result_dict(payload, media_id)
 
 
 def batch_ingest_files(
@@ -2312,6 +2338,21 @@ def batch_ingest_files(
     """
     Ingest multiple files in batch.
 
+    Concurrency (B15): by default the EXPENSIVE, DB-free parse/analyze stage
+    (``parse_local_file_for_ingest``) fans out under a bounded
+    ``ThreadPoolExecutor`` (``_BATCH_PARSE_MAX_WORKERS``). A window of that
+    many pending slots bounds parsed payload retention while results are
+    consumed and persisted serially, in input order, on the calling thread.
+    The DB stage is deliberately NOT parallelized: ``ingest_local_file``
+    writes through the caller's shared ``MediaDatabase`` (thread-local
+    connections; per-thread private databases for ``:memory:``, and
+    ``persist_parsed_media`` is documented to run on the single ingest writer
+    thread), so parallelizing it would either serialize on SQLite's writer
+    lock anyway or silently split ``:memory:`` writes across private
+    databases. ``stop_on_error=True`` keeps the historical strictly serial
+    loop: the first failure halts the batch so later files are never parsed
+    (and never incur analysis spend).
+
     Args:
         file_paths: List of file paths to ingest
         media_db: MediaDatabase instance
@@ -2325,7 +2366,7 @@ def batch_ingest_files(
         stop_on_error: Whether to stop on first error or continue
 
     Returns:
-        List of ingestion results (one per file)
+        List of ingestion results (one per file, in input order)
 
     Raises:
         FileIngestionError: If stop_on_error is True and an error occurs
@@ -2341,36 +2382,135 @@ def batch_ingest_files(
     success_count = 0
     error_count = 0
 
-    for file_path in file_paths:
-        try:
-            result = ingest_local_file(
-                file_path=file_path,
-                media_db=media_db,
-                keywords=common_keywords,
-                perform_analysis=perform_analysis,
-                api_name=api_name,
-                api_key=api_key,
-                chunk_options=chunk_options,
-            )
-            results.append(result)
-            success_count += 1
+    if stop_on_error:
+        # Historical strictly serial semantics: halt at the first failure so
+        # later files are never even parsed (no analysis spend past the
+        # failure). Deliberately unchanged by B15.
+        for file_path in file_paths:
+            try:
+                result = ingest_local_file(
+                    file_path=file_path,
+                    media_db=media_db,
+                    keywords=common_keywords,
+                    perform_analysis=perform_analysis,
+                    api_name=api_name,
+                    api_key=api_key,
+                    chunk_options=chunk_options,
+                )
+                results.append(result)
+                success_count += 1
 
-        except Exception as e:
-            error_count += 1
-            error_result = {
-                "file_path": str(file_path),
-                "error": str(e),
-                "success": False,
-            }
-            results.append(error_result)
+            except Exception as e:
+                error_count += 1
+                error_result = {
+                    "file_path": str(file_path),
+                    "error": str(e),
+                    "success": False,
+                }
+                results.append(error_result)
 
-            if stop_on_error:
                 log_counter("local_file_ingestion_batch_stopped_on_error")
                 raise FileIngestionError(f"Batch ingestion stopped: {e}")
+    else:
+        # --- B15 staged path: parse concurrently, persist serially ---------
+        # Results are assembled strictly in input order below, so the return
+        # value is identical to the historical serial loop's (including per-
+        # file error entries); only wall time changes.
+        from collections import deque
+        from concurrent.futures import ThreadPoolExecutor
+
+        file_paths_list = list(file_paths)
+
+        def _build_options(explicit_chunk_options: Any) -> Dict[str, Any]:
+            # Mirrors ``ingest_local_file``'s options dict exactly. The
+            # chunk_options dict is COPIED per file: the historical serial
+            # loop shared one dict object across files (processors
+            # ``setdefault`` into it, so file 1 could contaminate file 2);
+            # under concurrency that shared-object behavior would be a data
+            # race, so each parse gets its own copy of the caller's starting
+            # options instead.
+            if explicit_chunk_options is _CHUNK_WITH_DEFAULTS:
+                resolved_chunk_options: Any = {}
+            elif explicit_chunk_options is not None:
+                resolved_chunk_options = dict(explicit_chunk_options)
             else:
-                logger.error(
-                    f"Error ingesting {file_path}, continuing with next file: {e}"
-                )
+                resolved_chunk_options = None  # explicit None: disable chunking
+            return {
+                "title": None,
+                "author": None,
+                "keywords": common_keywords,
+                "custom_prompt": None,
+                "system_prompt": None,
+                "perform_analysis": perform_analysis,
+                "api_name": api_name,
+                "api_key": api_key,
+                "chunk_options": resolved_chunk_options,
+                "metadata": None,
+            }
+
+        if file_paths_list:
+            workers = min(_BATCH_PARSE_MAX_WORKERS, len(file_paths_list))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                remaining_paths = iter(file_paths_list)
+                pending = deque()
+
+                def _parse_to_holder(
+                    file_path: str,
+                    options: dict[str, Any],
+                    payload_holder: list[dict[str, Any]],
+                ) -> None:
+                    # Futures and late-retiring workers must not own payloads.
+                    payload_holder.append(
+                        parse_local_file_for_ingest(file_path, options)
+                    )
+
+                def _submit_next() -> None:
+                    try:
+                        file_path = next(remaining_paths)
+                    except StopIteration:
+                        return
+                    payload_holder = []
+                    pending.append(
+                        (
+                            file_path,
+                            pool.submit(
+                                _parse_to_holder,
+                                str(file_path),
+                                _build_options(chunk_options),
+                                payload_holder,
+                            ),
+                            payload_holder,
+                        )
+                    )
+
+                for _ in range(workers):
+                    _submit_next()
+                while pending:
+                    file_path, future, payload_holder = pending.popleft()
+                    payload = None
+                    try:
+                        future.result()
+                        payload = payload_holder.pop()
+                        media_id, _media_uuid, _message = persist_parsed_media(
+                            payload, media_db
+                        )
+                        results.append(_ingest_result_dict(payload, media_id))
+                        success_count += 1
+                    except Exception as ingest_err:  # noqa: BLE001 - historical per-file isolation
+                        error_count += 1
+                        results.append(
+                            {
+                                "file_path": str(file_path),
+                                "error": str(ingest_err),
+                                "success": False,
+                            }
+                        )
+                        logger.error(
+                            f"Error ingesting {file_path}, continuing with next file: {ingest_err}"
+                        )
+                    finally:
+                        del future, payload, payload_holder
+                    _submit_next()
 
     # Log batch completion metrics
     duration = time.time() - start_time

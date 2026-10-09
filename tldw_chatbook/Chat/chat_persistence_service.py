@@ -1,7 +1,8 @@
 import json
+import sqlite3
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
@@ -122,6 +123,40 @@ logger = _logger.bind(module="ChatPersistenceService")
 _ASSISTANT_AUTHORITY_UNSET = cast(Optional[str], object())
 _CONTEXT_POLICY_EXPECTED_REVISION_UNSET = object()
 CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH = 10_000
+
+_FORK_VERIFY_BATCH_CAP = 500
+_FORK_VERIFY_COLUMNS = (
+    "id, conversation_id, parent_message_id, sender, content, deleted, version"
+)
+_SQLITE_DEFAULT_VARIABLE_LIMIT = 999
+
+
+def _bounded_id_batches(
+    cursor: Any, ids: Sequence[str]
+) -> Iterator[Sequence[str]]:
+    """Yield ``ids`` in slices one ``IN (?, ...)`` list can bind.
+
+    Mirrors the house chunking in ``ChaChaNotes_DB._bounded_id_batches``
+    (500-id cap, bounded by the live connection's variable limit). Callers
+    run every batch inside one transaction, so the batches read one snapshot.
+
+    Args:
+        cursor: The transaction cursor whose connection bounds the batch.
+        ids: The ids to bind, one variable each.
+
+    Yields:
+        Consecutive slices of at most ``min(500, limit)`` ids.
+    """
+    connection = getattr(cursor, "connection", None)
+    limit = _SQLITE_DEFAULT_VARIABLE_LIMIT
+    if connection is not None:
+        try:
+            limit = connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+        except (AttributeError, sqlite3.Error):
+            limit = _SQLITE_DEFAULT_VARIABLE_LIMIT
+    size = max(1, min(_FORK_VERIFY_BATCH_CAP, limit))
+    for start in range(0, len(ids), size):
+        yield ids[start : start + size]
 
 # Complete census of direct ChaChaNotes message/revision locators. The schema
 # inventory regression requires every new locator to be classified before the
@@ -2083,15 +2118,33 @@ class ChatPersistenceService:
         )
         if actual_identity != expected_identity:
             raise RuntimeError("Console fork target identity collision.")
+        persisted_rows = self._load_fork_verification_rows(
+            cursor,
+            [
+                message.persisted_message_id
+                for message in snapshot.messages
+                if message.persisted_message_id is not None
+            ],
+        )
         for message in snapshot.messages:
-            persisted = cursor.execute(
-                """
-                SELECT conversation_id, parent_message_id, sender, content, deleted
-                FROM messages WHERE id = ?
-                """,
-                (message.persisted_message_id,),
-            ).fetchone()
-            if persisted is None or tuple(persisted) != (
+            persisted = persisted_rows.get(message.persisted_message_id)
+            if persisted is None:
+                # Row absent from the batch (e.g. deleted mid-transaction):
+                # fall back to the original single-row read for this id.
+                persisted = cursor.execute(
+                    """
+                    SELECT conversation_id, parent_message_id, sender, content, deleted
+                    FROM messages WHERE id = ?
+                    """,
+                    (message.persisted_message_id,),
+                ).fetchone()
+            if persisted is None or (
+                persisted["conversation_id"],
+                persisted["parent_message_id"],
+                persisted["sender"],
+                persisted["content"],
+                persisted["deleted"],
+            ) != (
                 target_id,
                 message.persisted_parent_id,
                 message.role.value,
@@ -2126,6 +2179,71 @@ class ChatPersistenceService:
             if message.persisted_message_id is not None
         }
 
+    @staticmethod
+    def _load_fork_verification_rows(
+        cursor: Any,
+        message_ids: Sequence[str | None],
+    ) -> dict[str, Any]:
+        """Batch-load message rows for fork verification (chunked IN-lists).
+
+        One chunked ``SELECT ... WHERE id IN (...)`` per 500 ids replaces the
+        per-message single-row reads in the fork-commit verification and
+        source-recheck walks (review-B B24). Callers run inside one
+        transaction, so the batches read one snapshot.
+
+        Args:
+            cursor: The transaction cursor to read through.
+            message_ids: Ids to load; ``None``/duplicates are ignored.
+
+        Returns:
+            Mapping of id to row carrying ``_FORK_VERIFY_COLUMNS``; ids with
+            no row are absent from the mapping.
+        """
+        unique_ids = [
+            message_id
+            for message_id in dict.fromkeys(message_ids)
+            if message_id is not None
+        ]
+        if not unique_ids:
+            return {}
+        rows: dict[str, Any] = {}
+        for batch in _bounded_id_batches(cursor, unique_ids):
+            placeholders = ",".join("?" * len(batch))
+            for row in cursor.execute(
+                f"""
+                SELECT {_FORK_VERIFY_COLUMNS}
+                FROM messages WHERE id IN ({placeholders})
+                """,
+                tuple(batch),
+            ):
+                rows[row["id"]] = row
+        return rows
+
+    @staticmethod
+    def _fork_row_resolver(cursor: Any, cache: dict[str, Any]) -> Any:
+        """Return a lookup resolving message ids through ``cache``.
+
+        A cache miss (a row outside the prefetched batch, e.g. a saved System
+        note on a parent hop) falls back to the original single-row SELECT and
+        memoizes the outcome -- including ``None`` -- for the rest of the
+        transaction, so repeated hops never re-query.
+        """
+
+        def resolve(message_id: str | None) -> Any:
+            if message_id is None or message_id in cache:
+                return cache.get(message_id)
+            row = cursor.execute(
+                f"""
+                SELECT {_FORK_VERIFY_COLUMNS}
+                FROM messages WHERE id = ?
+                """,
+                (message_id,),
+            ).fetchone()
+            cache[message_id] = row
+            return row
+
+        return resolve
+
     def _recheck_fork_source(
         self,
         cursor: Any,
@@ -2151,19 +2269,22 @@ class ChatPersistenceService:
         ):
             raise RuntimeError("Console fork source changed.")
         previous_source_id = None
+        source_rows = self._load_fork_verification_rows(
+            cursor,
+            [message.source_persisted_message_id for message in snapshot.messages],
+        )
+        resolve_row = self._fork_row_resolver(cursor, source_rows)
         for message in snapshot.messages:
-            row = cursor.execute(
-                """
-                SELECT conversation_id, parent_message_id, version, content, deleted
-                FROM messages WHERE id = ?
-                """,
-                (message.source_persisted_message_id,),
-            ).fetchone()
+            row = resolve_row(message.source_persisted_message_id)
             if (
                 row is None
                 or row["conversation_id"] != source_id
                 or self._fork_source_parent(
-                    cursor, source_id, row["parent_message_id"], previous_source_id
+                    cursor,
+                    source_id,
+                    row["parent_message_id"],
+                    previous_source_id,
+                    row_resolver=resolve_row,
                 )
                 != previous_source_id
                 or row["version"] != message.source_persisted_revision
@@ -2180,13 +2301,7 @@ class ChatPersistenceService:
             if active_lineage_id in seen or not active_lineage_id:
                 raise RuntimeError("Console fork source changed.")
             seen.add(active_lineage_id)
-            active_row = cursor.execute(
-                """
-                SELECT conversation_id, parent_message_id, deleted
-                FROM messages WHERE id = ?
-                """,
-                (active_lineage_id,),
-            ).fetchone()
+            active_row = resolve_row(active_lineage_id)
             if (
                 active_row is None
                 or active_row["conversation_id"] != source_id
@@ -2206,6 +2321,8 @@ class ChatPersistenceService:
         source_id: str,
         parent_id: str | None,
         previous_id: str | None,
+        *,
+        row_resolver: Any | None = None,
     ) -> str | None:
         """Walk a copied row's saved parent up past saved System notes.
 
@@ -2214,15 +2331,22 @@ class ChatPersistenceService:
         may sit between two copied rows. Only live ``system`` rows of the
         source conversation are skipped (TASK-33621.10); anything else stops
         the walk and the caller's exact-parent check decides.
+
+        ``row_resolver`` supplies prefetched rows (B24); when omitted each hop
+        reads its own row. The hop cap accounting is identical either way:
+        every hop consumes exactly one loop iteration.
         """
         for _ in range(CONSOLE_FORK_SOURCE_LINEAGE_MAX_DEPTH):
             if parent_id is None or parent_id == previous_id:
                 return parent_id
-            row = cursor.execute(
-                "SELECT conversation_id, parent_message_id, sender, deleted "
-                "FROM messages WHERE id = ?",
-                (parent_id,),
-            ).fetchone()
+            if row_resolver is not None:
+                row = row_resolver(parent_id)
+            else:
+                row = cursor.execute(
+                    "SELECT conversation_id, parent_message_id, sender, deleted "
+                    "FROM messages WHERE id = ?",
+                    (parent_id,),
+                ).fetchone()
             if (
                 row is None
                 or row["deleted"]

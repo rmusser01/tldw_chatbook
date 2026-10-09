@@ -114,7 +114,7 @@ def test_native76_staged_upgrade_preserves_machine_receipts(tmp_path, dictionary
         rows = tuple(connection.execute("SELECT * FROM console_dispatch_checkpoints"))
         messages = tuple(connection.execute("SELECT * FROM messages ORDER BY id"))
     assert validation.validate_candidate(_owner(), path, Event(), migrate=True) == ()
-    assert validation.validated_schema_version(_owner(), path, Event()) == 79
+    assert validation.validated_schema_version(_owner(), path, Event()) == 80
     with closing(sqlite3.connect(path)) as connection:
         assert (
             tuple(connection.execute("SELECT * FROM console_dispatch_checkpoints"))
@@ -598,13 +598,16 @@ def test_strong_primary_catalog_accepts_historical_stamps(
         connection.execute("UPDATE db_schema_version SET version=?", (version,))
         connection.commit()
     from tldw_chatbook.DB.recovery_core_schema import (
+        _browse_order_catalog,
         _fleet_progress_catalog,
         _sargable_catalog,
     )
 
     catalog = tuple(
         (sql,)
-        for sql in _sargable_catalog(_fleet_progress_catalog(tuple(row[0] for row in catalog)))
+        for sql in _browse_order_catalog(
+            _sargable_catalog(_fleet_progress_catalog(tuple(row[0] for row in catalog)))
+        )
     )
     assert validation.validate_candidate(_owner(), path, Event(), migrate=True) == ()
     with closing(sqlite3.connect(path)) as connection:
@@ -618,4 +621,4 @@ def test_strong_primary_catalog_accepts_historical_stamps(
         )
         assert connection.execute(
             "SELECT version FROM db_schema_version"
-        ).fetchone() == (79,)
+        ).fetchone() == (80,)

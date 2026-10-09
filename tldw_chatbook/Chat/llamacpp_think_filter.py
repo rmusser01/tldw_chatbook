@@ -9,6 +9,7 @@ ADR-066 and ADR-090.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -22,6 +23,14 @@ _OPEN_TO_CLOSE = {
     "<thinking>": "</thinking>",
 }
 _MAX_TAG_CHARS = max(map(len, (*_OPEN_TO_CLOSE, *_OPEN_TO_CLOSE.values())))
+
+_SURROGATE_PATTERN = re.compile("[\ud800-\udfff]")
+"""Lone-surrogate detector for capture text (review-B B27).
+
+``surrogateescape``-decoded bytes surface here as lone surrogates, which no
+valid UTF-8 payload may contain; the old per-codepoint scan rejected them and
+this pattern preserves that rejection exactly.
+"""
 
 ThinkCaptureStatus = Literal["pending", "complete", "failed"]
 
@@ -179,26 +188,29 @@ class StartAnchoredThinkSplitter:
 
     def _bounded_thinking(self, *ranges: tuple[str, int, int]) -> str | None:
         total = self._thinking_bytes
+        pieces: list[str] = []
         for text, start, end in ranges:
-            for index in range(start, end):
-                codepoint = ord(text[index])
-                if 0xD800 <= codepoint <= 0xDFFF:
-                    self._terminal_capture_failure()
-                    return None
-                total += (
-                    1
-                    if codepoint <= 0x7F
-                    else 2
-                    if codepoint <= 0x7FF
-                    else 3
-                    if codepoint <= 0xFFFF
-                    else 4
-                )
-                if total > MAX_THINKING_TEXT_BYTES:
-                    self._terminal_capture_failure()
-                    return None
+            if end <= start:
+                continue
+            # Every code point needs at least one UTF-8 byte; bound the copy.
+            if end - start > MAX_THINKING_TEXT_BYTES - total:
+                self._terminal_capture_failure()
+                return None
+            segment = text[start:end]
+            # review-B B27: one encode per slice instead of a per-codepoint
+            # Python loop; UTF-8 length and lone-surrogate rejection are
+            # identical to the old per-character walk (see the golden
+            # equivalence test).
+            if _SURROGATE_PATTERN.search(segment) is not None:
+                self._terminal_capture_failure()
+                return None
+            total += len(segment.encode("utf-8"))
+            if total > MAX_THINKING_TEXT_BYTES:
+                self._terminal_capture_failure()
+                return None
+            pieces.append(segment)
         self._thinking_bytes = total
-        return "".join(text[start:end] for text, start, end in ranges)
+        return "".join(pieces)
 
     def _terminal_capture_failure(self) -> None:
         self._state = "failed"

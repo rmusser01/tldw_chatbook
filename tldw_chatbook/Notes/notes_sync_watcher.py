@@ -7,7 +7,7 @@ import random
 import time
 from collections.abc import Callable, Iterable
 
-_DEFAULT_MAX_INTERVAL_SECONDS = 10.0
+_DEFAULT_MAX_INTERVAL_SECONDS = 30.0
 _JITTER_LOW = 0.5
 _JITTER_HIGH = 1.5
 

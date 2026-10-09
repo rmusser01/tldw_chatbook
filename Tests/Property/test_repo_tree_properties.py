@@ -144,6 +144,11 @@ class TreeViewStateMachine(RuleBasedStateMachine):
                 file_size=random.randint(100, 10000) if not is_dir else None,
             )
             self.tree_view.nodes[path] = node
+            # B20: cascades walk the child index, which the production
+            # loaders maintain; seed it the same way.
+            parent_path = path.rsplit("/", 1)[0] if "/" in path else ""
+            if parent_path:
+                self.tree_view._register_child(parent_path, path)
 
     @rule(data=st.data())
     def select_node(self, data):
@@ -423,6 +428,9 @@ class TestSelectionProperties:
                 path=child_path, name=f"file_{i}.txt", is_directory=False, level=1
             )
             tree.nodes[child_path] = child_node
+            # B20: cascades walk the child index maintained by the
+            # production loaders; seed it the same way.
+            tree._register_child(parent_path, child_path)
             child_paths.append(child_path)
 
         # Select parent

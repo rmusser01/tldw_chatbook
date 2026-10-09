@@ -358,25 +358,25 @@ class TestV78ToV79Migration:
         assert stored["future-space"] == "2027-01-01T00:00:00.000Z"
         assert all(v is None or CANONICAL_RE.match(v) for v in stored.values()), stored
 
-    def test_schema_version_is_79_after_migration(self, tmp_path: Path) -> None:
+    def test_schema_version_is_80_after_migration(self, tmp_path: Path) -> None:
         facts = seed_mixed_v78_db(tmp_path)
         db = reopen_migrated(facts)
         try:
             assert (
                 db._get_db_version(db.get_connection())
                 == CharactersRAGDB._CURRENT_SCHEMA_VERSION
-                == 79
+                == 80
             )
         finally:
             db.close_connection()
 
-    def test_fresh_install_reaches_79_with_the_new_indexes(
+    def test_fresh_install_reaches_80_with_the_new_indexes(
         self, tmp_path: Path
     ) -> None:
-        db = CharactersRAGDB(":memory:", "fresh-79")
+        db = CharactersRAGDB(":memory:", "fresh-80")
         try:
             conn = db.get_connection()
-            assert db._get_db_version(conn) == 79
+            assert db._get_db_version(conn) == 80
             names = {
                 row[0]
                 for row in conn.execute(
@@ -481,7 +481,7 @@ class TestV78ToV79Migration:
         db.close_connection()
         db = CharactersRAGDB(str(facts["path"]), client_id="audit")
         try:
-            assert db._get_db_version(db.get_connection()) == 79
+            assert db._get_db_version(db.get_connection()) == 80
             rows = db.get_conversations_for_character(1, limit=10)
             assert [row["id"] for row in rows] == facts["conv_golden"]
         finally:

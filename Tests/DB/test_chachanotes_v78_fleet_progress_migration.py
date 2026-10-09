@@ -53,7 +53,7 @@ def test_fleet_upgrade_preserves_native_receipts_and_predecessor_rows(
         # routes alike) now lands these candidates there.
         assert connection.execute(
             "SELECT version FROM db_schema_version"
-        ).fetchone() == (79,)
+        ).fetchone() == (80,)
         assert connection.execute(
             "SELECT count(*) FROM fleet_progress_messages"
         ).fetchone() == (0,)
@@ -84,7 +84,7 @@ def test_installed_fleet_migration_refuses_foreign_ddl_and_rolls_back(
 
 
 @pytest.mark.parametrize("shared", [False, True])
-@pytest.mark.parametrize("stamp", [77, 78, 79])
+@pytest.mark.parametrize("stamp", [77, 78, 79, 80])
 def test_current_fleet_catalog_accepts_only_its_complete_matching_stamp(
     tmp_path, shared, stamp
 ):
@@ -104,8 +104,8 @@ def test_current_fleet_catalog_accepts_only_its_complete_matching_stamp(
         if shared
         else _owner()
     )
-    # ADR-224: the current catalog is the v79 sargable one; only its own
-    # complete stamp validates read-only.
+    # ADR-216: the current catalog is the v80 browse-order one; only its
+    # own complete stamp validates read-only.
     assert validate_candidate(owner, path, Event(), migrate=False) == (
-        () if stamp == 79 else ("unsupported_schema_version",)
+        () if stamp == 80 else ("unsupported_schema_version",)
     )

@@ -32,6 +32,7 @@ from textual import work
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
 from textual.css.query import QueryError
+from textual.widget import Widget
 from textual.widgets import (
     Static,
     Button,
@@ -108,6 +109,10 @@ from ..Chat.provider_readiness import (
 #
 if TYPE_CHECKING:
     from ..app import TldwCli
+
+# Debounce window for the config-search-as-you-type handler (B19). Module
+# constant per repo convention; no new config key.
+CONFIG_SEARCH_DEBOUNCE_SECONDS = 0.3
 
 
 class _BackupManifestPublication(NamedTuple):
@@ -609,6 +614,11 @@ class ToolsSettingsWindow(Container):
         self._app_instance = app_instance
         self.config_data = load_cli_config_and_ensure_existence()
         self._backup_all_in_progress = False
+        # B19: reusable config-search engine cache (one index per active pane)
+        # and the search debounce timer handle.
+        self._config_search_engine = None
+        self._config_search_pane = None
+        self._config_search_debounce_timer = None
 
     @property
     def app_instance(self):
@@ -6830,8 +6840,18 @@ class ToolsSettingsWindow(Container):
 
     @on(Input.Changed, "#config-search-input")
     async def on_config_search_changed(self, event: Input.Changed) -> None:
-        """Handle search input changes for configuration settings."""
+        """Handle search input changes for configuration settings (debounced -- B19)."""
         query = event.value.strip()
+        if self._config_search_debounce_timer is not None:
+            self._config_search_debounce_timer.stop()
+        self._config_search_debounce_timer = self.set_timer(
+            CONFIG_SEARCH_DEBOUNCE_SECONDS,
+            lambda: self._run_config_search(query),
+        )
+
+    async def _run_config_search(self, query: str) -> None:
+        """Run one settled config search against the active pane."""
+        self._config_search_debounce_timer = None
 
         # Clear results if query is empty
         if not query:
@@ -6847,8 +6867,9 @@ class ToolsSettingsWindow(Container):
             if not active_pane:
                 return
 
-            # Create search engine for the active tab
-            search_engine = UIElementSearchEngine(active_pane)
+            # Reuse the per-pane search engine (B19); a pane switch
+            # invalidates the cached engine and the next search rebuilds once.
+            search_engine = self._get_config_search_engine(active_pane)
 
             # Perform search
             results = search_engine.search(query)
@@ -6856,6 +6877,25 @@ class ToolsSettingsWindow(Container):
 
         except Exception as e:
             logger.error(f"Error searching UI elements: {e}")
+
+    def _get_config_search_engine(
+        self, active_pane: "Widget"
+    ) -> "UIElementSearchEngine":
+        """Return the cached search engine for the active pane (B19).
+
+        The DOM index is built once per pane and reused across keystrokes;
+        switching panes invalidates the cached engine, so the next search
+        rebuilds exactly once for the new pane.
+        """
+        engine = self._config_search_engine
+        if engine is not None and self._config_search_pane is not active_pane:
+            engine.invalidate()
+            engine = None
+        if engine is None:
+            engine = UIElementSearchEngine(active_pane)
+            self._config_search_engine = engine
+            self._config_search_pane = active_pane
+        return engine
 
     async def _clear_config_search_results(self) -> None:
         """Clear the configuration search results."""

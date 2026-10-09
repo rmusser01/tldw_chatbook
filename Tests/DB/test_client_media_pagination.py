@@ -343,7 +343,7 @@ def test_count_and_page_share_one_read_snapshot_during_wal_write(media_db):
 
     def trace(sql: str) -> None:
         nonlocal count_started
-        if sql.lstrip().startswith("SELECT COUNT(DISTINCT m.id)"):
+        if sql.lstrip().startswith("SELECT COUNT(m.id)"):
             count_started = True
 
     def coordinate_write() -> int:

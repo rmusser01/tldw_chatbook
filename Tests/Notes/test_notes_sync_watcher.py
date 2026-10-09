@@ -213,13 +213,16 @@ async def test_backed_off_sleeps_are_jittered_but_the_base_interval_is_not() -> 
     assert len(jitters) == 2
 
 
-def test_default_backoff_cap_lands_in_the_five_to_fifteen_second_band() -> None:
+def test_default_backoff_cap_lands_at_thirty_seconds() -> None:
+    """B12: the idle ceiling is 30 s (stat walks drop from 60 to ~24 per 10
+    idle minutes), while the jitter band is unchanged."""
+
     from tldw_chatbook.Notes.notes_sync_watcher import PollingNotesSyncWatcher
 
     watcher = PollingNotesSyncWatcher(lambda: (), lambda _root_id: None)
 
     assert watcher._interval == 1.0
-    assert watcher._max_interval == 10.0
+    assert watcher._max_interval == 30.0
     for _ in range(200):
         factor = watcher._jitter()
         assert 0.5 <= factor <= 1.5
@@ -283,14 +286,14 @@ def test_watcher_module_has_no_planner_executor_or_filesystem_dependency() -> No
 def test_watcher_interval_config_defaults_validation_and_overrides() -> None:
     import tldw_chatbook.config as config_module
 
-    assert config_module.get_notes_sync_watcher_intervals({}) == (1.0, 10.0)
+    assert config_module.get_notes_sync_watcher_intervals({}) == (1.0, 30.0)
     assert config_module.get_notes_sync_watcher_intervals({"notes": {}}) == (
         1.0,
-        10.0,
+        30.0,
     )
     assert config_module.get_notes_sync_watcher_intervals({"notes": "invalid"}) == (
         1.0,
-        10.0,
+        30.0,
     )
     assert config_module.get_notes_sync_watcher_intervals(
         {

@@ -654,7 +654,7 @@ def _count_sql_for(db: MediaDatabase, _unused: list, **kwargs) -> str:
         db.search_media_db(**kwargs)
     finally:
         conn.set_trace_callback(None)
-    matches = [s for s in captured if "COUNT(DISTINCT m.id)" in s]
+    matches = [s for s in captured if "COUNT(m.id)" in s]
     assert matches, f"no COUNT statement was traced; saw {captured}"
     return matches[0]
 
@@ -714,5 +714,5 @@ def test_non_fts_search_is_unchanged_by_the_count_rewrite(fresh_db):
     conn = fresh_db.get_connection()
     _seed(conn)
     count_sql = _count_sql_for(fresh_db, [], search_query=None, results_per_page=10)
-    assert count_sql.strip().startswith("SELECT COUNT(DISTINCT m.id) FROM Media m")
+    assert count_sql.strip().startswith("SELECT COUNT(m.id) FROM Media m")
     assert "media_fts" not in count_sql

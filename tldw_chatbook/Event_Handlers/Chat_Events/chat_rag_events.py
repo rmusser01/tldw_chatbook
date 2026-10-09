@@ -197,8 +197,9 @@ async def perform_plain_rag_search(
     """
     logger.info("RAG pipeline starting; mode=plain")
 
-    # Build pipeline configuration
-    config = BUILTIN_PIPELINES["plain"].copy()
+    # Build pipeline configuration (deep copy: steps are nested dicts and the
+    # builtin definition must not be mutated across calls)
+    config = copy.deepcopy(BUILTIN_PIPELINES["plain"])
     config["parameters"] = {
         "top_k": top_k,
         "max_context_length": max_context_length,
@@ -249,8 +250,9 @@ async def perform_full_rag_pipeline(
     """
     logger.info("RAG pipeline starting; mode=semantic")
 
-    # Build pipeline configuration
-    config = BUILTIN_PIPELINES["semantic"].copy()
+    # Build pipeline configuration (deep copy: steps are nested dicts and the
+    # builtin definition must not be mutated across calls)
+    config = copy.deepcopy(BUILTIN_PIPELINES["semantic"])
     config["parameters"] = {
         "top_k": top_k,
         "max_context_length": max_context_length,
