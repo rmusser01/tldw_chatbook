@@ -2692,6 +2692,21 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: solid $ds-grid-line;
 }
 
+/* TASK-34000.13 (review N-10): the delete prompt is a Vertical inside the
+   Info VerticalScroll, and only the compact rule (`_library.tcss`) ever
+   gave it a height. On the wide stage it kept Textual's default
+   `height: 1fr; overflow: hidden`, which inside a scrolling parent means
+   "the rows left over": one row at 120x36 (the copy clipped, Cancel and
+   Delete painted on the screen's last row, outside the Info border) and
+   eleven at 160x45. Size it by its content at every width -- the copy may
+   wrap and the button row under it must still paint. The compact rule's
+   two-row box still outranks this one by specificity. */
+#library-note-delete-confirmation {
+    height: auto;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+}
+
 #library-note-preview-region:focus,
 #library-note-context-region:focus {
     border: heavy $ds-input-focus-accent;

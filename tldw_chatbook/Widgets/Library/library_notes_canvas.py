@@ -1481,6 +1481,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             event: Textual's resize event, carrying this canvas's own size.
         """
         if self.mode != "list":
+            self._keep_delete_prompt_in_view()
             return
         width = event.size.width
         if width <= 0 or width == self._measured_width:
@@ -1492,6 +1493,30 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             or self._tree_actions_need_repack()
         ):
             self.refresh(recompose=True)
+
+    def _keep_delete_prompt_in_view(self) -> None:
+        """Keep an open delete prompt inside Info's viewport across a resize.
+
+        TASK-34000.13: the prompt is revealed once, when Delete is pressed
+        (the controller scrolls Info to it after the refresh). A terminal
+        resize while it is open re-lays Info out, and Textual does not
+        re-scroll a focused widget on resize: measured at 160x45 -> 120x36
+        the prompt dropped below Info's fold (``max_scroll_y`` 3,
+        ``scroll_y`` 0) with Tab still trapped inside it -- the blind-Enter
+        shape again. The widget owns its content (ADR-086), so it keeps the
+        block in view itself; focus is left alone (the user may be on
+        Delete). Scheduled after the refresh so the new geometry is real;
+        never a timer.
+        """
+        try:
+            prompt = self.query_one("#library-note-delete-confirmation")
+        except NoMatches:
+            return
+        if not prompt.display:
+            return
+        self.call_after_refresh(
+            prompt.scroll_visible, animate=False, immediate=True, force=True
+        )
 
     def apply_pane_width(self, pane_width: int) -> None:
         """Take a freshly resolved Items width; re-shape only if it shrank.

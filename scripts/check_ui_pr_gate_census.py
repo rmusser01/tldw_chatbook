@@ -149,7 +149,15 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # 26 s locally. The slower variants (200x50/235x52, wheel events, the
 # breakpoint round trip, the Trash opener) stay in
 # test_library_notes_tree_scrolls_wide_extended.py, outside the lane.
-MINIMUM_FILES = 156
+# TASK-34000.13 (2026-10-08) raised it to 157:
+# Tests/UI/test_library_note_delete_prompt_visible.py -- Info > Delete shows
+# the whole prompt (copy, Cancel, Delete) inside the Info box at 120x36 and
+# 80x24, focus lands on a visible Cancel, Tab/Shift+Tab stay inside, and
+# Cancel restores Info's scroll; 4 tests, about 14 s locally. The slower
+# variants (160x30/160x45/235x52, the resize while open, the real-DB
+# "Linked from" case and the DB-level Cancel/Delete checks) stay in
+# test_library_note_delete_prompt_visible_extended.py, outside the lane.
+MINIMUM_FILES = 157
 
 
 def read_census(path: Path) -> list[str]:

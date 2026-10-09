@@ -423,7 +423,15 @@ _BUDGETS: dict[str, int] = {
     # `library_notes_sync_attention.py` (which now also answers whether the
     # note's sync folder is held for attention); the controller keeps a
     # three-line delegator and one scheduling call.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6311,
+    #
+    # 2026-10-08, TASK-34000.13: 6311 -> 6337 (+26), owner decision
+    # (2026-10-04 ruling: a fix over a size ratchet raises the row to the
+    # measured value; never move or reflow code to make it fit). The
+    # delete prompt is now revealed after the refresh:
+    # `handle_library_note_delete` schedules
+    # `_reveal_library_note_delete_prompt` (scroll the whole prompt into
+    # Info, focus Cancel in place) via `call_after_refresh`.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6337,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
