@@ -512,6 +512,19 @@ def provider_config_key(provider: str | None) -> str:
     return normalize_provider_config_key(provider)
 
 
+def required_base_url_target(provider: str | None) -> str | None:
+    """Name what a provider that ships no base URL needs set (ADR-179).
+
+    Args:
+        provider: A provider id or alias.
+
+    Returns:
+        E.g. "resource host" for Azure, or None when a default URL ships.
+    """
+    recovery = _BASE_URL_RECOVERY.get(provider_config_key(provider))
+    return recovery[1] if recovery else None
+
+
 def _requires_api_key(provider_key: str) -> bool:
     """Return True unless the provider is known to work without credentials."""
     return provider_key not in KEYLESS_PROVIDER_KEYS

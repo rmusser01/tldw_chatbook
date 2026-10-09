@@ -29,7 +29,10 @@ from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
 
 _SIZE = (211, 44)
 _FAKE_KEY = "sk-proj-abcdefghijklmnop1234"
-_NEW_CHATS = "new chats (Ctrl+T, temporary, workspace)."
+#: Rewritten on purpose (TASK-33007 capture fix 4): the row is one line with
+#: a dated model id, so "(Ctrl+T, temporary, workspace)" moved to the
+#: Inspector's New chats row.
+_NEW_CHATS = "new chats;"
 PROVIDERS_MODELS = SettingsCategoryId.PROVIDERS_MODELS
 
 
@@ -93,15 +96,46 @@ async def test_applies_to_row_sits_under_the_default_model_and_says_no_chat_is_o
             "Applies to"
         )
         assert _text(screen, "#settings-model-applies-to") == (
-            f"{_NEW_CHATS} No Console chat is open."
+            f"{_NEW_CHATS} no Console chat is open."
         )
 
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_a_long_chat_title_wraps_the_row_rather_than_cut_the_pair(request):
-    """AC#1: the pair is the point of the row; a long title gives way to it
-    and the row wraps instead of cutting it off."""
+@pytest.mark.parametrize("size", [_SIZE, (235, 52)], ids=["211x44", "235x52"])
+async def test_applies_to_is_one_row_with_a_dated_model_id(request, size):
+    """Capture 03 (fix 4): with a dated model id the row wrapped to two lines
+    at both sizes. It says the same in one row."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    app = _app()
+    app.app_config["chat_defaults"]["model"] = "o4-mini-2025-04-16"
+    store = ConsoleChatStore()
+    store.create_session(title="Chat 1")
+    app.console_runtime.set_chat_store(store)
+    host = _SettingsCssHarness(app, "settings")
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_providers(host, pilot)
+        row = screen.query_one("#settings-model-applies-row")
+        text = (
+            f"{_NEW_CHATS} open chat “Chat 1” is unused and will use "
+            "OpenAI · o4-mini-2025-04-16."
+        )
+
+        assert _text(screen, "#settings-model-applies-to") == text
+        assert row.region.height == 1
+        assert text in _region_rows(screen, row)[0]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("size", [_SIZE, (235, 52)], ids=["211x44", "235x52"])
+async def test_a_row_too_long_for_one_line_breaks_before_the_pair(request, size):
+    """AC#1, capture 03 (fix 4): the pair is the point of the row. A long
+    title gives way to it, and a row still too long for one line breaks
+    before the pair, never inside it ("Anthropic" ending one line and
+    "· claude-sonnet-4-5." starting the next). Textual wraps at a no-break
+    space too, so the row has to choose the break itself."""
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -109,7 +143,8 @@ async def test_a_long_chat_title_wraps_the_row_rather_than_cut_the_pair(request)
     app = _app()
     store = ConsoleChatStore()
     own = ConsoleSessionSettings(
-        provider="anthropic", model="claude-sonnet-4-5-20250929"
+        provider="openrouter",
+        model="meta-llama/llama-3.1-405b-instruct:free-preview-2025-07-23",
     )
     session = store.create_session(
         title="Refactor the settings screen into region modules",
@@ -119,17 +154,18 @@ async def test_a_long_chat_title_wraps_the_row_rather_than_cut_the_pair(request)
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="hi")
     app.console_runtime.set_chat_store(store)
     host = _SettingsCssHarness(app, "settings")
-    async with host.run_test(size=_SIZE) as pilot:
+    async with host.run_test(size=size) as pilot:
         screen = await _open_providers(host, pilot)
-        text = _text(screen, "#settings-model-applies-to")
-        assert text == (
-            f"{_NEW_CHATS} Open chat “Refactor the settings s…” keeps "
-            "Anthropic · claude-sonnet-4-5-20250929."
+        pair = "OpenRouter · meta-llama/llama-3.1-405b-instruct:free-preview-2025-07-23"
+        assert _text(screen, "#settings-model-applies-to") == (
+            f"{_NEW_CHATS} open chat “Refactor the settings s…” keeps {pair}."
         )
         row = screen.query_one("#settings-model-applies-row")
-        painted = " ".join(line.strip() for line in _region_rows(screen, row))
-        assert "claude-sonnet-4-5-20250929." in painted, painted
-        assert row.region.height == 2
+        painted = [line.strip() for line in _region_rows(screen, row)]
+
+        assert row.region.height == 2, painted
+        assert painted[0].endswith("“Refactor the settings s…” keeps"), painted
+        assert painted[1].startswith(f"{pair}."), painted
 
 
 @pytest.mark.asyncio
@@ -174,7 +210,7 @@ async def test_an_open_chat_with_no_settings_of_its_own_is_described_not_crashed
     host = _SettingsCssHarness(app, "settings")
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
-        chat = f"{_NEW_CHATS} Open chat “Old chat” "
+        chat = f"{_NEW_CHATS} open chat “Old chat” "
 
         assert _text(screen, "#settings-model-applies-to") == chat + says.format(
             pair="OpenAI · gpt-4o"
@@ -211,7 +247,7 @@ async def test_inspector_leads_with_reach_then_the_next_new_chat_then_the_field(
             _text(screen, f"#settings-provider-applies-{row}")
             for row in ("new", "unused", "work", "switch")
         ] == [
-            "New chats: yes",
+            "New chats: yes (Ctrl+T, temporary, workspace)",
             "Unused open chats: follow the saved default",
             "Chats with work: keep their own; switch there with Alt+M",
             "Model defaults: chats that switch to this model pick them up",
@@ -371,10 +407,10 @@ async def test_saving_default_b_states_its_reach_and_a_new_chat_takes_it(
         screen = await _wait_for_screen(app, pilot, "SettingsScreen")
         await _wait_for_selector(screen, pilot, "#settings-model-applies-to")
         await pilot.pause()
-        keeps = f"{_NEW_CHATS} Open chat “{title}” keeps llama.cpp · model-a."
+        keeps = f"{_NEW_CHATS} open chat “{title}” keeps llama.cpp · model-a."
         if work == "untouched":
             assert _text(screen, "#settings-model-applies-to") == (
-                f"{_NEW_CHATS} Open chat “{title}” is unused and will use "
+                f"{_NEW_CHATS} open chat “{title}” is unused and will use "
                 "llama.cpp · model-a."
             )
         else:
@@ -407,7 +443,7 @@ async def test_saving_default_b_states_its_reach_and_a_new_chat_takes_it(
 
         if work == "untouched":
             assert _text(screen, "#settings-model-applies-to") == (
-                f"{_NEW_CHATS} Open chat “{title}” is unused and will use "
+                f"{_NEW_CHATS} open chat “{title}” is unused and will use "
                 "OpenAI · gpt-4.1."
             )
         else:

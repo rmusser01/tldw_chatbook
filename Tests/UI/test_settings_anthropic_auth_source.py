@@ -20,9 +20,9 @@ from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
 from Tests.UI.test_settings_qwencloud_api_mode import _capture_atomic_writes
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
-from tldw_chatbook.UI.Screens.settings_screen import (
-    ANTHROPIC_API_KEY_GUIDANCE_COPY,
-    ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY,
+from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+    AUTH_SOURCE_API_KEY_HELP,
+    AUTH_SOURCE_SUBSCRIPTION_HELP,
 )
 
 # The real Settings screen goes through config-participant admission, which the
@@ -98,8 +98,10 @@ async def test_subscription_disables_but_keeps_the_key_rows_and_switching_back_r
         api_key = screen.query_one("#settings-provider-api-key", Input)
         env_var = screen.query_one("#settings-provider-credential-env-var", Input)
         clear = screen.query_one("#settings-provider-api-key-clear", Button)
+        # Rewritten on purpose (TASK-33007 capture fix 7): the guidance is the
+        # Sign in with row's one-line help; its long copy is the Inspector's.
         guidance = screen.query_one("#settings-provider-auth-source-guidance", Static)
-        assert str(guidance.content) == ANTHROPIC_API_KEY_GUIDANCE_COPY
+        assert str(guidance.content) == AUTH_SOURCE_API_KEY_HELP
 
         _choose(screen, "claude_subscription")
         await pilot.pause()
@@ -107,14 +109,14 @@ async def test_subscription_disables_but_keeps_the_key_rows_and_switching_back_r
         assert api_key.disabled is True and env_var.disabled is True and clear.disabled is True
         assert api_key.display and env_var.display  # visible, not hidden
         assert env_var.value == "ANTHROPIC_API_KEY"  # nothing lost
-        assert str(guidance.content) == ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
+        assert str(guidance.content) == AUTH_SOURCE_SUBSCRIPTION_HELP
 
         _choose(screen, "api_key")
         await pilot.pause()
 
         assert api_key.disabled is False and env_var.disabled is False
         assert env_var.value == "ANTHROPIC_API_KEY"
-        assert str(guidance.content) == ANTHROPIC_API_KEY_GUIDANCE_COPY
+        assert str(guidance.content) == AUTH_SOURCE_API_KEY_HELP
 
 
 @pytest.mark.asyncio

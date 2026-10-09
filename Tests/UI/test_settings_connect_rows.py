@@ -42,6 +42,22 @@ def _text(screen, selector: str) -> str:
     return str(screen.query_one(selector, Static).renderable)
 
 
+def _resting_help_counts(help_text: str, configured: int) -> bool:
+    """Whether the Provider row's resting help counts ``configured`` providers.
+
+    TASK-33007 capture fix 5, rewritten on purpose: the help counts the
+    configured providers instead of naming them ("configured: Anthropic,
+    Azure OpenAI +1 · 57 more" was cut at 211 and ambiguous at 235).
+    """
+    if configured == 0:
+        return help_text.startswith("none of ") and help_text.endswith(
+            " configured yet"
+        )
+    return help_text.startswith(f"{configured} of ") and help_text.endswith(
+        " configured · listed first"
+    )
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id(request):
@@ -60,9 +76,7 @@ async def test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id(reques
         assert control.region.height == 1
         assert control.value == "Anthropic"
         assert not picker.display
-        assert "configured: Anthropic ·" in _text(
-            screen, "#settings-provider-search-status"
-        )
+        assert _resting_help_counts(_text(screen, "#settings-provider-search-status"), 1)
 
         control.focus()
         await pilot.pause()
@@ -293,7 +307,12 @@ _CONNECT_STOPS = (
     "settings-provider-endpoint-value",
 )
 _ANTHROPIC_STOPS = ("settings-provider-auth-source", *_CONNECT_STOPS)
-_OPENAI_STOPS = (*_CONNECT_STOPS, "settings-openai-reconnect-review")
+#: Rewritten on purpose (TASK-33007 capture fix 3): "Review restored OpenAI
+#: connection" is a stop only while a restored connection awaits review, and
+#: these profiles restored nothing -- see
+#: test_restored_openai_connection_row_shows_only_while_a_review_awaits.
+_OPENAI_STOPS = _CONNECT_STOPS
+_OPENAI_REVIEW_STOPS = (*_CONNECT_STOPS, "settings-openai-reconnect-review")
 _QWENCLOUD_STOPS = (*_CONNECT_STOPS, "settings-provider-api-mode")
 _SAVED_KEY = {"api_key": _FAKE_KEY}
 
@@ -371,8 +390,9 @@ async def test_model_is_at_most_five_tab_presses_from_provider(
 ):
     """Parent AC#2: neither Test (t) nor Clear is a Tab stop -- a key runs
     each -- so Model stays within five presses of the Provider control, with
-    OpenAI's "Review restored OpenAI connection" (AC#9), QwenCloud's API mode
-    Select or Anthropic's Sign in with Select (TASK-34201) in the chain."""
+    QwenCloud's API mode Select or Anthropic's Sign in with Select
+    (TASK-34201) in the chain. OpenAI's "Review restored OpenAI connection"
+    (AC#9) is in it only while a restored connection awaits review."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     app = _build_test_app()
@@ -646,9 +666,13 @@ async def test_a_key_reads_saved_before_its_base_url_is_set(
             "saved in config" if where == "config" else "from env var"
         )
         assert clear.disabled is (where != "config")
-        assert _text(screen, "#settings-provider-search-status").startswith(
-            f"configured: {screen._provider_display_label(provider)} ·"
+        configured = next(
+            group
+            for group in screen._provider_picker_groups()
+            if group.group_id == "configured"
         )
+        assert [option.provider_id for option in configured.options] == [provider]
+        assert _resting_help_counts(_text(screen, "#settings-provider-search-status"), 1)
 
 
 @pytest.mark.asyncio
@@ -704,7 +728,8 @@ async def test_model_stays_within_five_presses_while_a_return_is_pending(
 async def test_provider_help_names_a_provider_once_its_save_configures_it(
     request, monkeypatch
 ):
-    """Review finding 7: the "configured: ..." help is rebuilt after a save."""
+    """Review finding 7: the configured count in the help is rebuilt after a
+    save (it named the providers until TASK-33007 capture fix 5)."""
     from Tests.UI.test_settings_configuration_hub import (
         _capture_provider_settings_mutations,
     )
@@ -717,7 +742,7 @@ async def test_provider_help_names_a_provider_once_its_save_configures_it(
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
-        assert "llama.cpp" not in _text(screen, "#settings-provider-search-status")
+        assert _resting_help_counts(_text(screen, "#settings-provider-search-status"), 0)
 
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
         endpoint.focus()
@@ -726,9 +751,7 @@ async def test_provider_help_names_a_provider_once_its_save_configures_it(
         await pilot.pause(0.2)
 
         assert len(mutations) == 1
-        assert "configured: llama.cpp" in _text(
-            screen, "#settings-provider-search-status"
-        )
+        assert _resting_help_counts(_text(screen, "#settings-provider-search-status"), 1)
 
 
 # --- TASK-33007.9: the control after a choice or Revert; the list's box ---
@@ -823,7 +846,7 @@ async def test_provider_control_names_the_choice_never_the_typed_filter(request)
         legacy_name = "llama.cpp (legacy alias)"
         help_id = "#settings-provider-search-status"
         resting_help = _text(screen, help_id)
-        assert resting_help.startswith("configured: Anthropic ·")
+        assert _resting_help_counts(resting_help, 1)
 
         await _type_filter(pilot, screen, "legacy")
         assert _text(screen, help_id) != resting_help
@@ -971,9 +994,7 @@ async def test_discard_changes_shows_the_saved_provider_and_no_filtered_list(
         assert control.value == "Anthropic"
         assert not picker.display
         assert _text(screen, "#settings-provider-source") == "new-chat default"
-        assert "configured: Anthropic ·" in _text(
-            screen, "#settings-provider-search-status"
-        )
+        assert _resting_help_counts(_text(screen, "#settings-provider-search-status"), 1)
 
         # Opened again, the list is whole and rests on the saved provider.
         control.focus()
@@ -1149,3 +1170,262 @@ async def test_a_saved_wide_provider_name_is_painted_from_its_head(
         await _until(pilot, lambda: control.has_focus)
         await pilot.pause()
         await _expect_the_head(pilot, screen, control, name)
+
+
+# --- TASK-33007 capture fixes (qa/model-config-33007-captures, review notes) ---
+
+_SIZES = pytest.mark.parametrize("size", [_SIZE, (235, 52)], ids=["211x44", "235x52"])
+
+
+def _squeezed(text: str) -> str:
+    return "".join(text.split())
+
+
+def _switch_provider(screen, provider_key: str) -> None:
+    """Choose ``provider_key`` through the hidden Select the control drives."""
+    adapter = screen.query_one("#settings-provider-value", Select)
+    adapter.value = provider_key
+    screen.handle_provider_value_changed(Select.Changed(adapter, provider_key))
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("provider", "target"),
+    [
+        ("azure", "resource host"),
+        ("cloudflare", "account URL"),
+        ("databricks", "workspace host"),
+    ],
+)
+async def test_an_endpoint_with_no_shipped_default_reads_required(
+    request, monkeypatch, provider, target
+):
+    """Capture 01c (fix 1): with no base URL the Key check reads "Not ready",
+    yet the Endpoint row said built-in and "blank uses the provider default".
+    These three ship no default, so the row says the URL is required."""
+    from tldw_chatbook.Chat.provider_readiness import default_api_key_env_var
+
+    monkeypatch.delenv(default_api_key_env_var(provider), raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": provider, "model": "m-1"}
+    app.app_config["api_settings"] = {provider: dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        help_line = f"required: your {target}"
+
+        assert endpoint.value == ""
+        assert _text(screen, "#settings-provider-readiness").startswith("Not ready")
+        assert _text(screen, "#settings-provider-endpoint-source") == "not set"
+        assert _text(screen, "#settings-provider-endpoint-help") == help_line
+        assert endpoint.placeholder == f"Enter your {target}"
+        painted = _region_rows(screen, screen.query_one("#settings-provider-endpoint-row"))
+        assert help_line in painted[0] and endpoint.placeholder in painted[0], painted
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_provider_and_model_read_edited_only_when_their_own_value_is(request):
+    """Captures 03 and 04 (fix 2): the draft pins provider and model beside
+    any edit, so staging only a Temperature made both rows read edited *,
+    and staging only a model made Provider read it too."""
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        temperature = screen.query_one("#settings-model-profile-temperature", Input)
+        temperature.focus()
+        await pilot.pause()
+        await pilot.press(*"0.4")
+        await pilot.pause()
+
+        assert screen._category_has_unsaved_changes(SettingsCategoryId.PROVIDERS_MODELS)
+        assert _text(screen, "#settings-model-profile-temperature-source") == "edited *"
+        assert _text(screen, "#settings-provider-source") == "new-chat default"
+        assert _text(screen, "#settings-model-source") == "new-chat default"
+
+        screen.query_one("#settings-model-value", Input).value = "gpt-4o"
+        await pilot.pause()
+
+        assert _text(screen, "#settings-provider-source") == "new-chat default"
+        assert _text(screen, "#settings-model-source") == "edited *"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_restored_openai_connection_row_shows_only_while_a_review_awaits(
+    request, monkeypatch
+):
+    """Captures 01 and 02 (fix 3): the review button showed, and took a Tab
+    stop, on every OpenAI profile, a fresh one included; while it had focus
+    the Inspector named no setting. It is a Connect row now, shown only while
+    a restored connection awaits review: read at mount, on a provider switch
+    to OpenAI, and cleared once a review is recorded."""
+    from tldw_chatbook.LLM_Calls import recovery_review
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "m-1"}
+    app.app_config["api_settings"] = {"openai": {}, "anthropic": {}}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        row = screen.query_one("#settings-openai-reconnect-row")
+        button = screen.query_one("#settings-openai-reconnect-review", Button)
+
+        # This profile restored nothing: no row, no stop.
+        assert not row.display
+        assert button not in screen.focus_chain
+
+        monkeypatch.setattr(recovery_review, "openai_reconnect_pending", lambda: True)
+        _switch_provider(screen, "anthropic")
+        await pilot.pause()
+        _switch_provider(screen, "openai")
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+
+        assert row.display and row.region.height == 1
+        assert button.parent is row
+        assert _text(screen, "#settings-openai-reconnect-source") == "restored"
+        painted = _region_rows(screen, row)[0]
+        assert "Connection" in painted and "Review" in painted, painted
+        assert "requests wait until you review it" in painted, painted
+        stops = await _tab_stops_to_model(host, pilot, screen)
+        assert stops == [*_OPENAI_REVIEW_STOPS, "model-search-picker-input"]
+
+        button.focus()
+        await pilot.pause()
+        guide = [
+            _text(screen, f"#settings-provider-field-guide-{index}")
+            for index in range(4)
+        ]
+        assert guide[0] == "Focused setting: Restored OpenAI connection"
+        assert guide[1].startswith("Purpose: This profile was restored from a backup")
+        assert guide[2] == "Save: applies immediately - no Save needed"
+
+        monkeypatch.setattr(recovery_review, "confirm_openai_reconnect", lambda _r: None)
+        await screen._record_openai_reconnect_review(object())
+        await pilot.pause()
+        assert not row.display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@_SIZES
+async def test_provider_help_counts_configured_providers_whole(request, size):
+    """Captures 01 and 03 (fix 5): "configured: Anthropic, Azure OpenAI +1 ·…"
+    was cut at 211, and its whole form at 235, "+1 · 57 more", read as one
+    more configured provider and then 57 more providers."""
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "m-1"}
+    app.app_config["api_settings"] = {
+        provider: dict(_SAVED_KEY) for provider in ("openai", "anthropic", "azure")
+    }
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_providers(host, pilot)
+        help_text = _text(screen, "#settings-provider-search-status")
+        total = sum(
+            len(group.options)
+            for group in screen._provider_picker_groups()
+            if group.group_id not in {"actions", "saved"}
+        )
+
+        assert help_text == f"3 of {total} configured · listed first"
+        painted = _region_rows(screen, screen.query_one("#settings-provider-row"))[0]
+        assert help_text in painted, painted
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@_SIZES
+@pytest.mark.parametrize("state", ["saved", "missing", "subscription"])
+async def test_api_key_placeholder_is_painted_whole(request, monkeypatch, size, state):
+    """Captures 01, 01b and 01c (fix 6): the saved-key placeholder was cut to
+    "Local config key saved;" at both sizes."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "anthropic", "model": "m-1"}
+    anthropic = dict(_SAVED_KEY) if state == "saved" else {}
+    if state == "subscription":
+        anthropic["auth_source"] = "claude_subscription"
+    app.app_config["api_settings"] = {"anthropic": anthropic}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_providers(host, pilot)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+
+        assert api_key.placeholder
+        assert len(api_key.placeholder) <= api_key.content_region.width
+        assert api_key.placeholder in _region_rows(screen, api_key)[0]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@_SIZES
+async def test_sign_in_with_is_one_row_with_a_source_word_and_help(request, size):
+    """Capture 01b (fix 7): Sign in with had no Source word, and its help
+    took a second row even at 235. Its long copy is the Inspector's now."""
+    from tldw_chatbook.UI.Screens.settings_screen import (
+        ANTHROPIC_API_KEY_GUIDANCE_COPY,
+        ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY,
+    )
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "anthropic", "model": "m-1"}
+    app.app_config["api_settings"] = {"anthropic": dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_providers(host, pilot)
+        row = screen.query_one("#settings-provider-auth-source-row")
+        selector = screen.query_one("#settings-provider-auth-source", Select)
+        help_line = screen.query_one("#settings-provider-auth-source-guidance", Static)
+
+        assert row.region.height == 1
+        assert help_line.parent is row
+        assert screen.query_one("#settings-provider-api-key-row").region.y == (
+            row.region.bottom
+        )
+        assert _text(screen, "#settings-provider-auth-source-word") == "built-in"
+        assert _text(screen, "#settings-provider-auth-source-guidance") == (
+            "bills API credits through your key"
+        )
+        assert "bills API credits through your key" in _region_rows(screen, row)[0]
+
+        selector.focus()
+        await pilot.pause()
+        assert _text(screen, "#settings-provider-field-guide-0") == (
+            "Focused setting: Sign in with"
+        )
+        assert _squeezed(_text(screen, "#settings-provider-field-guide-1")) == (
+            _squeezed(f"Purpose: {ANTHROPIC_API_KEY_GUIDANCE_COPY}")
+        )
+
+        selector.value = "claude_subscription"
+        screen.handle_provider_auth_source_changed(
+            Select.Changed(selector, "claude_subscription")
+        )
+        await pilot.pause()
+        assert row.region.height == 1
+        assert _text(screen, "#settings-provider-auth-source-word") == "edited *"
+        help_text = "bills your Claude plan, not API credits"
+        assert _text(screen, "#settings-provider-auth-source-guidance") == help_text
+        assert help_text in _region_rows(screen, row)[0]
+        # The Inspector folds the long credential path at its separators.
+        assert _squeezed(_text(screen, "#settings-provider-field-guide-1")) == (
+            _squeezed(f"Purpose: {ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY}")
+        )

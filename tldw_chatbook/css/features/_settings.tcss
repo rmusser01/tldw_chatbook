@@ -501,6 +501,7 @@ Button.settings-category-group-toggle:focus {
 #settings-provider-api-mode,
 #settings-provider-credential-env-var,
 #settings-provider-endpoint-value,
+#settings-openai-reconnect-review,
 #settings-model-picker {
     width: $ds-fr-2;
     min-width: $ds-size-24;
@@ -688,6 +689,13 @@ Button.settings-category-group-toggle:focus {
     height: $ds-control-height-compact;
     min-height: $ds-control-height-compact;
     margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+}
+
+/* Capture fix 3: Review is the restored-connection row's control, in the
+   Connect control column, so its Source word lines up with the others. */
+#settings-openai-reconnect-review {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
 }
 
 /* The list under the Provider control never takes focus (one Tab stop), so
