@@ -47,6 +47,11 @@ SENT_DRAFT_KEPT_IN = (
     "it because the draft changed while sending. Clear or edit it before you "
     "send again."
 )
+#: A press refused because a message held in another tab is being sent.
+REFUSED_FOR_OTHER_CHAT = (
+    "Not sent: your message in “{chat}” is still being sent. This text stays "
+    "in the composer; send it again in a moment."
+)
 #: How much of a chat's title a notice names.
 _LABEL_CHARACTERS = 60
 
@@ -141,6 +146,12 @@ def superseded(screen: Any, session_id: str, stash: ConsoleDraftStash | None) ->
     if composer is None or screen._console_visible_draft_session_id != session_id:
         return False
     return capture_superseded(composer, stash)
+
+
+def refused_for(screen: Any, session_id: str) -> str:
+    """The refusal copy naming the tab whose held message is being sent."""
+    store = screen._ensure_console_chat_store()
+    return REFUSED_FOR_OTHER_CHAT.format(chat=chat_label(store, session_id))
 
 
 def take_out_sent_draft(

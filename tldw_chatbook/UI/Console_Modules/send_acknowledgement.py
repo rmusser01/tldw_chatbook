@@ -58,7 +58,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     blocked_turn_reason,
 )
-from tldw_chatbook.UI.Console_Modules.sent_draft import superseded
+from tldw_chatbook.UI.Console_Modules.sent_draft import (
+    refused_for,
+    superseded,
+)
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ConsoleDraftStash,
     classify_console_raw_draft,
@@ -550,7 +553,10 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
         return
     still_shows_running = running is not None and running.generation == stash.generation
     if held is not None or still_shows_running:
-        screen.app_instance.notify(DEFERRED_PRESS_REFUSED, severity="warning")
+        text = DEFERRED_PRESS_REFUSED
+        if held is not None and held.session_id != request.session_id:
+            text = refused_for(screen, held.session_id)  # Name the other tab.
+        screen.app_instance.notify(text, severity="warning")
         return
     if _record_draft(screen, request):
         flight.deferred = request

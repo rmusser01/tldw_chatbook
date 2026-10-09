@@ -99,6 +99,7 @@ class ConsoleHooksController:
         start_worker: (
             Callable[[Coroutine[Any, Any, ConsolePromptDispatchResult]], object] | None
         ) = None,
+        session_label: Callable[[str], str] | None = None,
     ) -> None:
         """Wire the controller to its owners.
 
@@ -108,6 +109,8 @@ class ConsoleHooksController:
                 worker hands its review to it instead of awaiting the review
                 itself (TASK-33621.28). ``None`` keeps every review inline,
                 for callers that own their own task.
+            session_label: Names a chat for the "already in progress"
+                refusal when the busy Send is another tab's (TASK-33620.15.2).
         """
         self._permissions = hook_permissions_accessor
         self._review = request_review
@@ -116,8 +119,11 @@ class ConsoleHooksController:
         self._on_state = on_state
         self._notify = notify
         self._start_worker = start_worker
+        self._session_label = session_label
         self._generation = 0
         self._busy = False
+        #: The chat whose Send holds ``_busy``; ``None`` for a plain review.
+        self._busy_session: str | None = None
         self.review_open = False
 
     async def _request_review(self, snapshot, waiting):
@@ -145,7 +151,7 @@ class ConsoleHooksController:
     async def review_current(self) -> None:
         if self._busy:
             return
-        self._busy = True
+        self._busy, self._busy_session = True, None
         try:
             snapshot = await asyncio.to_thread(self._permissions().snapshot)
             self._on_state(snapshot)
@@ -175,10 +181,8 @@ class ConsoleHooksController:
         settled outcome. ``in_worker_task`` decides which, by task identity.
         """
         if self._busy:
-            return self._refused(
-                session_id, "Hook review or Send is already in progress."
-            )
-        self._busy = True
+            return self._refused(session_id, self._busy_copy(session_id))
+        self._busy, self._busy_session = True, session_id
         self._generation += 1
         generation = self._generation
         owns_busy = True
@@ -265,6 +269,14 @@ class ConsoleHooksController:
         # The captured continuation is consumed before the normal dispatcher awaits.
         self._generation += 1
         return await dispatch()
+
+    def _busy_copy(self, session_id: str) -> str:
+        """The "already in progress" refusal, naming another tab's busy Send."""
+        busy = self._busy_session
+        if busy is None or busy == session_id or self._session_label is None:
+            return "Hook review or Send is already in progress."
+        label = self._session_label(busy)
+        return f"Hook review or Send is already in progress in “{label}”."
 
     def _refused(self, session_id: str, detail: str) -> ConsolePromptDispatchResult:
         self._notify(detail, "warning")

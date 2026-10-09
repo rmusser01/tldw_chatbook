@@ -390,6 +390,12 @@ def _commit_sent_console_draft(screen: Any, session_id: str, stash: Any) -> None
     screen._start_console_transcript_sync_timer()
 
 
+def _console_chat_label(screen: Any, session_id: str) -> str:
+    from .sent_draft import chat_label
+
+    return chat_label(screen._ensure_console_chat_store(), session_id)
+
+
 def _load_console_turn_recovery(screen: Any, session_id: str) -> None:
     """Load a restored draft into its matching active composer."""
 
@@ -2495,6 +2501,7 @@ def build_console_controllers(
         start_worker=lambda continuation: screen.run_worker(
             continuation, group="console-hook-send-review"
         ),
+        session_label=lambda session_id: _console_chat_label(screen, session_id),
     )
     screen._review_selection = ConsoleReviewSelectionController(
         store_accessor=lambda: screen._ensure_console_chat_store(),

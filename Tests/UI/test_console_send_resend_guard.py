@@ -337,3 +337,87 @@ async def test_enter_after_a_tab_round_trip_during_admission_sends_the_draft_onc
                 assert composer.draft_text() == ""
                 assert not told, notices
                 assert store.session_draft(session_b) == B_DRAFT
+
+
+@pytest.mark.asyncio
+async def test_a_press_refused_for_a_send_held_in_another_tab_names_that_tab():
+    """AC#3: the refusal says which tab's message is still being sent.
+
+    A press held in tab A (its first send still running), then Enter in tab
+    B: B's press is refused with "your previous message is still being sent"
+    although B sent nothing before. The notice now names tab A.
+    """
+    host, gateway, _timeline = build()
+    _allow_second_turns(host)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            session_a, session_b = await _second_tab(console, pilot, ready=True)
+            store = console._ensure_console_chat_store()
+            store.rename_session(session_a, "Alpha plans")
+            notices = _record_notices(host)
+            tail = _hold_first_send_tail(console)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(lambda: composer.draft_text() == "", timeout=ENTRY_SECONDS)
+                press(host, "y", "y")
+                press(host, "enter", "\r")
+                await until(lambda: _held(console), timeout=10)
+                press(host, "alt+2")
+                await until(
+                    lambda: console._console_visible_draft_session_id == session_b
+                )
+                await until(lambda: composer.draft_text() == B_DRAFT)
+                press(host, "enter", "\r")
+                await until(lambda: any("still being sent" in n for n in notices))
+                await until(lambda: _turns_done(console, session_a, 1))
+            finally:
+                tail.set()
+            await _idle(host, console, pilot, session_a)
+            refusals = [n for n in notices if "still being sent" in n]
+            assert refusals and all("Alpha plans" in n for n in refusals), refusals
+            assert _sent_or_queued(console, session_b) == []
+            assert (
+                store.session_draft(session_b) == B_DRAFT
+                or composer.draft_text() == B_DRAFT
+            )
+
+
+@pytest.mark.asyncio
+async def test_a_send_refused_while_another_tab_sends_names_that_tab():
+    """AC#3: the Send gate's "already in progress" names the busy tab.
+
+    A spoken send in tab A is being admitted (it holds the Send gate), then
+    Alt+2 and Enter in tab B: B's send was refused with "Hook review or Send
+    is already in progress." although nothing was in progress in B.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            session_a, session_b = await _second_tab(console, pilot, ready=True)
+            store = console._ensure_console_chat_store()
+            store.rename_session(session_a, "Alpha plans")
+            notices = _record_notices(host)
+            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            gateway.validation_release.set()
+            try:
+                _speak_send(console, session_a)
+                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                press(host, "alt+2")
+                await until(
+                    lambda: console._console_visible_draft_session_id == session_b
+                )
+                await until(lambda: composer.draft_text() == B_DRAFT)
+                press(host, "enter", "\r")
+                await until(lambda: any("already in progress" in n for n in notices))
+            finally:
+                hold.release.set()
+            await until(lambda: gateway.stream_calls == 1)
+            await _idle(host, console, pilot, session_a)
+            refusals = [n for n in notices if "already in progress" in n]
+            assert refusals and all("Alpha plans" in n for n in refusals), refusals
+            assert _sent_or_queued(console, session_a) == [DRAFT]
+            assert _sent_or_queued(console, session_b) == []
+            assert composer.draft_text() == B_DRAFT
