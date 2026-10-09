@@ -17,6 +17,12 @@ A reveal is now far once it would mount more than one load-shaped window
 selection the kept window already holds is bounded the same way when more
 than one window lands below it -- the rows an Undo restores under its root.
 
+The bound needs two-sided windowing (``ConsoleTranscript._two_sided_active``:
+windowing and pruning both on, with sane watermarks). With the windowing
+kill switch on, the whole history mounts anyway. With pruning off or
+degenerate watermarks, every reveal is near: it mounts each row between the
+window and the target, as before this task.
+
 The functions take the transcript and use only its window primitives, so
 ``console_transcript.py`` imports this module lazily and boot pays nothing.
 """
