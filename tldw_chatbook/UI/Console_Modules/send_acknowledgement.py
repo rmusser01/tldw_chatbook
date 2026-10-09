@@ -58,6 +58,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     blocked_turn_reason,
 )
+from tldw_chatbook.UI.Console_Modules.sent_draft import superseded
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
     ConsoleDraftStash,
     classify_console_raw_draft,
@@ -406,6 +407,11 @@ def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
 
     async def observed_send() -> bool:
         try:
+            if superseded(screen, pending_send.session_id, pending_send.stash):
+                # Another send took this draft meanwhile (TASK-33620.15.2).
+                if screen._console_pending_send is pending_send:
+                    screen._console_pending_send = None
+                return False
             with ack.dispatching(token):
                 return await send()
         finally:
@@ -524,7 +530,8 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
     "Press Enter again to send as text" leaves it in the composer. While the
     composer still shows a capture, a press with new text cannot be told
     apart from it, so it is refused with a notice and its text stays. Only
-    one press is held at a time, so it is never overwritten.
+    one press is held at a time, so it is never overwritten; a held press
+    that can no longer be sent is discarded first.
     """
     stash = request.stash
     if stash is None:  # Nothing typed: only a staged image is worth sending.
@@ -533,8 +540,8 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
             flight.deferred = request
         return
     held = flight.deferred
-    if held is not None and held.repeat and not _still_shown(screen, held.stash):
-        held = flight.deferred = None  # Its draft was sent: nothing to repeat.
+    if held is not None and not _replayable(screen, held):
+        held = flight.deferred = None  # Its draft was sent or replaced.
     if held is not None and _same(held.stash, stash):
         return
     running = flight.running
@@ -547,6 +554,12 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
         return
     if _record_draft(screen, request):
         flight.deferred = request
+
+
+def _replayable(screen: Any, request: _Request) -> bool:
+    if request.repeat:
+        return _still_shown(screen, request.stash)
+    return not superseded(screen, request.session_id, request.stash)
 
 
 def _same(held: ConsoleDraftStash | None, stash: ConsoleDraftStash) -> bool:
@@ -590,6 +603,8 @@ def _replay(screen: Any, flight: _SendFlight) -> None:
         return
     if request.repeat and not _still_shown(screen, request.stash):
         return  # The send it repeats committed (sent) that draft.
+    if superseded(screen, request.session_id, request.stash):
+        return  # Another send took its draft meanwhile (TASK-33620.15.2).
     _schedule(screen, flight, request)
 
 

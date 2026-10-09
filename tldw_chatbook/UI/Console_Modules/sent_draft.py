@@ -18,6 +18,10 @@ by the time a send commits its capture the draft can have changed under it:
   it, and it came back when the user returned. It now comes off that saved
   draft, with anything typed after it kept.
 
+A capture another send has already committed, or that a retire or a new
+draft replaced, is superseded (``capture_superseded``): a press holding it
+is dropped instead of sending the same text twice.
+
 Imported on the first send only, so it adds nothing to the ADR-097 boot
 census.
 """
@@ -80,6 +84,27 @@ def _reloaded(composer: Any, stash: ConsoleDraftStash) -> bool:
     )
 
 
+def capture_superseded(composer: Any, stash: ConsoleDraftStash | None) -> bool:
+    """Whether ``stash`` no longer describes the composer's draft.
+
+    A commit, clear, retire or a different draft moved the draft generation
+    on; a reload with nothing typed did not supersede it. An edit within the
+    same generation does not either: under the lead ruling the capture is
+    still what its press sends.
+
+    Args:
+        composer: The Console composer, showing the capture's chat.
+        stash: A press's capture; ``None`` (nothing typed) is never stale.
+
+    Returns:
+        True when sending ``stash`` could repeat text that already left.
+    """
+    if stash is None:
+        return False
+    live = composer.capture_draft_snapshot()
+    return live.generation != stash.generation and not _reloaded(composer, stash)
+
+
 def commit_capture(composer: Any, stash: ConsoleDraftStash | None) -> bool:
     """Commit ``stash`` out of the composer, through a reload if need be.
 
@@ -96,6 +121,26 @@ def commit_capture(composer: Any, stash: ConsoleDraftStash | None) -> bool:
         return False
     live = composer.capture_draft_snapshot()
     return composer.commit_captured_draft(replace(stash, generation=live.generation))
+
+
+def superseded(screen: Any, session_id: str, stash: ConsoleDraftStash | None) -> bool:
+    """Whether a press's capture can no longer be sent: its draft already left.
+
+    Judged only while the capture's chat is on screen; elsewhere the send's
+    own chat check refuses it.
+
+    Args:
+        screen: The Console ``ChatScreen``.
+        session_id: The chat the press was made in.
+        stash: The press's capture.
+
+    Returns:
+        True when another send took the draft, or a new draft replaced it.
+    """
+    composer = screen._console_composer_or_none()
+    if composer is None or screen._console_visible_draft_session_id != session_id:
+        return False
+    return capture_superseded(composer, stash)
 
 
 def take_out_sent_draft(
