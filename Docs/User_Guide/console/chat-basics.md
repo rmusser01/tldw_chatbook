@@ -398,8 +398,7 @@ statistics tools.
   with **Restore**.
   Slash commands, typed `! ` commands, Enter during a run (which queues) and
   a send behind a **Blocked** turn (which is refused) skip this step.
-- Console stays responsive while it prepares the turn and while the reply
-  sets up its tools before the provider is called. Enter sends exactly
+- Console stays responsive while it prepares the turn. Enter sends exactly
   what the composer held when you pressed it; anything you type afterwards
   stays in the composer for your next message. An Enter on an empty composer
   sends nothing but a staged image, even if you start typing right after it.

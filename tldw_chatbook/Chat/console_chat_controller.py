@@ -15689,10 +15689,10 @@ class ConsoleChatController:
 
         MUST be awaited on the real Textual main loop (``_run_agent_reply``,
         BEFORE the bridge's own ``asyncio.to_thread``): the provider is bound
-        to that loop for tool calls. TASK-33620.15.1: the kill-switch and
-        catalog reads run in one worker hop at this point
-        (``console_run_start_tools``), fresh, so the loop keeps taking input;
-        ``local_kill_switch`` also gets the local tools' read there.
+        to that loop for tool calls. TASK-33620.15.1: one kill-switch read
+        decides MCP and local tools (``local_kill_switch``), and a catalog is
+        reused while nothing it was composed from has changed
+        (``console_run_start_tools``).
 
         TASK-632: returns the provider ALONE. It used to also build and
         return a per-run `build_mcp_review_hook` closure, but TASK-545's
@@ -15774,12 +15774,12 @@ class ConsoleChatController:
             maximum_tool_ids=maximum_tool_ids,
             maximum_definition_hashes=maximum_definition_hashes,
         )
-        # TASK-33620.15.1: the kill switch and catalog reads stay at this
-        # point, fresh, in one worker hop; ``None`` = switched off or failed.
+        # TASK-33620.15.1: composed here, on the loop, or reused while nothing
+        # it read has changed; ``None`` = switched off or a read failed.
         from .console_run_start_tools import compose_run_mcp_provider
 
-        provider = await asyncio.to_thread(
-            compose_run_mcp_provider, service, uncomposed, local_kill_switch
+        provider = await compose_run_mcp_provider(
+            service, uncomposed, local_kill_switch
         )
         if provider is None:
             publish(None, None)
@@ -15905,7 +15905,7 @@ class ConsoleChatController:
             mcp_profile_kwargs["plugin_maximum"] = turn_context.skill_context_maximum
         from .console_run_start_tools import LocalKillSwitchRead
 
-        local_kill_switch = LocalKillSwitchRead()  # read in the MCP hop
+        local_kill_switch = LocalKillSwitchRead()  # decided with MCP's
         mcp_provider = await self._compose_mcp_provider(
             session_id,
             publish_counts=publish_mcp_counts,
@@ -26997,10 +26997,10 @@ class ConsoleChatController:
         # left a slow discovery rendering a blank row (Qodo #6 on PR #2586).
         async with self._pre_provider_setup_phase(work_conversation_id):
             # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
-            # bound to the running main loop, BEFORE the bridge is dispatched
-            # onto asyncio.to_thread below (TASK-33620.15.1: its reads run in
-            # one worker hop at this point -- `_compose_mcp_provider`).
-            # `(None, None)` (no service, kill switch
+            # on the running main loop, BEFORE the bridge is dispatched onto
+            # asyncio.to_thread below -- see `_compose_mcp_provider`'s own
+            # docstring for why `compose_catalog()`'s async I/O can never run
+            # from the worker thread. `(None, None)` (no service, kill switch
             # on, or nothing composed) leaves the bridge's MCP-free path
             # byte-identical to before this task.
             #
