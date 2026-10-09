@@ -165,6 +165,27 @@ both real-profile fingerprints were unchanged.
   - Applies to reads "new chats; open chat “Chat 1” keeps OpenAI · gpt-5.6-terra." on
     one line.
 
+### Context window re-take (08, 08b, 08c; item 12)
+
+Taken 2026-10-09 at branch `p7cf-c` on `f7faf18906` in its own tmux server
+(`-L capC33007`), under the same isolation as above (`env -i`, scratch `HOME`,
+`XDG_*` and `TLDW_CONFIG_PATH`, null keyring, fake keys) with the OpenAI /
+`gpt-5.6-terra` profile. No provider was contacted and nothing was saved: the
+only key that differed afterwards was `console.rail_state`. The real profile
+hashes were unchanged (`15c6cb224a6a51c7`, `db7e7faf5bff92d2`).
+
+- `08-chat-settings-context`, **Ctrl+O**. The MODEL row reads "Ready · not
+  tested · context unknown", and Request estimate "0 / 32,000 tokens (assumed;
+  window unknown)". The ▼ of Streaming, Reasoning effort, Reasoning summary
+  and Verbosity sit in one column, and so do all six Source words.
+- `08b-chat-settings-context-view`, a click on **Context and memory**. Model
+  window reads "unknown, 32,000 assumed" and the note "Context window unknown;
+  budgets use the assumed size. Enter the model's documented limit in F4
+  Settings > Providers & Models." Every Select's ▼ is in one column.
+- `08c-advanced-context-window`, **Esc**, then Providers & Models as above.
+  The closed title reads "Context window · unknown, 32,000 assumed · enter
+  the model's documented limit".
+
 ## Review notes (what looks wrong at full screen)
 
 1. **Azure Endpoint row contradicts the Key check** (`01c`). With no base URL, the row
@@ -228,6 +249,14 @@ both real-profile fingerprints were unchanged.
     column, and its prose wraps to two lines. **Reset to detected** is disabled (it is
     dimmed in the `.ansi.txt`), but it still takes a row and still offers "detected"
     when the title says the window is unknown.
+12. **Fixed** (`08`, `08b`, `08c`). (a) Chat settings said "~32k context" for
+    `gpt-5.6-terra` while Settings ▸ Advanced said "unknown". Both now read the
+    one resolver (`resolve_context_window`), and a fallback is "unknown" with the
+    size assumed on both. Settings used to drop the provider fallbacks and
+    OpenRouter's upstream; it now reads them too. (b) The Chat settings Selects
+    were 8, 12 and 13 columns wide, so their ▼ stepped down the column. Each view
+    now has one width: 13 in the Model view (numbers included, which also lines
+    up the Source words) and 32 in the Context view.
 
 ## Re-taken captures (p7cf-b, items 9-11)
 
