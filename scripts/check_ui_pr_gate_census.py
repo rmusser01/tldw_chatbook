@@ -178,7 +178,16 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # external-edit conflict, `n` inside Find, the server-item refusal, the
 # untouched-blank GC, the vetoed title, Back at 100x30, 120x36) stay in
 # test_library_rail_switch_keeps_reader_and_note_extended.py, outside the lane.
-MINIMUM_FILES = 159
+# TASK-34000.21 (2026-10-09) raised it to 160:
+# Tests/UI/test_library_rag_answer_names_model.py -- before Run the quiet
+# line names the persisted provider AND model (`To openai · gpt-4.1-mini:
+# question + evidence`) at 170x48 and 80x24, Enter sends exactly that pair
+# to the chat seam, the footer reports the same model back, and an
+# Anthropic `[chat_defaults]` bills anthropic / claude-haiku-4-5 with the
+# in-flight line agreeing; 3 tests, about 13 s locally. The long-model arm
+# (a 60-character name at 80x24 stays one row and keeps the recipient) is
+# in test_library_rag_answer_names_model_extended.py, outside the lane.
+MINIMUM_FILES = 160
 
 
 def read_census(path: Path) -> list[str]:

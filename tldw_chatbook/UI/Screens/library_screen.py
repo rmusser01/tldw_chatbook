@@ -14913,6 +14913,10 @@ class LibraryScreen(BaseAppScreen):
             # Search mode never calls a provider and stays unaffected
             # regardless of this value.
             provider_name=provider_gate.provider,
+            # TASK-34000.21: the persisted `[chat_defaults]` model rides the
+            # same gate, so the quiet line names the model that will be
+            # billed, not just the provider.
+            provider_model=provider_gate.model,
             provider_credential_recovery=provider_gate.credential_recovery,
             selected_source_types=selected_source_types,
             history=self._rag_search_state.history,

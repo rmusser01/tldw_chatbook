@@ -3939,6 +3939,18 @@ Input.library-media-speaker-input:focus {
     color: $ds-text-muted;
 }
 
+/* TASK-34000.21: the query row's reserved quiet line now names the model
+ * that will be billed ("To openai · gpt-4.1-mini: question + evidence").
+ * The row is one cell high (`h-1`), so a sentence wider than the panel --
+ * a real `claude-sonnet-4-5-20250929` at 80 columns, not only a contrived
+ * name -- used to word-wrap onto a clipped second row, leaving the user
+ * with "To openai ·" and no model at all. Clip on one row with an ellipsis
+ * instead: the recipient and the start of the model stay readable. */
+#library-rag-query-quiet-line {
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
 .library-rag-empty-guidance {
     margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
     padding: $ds-space-0 $ds-space-1;

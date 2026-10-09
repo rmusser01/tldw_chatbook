@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation        Collapse     ││  To openai · gpt-4.1-mini: question + evidence                                                                         │ │
+│ │     Import…                    ││                                                                                                                        │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ ││        Run                                                                                                             │ │
+│ │ ▊ pter 2 history section  ▎▊x▎ ││                                                                                                                        │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ ││                                                                                                                      ▄ │ │
+│ │                                ││ Sources                                                                                                                │ │
+│ │ ────────────────────────────── ││  Scope: all local sources                                                                                              │ │
+│ │ Browse                     ▾   ││   ☑ Notes (122)                                                                                                        │ │
+│ │    Media (23) — your files     ││                                                                                                                        │ │
+│ │    Conversations (0)           ││                                                                                                                        │ │
+│ │    Notes (122)                 ││   ☑ Media (23)                                                                                                         │ │
+│ │    Prompts (0) — reuse         ││                                                                                                                        │ │
+│ │    Skills (1) — AI add-ons     ││                                                                                                                        │ │
+│ │    Collections (0)             ││   ☐ Conversations (0)                                                                                                  │ │
+│ │  ▸ Search / RAG — find all     ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Artifacts                  ▾   ││   ☐ Prompts (0)                                                                                                        │ │
+│ │    All artifacts               ││                                                                                                                        │ │
+│ │    Chatbooks                   ││                                                                                                                        │ │
+│ │    Reports                     ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││ Answer                                                                                                                 │ │
+│ │ Create                     ▾   ││                                                                                                                        │ │
+│ │    New note                    ││  Chapter 2 is considered too broad, so the history section should be cut from it according to the advisor meeting      │ │
+│ │    New prompt                  ││  notes [S1].                                                                                                           │ │
+│ │    New skill                   ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                      ▇ │ │
+│ │ Study                      ▾   ││  Citations resolve to staged evidence.                                                                                 │ │
+│ │    Study decks (0)             ││                                                                                                                        │ │
+│ │    Flashcards due: 0           ││ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ │
+│ │    Quizzes (0)                 ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││  openai · gpt-4.1-mini-2025-04-14 · $0.0003 (666 tok)                                                                  │ │
+│ │ Import / Export            ▾   ││                                                                                                                        │ │
+│ │    Import…                     ││                                                                                                                        │ │
+│ │    Export                      ││ Evidence · top 15                                                                                                      │ │
+│ │ ────────────────────────────── ││  1 result for 'Advisor meeting chapter 2 history section'.                                                             │ │
+│ │ Details                    ▸   ││                                                                                                                        │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc leave field | after esc: u use Library context in Console · o open evidence · / focus search | F1 · F6 · Ctrl+P · Ctrl+Q

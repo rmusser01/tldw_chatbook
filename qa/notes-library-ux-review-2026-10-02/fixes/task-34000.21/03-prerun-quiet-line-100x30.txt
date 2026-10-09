@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────┐Search / RAG
+│ Na…    Collapse      │  mode: Search ⇄ ✓ RAG Answer
+│     Import…          │
+│ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │
+│ ▊ Advisor meet ▎▊x▎  │┌─────────────────────────────────────────────────────────────────────────┐
+│ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  ││  Advisor meeting chapter 2 history section                              │
+│                      │└─────────────────────────────────────────────────────────────────────────┘
+│ ───────────────────  │
+│ Browse          ▾    │ To openai · gpt-4.1-mini: question + evidence
+│    Media (23)        │
+│    Chats (0)         │       Run
+│    Notes (122)       │
+│    Prompts (0)       │                                                                           ▄
+│    Skills (1)        │Sources
+│    Collections (0)   │ Scope: all local sources
+│  ▸ Search / RAG    ▅ │  ☑ Notes (122)
+│ ───────────────────  │
+│ Artifacts       ▾    │
+│    All artifacts     │  ☑ Media (23)
+│    Chatbooks         │
+│    Reports           │
+│ ───────────────────  │  ☐ Conversations (0)
+│ Create          ▾    │
+│  ▾ scroll for        │
+└──────────────────────┘  ☐ Prompts (0)
+  typing in field | esc leave field | F1 · F6 · Ctrl+P · Ctrl+Q

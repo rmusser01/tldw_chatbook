@@ -932,7 +932,13 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: owner decision: the Reader's Note action titles an untitled document
     #: with the source line's own `MEDIA_SOURCE_UNTITLED_TITLE` (one import
     #: line, one two-line comment). No new method.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36968, 1343),
+    #: 2026-10-09, TASK-34000.21: 36968 -> 36972 (+4), same owner decision
+    #: (2026-10-04: raise the row to the measured value rather than move
+    #: unrelated code to fit): the panel-state builder forwards the gate's
+    #: model (`provider_model=provider_gate.model`, one kwarg and a
+    #: three-line comment) so the quiet line names the model that will be
+    #: billed. No new method.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36972, 1343),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

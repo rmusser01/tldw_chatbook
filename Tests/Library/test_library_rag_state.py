@@ -366,8 +366,21 @@ def test_provider_ready_parameter_no_longer_exists() -> None:
         )
 
 
-def test_library_rag_paid_mode_notice_names_the_provider() -> None:
-    assert library_rag_paid_mode_notice("openai") == "To openai: question + evidence"
+def test_library_rag_paid_mode_notice_names_the_provider_and_model() -> None:
+    """TASK-34000.21: the model is named before Run, with the footer's own
+    `·` joiner; with none resolvable the line says so rather than naming
+    one it cannot know."""
+    assert (
+        library_rag_paid_mode_notice("openai", "gpt-4.1-mini")
+        == "To openai · gpt-4.1-mini: question + evidence"
+    )
+    assert (
+        library_rag_paid_mode_notice("openai")
+        == "To openai · its default model: question + evidence"
+    )
+    assert library_rag_paid_mode_notice("openai", "  ") == library_rag_paid_mode_notice(
+        "openai"
+    )
 
 
 def test_panel_state_threads_provider_name_into_query_state() -> None:

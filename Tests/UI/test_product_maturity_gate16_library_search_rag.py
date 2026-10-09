@@ -57,12 +57,22 @@ def _ready_library_rag_provider(monkeypatch):
     settings (never a hand-built stand-in, so the rest of app boot still
     sees the genuine config shape) rather than requiring every test to opt
     in individually.
+
+    TASK-34000.21: the resolver now reads the persisted `[chat_defaults]`
+    pair first, and a bare sandbox config carries the loader's own default
+    (`OpenAI` / `gpt-5.6-terra`), so the pair is pinned here too -- every
+    importer's quiet line reads `To openai · gpt-4.1-mini: question +
+    evidence`, the same config the live harness writes.
     """
     monkeypatch.setattr(app_config, "default_api_endpoint", "openai", raising=False)
     real_load_settings = app_config.load_settings
 
     def _load_settings_with_ready_openai_key(*args, **kwargs):
         settings = dict(real_load_settings(*args, **kwargs))
+        chat_defaults = dict(settings.get("chat_defaults") or {})
+        chat_defaults["provider"] = "OpenAI"
+        chat_defaults["model"] = "gpt-4.1-mini"
+        settings["chat_defaults"] = chat_defaults
         api_settings = dict(settings.get("api_settings") or {})
         openai_settings = dict(api_settings.get("openai") or {})
         openai_settings["api_key"] = "sk-test-gate16-ready-key"
@@ -471,13 +481,15 @@ def test_query_quiet_line_names_the_paid_provider_when_rag_mode_is_ready() -> No
         query="What changed?",
         mode="rag",
         provider_name="openai",
+        provider_model="gpt-4.1-mini",
     )
     quiet_line = next(
         child
         for child in library_rag_query_status_children(state)
         if child.id == "library-rag-query-quiet-line"
     )
-    assert str(quiet_line.renderable) == "To openai: question + evidence"
+    # TASK-34000.21: the model is named too, before Run.
+    assert str(quiet_line.renderable) == "To openai · gpt-4.1-mini: question + evidence"
 
 
 def test_query_quiet_line_stays_empty_in_search_mode() -> None:

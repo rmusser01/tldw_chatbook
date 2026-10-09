@@ -54,6 +54,11 @@ FAST_LANE_TARGETS = (
     # carrying its time. About 6 s together; nothing else gated them.
     "Tests/Library/test_library_file_export.py",
     "Tests/Architecture/test_notes_sync_snapshot_construction.py",
+    # TASK-34000.21: Library RAG Answer resolves the persisted
+    # `[chat_defaults]` provider AND model (never borrowing one across
+    # providers), names both on the line above Run, and the scheduled
+    # fallback takes the same pair; pure, about a second.
+    "Tests/Library/test_library_rag_answer_provider_resolution.py",
     # TASK-34000.25: the ``[<title>](media://<uuid>)`` source line a note
     # takes from a Media item is pure and refuses anything but a uuid
     # (under a second).

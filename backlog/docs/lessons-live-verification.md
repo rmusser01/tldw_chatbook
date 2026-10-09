@@ -814,6 +814,16 @@ A live credential pasted into a session is a real secret. Keep it in an env var 
 run; never write it to a config file that could be committed; and before committing,
 confirm `git diff | grep -c "<key-fragment>"` is `0`. Advise rotation afterwards.
 
+**Grep the key's own first characters, never the prefix family (TASK-34000.21,
+2026-10-09).** A `grep -c "sk-"` over an isolated run's app log reported 18 hits and
+was read as a leaked OpenAI key for a full investigation round. All 18 were the
+worktree path: `task-34000-clarify` contains `sk-`. The rule above already says
+"key-fragment" for this reason -- read the first 6-12 characters of the key file into
+a shell variable (`K=$(head -c12 <key-file>)`, never echoed) and count THAT, and when
+a pattern must stand in for the key, shape it like one (`sk-(ant-)?[A-Za-z0-9_-]{20,}`)
+so a path or a task id cannot match. A false positive here costs as much time as a
+real leak, and a check that cries wolf is one that gets skipped next time.
+
 ---
 
 ## Validate the multimodal fixture before blaming the request path (2026-08-21)
