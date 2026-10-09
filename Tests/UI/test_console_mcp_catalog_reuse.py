@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import os
 import sys
 from types import SimpleNamespace
 
@@ -405,22 +406,38 @@ async def test_an_admission_change_during_composition_is_never_reused(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_a_composition_over_a_just_written_store_is_not_reused():
-    """A store file changed under two seconds ago is read again next run.
+async def test_a_composition_over_a_just_written_store_is_not_reused(monkeypatch):
+    """A store file changed under ``SETTLE_NS`` before run start is read again next run.
 
     Storage admission trusts file stamps only once a change has settled; the
-    reuse check keeps that rule, so a same-tick second write cannot hide.
+    reuse check keeps that rule, so a same-tick second write cannot hide. The
+    rule's clock is set from the store files' own change times rather than
+    slept towards, so a loaded runner cannot carry a run start past it.
     """
+    try:
+        from tldw_chatbook.Chat import console_run_start_tools as tools
+    except ImportError:  # the base build: no reuse, so nothing to clock
+        tools = None
+    settle = getattr(tools, "SETTLE_NS", 2_000_000_000)
+    clock = {"ns": 0}
+    if tools is not None:
+        monkeypatch.setattr(tools, "time", SimpleNamespace(time_ns=lambda: clock["ns"]))
+
+    def after_last_store_change(c: _Console, delay_ns: int) -> None:
+        paths = (c.service.permission_store.path, c.service.local_service.store.path)
+        changed = [os.stat(path).st_ctime_ns for path in paths if os.path.exists(path)]
+        clock["ns"] = max(changed, default=0) + delay_ns
 
     async def check(c: _Console) -> None:
-        await asyncio.sleep(2.2)
+        after_last_store_change(c, 2 * settle)
         first, *_ = await _run_start(c.console)
         await _reused(c.console, c.reads)
         _name, (tool, _state) = next(iter(first._entry_by_llm_name.items()))
         c.set_state(tool, "ask")
+        after_last_store_change(c, settle // 2)
         await _recomposed(c.console, c.reads)
         await _recomposed(c.console, c.reads)
-        await asyncio.sleep(2.2)
+        after_last_store_change(c, 2 * settle)
         await _recomposed(c.console, c.reads)
         await _reused(c.console, c.reads)
 
