@@ -479,9 +479,11 @@ works.
 **Autosave** runs about two seconds after you stop typing; the meta line
 flips to "saving…" and back to "saved". If you keep typing without a
 two-second pause, it still saves at least every ten seconds, so a long
-burst of steady typing is never held back until you stop. (A note in a synced
-folder can take up to three seconds longer, while the folder finishes syncing
-the previous save.) If an autosave is
+burst of steady typing is never held back until you stop. A note in a synced
+folder saves on the same timings: a save never waits for the folder's previous
+sync, and a save that lands while that sync is still writing the file settles
+on its own (see "Add from files and lasting sync" below: typing in a synced
+note never holds its folder). If an autosave is
 refused — a title with a leading or trailing space, unsafe markup, a
 duplicate keyword — or the write fails, the status line says why, and your
 cursor stays in the field you are typing in. Nothing jumps to another field
@@ -816,7 +818,13 @@ and the root's row says so — "⚠ Sync stopped · Next: Check changes" — ins
 of claiming to be up to date. (That one label still appears only on the next
 redraw — on opening **Manage sync folders**, or on returning to the Library:
 a runtime that has stopped publishes nothing, so a list you are already
-sitting on cannot learn it from a publication.) Until this the note side
+sitting on cannot learn it from a publication.) The same row also appears
+for one folder on its own when lasting sync is running but nothing is
+watching that folder — the fact is read each time the list is drawn, never
+remembered from the last status — and **Check changes** on that row starts
+watching it again; when watching resumes on its own (a backup finishing,
+say) the row returns to "✓ Up to date as of HH:MM" without a keypress
+(TASK-34000.50). Until this the note side
 produced no signal at all: Chatbook watches the folder, not the notes
 database, so a note you saved stayed in Notes only and its file kept its old
 bytes until something else touched the disk — with the row reading
@@ -826,7 +834,9 @@ A folder that is **held for attention** — a sync entry that could not be
 completed, a conflict or deletion waiting for your review, a failed pass — is
 not syncing in either direction until you act, and every Notes surface says so
 rather than only Manage sync folders (TASK-34000.2, review finding N-02): the
-folder's tree row reads "⚠ Needs attention" in place of "⇄ Sync managed", the
+folder's tree row reads "⚠ Needs attention" in place of "⇄ Sync managed" (and
+"⚠ Sync stopped" for a folder that is healthy but not being watched -- the same
+row Manage sync folders shows for it, TASK-34000.50), the
 list's idle status reads "Library notes · ⚠ A sync folder needs attention ·
 Next: Open Manage sync folders." in place of "Ready", and the editor of any
 note in that folder says "Saved HH:MM in Notes · ⚠ Sync needs attention" with
@@ -835,12 +845,22 @@ surfaces follow the folder as its state changes — a hold that a background pas
 produces while you sit idle (a disk edit colliding with a note edit, say)
 reaches them within a moment, without a keypress — and they return to the
 healthy wording the same way once the folder is resolved. Typing in a synced
-note can still, rarely, hold its folder: Chatbook saves the note while you
-type, and each save first waits up to three seconds for the folder's previous
-sync to finish, so on a folder slow enough to outlast that wait a save can
-land in the middle of a sync, and the folder is then held until you press
-**Recovery**, which loses nothing (TASK-34000.51 is to make that settle on its
-own). Before this
+note never holds its folder: Chatbook saves the note while you type, and a save
+that lands while the folder is still writing the previous save to the file is
+settled on the next pass with no click -- the folder records the baseline it
+can prove (the journal's digest and the bytes on disk) and writes the newer
+text; while a long burst of typing is being caught up the row may briefly read
+"◌ Changes available" before it returns to "✓ Up to date", with nothing to
+press; a save never waits for a sync, on this folder
+or any other, so a note switch, Back or a rail switch is never delayed by a
+folder's pass (TASK-34000.51). The one thing that still waits is a change on
+both sides -- the file edited on disk while the note was edited in Chatbook --
+which is an ordinary "Both file and note changed" review, never a silent
+winner. A file's line-ending convention is kept across an edit that leaves
+no line ending at all -- a Windows-style CRLF file whose note shrinks to one
+line stays a CRLF file, the next multi-line edit is written CRLF, and a
+folder that an older build held on exactly this ("Recovery failed" after
+such an edit) is healed by **Recovery** (TASK-34000.48). Before this
 an ordinary edit — Ctrl+End, then a word without Enter, in a vault whose files
 end with a newline — left a `postcondition_failed` entry open on the folder
 while the tree, the list and the editor went on saying Sync managed, Ready and
@@ -888,13 +908,24 @@ profile at the moment you restore, the folder waits for your next change to
 one of its notes, or for **Check changes**. And **Ctrl+Q** right after a
 restore waits up to five seconds for the folder to be checked; on a folder
 that takes longer, the next session opens with it still held.)
-One known gap remains after that: the first edit you make to that file *on
-disk* is refused by the folder — "⚠ Needs attention" with nothing to review —
-until TASK-34000.49 lands; editing the note in Chatbook first turns it into an
-ordinary "Both file and note changed" review you can resolve. Before this,
-deleting a synced note left the row at "✓ Up to date" with the file still on
-disk and nothing to say the folder had anything to decide (TASK-32633 slice,
-N-03).
+A folder that opens held — Chatbook was quit while it needed attention, so
+the next session starts with the row already reading "⚠ Needs attention" —
+is also healed by **Review** on that row once the cause is gone (the note
+restored, or the file back on disk), or by **Recovery** on an open entry,
+and either leaves the folder watched: the next edit on disk reaches the note
+and the next save in Chatbook reaches the file, with no **Check changes**
+(TASK-34000.50; before it, that row turned to "✓ Up to date as of HH:MM"
+while nothing was watching the folder, and only Check changes started it).
+The folder keeps syncing both ways after that: the first edit you make to
+that file *on disk* flows into the restored note on the next automatic pass,
+exactly as it did before the delete. (The same holds after a keywords-only
+save or a rename of the note in Chatbook — none of those count as a change to
+the note's text, and none of them stop the next file edit from landing.) If
+you edited the note's text in Chatbook *and* the file on disk, the folder
+stops for the ordinary "Both file and note changed" review instead; nothing
+is chosen for you. Before this, deleting a synced note left the row at "✓ Up
+to date" with the file still on disk and nothing to say the folder had
+anything to decide (TASK-32633 slice, N-03).
 
 **What this covers, exactly: editing an existing synced note in the Library
 note editor, and deleting or restoring one through the Library.** Those are

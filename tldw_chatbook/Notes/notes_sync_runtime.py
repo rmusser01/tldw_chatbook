@@ -88,6 +88,7 @@ from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFileSnapshot,
     NotesSyncFilesystemError,
     PosixNotesSyncFilesystem,
+    proven_profile,
     represented_digest,
 )
 from tldw_chatbook.Notes.notes_sync_legacy import (
@@ -139,6 +140,16 @@ _RELEASED_PASS_REFUSALS = frozenset(
         "notes_sync_cutover_not_admitted",
     }
 )
+
+#: TASK-34000.51: how many times one locked automatic pass re-plans after an
+#: ``update_file`` was fenced only because its note moved on (the entry is
+#: settled at the baseline its authorities prove, nothing is written from the
+#: stale source, and the fresh plan writes the newer note). Past this the pass
+#: returns with the root UNBLOCKED and its dirty mark set, so the hint loop or
+#: the next hint carries the rest: a user who types faster than the folder
+#: writes is never held, and no single pass holds the root's lock for longer
+#: than this many writes.
+_SOURCE_MOVED_REPLANS = 2
 
 #: TASK-34000.2: root statuses under which a folder is NOT syncing until the
 #: user acts -- an open entry, a conflict or deletion to review, a failed or
@@ -244,6 +255,14 @@ class NotesSyncRootRuntimeSnapshot:
     was last confirmed instead of an unqualified "Up to date", and that time
     has to come from the publication, never from the paint. ``None`` only for
     a snapshot built by hand.
+
+    ``watching`` (TASK-34000.50) is whether a watcher is running for this
+    root's lease RIGHT NOW: read live by :meth:`NotesSyncRuntimeOwner.snapshot`
+    and stamped onto every listener notification, never frozen into the
+    stored publication (startup publishes each root's ``up_to_date`` before
+    it starts the watcher, and a backup fence stops the watcher without
+    publishing anything). A healthy status with ``watching`` False is a row
+    nothing is carrying changes for; the projection says so.
     """
 
     root_id: str
@@ -251,6 +270,7 @@ class NotesSyncRootRuntimeSnapshot:
     next_action: str
     action_id: str | None = None
     published_at: float | None = None
+    watching: bool = True
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
@@ -259,6 +279,8 @@ class NotesSyncRootRuntimeSnapshot:
             validate_notes_sync_opaque_id(self.action_id, field_name="action_id")
         if self.published_at is not None and type(self.published_at) is not float:
             raise TypeError("published_at must be a float or None")
+        if type(self.watching) is not bool:
+            raise TypeError("watching must be a bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -609,6 +631,27 @@ class _FreshAuthority:
 
     def __repr__(self) -> str:
         return "_FreshAuthority(<private>)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _ExecuteOutcome:
+    """What one locked execution of a plan's actions left (TASK-34000.51).
+
+    ``results`` are the executor's results in action order, as before.
+    ``replan`` is set when an automatic ``update_file`` was fenced only
+    because its note moved on and the entry was settled (or needed no
+    settle): the plan is stale, nothing was published, the root is not
+    blocked, and the caller re-plans inside the same lock. A ``replan``
+    outcome returns BEFORE the plan's remaining actions run (the other
+    bindings' writes, in a multi-binding plan); the re-plan re-selects them,
+    and at the bound they wait for the scheduled hint like the moved note.
+    """
+
+    results: tuple[object, ...]
+    replan: bool = False
+
+    def __repr__(self) -> str:
+        return "_ExecuteOutcome(<private>)"
 
 
 class _RuntimeAdapter(Protocol):
@@ -1084,7 +1127,19 @@ class _ProductionRuntimeAdapter:
                         )
                     ),
                     baseline_serialization=binding.serialization,
-                    serialization=(file.observation.serialization if file else None),
+                    # TASK-34000.48: a file whose text has no line ending
+                    # proves nothing about its newline and keeps the
+                    # binding's; the planner must not raise a representation
+                    # refresh over a one-line note in a CRLF file.
+                    serialization=(
+                        proven_profile(
+                            file.observation.serialization,
+                            file.text,
+                            binding.serialization,
+                        )
+                        if file
+                        else None
+                    ),
                 )
             )
             bundle[binding.binding_id] = _ObservedBinding(binding, note, file)
@@ -1107,6 +1162,11 @@ class _ProductionRuntimeAdapter:
                 f"note\0{root.root_id}\0{relative_path}".encode("utf-8")
             ).hexdigest()
             identity_digest = NotesSyncExecutor.stable_identity_digest(file)
+            # A discovered file has no recorded convention yet: its own
+            # observation is the record (TASK-34000.48).
+            candidate_profile = proven_profile(
+                file.observation.serialization, file.text, None
+            )
             candidate = NotesSyncBindingRecord(
                 binding_id=binding_id,
                 root_id=root.root_id,
@@ -1115,7 +1175,7 @@ class _ProductionRuntimeAdapter:
                 normalized_relative_path=relative_path,
                 stable_identity_digest=identity_digest,
                 state=NotesSyncBindingState.CANDIDATE,
-                serialization=file.observation.serialization,
+                serialization=candidate_profile,
                 content_digest=file.observation.content_digest,
                 note_version=0,
             )
@@ -1134,8 +1194,8 @@ class _ProductionRuntimeAdapter:
                     note_id=note_id,
                     note_version=0,
                     bound=False,
-                    baseline_serialization=file.observation.serialization,
-                    serialization=file.observation.serialization,
+                    baseline_serialization=candidate_profile,
+                    serialization=candidate_profile,
                     file_blank=not file.text.strip(),
                     prior_import_note=relative_path in prior_import_paths,
                 )
@@ -1733,13 +1793,45 @@ class NotesSyncRuntimeOwner:
         return lock
 
     def snapshot(self) -> NotesSyncRuntimeSnapshot:
-        """Return the current path-free UI projection."""
+        """Return the current path-free UI projection.
+
+        Each root carries ``watching`` read at THIS moment (TASK-34000.50):
+        the stored publication never says whether a watcher runs, because
+        the answer changes without a publication -- startup publishes every
+        root before it starts the watcher, and a maintenance fence stops the
+        watcher without publishing. Computed here, a row can never wear a
+        healthy label over a root nothing is polling.
+        """
 
         return NotesSyncRuntimeSnapshot(
             self._status,
             self._next_action,
-            tuple(self._root_status[key] for key in sorted(self._root_status)),
+            tuple(
+                self._with_watching(self._root_status[key])
+                for key in sorted(self._root_status)
+            ),
         )
+
+    def _with_watching(
+        self, entry: NotesSyncRootRuntimeSnapshot
+    ) -> NotesSyncRootRuntimeSnapshot:
+        """Stamp the live "is this root being watched" fact onto a publication.
+
+        True only when a watcher task is running AND the root holds a lease
+        AND it is not blocked -- exactly the set the watcher polls
+        (:meth:`_watchable_root_ids`). ``dataclasses.replace``, not the
+        constructor: ``_publish`` stays the only construction site
+        (``Tests/Architecture/test_notes_sync_snapshot_construction.py``).
+        """
+
+        watching = (
+            self._watcher_running()
+            and entry.root_id in self._leases
+            and entry.root_id not in self._blocked_roots
+        )
+        if entry.watching is watching:
+            return entry
+        return replace(entry, watching=watching)
 
     def _remember_conflict_receipt(
         self,
@@ -2177,6 +2269,56 @@ class NotesSyncRuntimeOwner:
             self._admission_open = False
             return
         self._start_watcher()
+        # Final review 1 (Important 1): a root whose startup pass hit the
+        # ``_SOURCE_MOVED_REPLANS`` bound set its dirty mark and handed the
+        # rest to :meth:`schedule_hint`, which refused it -- admission was
+        # closed and the runtime still ``starting`` -- and every save's own
+        # ``note_changed`` was refused the same way, so nothing carried the
+        # newest text until the user's next save. Re-schedule every root
+        # still marked, now that admission is open and the watcher runs. The
+        # method's own gates skip a root that is blocked, paused or unleased;
+        # its mark stays for whichever pass next runs for it.
+        for root_id in tuple(self._dirty_hints):
+            self.schedule_hint(root_id)
+
+    def _watch_lease(self, root_id: str, *, persisted: bool) -> None:
+        """Start the watcher for a lease taken after start (TASK-34000.50).
+
+        Startup starts the watcher once, after its loop (admission is still
+        closed while it runs, so this is a no-op there). A lease acquired
+        LATER -- Review on a folder held at startup, Recovery, the released
+        pass, Resume, a migration activation -- used to leave the root leased
+        and healthy with nothing polling it, because only Check changes
+        called :meth:`_start_watcher`. Enforced here, at the one place leases
+        are made, the invariant is "a persisted root leased under open
+        admission has a running watcher", whoever took the lease.
+
+        Only a NEW lease starts one. A root already leased is either watched
+        (startup starts the watcher for every lease it took) or the runtime
+        is ``failed`` because its watcher died -- and a dead watcher is
+        restarted only by a Check changes whose check succeeds
+        (:meth:`request_sync_now`, which also resets the runtime status;
+        pinned by ``test_failed_sync_now_check_does_not_restart_the_watcher``),
+        so this also declines unless the runtime is ``active``: under
+        ``failed`` no hint is admitted anyway (:meth:`schedule_hint`) and the
+        rows already read "⚠ Sync stopped · Next: Check changes".
+
+        Not for a provisional lease (``persisted`` False: a setup review's
+        folder, which the store has never seen and a hint could only fail
+        on -- activation starts the watcher itself once the root exists), and
+        never for a root Pause is closing: its late lease is about to be
+        released, and :meth:`_resume_root` re-leases it when it comes back.
+        :meth:`_start_watcher` keeps its own guards (closing, maintenance
+        fence, admission, idempotent while a watcher task runs).
+        """
+
+        if (
+            not persisted
+            or self._status != "active"
+            or root_id in self._closed_roots
+        ):
+            return
+        self._start_watcher()
 
     def _start_watcher(self) -> None:
         if (
@@ -2193,11 +2335,28 @@ class NotesSyncRuntimeOwner:
             self._watcher.run(), name="notes_sync_watcher"
         )
         self._watcher_task.add_done_callback(self._watcher_finished)
+        # TASK-34000.50: the rows read ``watching`` live, but they are redrawn
+        # on publications. A watcher starting is not one (a fence lifting,
+        # the startup loop's roots), so re-announce every root's last
+        # publication: a row that read "⚠ Sync stopped" while nothing ran is
+        # re-projected without a user action. Listeners publish only on a
+        # change, so this never loops.
+        for root_id in sorted(self._root_status):
+            self._notify_status_listeners(self._root_status[root_id])
 
     def _watcher_finished(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
             return
         task.exception()
+        if task is not self._watcher_task:
+            # TASK-34000.50 fix round 1 (review Minor 1): this callback is
+            # queued with ``call_soon`` when the task ends and can run AFTER
+            # ``_start_watcher`` replaced the task (a lease landing from a
+            # worker thread sits ahead of it in the ready queue). A stale
+            # callback marked the runtime failed with a live watcher: every
+            # row read "Sync stopped" and every hint was refused until Check
+            # changes. Only the CURRENT watcher's end is a runtime failure.
+            return
         if self._admission_open:
             self._status = "failed"
             self._next_action = "sync_now"
@@ -2245,6 +2404,7 @@ class NotesSyncRuntimeOwner:
             self._admission_reasons.pop(root.root_id, None)
             if root.root_id not in self._durably_blocked_roots:
                 self._blocked_roots.discard(root.root_id)
+            self._watch_lease(root.root_id, persisted=persist)
             return True
         status, action = {
             RootAdmissionState.PASSIVE: ("passive", "open_active_process"),
@@ -2313,34 +2473,60 @@ class NotesSyncRuntimeOwner:
         lease = self._leases.get(root.root_id)
         if lease is None or not getattr(lease, "authoritative", False):
             raise RuntimeError("root_lease_required")
-        authority = await self._fresh_authority(root)
-        plan = authority.plan
-        self._reviews[root.root_id] = plan
-        blocked = self._blocked_plan_status(plan)
-        if blocked is not None:
-            self._blocked_roots.add(root.root_id)
-            await self._publish(root.root_id, *blocked)
+        # TASK-34000.51: an automatic pass whose ``update_file`` was fenced
+        # only because the note moved on re-plans here, inside the same lock,
+        # at most ``_SOURCE_MOVED_REPLANS`` times. Every re-plan is the
+        # ordinary automatic pass with its ordinary gates (direction,
+        # attention, ``_blocked_plan_status``), so a change that meanwhile
+        # became two-sided is a conflict review on the very next plan.
+        replans = 0
+        while True:
+            authority = await self._fresh_authority(root)
+            plan = authority.plan
+            self._reviews[root.root_id] = plan
+            blocked = self._blocked_plan_status(plan)
+            if blocked is not None:
+                self._blocked_roots.add(root.root_id)
+                await self._publish(root.root_id, *blocked)
+                return plan
+            selected = tuple(
+                action
+                for action in plan.safe_actions
+                if action.kind
+                in (_AUTOMATIC_ACTIONS if automatic else _EXECUTABLE_ACTIONS)
+            )
+            if automatic and any(
+                getattr(authority.requests[action.action_id], "direction_override", None)
+                is not None
+                for action in selected
+            ):
+                self._blocked_roots.add(root.root_id)
+                await self._publish(root.root_id, "needs_attention", "review_changes")
+                return plan
+            if automatic and selected:
+                outcome = await self._execute_locked(
+                    root, authority, selected, settle_source_moved=True
+                )
+                if not outcome.replan or self._closing:
+                    return plan
+                if replans < _SOURCE_MOVED_REPLANS:
+                    replans += 1
+                    continue
+                # The bound: the note is still moving. Leave the root
+                # unblocked with its dirty mark set -- ``_run_hint``'s loop
+                # re-plans for it, and a caller that does not loop (Recovery's
+                # settled pass, the released pass) hands it to a hint. The
+                # last settle proved what is on disk; the newer note is a
+                # change a check carries, which is what the row says.
+                self._dirty_hints.add(root.root_id)
+                await self._publish(root.root_id, "changes_available", "sync_now")
+                self.schedule_hint(root.root_id)
+                return plan
+            if selected:
+                await self._publish(root.root_id, "changes_available", "review_changes")
+            else:
+                await self._publish(root.root_id, "up_to_date", "sync_now")
             return plan
-        selected = tuple(
-            action
-            for action in plan.safe_actions
-            if action.kind in (_AUTOMATIC_ACTIONS if automatic else _EXECUTABLE_ACTIONS)
-        )
-        if automatic and any(
-            getattr(authority.requests[action.action_id], "direction_override", None)
-            is not None
-            for action in selected
-        ):
-            self._blocked_roots.add(root.root_id)
-            await self._publish(root.root_id, "needs_attention", "review_changes")
-            return plan
-        if automatic and selected:
-            await self._execute_locked(root, authority, selected)
-        elif selected:
-            await self._publish(root.root_id, "changes_available", "review_changes")
-        else:
-            await self._publish(root.root_id, "up_to_date", "sync_now")
-        return plan
 
     @staticmethod
     def _blocked_plan_status(
@@ -2954,13 +3140,18 @@ class NotesSyncRuntimeOwner:
                         release(observed_token)
 
                 actions = (*safe_actions, *conflict_actions)
+                # A reviewed apply never settles a fence on its own (no
+                # ``settle_source_moved``): its partial result is reported
+                # to the user as before.
                 raw_results = (
-                    await self._execute_locked(
-                        root,
-                        authority,
-                        actions,
-                        publish_terminal=False,
-                    )
+                    (
+                        await self._execute_locked(
+                            root,
+                            authority,
+                            actions,
+                            publish_terminal=False,
+                        )
+                    ).results
                     if actions
                     else ()
                 )
@@ -3055,7 +3246,8 @@ class NotesSyncRuntimeOwner:
     ) -> tuple[object, ...]:
         lock = self._mutation_lock(root.root_id)
         async with lock:
-            return await self._execute_locked(root, authority, actions)
+            outcome = await self._execute_locked(root, authority, actions)
+        return outcome.results
 
     async def _execute_locked(
         self,
@@ -3064,7 +3256,8 @@ class NotesSyncRuntimeOwner:
         actions: tuple[NotesSyncAction, ...],
         *,
         publish_terminal: bool = True,
-    ) -> tuple[object, ...]:
+        settle_source_moved: bool = False,
+    ) -> _ExecuteOutcome:
         self._require_authority(root.root_id, "write")
         executor = self._adapter.executor_for(
             root,
@@ -3074,7 +3267,7 @@ class NotesSyncRuntimeOwner:
         results: list[object] = []
         for index, action in enumerate(actions):
             if self._closing:
-                return tuple(results)
+                return _ExecuteOutcome(tuple(results))
             self._require_authority(root.root_id, "write")
             request = authority.requests.get(action.action_id)
             if request is None:
@@ -3089,11 +3282,22 @@ class NotesSyncRuntimeOwner:
             results.append(result)
             state = getattr(result, "state", None)
             if state is NotesSyncOperationState.NEEDS_ATTENTION:
-                self._blocked_roots.add(root.root_id)
                 recoverable = getattr(result, "recovery_required", False) and (
                     getattr(getattr(request, "action_kind", None), "value", None)
                     in NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS
                 )
+                if (
+                    settle_source_moved
+                    and getattr(result, "reason_code", None) == "source_moved_on"
+                    and (recoverable or not getattr(result, "recovery_required", False))
+                    and await self._settle_source_moved(root.root_id, executor, result)
+                ):
+                    # TASK-34000.51: fenced only because the note moved on.
+                    # The entry is closed at the baseline its authorities
+                    # prove (or there was none to close); the plan is stale,
+                    # so the caller re-plans. No hold, nothing published.
+                    return _ExecuteOutcome(tuple(results), replan=True)
+                self._blocked_roots.add(root.root_id)
                 await self._publish(
                     root.root_id,
                     "needs_attention",
@@ -3105,7 +3309,7 @@ class NotesSyncRuntimeOwner:
                         else None
                     ),
                 )
-                return tuple(results)
+                return _ExecuteOutcome(tuple(results))
             if state is not NotesSyncOperationState.COMPLETED:
                 self._blocked_roots.add(root.root_id)
                 next_action = (
@@ -3124,16 +3328,91 @@ class NotesSyncRuntimeOwner:
                         else None
                     ),
                 )
-                return tuple(results)
+                return _ExecuteOutcome(tuple(results))
             if self._closing:
                 if index == len(actions) - 1:
                     await self._publish(root.root_id, "up_to_date", "sync_now")
                 else:
                     await self._publish(root.root_id, "partial", "review_changes")
-                return tuple(results)
+                return _ExecuteOutcome(tuple(results))
         if publish_terminal:
             await self._publish(root.root_id, "up_to_date", "sync_now")
-        return tuple(results)
+        return _ExecuteOutcome(tuple(results))
+
+    async def _settle_source_moved(
+        self, root_id: str, executor: object, result: object
+    ) -> bool:
+        """Close an entry fenced only because its note moved on (TASK-34000.51).
+
+        Runs under the root's mutation lock, like Recovery's settle in
+        :meth:`resolve_cleanup`, and awaits nothing but the executor. The
+        settle is ``NotesSyncExecutor.settle_attention``, unchanged: it
+        mutates neither side and commits only a baseline proven against the
+        journal digest and the bytes on disk (the post-write baseline when
+        the write is exactly on disk, otherwise the reviewed one). A fence
+        raised BEFORE admission has no journal row and nothing to settle.
+
+        Returns:
+            Whether the caller may re-plan. False when the settle is refused
+            (``recovery_authority_changed``, ``operation_needs_attention``,
+            ``stale_observation``, an unreadable file or note): the entry
+            then takes today's Recovery hold, with its reason persisted.
+        """
+
+        if not getattr(result, "recovery_required", False):
+            return True
+        settle = getattr(executor, "settle_attention", None)
+        operation_id = getattr(result, "operation_id", None)
+        if not callable(settle) or type(operation_id) is not str:
+            return False
+        self._require_authority(root_id, "write")
+        try:
+            settled = await settle(operation_id)
+        except Exception as error:  # noqa: BLE001 - a refused settle is a hold, not a crash
+            _log_bounded_failure("source-moved settle", error)
+            return False
+        self._require_authority(root_id, "write")
+        return getattr(settled, "state", None) is NotesSyncOperationState.COMPLETED
+
+    async def _settle_source_moved_at_startup(
+        self,
+        root: NotesSyncRootRecord,
+        operation: NotesSyncOperationRecord,
+    ) -> bool:
+        """Settle a ``source_moved_on`` entry persisted across a restart.
+
+        TASK-34000.51, restart in the middle: the runtime's own settle was
+        refused or the app went down between the fence and the settle. The
+        entry is settled here, under the root lock the caller holds, before
+        it would be classified as a Recovery hold; on success the root is
+        left unblocked so the startup loop leases and reconciles it, and
+        that pass writes the newer note. Anything else is classified as
+        today.
+        """
+
+        if (
+            operation.state is not NotesSyncOperationState.NEEDS_ATTENTION
+            or operation.reason_code != "source_moved_on"
+            or operation.kind not in NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS
+        ):
+            return False
+        try:
+            self._require_authority(root.root_id, "write")
+            executor = self._adapter.executor_for(
+                root,
+                after_stage=lambda _state, root_id=root.root_id: (
+                    self._require_authority(root_id, "write")
+                ),
+            )
+            settle = getattr(executor, "settle_attention", None)
+            if not callable(settle):
+                return False
+            settled = await settle(operation.operation_id)
+            self._require_authority(root.root_id, "write")
+        except Exception as error:  # noqa: BLE001 - classified as a hold below
+            _log_bounded_failure("startup source-moved settle", error)
+            return False
+        return getattr(settled, "state", None) is NotesSyncOperationState.COMPLETED
 
     async def _classify_incomplete_block(
         self,
@@ -3207,6 +3486,17 @@ class NotesSyncRuntimeOwner:
                     or current_root.state is not NotesSyncRootState.ACTIVE
                 ):
                     recovery_blocked.add(operation.root_id)
+                    continue
+                if await self._settle_source_moved_at_startup(current_root, operation):
+                    # Settled: the startup loop reconciles it. Fix round 1
+                    # (review Minor 3): the persisted ``needs_attention`` put
+                    # the root among the durable blocks above; the entry it
+                    # stood for is closed, so both marks go, as on
+                    # ``_release_planner_hold``'s healed path -- otherwise
+                    # ``_ensure_lease`` would refuse to lift a later
+                    # transient block until a Check or Review cleared it.
+                    self._blocked_roots.discard(current_root.root_id)
+                    self._durably_blocked_roots.discard(current_root.root_id)
                     continue
                 if await self._classify_incomplete_block(current_root, operation):
                     recovery_blocked.add(current_root.root_id)
@@ -3314,8 +3604,10 @@ class NotesSyncRuntimeOwner:
         the root is leased, the settled pass runs directly, and the watcher
         is started. Fix round 2: the same pass runs whenever NO hint can be
         scheduled for the released root -- unleased, or leased with no
-        watcher running (a Review or Check changes on the held row leases it
-        without starting one) -- and it runs as an admitted background task,
+        watcher running (a lease taken under the maintenance fence, or
+        before TASK-34000.50 any Review or Check changes on the held row,
+        which leased it without starting one) -- and it runs as an admitted
+        background task,
         like a scheduled hint, so a save or restore returns promptly while
         ``settle()`` and the post-save bounded wait still join it. A root
         paused in this session (``_closed_roots``) is refused; a root paused
@@ -3456,9 +3748,12 @@ class NotesSyncRuntimeOwner:
     async def _run_released_pass(self, root_id: str) -> bool:
         """Lease a released root if needed, re-plan it, and start the watcher.
 
-        Startup publishes a persisted hold without leasing the root, and a
-        Review or Check changes on that row leases it without starting the
-        watcher, so no hint can reach it either way. Once
+        Startup publishes a persisted hold without leasing the root, so no
+        hint can reach it (before TASK-34000.50 a Review or Check changes on
+        that row leased it without starting the watcher, which left it just
+        as unreachable; a lease now starts the watcher, and this pass remains
+        the path for a root that is still unleased, or leased while the
+        watcher could not start). Once
         :meth:`_release_planner_hold` has cleared the hold, the root takes
         exactly the pass Recovery's settle takes (:meth:`_run_settled_pass`,
         which does not depend on the watcher) and the watcher is started for
@@ -3585,12 +3880,45 @@ class NotesSyncRuntimeOwner:
             for root_id, current in self._root_status.items()
             if current.status in NOTES_SYNC_ATTENTION_STATUSES
         )
-        if self._closing or not held:
+        return await self._folder_ids_of(held)
+
+    @producer_call
+    async def unwatched_folder_ids(self) -> frozenset[str]:
+        """Return the Notes folders whose root is healthy but nothing watches.
+
+        TASK-34000.50 fix round 1 (review Minor 2, AC#2): the Manage sync
+        folders row reads "⚠ Sync stopped" for an ``up_to_date`` root whose
+        lease has no running watcher (:meth:`snapshot`); the tree row kept
+        "⇄ Sync managed". Same read-time fact, per folder, so the two cannot
+        disagree. A ``starting`` runtime reports nothing -- startup publishes
+        every root before it starts the watcher, and a just-reconciled folder
+        has not stopped, it has not finished (the Manage row reads "Starting"
+        for the same reason).
+
+        Returns:
+            The logical folder ids of every ``up_to_date`` root whose live
+            ``watching`` fact is False.
+        """
+
+        if self._status == "starting":
+            return frozenset()
+        unwatched = tuple(
+            root_id
+            for root_id, current in self._root_status.items()
+            if current.status == "up_to_date"
+            and not self._with_watching(current).watching
+        )
+        return await self._folder_ids_of(unwatched)
+
+    async def _folder_ids_of(self, root_ids: tuple[str, ...]) -> frozenset[str]:
+        """The logical folder ids of ``root_ids``, read off the store."""
+
+        if self._closing or not root_ids:
             return frozenset()
 
         def read() -> frozenset[str]:
             folders: set[str] = set()
-            for root_id in held:
+            for root_id in root_ids:
                 try:
                     folder_id = self._store.get_root(root_id).logical_folder_id
                 except Exception:  # noqa: BLE001 - a vanished root holds nothing
@@ -4241,6 +4569,10 @@ class NotesSyncRuntimeOwner:
             pass
 
     def _notify_status_listeners(self, snapshot: NotesSyncRootRuntimeSnapshot) -> None:
+        # TASK-34000.50: a notification carries the live ``watching`` fact at
+        # the moment it is sent, like ``snapshot()`` does; the stored
+        # publication keeps the field's default.
+        snapshot = self._with_watching(snapshot)
         for listener in tuple(self._status_listeners):
             try:
                 listener(snapshot)

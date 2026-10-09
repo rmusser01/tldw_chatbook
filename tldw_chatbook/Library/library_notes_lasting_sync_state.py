@@ -1125,6 +1125,11 @@ _CHECK_REFUSAL_COPY: dict[str, str] = {
     "stale_observation": (
         "The note or its file changed while sync was working. Use Recovery again."
     ),
+    # TASK-34000.51: normally settled by the runtime itself with no click;
+    # surfaces only when that settle was refused and the entry stayed open.
+    "source_moved_on": (
+        "The note changed while it was being written. Use Recovery to settle it."
+    ),
     "operation_needs_attention": (
         "A leftover temporary file still needs cleaning up. Use Recovery again."
     ),
@@ -1185,6 +1190,11 @@ _CHECK_FAILURE_ROW: dict[str, tuple[str, str]] = {
     # TASK-34000.2: Recovery refusals that Recovery itself can move forward.
     "postcondition_failed": ("a sync write wasn't confirmed", "resolve_cleanup"),
     "stale_observation": ("the note or file changed meanwhile", "resolve_cleanup"),
+    # TASK-34000.51: the rare case a runtime settle was refused.
+    "source_moved_on": (
+        "the note changed while it was being written",
+        "resolve_cleanup",
+    ),
     "operation_needs_attention": (
         "a temporary file still needs cleanup",
         "resolve_cleanup",

@@ -102,8 +102,10 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: TASK-34000.1 adds ``autosave_burst``, the burst of unsaved typing the
 #: autosave max wait bounds (106 + 1 = 107). **108**: TASK-34000.2 adds
 #: ``tree_attention_folder_ids``, the sync folders held for attention whose
-#: tree row and list status say so (107 + 1 = 108).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 108
+#: tree row and list status say so (107 + 1 = 108). **109**: TASK-34000.50
+#: fix round 1 adds ``tree_unwatched_folder_ids``, the healthy sync folders
+#: nothing is watching, whose tree row reads "⚠ Sync stopped" (108 + 1 = 109).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 109
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_

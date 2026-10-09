@@ -138,20 +138,27 @@ async def test_create_file_executes_one_sided_plan_and_activates_binding(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "observed_profile",
+    ("observed_profile", "content"),
     (
-        NotesSyncSerializationProfile(True, "lf", False, 0o600),
-        NotesSyncSerializationProfile(False, "crlf", False, 0o600),
-        NotesSyncSerializationProfile(False, "lf", True, 0o600),
-        NotesSyncSerializationProfile(False, "lf", False, 0o640),
+        (NotesSyncSerializationProfile(True, "lf", False, 0o600), "from-note"),
+        # TASK-34000.48: a newline drift is only observable on a text that
+        # carries a line ending. The real parser reports every newline-free
+        # text as ``lf``, so a fake reporting ``crlf`` for "from-note" pinned
+        # a drift that cannot exist; the written bytes decide, and here they
+        # genuinely differ (CRLF on disk, LF candidate).
+        (NotesSyncSerializationProfile(False, "crlf", False, 0o600), "from\nnote"),
+        (NotesSyncSerializationProfile(False, "lf", True, 0o600), "from-note"),
+        (NotesSyncSerializationProfile(False, "lf", False, 0o640), "from-note"),
     ),
+    ids=("bom", "newline", "final-newline", "mode"),
 )
 async def test_create_file_rejects_representation_drift_before_membership_binding(
     tmp_path: Path,
     observed_profile: NotesSyncSerializationProfile,
+    content: str,
 ) -> None:
     store, _ = _store(tmp_path)
-    note = _note(content="from-note", version=4)
+    note = _note(content=content, version=4)
     notes = FakeNoteAuthority(note)
     files = DriftingCreatingFilesystem(observed_profile)
     reviewed_profile = NotesSyncSerializationProfile(False, "lf", False, 0o600)
@@ -185,6 +192,26 @@ async def test_create_file_rejects_representation_drift_before_membership_bindin
         store.get_binding("binding-1")
 
 
+def test_classify_on_a_vanished_binding_says_binding_authority_changed(
+    tmp_path: Path,
+) -> None:
+    """TASK-34000.48 fix round 1 (review Minor 5): the recorded profile is read
+    from the binding inside ``_classify``; a binding that no longer exists is
+    the owner check's own answer, never a storage error."""
+
+    store, _ = _store(tmp_path)
+    note = _note(content="before", version=4)
+    file = _file(content="before")
+    request = _request(action=NotesSyncActionKind.UPDATE_FILE, note=note, file=file)
+    executor = NotesSyncExecutor(
+        store, FakeNoteAuthority(note), FakeFilesystem(file), recovery_capacity_bytes=4096
+    )
+    with pytest.raises(RuntimeError, match="binding_authority_changed"):
+        executor._classify(request, note, file)
+    with pytest.raises(RuntimeError, match="binding_authority_changed"):
+        executor._classify_restore(request, note, file)
+
+
 @pytest.mark.asyncio
 async def test_move_file_executes_guarded_move_and_updates_binding_path(
     tmp_path: Path,
@@ -213,22 +240,26 @@ async def test_move_file_executes_guarded_move_and_updates_binding_path(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "observed_profile",
+    ("observed_profile", "content"),
     (
-        NotesSyncSerializationProfile(True, "lf", False, 0o600),
-        NotesSyncSerializationProfile(False, "crlf", False, 0o600),
-        NotesSyncSerializationProfile(False, "lf", True, 0o600),
-        NotesSyncSerializationProfile(False, "lf", False, 0o640),
+        (NotesSyncSerializationProfile(True, "lf", False, 0o600), "before"),
+        # TASK-34000.48: see the create twin above -- a newline drift needs a
+        # text that carries a line ending to be observable at all.
+        (NotesSyncSerializationProfile(False, "crlf", False, 0o600), "be\nfore"),
+        (NotesSyncSerializationProfile(False, "lf", True, 0o600), "before"),
+        (NotesSyncSerializationProfile(False, "lf", False, 0o640), "before"),
     ),
+    ids=("bom", "newline", "final-newline", "mode"),
 )
 async def test_move_file_rejects_representation_drift_before_membership_binding(
     tmp_path: Path,
     observed_profile: NotesSyncSerializationProfile,
+    content: str,
 ) -> None:
-    store, _ = _execution_store(tmp_path)
-    note = _note(content="before", version=4)
+    store, _ = _execution_store(tmp_path, content)
+    note = _note(content=content, version=4)
     notes = FakeNoteAuthority(note)
-    source = _file(content="before")
+    source = _file(content=content)
     files = DriftingMovingFilesystem(source, observed_profile)
     request = replace(
         _request(action=NotesSyncActionKind.UPDATE_FILE, note=note, file=source),
@@ -945,9 +976,11 @@ def _file_at(
     )
 
 
-def _execution_store(tmp_path: Path) -> tuple[NotesDeviceStateStore, Path]:
+def _execution_store(
+    tmp_path: Path, content: str = "before"
+) -> tuple[NotesDeviceStateStore, Path]:
     store, database = _store(tmp_path)
-    file_before = _file(content="before")
+    file_before = _file(content=content)
     store.create_binding(
         NotesSyncBindingRecord(
             binding_id="binding-1",
@@ -960,7 +993,7 @@ def _execution_store(tmp_path: Path) -> tuple[NotesDeviceStateStore, Path]:
             ),
             state=NotesSyncBindingState.ACTIVE,
             serialization=file_before.observation.serialization,
-            content_digest=_digest("before"),
+            content_digest=_digest(content),
             note_version=4,
         )
     )
@@ -1042,6 +1075,7 @@ class FakeFilesystem:
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
         assert expected == self.snapshot
         self.replace_calls += 1
@@ -1062,6 +1096,7 @@ class PartialFilesystem(FakeFilesystem):
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
         self.snapshot = _file(
             content=text, inode=expected.observation.identity.inode + 1
@@ -1087,6 +1122,7 @@ class NullCleanupPartialFilesystem(PartialFilesystem):
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
         self.snapshot = _file(
             content=text, inode=expected.observation.identity.inode + 1
@@ -1110,6 +1146,7 @@ class DuplicateBlockingFilesystem(FakeFilesystem):
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
         self.replace_calls += 1
         self.started.set()
@@ -1132,10 +1169,11 @@ class BlockingFilesystem(FakeFilesystem):
         text: str,
         *,
         expected: NotesSyncFileSnapshot,
+        profile: NotesSyncSerializationProfile | None = None,
     ) -> NotesSyncFileSnapshot:
         self.started.set()
         assert self.release.wait(3.0)
-        return super().replace(relative_path, text, expected=expected)
+        return super().replace(relative_path, text, expected=expected, profile=profile)
 
 
 class FakeWindowsObservationFilesystem:
@@ -1312,10 +1350,24 @@ class DriftingMovingFilesystem(MovingFilesystem):
         expected: NotesSyncFileSnapshot,
     ) -> NotesSyncFileSnapshot:
         moved = super().move(destination_path, expected=expected)
+        # Fix round 1 (review Minor 4): the bytes carry the drift too, as the
+        # create fake's do -- a fake may only report what the bytes can say.
+        payload = PosixNotesSyncFilesystem.serialize(moved.text, self._profile)
         self.destination = replace(
             moved,
-            observation=replace(moved.observation, serialization=self._profile),
-            reviewed_state=replace(moved.reviewed_state, mode=self._profile.mode),
+            observation=replace(
+                moved.observation,
+                serialization=self._profile,
+                size_bytes=len(payload),
+            ),
+            raw_bytes=payload,
+            reviewed_state=replace(
+                moved.reviewed_state,
+                content=payload,
+                mode=self._profile.mode,
+                size=len(payload),
+            ),
+            representation_digest=hashlib.sha256(payload).hexdigest(),
         )
         return self.destination
 
@@ -2191,6 +2243,135 @@ async def test_folder_owner_change_before_membership_stage_never_redirects_place
     assert result.reason_code == "binding_authority_changed"
     assert notes.memberships == []
     assert store.get_binding("binding-1").note_version == 4
+
+
+_RESUMABLE_CRASH_POINTS = (
+    NotesSyncOperationState.RECOVERY_ADMITTED,
+    NotesSyncOperationState.FIRST_AUTHORITY_APPLIED,
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "live_version", (4, 6), ids=("control-same-version", "version-only-move")
+)
+@pytest.mark.parametrize(
+    "crash_at", _RESUMABLE_CRASH_POINTS, ids=("after-admission", "after-first-write")
+)
+async def test_update_note_of_a_version_only_moved_note_reconstructs_and_resumes(
+    tmp_path: Path,
+    live_version: int,
+    crash_at: NotesSyncOperationState,
+) -> None:
+    """TASK-34000.49 fix round 1: recovery must not keep the version proxy.
+
+    The binding was committed at note version 4 and content ``before``; the
+    live note still says ``before`` but its version moved on without a content
+    change (a keywords-only save, a title-only edit, a delete and restore).
+    ``_validate_initial`` admits that update_note on the content baseline alone,
+    so ``operation.expected_note_version`` (the live version at admission) and
+    the journaled binding's ``note_version`` are no longer equal by
+    construction -- and ``reconstruct_request`` used to require exactly that,
+    leaving any interruption after admission unrecoverable
+    (``recovery_authority_changed``, root published ``failed``). The journaled
+    binding, the journaled payload against the baseline digest and the exact
+    re-observe on resume carry the invariant; the version clause is gone.
+    """
+
+    store, database = _execution_store(tmp_path)
+    notes = FakeNoteAuthority(_note(content="before", version=live_version))
+    files = FakeFilesystem(_file(content="after"))
+    request = _request(
+        action=NotesSyncActionKind.UPDATE_NOTE, note=notes.snapshot, file=files.snapshot
+    )
+
+    def crash(stage: NotesSyncOperationState) -> None:
+        if stage is crash_at:
+            raise InjectedCrash
+
+    with pytest.raises(InjectedCrash):
+        await NotesSyncExecutor(
+            store, notes, files, recovery_capacity_bytes=2048, after_stage=crash
+        ).execute(request)
+    operation = store.get_operation("operation-1")
+    assert operation.state is crash_at
+    assert operation.expected_note_version == live_version
+    assert store.get_binding("binding-1").note_version == 4
+
+    reopened = NotesSyncExecutor(
+        NotesDeviceStateStore(database), notes, files, recovery_capacity_bytes=2048
+    )
+    reconstructed = await reopened.reconstruct_request("operation-1")
+    assert isinstance(reconstructed, NotesSyncExecutionRequest)
+    assert reconstructed.note is not None
+    assert reconstructed.note.version == live_version
+    result = await reopened.resume(reconstructed)
+
+    assert result.state is NotesSyncOperationState.COMPLETED, result.reason_code
+    assert notes.snapshot.content == "after"
+    assert notes.snapshot.version == live_version + 1
+    assert notes.replace_calls == 1
+    assert files.replace_calls == 0
+    binding = store.get_binding("binding-1")
+    assert binding.note_version == notes.snapshot.version
+    assert binding.content_digest == _digest("after")
+    assert store.list_incomplete_operations() == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("crash_at", "refusal"),
+    (
+        (NotesSyncOperationState.RECOVERY_ADMITTED, "stale_observation"),
+        (NotesSyncOperationState.FIRST_AUTHORITY_APPLIED, "postcondition_failed"),
+    ),
+    ids=("after-admission", "after-first-write"),
+)
+async def test_update_note_of_a_version_only_moved_note_still_refuses_a_content_move_on_resume(
+    tmp_path: Path,
+    crash_at: NotesSyncOperationState,
+    refusal: str,
+) -> None:
+    """Negative control: the note's CONTENT moved after the crash -> refused.
+
+    Same version-only-moved note, same interruption; then the note is edited
+    in the app before the resume. Nothing is written on either side, both
+    texts stay where they were typed, and the binding row is untouched: the
+    guards that remain at reconstruction and on resume still stop for review.
+    """
+
+    store, database = _execution_store(tmp_path)
+    notes = FakeNoteAuthority(_note(content="before", version=6))
+    files = FakeFilesystem(_file(content="after"))
+    request = _request(
+        action=NotesSyncActionKind.UPDATE_NOTE, note=notes.snapshot, file=files.snapshot
+    )
+
+    def crash(stage: NotesSyncOperationState) -> None:
+        if stage is crash_at:
+            raise InjectedCrash
+
+    with pytest.raises(InjectedCrash):
+        await NotesSyncExecutor(
+            store, notes, files, recovery_capacity_bytes=2048, after_stage=crash
+        ).execute(request)
+    writes_before = notes.replace_calls
+    typed = "typed in the app"
+    notes.snapshot = _note(content=typed, version=notes.snapshot.version + 1)
+
+    reopened = NotesSyncExecutor(
+        NotesDeviceStateStore(database), notes, files, recovery_capacity_bytes=2048
+    )
+    result = await reopened.resume(await reopened.reconstruct_request("operation-1"))
+
+    assert result.state is NotesSyncOperationState.NEEDS_ATTENTION
+    assert result.reason_code == refusal
+    assert notes.replace_calls == writes_before
+    assert files.replace_calls == 0
+    assert notes.snapshot.content == typed
+    assert files.snapshot.text == "after"
+    binding = store.get_binding("binding-1")
+    assert (binding.note_version, binding.content_digest) == (4, _digest("before"))
 
 
 @pytest.mark.asyncio

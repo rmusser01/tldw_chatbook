@@ -447,7 +447,12 @@ _BUDGETS: dict[str, int] = {
     # state.py` as `ROOT_STATUS_LABELS`, next to the refusal table above, and
     # the healthy label is now dated there (`root_status_label`); the
     # controller spends one line on the call it used to spend three on.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2366,
+    #
+    # 2026-10-08, TASK-34000.50, owner decision ("expand the limits, don't
+    # modify other code to make it fit", 2026-10-04): 2366 -> 2375 (+9). The
+    # third per-root label overlay (a healthy root nothing watches reads
+    # "Sync stopped") sits inline beside the other two in `_project_root`.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2375,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

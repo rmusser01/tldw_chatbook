@@ -3019,6 +3019,69 @@ async def test_failed_sync_now_check_does_not_restart_the_watcher(
     await owner.shutdown()
 
 
+class _LateFailedWatcher(_Watcher):
+    """Runs until released, then dies -- a watcher whose task ends later."""
+
+    async def run(self) -> None:
+        self.events.append("watcher-started")
+        self.started.set()
+        await self.release.wait()
+        raise RuntimeError("forced late watcher failure")
+
+
+@pytest.mark.asyncio
+async def test_a_stale_watcher_done_callback_never_marks_a_live_watcher_failed(
+    tmp_path: Path,
+) -> None:
+    """TASK-34000.50 fix round 1 (review Minor 1).
+
+    ``_start_watcher`` restarts once the old task is done, but the old task's
+    done-callback is queued with ``call_soon`` and can run AFTER the new task
+    exists (a lease landing from ``to_thread`` sits ahead of it in the ready
+    queue). The stale callback then marked the runtime ``failed`` with a live
+    watcher: every row read "Sync stopped" and every hint was refused until
+    Check changes. The ordering here is exact: the old task finishes in the
+    tick ``sleep(0)`` yields to, its callback is queued behind this coroutine,
+    and the restart happens before that callback runs.
+    """
+
+    from tldw_chatbook.Notes.notes_sync_runtime import NotesSyncRuntimeOwner
+
+    first = _LateFailedWatcher()
+    replacement = _Watcher()
+    watchers = iter((first, replacement))
+    owner = NotesSyncRuntimeOwner(
+        store=_store(tmp_path),
+        migrate_legacy=lambda: None,
+        coordinator=_Coordinator(),
+        adapter=_Adapter([_input(file_digest=_A, note_digest=_A)]),
+        watcher_factory=lambda _schedule: next(watchers),
+        cutover_admitted=True,
+        profile_process_is_sole=True,
+    )
+    await owner.start()
+    await first.started.wait()
+    old_task = owner._watcher_task
+    assert old_task is not None and not old_task.done()
+
+    first.release.set()
+    await asyncio.sleep(0)  # the old task dies in this tick; its callback is queued
+    assert old_task.done()
+    assert owner.snapshot().status == "active", "the callback has not run yet"
+    owner._start_watcher()  # a lease landing now restarts the watcher
+    assert owner._watcher_task is not old_task
+    await replacement.started.wait()
+    await asyncio.sleep(0)  # the stale callback runs now
+    await asyncio.sleep(0)
+
+    assert owner.snapshot().status == "active"
+    assert owner._watcher_running()
+    assert owner.snapshot().roots[0].watching is True
+    assert owner.schedule_hint("root-1") is not None
+    await owner.settle()
+    await owner.shutdown()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("operation_state", "root_status", "expected_action"),

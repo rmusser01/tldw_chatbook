@@ -16397,6 +16397,71 @@ test's first draft. If you genuinely cannot run it, say INFERRED and name the
 experiment that would settle it; never let proximity to your own change
 decide the verdict in either direction.
 
+## A fake that reports an observation the real parser cannot produce pins a fiction, and the fiction outlives the rule it contradicts (TASK-34000.48, 2026-10-08)
+
+**The incident.** The lasting-sync file parser reports every text with no
+line ending as `lf` -- the profile has no "indeterminate" -- so a CRLF file
+whose note shrank to one line was re-observed as `lf` after its own correct
+write and the folder wedged for good. The fix is one rule (a newline-free
+observation inherits the recorded `newline`), applied at ~25 sites. Of the
+170+ existing sync tests, exactly TWO went red, the create pin and its move
+twin: `test_create_file_rejects_representation_drift_before_membership_binding[crlf]`
+and `test_move_file_rejects_representation_drift_before_membership_binding[crlf]`
+in `Tests/Notes/test_notes_sync_executor.py`, whose `DriftingCreatingFilesystem`
+/ `DriftingMovingFilesystem` fakes reported `crlf` for the texts `"from-note"`
+and `"before"`. No real filesystem can say that -- the bytes `b"from-note"`
+parse to `lf` -- so both tests had pinned a drift that cannot exist, and they
+were the only things in the suite that "knew" about newline drift on a
+one-line file. Meanwhile the real-stack RED
+file (`Tests/Notes/test_notes_sync_crlf_single_line.py`: real
+`PosixNotesSyncFilesystem`, real DB, real bytes) found the actual defect at
+the first assertion.
+
+**The rule.** A fake authority may only return observations the real one can
+produce from the same bytes; when a parametrized "drift" case needs a fake to
+assert a field the real parser derives from content, derive the content so
+the field is REAL (here: `"from\nnote"` makes the CRLF drift observable and
+the written bytes differ). When a fix turns one such pin red, read the fake
+before the fix: if the fake's observation is impossible on disk, the pin was
+the fiction and the fix is right. And a code-derived guard that resolves
+names through a function's assignments must carry a name's VALUE KIND, not
+its whole subtree -- the first draft of
+`Tests/Architecture/test_notes_sync_binding_profile_commits.py` read
+`relative_path in claimed_paths` as a profile comparison because an earlier,
+unrelated `candidate = NotesSyncBindingRecord(..., serialization=...)` in the
+same function tainted every name derived from `candidate`.
+
+## A `Tests/UI` file that is red ALONE with `raw_source_selection_changed` is red by collection order, not by your change (TASK-34000.50, 2026-10-08)
+
+**The incident.** The pure controller pin for TASK-34000.50 lives in
+`Tests/UI/Library_Modules/test_library_notes_sync_controller.py`. Run on its
+own (`pytest <file> -k ...`) every test in the file -- the untouched
+neighbours included -- errored at setup on both the base commit and the
+branch with `RecoveryRequired: raw_source_selection_changed`, raised from
+`Tests/UI/conftest.py::_disable_model_catalog_refresh` importing
+`tldw_chatbook.app` for the first time inside a per-test profile. Wave 1c's
+Task 1 had already met the same shape on
+`test_library_notes_files_sync_journey.py` (37 red on base and branch alike)
+and filed it as "environment". It is not the environment: that conftest
+fixture documents the mechanism (`load_settings()` at app-import time with a
+per-test profile selected but the `config` module still bound to the session
+profile) and keeps a hand list of files it rebinds first. A file outside that
+list is green only when something collected BEFORE it imported the app at
+module level.
+
+**What settled it in one run.** Collect a module-level app importer first:
+`pytest Tests/UI/test_app_instance_warning.py Tests/UI/Library_Modules/test_library_notes_sync_controller.py ...`
+-- RED then failed with the one expected `TypeError` and 18 neighbours
+passed; GREEN read 177 passed for the whole file. The CI lanes see the same
+file green for the same reason (other files precede it).
+
+**The rule.** Before calling a `Tests/UI` red "pre-existing", check whether
+it is a setup ERROR from the app import rather than a FAILED assertion, and
+re-run it with an app importer collected first. A red you have not been able
+to turn into the one failure your change predicts is not RED evidence; it is
+a collection-order artefact, and the rule above about counting reds by NAME
+does not rescue it, because the name-set is the whole file either way.
+
 ## A shared red is not a baseline red until the NUMBER matches (task-32605, 2026-09-15)
 
 **The incident.** PR #2691's landing pass reported "zero branch-only reds"

@@ -160,20 +160,18 @@ async def test_restoring_the_deleted_note_releases_the_hold_and_the_root_is_heal
         await owner.shutdown()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "TASK-34000.49: the restore moved the note's version without a content "
-        "change, and the executor's update_note precondition compares the "
-        "binding's recorded version, so the next file-to-note update is refused "
-        "as stale_observation (needs_attention, nothing to review). Pre-existing; "
-        "found by this slice."
-    ),
-)
 async def test_a_disk_edit_after_a_restore_still_flows_into_the_note(
     vault: Vault,
 ) -> None:
-    """The folder must keep syncing both ways after a delete and restore."""
+    """The folder must keep syncing both ways after a delete and restore.
+
+    Pinned as a strict xfail by the TASK-32633 slice: the restore moved the
+    note's version without a content change and ``_validate_initial``
+    compared the binding's recorded version against the live note, so the
+    next file-to-note update was refused as ``stale_observation`` with nothing
+    to review. TASK-34000.49 dropped that version proxy; the fuller pins live
+    in ``Tests/Notes/test_notes_sync_version_only_move.py``.
+    """
 
     owner = build_owner(vault)
     await owner.start()
@@ -335,7 +333,8 @@ async def test_restore_releases_the_hold_after_review_or_check_in_a_later_sessio
         assert [item.reason_code for item in plan.attention] == ["note_missing"]
         held = second.snapshot().roots[0]
         assert (held.status, held.next_action) == ("needs_attention", "review_changes")
-        # Leased by the look, but nothing watches it: a hint is refused.
+        # Leased by the look (which, since TASK-34000.50, also starts the
+        # watcher); the hold is what refuses the hint.
         assert second.schedule_hint("root-1") is None
 
         await _restore(vault, tombstone_version)

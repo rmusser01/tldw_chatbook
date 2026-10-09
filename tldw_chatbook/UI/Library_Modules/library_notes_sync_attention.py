@@ -43,15 +43,6 @@ from .screen_constants import LIBRARY_NOTES_SOURCE_DATABASE
 #: flush waits this long too before the app exits (final review I4).
 SYNC_PASS_WAIT_SECONDS = 5.0
 
-#: How long a SAVE of a synced note waits for the pass its previous save
-#: hinted before it commits (final review I1). The executor fences a folder
-#: when a note moves on between a pass admitting its ``update_file`` and that
-#: write completing, so a save must not land inside that window. Shorter than
-#: the navigation and quit flush bound (5 s): a flush that has to wait must
-#: still have time to commit. Past this the save proceeds, and a hold it
-#: causes is visible and healable, as before.
-RESAVE_SYNC_PASS_WAIT_SECONDS = 3.0
-
 #: ``_ask``'s answer when the runtime could not say (final review I3). It is
 #: not the question's default: "nothing is held" is an answer, and a refused
 #: or failed read is not one.
@@ -62,7 +53,7 @@ _ATTENTION_VIEWS = frozenset({"editor", "list"})
 
 
 def library_notes_tree_folder_sets(notes_state: Any) -> dict[str, frozenset[str]]:
-    """Return the tree builder's three folder-status sets from Notes state.
+    """Return the tree builder's four folder-status sets from Notes state.
 
     One place that knows which state fields the tree's folder rows read, so
     the screen's tree call stays one line.
@@ -83,6 +74,10 @@ def library_notes_tree_folder_sets(notes_state: Any) -> dict[str, frozenset[str]
         ),
         "attention_folder_ids": getattr(
             notes_state, "tree_attention_folder_ids", frozenset()
+        ),
+        # TASK-34000.50 fix round 1: healthy folders nothing watches.
+        "unwatched_folder_ids": getattr(
+            notes_state, "tree_unwatched_folder_ids", frozenset()
         ),
     }
 
@@ -168,11 +163,11 @@ async def _ask(runtime: Any, name: str, *args: Any, default: Any) -> Any:
 async def await_sync_pass(runtime: Any, *, timeout: float | None = None) -> None:
     """Let the sync pass a save just hinted land, bounded.
 
-    ``settle`` joins the runtime's own hint tasks; it is shielded so a caller
-    that is superseded (``exclusive=True``) or times out can never cancel
-    them. Three callers: the post-save re-read of the editor's line, a save of
-    a note whose previous save hinted a pass (final review I1), and a clean
-    quit flush (I4).
+    ``settle`` joins the runtime's own hint tasks -- every folder's, so this
+    is never on a save path; it is shielded so a caller that is superseded
+    (``exclusive=True``) or times out can never cancel them. Two callers: the
+    post-save re-read of the editor's line (a worker) and a clean quit flush
+    (final review I4). The save-path wait of I1 was removed by TASK-34000.51.
 
     Args:
         runtime: The sync runtime, or None when the app has none.
@@ -251,9 +246,20 @@ async def refresh_library_notes_sync_attention(
     if held is _COULD_NOT_SAY:
         # Keep the last known answer and paint nothing (final review I3).
         return
+    # TASK-34000.50 fix round 1 (AC#2): the same read-time "watching" fact
+    # the Manage sync folders row consults, per folder, so the tree row
+    # never says "Sync managed" over a folder nothing is polling.
+    unwatched = await _ask(runtime, "unwatched_folder_ids", default=frozenset())
+    if unwatched is _COULD_NOT_SAY:
+        return
     folder_ids = frozenset(held or ())
+    unwatched_ids = frozenset(unwatched or ())
     notes_state = host._notes_state
-    if folder_ids == getattr(notes_state, "tree_attention_folder_ids", frozenset()):
+    if folder_ids == getattr(
+        notes_state, "tree_attention_folder_ids", frozenset()
+    ) and unwatched_ids == getattr(
+        notes_state, "tree_unwatched_folder_ids", frozenset()
+    ):
         return
     note_id = getattr(host, "_selected_note_id", None)
     asked: Any = _COULD_NOT_SAY
@@ -262,9 +268,14 @@ async def refresh_library_notes_sync_attention(
     # Both reads are done. Nothing below awaits: this worker is exclusive, and
     # a successor that cancelled it between the write and the paint would find
     # the stored answer "unchanged" and never paint it (deferred minor T2-a).
-    if folder_ids == getattr(notes_state, "tree_attention_folder_ids", frozenset()):
+    if folder_ids == getattr(
+        notes_state, "tree_attention_folder_ids", frozenset()
+    ) and unwatched_ids == getattr(
+        notes_state, "tree_unwatched_folder_ids", frozenset()
+    ):
         return
     notes_state.tree_attention_folder_ids = folder_ids
+    notes_state.tree_unwatched_folder_ids = unwatched_ids
     location = getattr(host, "_library_note_location", ("", "", False))
     if (
         asked is not _COULD_NOT_SAY
@@ -479,7 +490,6 @@ def release_library_notes_sync_attention_listener(host: Any) -> None:
 
 
 __all__ = [
-    "RESAVE_SYNC_PASS_WAIT_SECONDS",
     "STATUS_LISTENER_DEBOUNCE_SECONDS",
     "SYNC_PASS_WAIT_SECONDS",
     "LibraryNotesSyncAttentionListener",
