@@ -5749,6 +5749,7 @@ class LibraryNotesController:
         # the user saw only the footer change). Reveal it after the refresh;
         # a timer is not an option (``set_timer(0)`` never fires).
         self.call_after_refresh(self._reveal_library_note_delete_prompt)
+
     def _reveal_library_note_delete_prompt(self) -> None:
         """Scroll Info to the whole delete prompt, then focus Cancel in place.
 
