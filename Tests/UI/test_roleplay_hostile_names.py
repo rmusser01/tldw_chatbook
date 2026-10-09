@@ -12,6 +12,7 @@ copy of the name runs nothing. ``[/`` and ``[TODO] y`` pin the escaper choice:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -26,7 +27,9 @@ from Tests.UI.app_factory import _build_test_app
 # frame harness, their one home (test_roleplay_hostile_text_surfaces.py
 # imports them from there too).
 from Tests.UI.roleplay_frame_harness import (
+    StyledRoleplayMockApp,
     click_meta_cells,
+    open_styled_roleplay,
     painted_rows,
     seed_mock_characters,
     settle,
@@ -71,6 +74,11 @@ class _RecordingApp(PersonasTestApp):
 
     def action_record(self, value: str) -> None:
         self.recorded.append(value)
+
+
+class _RecordingStyledApp(_RecordingApp, StyledRoleplayMockApp):
+    """``_RecordingApp`` under styled tier 1 (Roleplay frame B1): only the lazy
+    Roleplay sheet gives the header's item label and chips their row."""
 
 
 def _painted(screen) -> str:
@@ -193,6 +201,50 @@ async def test_a_character_name_tag_and_conversation_title(
         assert item.value == (name, True)
         subtitle = screen.query_one("#workbench-header-subtitle", Static)
         assert str(subtitle.render()) == "Characters"
+        assert click_meta_cells(screen) == []
+
+
+@pytest.mark.parametrize("name", HOSTILE_NAMES)
+async def test_the_header_item_label_and_server_label(
+    name, mock_app_instance, monkeypatch
+):
+    """Roleplay frame B1's header surfaces: the item label (a literal
+    ``FittedText``, viewing and editing) and the status chip's server label
+    (escaped by ``build_header_view`` into the shared markup-on header)."""
+    seed_mock_characters(
+        monkeypatch, [{"id": 1, "name": name, "description": "d", "version": 1}]
+    )
+    async with open_styled_roleplay(
+        "mock", mock_app_instance, size=SIZE, app_class=_RecordingStyledApp
+    ) as pilot:
+        screen = pilot.app.screen
+        item = screen.query_one("#personas-header-item", FittedText)
+        # Alone in the library, so the first-paint auto-selection (F-031) picks it.
+        await wait_until(
+            pilot,
+            lambda: item.value == (name, False),
+            what="the hostile name in the header",
+        )
+        pilot.app.runtime_policy = SimpleNamespace(
+            state=SimpleNamespace(last_known_server_label=name, active_server_id=None)
+        )
+        screen._set_persona_editor_runtime_source("server")
+        screen._update_title()
+        await settle(pilot)
+        assert item.fitted_text == f"› {name}"
+        painted = _painted(screen)
+        assert f"› {name}" in painted
+        assert f"Server: {name} · read-only" in painted
+        # Library row, card name, Inspector, header item label and status.
+        await _assert_literal_and_inert(pilot, name, at_least=5)
+        # Editing is a local-only action: back to the local source first.
+        screen._set_persona_editor_runtime_source("local")
+        screen._update_title()
+        await settle(pilot)
+        screen.post_message(EditCharacterRequested("1"))
+        await settle(pilot)
+        assert screen._edit_mode == "edit"
+        assert f"› {name} · editing" in _painted(screen)
         assert click_meta_cells(screen) == []
 
 
