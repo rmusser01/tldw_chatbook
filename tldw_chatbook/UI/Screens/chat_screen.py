@@ -171,6 +171,7 @@ from ..Console_Modules.wiring import build_console_controllers
 from ..Console_Modules import raw_cli as raw_cli_ui
 from ..Console_Modules import composer_run_controls as run_controls
 from ..Console_Modules.session import (
+    ConsoleSessionController,
     _has_selected_text,
     _is_empty_select_value,
 )
@@ -9023,6 +9024,8 @@ class ChatScreen(BaseAppScreen):
         that safe global context until hydration resolves the conversation's
         own persisted scope.
         """
+        if ChatScreen._console_preparing_display_read(self):
+            return self._console_chat_store
         store = self._console_chat_store
         resume_pending = self._console_ordered_resume_pending()
         # task-28029: `_workspace` is a wiring-set instance attribute
@@ -9240,6 +9243,8 @@ class ChatScreen(BaseAppScreen):
         seams there. The disposable projections, wake app wiring, and core
         state sync still run here on every call.
         """
+        if ChatScreen._console_preparing_display_read(self):
+            return self._console_chat_controller
         runtime = self._console_runtime()
         if getattr(self, "_console_runtime_attachment_retired", False):
             return runtime.chat_controller
@@ -17470,7 +17475,295 @@ class ChatScreen(BaseAppScreen):
                     group="console-sync",
                 )
 
-    async def _sync_native_console_chat_ui(self) -> bool:
+    def _console_preparing_display_read(self) -> bool:
+        """Read established owners only inside the exact current display task."""
+        owner = getattr(self, "_console_preparing_display_task", None)
+        if owner is None:
+            return False
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:  # Ordinary thread callers never join this display task.
+            return False
+        if owner is not current_task:
+            return False
+        if (
+            self._console_preparing_poll_record()
+            is not self._console_preparing_display_record
+        ):
+            raise _ConsolePreparingPollChanged
+        return True
+
+    def _console_poll_source(self) -> dict | None:
+        """Observe established owners; this is never native/action authority."""
+        from tldw_chatbook import config
+
+        if type(self) is not ChatScreen:
+            return None
+        runtime = self._console_runtime()
+        if type(runtime) is not ConsoleRuntime:
+            return None
+        app = self.app_instance
+        store, controller = runtime.chat_store, runtime.chat_controller
+        if (
+            type(store) is not ConsoleChatStore
+            or type(controller) is not ConsoleChatController
+            or controller.store is not store
+            or controller.app is not app
+            or runtime._app is not app
+            or runtime._disposed
+            or controller._disposed
+            or controller._shutdown_requested.is_set()
+        ):
+            return None
+        session = store._sessions.get(store.active_session_id)
+        registry = vars(app).get("_workspace_registry_service")
+        if registry is None:
+            registry = vars(app).get("workspace_registry_service")
+        generation = getattr(registry, "mutation_generation", None)
+        app_config = getattr(app, "app_config", None)
+        if (
+            session is None
+            or session.settings is None
+            or type(app_config) is not dict  # noqa: E721 - custom mappings stay FULL.
+            or type(generation) is not int  # noqa: E721 - booleans/custom generations stay FULL.
+        ):
+            return None
+        return {
+            "visit": self._current_console_attach_visit(),
+            "config": config,
+            "config_identity": config.current_config_identity(),
+            "app": app,
+            "app_config": app_config,
+            "chat_database": vars(app).get("chachanotes_db"),
+            "runtime": runtime,
+            "store": store,
+            "controller": controller,
+            "registry": registry,
+            "registry_generation": generation,
+            "session": session,
+            "settings": session.settings,
+            "bridge": controller._agent_bridge,
+            "runtime_bridge": runtime._agent_bridge,
+            "membership": tuple(store.sessions()),
+        }
+
+    def _console_poll_source_is_current(self, captured: dict | None) -> bool:
+        current = self._console_poll_source()
+        if captured is None or current is None:
+            return False
+        return (
+            captured["visit"].can_complete(current["visit"])
+            and captured["config_identity"] == current["config_identity"]
+            and captured["registry_generation"] == current["registry_generation"]
+            and all(
+                captured[name] is current[name]
+                for name in (
+                    "config",
+                    "app",
+                    "app_config",
+                    "chat_database",
+                    "runtime",
+                    "store",
+                    "controller",
+                    "registry",
+                    "session",
+                    "settings",
+                    "bridge",
+                    "runtime_bridge",
+                )
+            )
+            and len(captured["membership"]) == len(current["membership"])
+            and all(
+                before is after
+                for before, after in zip(captured["membership"], current["membership"])
+            )
+        )
+
+    def _console_preparing_poll_record(self):
+        """Select only a sole, unchanged stock manual receipt for display work."""
+        from tldw_chatbook.Chat.console_configuration_preparation import (
+            capture_console_received_configuration_preparation,
+        )
+        from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
+        from tldw_chatbook.Chat.console_chat_models import ConsoleSubmissionOrigin
+        from ..Console_Modules.session import _console_live_runtime_enabled
+
+        source = getattr(self, "_console_completed_full_source", None)
+        if (
+            self._console_sync_requested
+            or not self._console_attach_sync_complete
+            or not self._console_attach_reconciled
+            or self._console_attach_reconcile_running
+            or self._console_ordered_resume_pending()
+            or not self._console_poll_source_is_current(source)
+            or not stock_native_methods(self, _CONSOLE_RECEIVED_SCREEN_SELECTORS)
+            or not stock_native_methods(self, _CONSOLE_PREPARING_POLL_SCREEN_READERS)
+            or type(self._session) is not ConsoleSessionController
+            or not stock_native_methods(
+                self._session, _CONSOLE_PREPARING_POLL_SESSION_READERS
+            )
+            or any(
+                globals().get(function.__name__) is not function
+                or function.__code__ is not code
+                for function, code in _CONSOLE_RECEIVED_RAG_READERS
+            )
+        ):
+            return None
+        runtime, store, controller = (
+            source["runtime"],
+            source["store"],
+            source["controller"],
+        )
+        if (
+            len(runtime._turn_custody) != 1
+            or not stock_native_methods(
+                controller, _CONSOLE_PREPARING_POLL_CONTROLLER_READERS
+            )
+            or any(
+                store.dispatch_recovery_needs_queue_hydration(session.id)
+                for session in source["membership"]
+            )
+            # The received claim itself occupies one slot. No other run may.
+            or controller.in_flight_run_count() != 1
+            or any(
+                worker.group.startswith("console-run-") and not worker.is_finished
+                for worker in self.workers
+            )
+            or not stock_native_methods(
+                controller, _CONSOLE_PREPARING_POLL_CONTROLLER_READERS
+            )
+        ):
+            return None
+        record = next(iter(runtime._turn_custody.values()))
+        intent, claim = record.received_intent, record.received_claim
+        if (
+            record.store is not store
+            or record.session_id != source["session"].id
+            or record.request is not None
+            or record.task is None
+            or record.task.done()
+            or intent is None
+            or intent.queue_revision is not None
+            or claim is None
+            or claim.origin is not ConsoleSubmissionOrigin.MANUAL
+            or not store.received_turn_is_current(claim)
+            or not store.session_inputs_are_current(intent.inputs)
+            or intent.view_attachment_generation != source["visit"].generation
+            or capture_console_received_configuration_preparation(
+                source["app"], store, controller, session_id=record.session_id
+            )
+            is None
+        ):
+            return None
+        context_provider = controller._turn_context_provider
+        if context_provider is not None and (
+            getattr(context_provider, "__self__", None) is not self._session
+            or getattr(context_provider, "__func__", None)
+            is not _CONSOLE_PREPARING_POLL_SESSION_READERS[0][1]
+        ):
+            return None
+        adapters = getattr(self, "_console_received_live_adapters", ())
+        if not adapters or any(
+            getattr(target, name, None) is not original
+            for target, name, original in adapters
+        ):
+            return None
+        launch, launch_revision, _ = runtime.snapshot_console_staged_evidence()
+        if (
+            launch is not intent.staged_evidence_launch
+            or launch_revision != intent.staged_evidence_revision
+            or controller._provider_selection() != intent.selection.provider_selection
+            # Stock provider-direct chats have no bridge without a chat DB.
+            or source["bridge"] is None
+            and (
+                source["chat_database"] is not None
+                or source["runtime_bridge"] is not None
+            )
+        ):
+            return None
+        console_config = source["app_config"].get("console")
+        if type(console_config) is not dict or controller._agent_runtime_enabled != (  # noqa: E721 - custom mappings stay FULL.
+            _console_live_runtime_enabled(source["app_config"], console_config)
+        ):
+            return None
+        # Voice owns independent transitions; this first route is manual-only.
+        missing = object()
+        if self._dictation._console_dictation_state != "idle" or any(
+            vars(owner).get(name, missing) is not None
+            for owner, names in (
+                (
+                    self._dictation,
+                    ("_console_dictation_session", "_console_pending_voice_action"),
+                ),
+                (
+                    self._hands_free,
+                    ("_console_hands_free", "_qualified_voice_startup_generation"),
+                ),
+                (self._realtime, ("session", "close_worker")),
+                (
+                    self._message,
+                    (
+                        "_console_speaking_message_id",
+                        "_console_speech_owner",
+                        "_console_speech_pending_stop",
+                    ),
+                ),
+            )
+            for name in names
+        ):
+            return None
+        wake = controller.fleet_wake
+        coordinator = runtime.change_review_coordinator
+        if (
+            wake is not None
+            and wake.delivering_conversation_ids()
+            or coordinator is not None
+            and coordinator.publication_signal.snapshot().pending
+        ):
+            return None
+        if (
+            any(
+                getattr(self, name, None) is not None
+                for name in (
+                    "_console_roleplay_pending_plan",
+                    "_console_roleplay_active_plan",
+                    "_console_roleplay_repair_plan",
+                )
+            )
+            or self._console_roleplay_drain_scheduled
+            or self._console_roleplay_tearing_down
+            or self._console_roleplay_repair_inflight_generation > 0
+            or self._console_roleplay_persistence_task is not None
+            and not self._console_roleplay_persistence_task.done()
+            or self._console_roleplay_writer_task is not None
+            and not self._console_roleplay_writer_task.done()
+            or getattr(source["app"], "_console_identity_refresh_generation", 0)
+            > self._console_identity_refresh_generation
+            or getattr(source["app"], "_console_roleplay_repair_generation", 0)
+            > max(
+                self._console_roleplay_repair_generation,
+                getattr(
+                    source["app"], "_console_roleplay_repair_consumed_generation", 0
+                ),
+            )
+            or (record.session_id, self._global_chat_display_name())
+            != self._last_console_roleplay_refresh_key
+        ):
+            return None
+        return record
+
+    async def _sync_console_poll_display_ui(self) -> bool:
+        """Keep general polls FULL; only an unchanged manual Preparing pass narrows."""
+        from tldw_chatbook.Chat.console_received_dispatch import stock_native_methods
+
+        # Custom/legacy full callbacks retain their existing no-keyword contract.
+        if not stock_native_methods(self, (_CONSOLE_PREPARING_POLL_FULL_SYNC,)):
+            return await self._sync_native_console_chat_ui()
+        return await self._sync_native_console_chat_ui(_preparing_poll=True)
+
+    async def _sync_native_console_chat_ui(
+        self, *, _preparing_poll: bool = False
+    ) -> bool:
         """Refresh visible Console-native state after send/stop transitions.
 
         **A torn-down screen renders nothing** (task-15860, cross-suite
@@ -17505,6 +17798,8 @@ class ChatScreen(BaseAppScreen):
             self._console_sync_requested = True
             return False
         if self._console_sync_in_progress:
+            if _preparing_poll:
+                return False  # The existing inclusive pass owns publication.
             self._console_sync_requested = True
             try:
                 await self._sync_console_native_session_tabs()
@@ -17513,8 +17808,23 @@ class ChatScreen(BaseAppScreen):
                     raise
             return False
         visit = self._current_console_attach_visit()
+        poll_record = self._console_preparing_poll_record() if _preparing_poll else None
+        full_source = (
+            ChatScreen._console_poll_source(self) if poll_record is None else None
+        )
+        if poll_record is None and type(self) is ChatScreen:
+            self._console_completed_full_source = None
         self._console_sync_in_progress = True
         self._record_ui_worker_started("console-sync")
+
+        def poll_is_current() -> bool:
+            if (
+                poll_record is None
+                or self._console_preparing_poll_record() is poll_record
+            ):
+                return True
+            self._console_sync_requested = True
+            return False
 
         def sync_live_state(sync: Callable[[], None]) -> bool:
             # These paths also update controller/store state, so retain fresh
@@ -17544,7 +17854,14 @@ class ChatScreen(BaseAppScreen):
                         registry.drop_session(missing_session_id)
                 self._console_h3_known_session_ids = live_session_ids
                 self._image._reconcile_h3_image_edit_completions(store)
-            if not sync_live_state(self._sync_console_chat_core_state):
+            if not poll_is_current():
+                return False
+            if poll_record is not None:
+                self._console_preparing_display_task = asyncio.current_task()
+                self._console_preparing_display_record = poll_record
+            if poll_record is None and not sync_live_state(
+                self._sync_console_chat_core_state
+            ):
                 return False
             self._session._sync_console_session_draft()
             # PR#757 review (comment 4): warm the effective-scope cache for
@@ -17553,6 +17870,8 @@ class ChatScreen(BaseAppScreen):
             # docstring for why the picker/resume/flush warmers alone leave
             # a restore_state-reactivated session uncovered.
             await self._retrieval._warm_console_effective_scope_cache_if_stale()
+            if not poll_is_current():
+                return False
             # Fix-wave (Critical, Task 4 review): this is the trigger for the
             # "what's in play" chat-dictionary summary now -- it replaces the
             # removed app-level `watch_current_chat_conversation_id`/
@@ -17567,7 +17886,11 @@ class ChatScreen(BaseAppScreen):
             await (
                 self._retrieval._refresh_active_dictionaries_summary_if_scope_changed()
             )
+            if not poll_is_current():
+                return False
             await self._retrieval._refresh_active_world_books_summary_if_scope_changed()
+            if not poll_is_current():
+                return False
             # P3c Task 4: mirrors the dictionary/world-book scope-guarded
             # refresh pattern immediately above -- safe to call unconditionally
             # on every sync tick because the refresh is itself scope-guarded
@@ -17575,10 +17898,14 @@ class ChatScreen(BaseAppScreen):
             # raises (see `_refresh_active_character_avatar_if_scope_changed`
             # docstring, T3).
             await self._character._refresh_active_character_avatar_if_scope_changed()
+            if not poll_is_current():
+                return False
             # The display facade checks its exact ambient owner every tick;
             # stable metadata observations expire within two seconds. Actions
             # and commits retain their independent fresh native scope checks.
             await self._character_context.refresh_presentation_if_scope_changed(self)
+            if not poll_is_current():
+                return False
             # Tab publication can create/activate a session. Read the
             # current target after it suspends; rail visibility still derives
             # fresh state after transcript publication (PR #660).
@@ -17597,10 +17924,23 @@ class ChatScreen(BaseAppScreen):
                 self, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
             )
             with read_snapshot.scope(), self._workspace.tick_workspace_build_scope():
-                await self._sync_console_native_session_tabs()
+                if poll_record is None:
+                    await self._sync_console_native_session_tabs()
+                elif (
+                    await self._sync_console_native_session_tabs(
+                        _preparing_record=poll_record
+                    )
+                    is False
+                ):
+                    self._console_sync_requested = True
+                    return False
+                if not poll_is_current():
+                    return False
                 # Roleplay materializes current message projections. Keep its
                 # fresh authority check before publishing those messages.
-                if not sync_live_state(self._dispatch_active_console_roleplay_refresh):
+                if poll_record is None and not sync_live_state(
+                    self._dispatch_active_console_roleplay_refresh
+                ):
                     return False
                 self._sync_console_workspace_context()
                 project_instruction_ui.sync_project_instruction_status_for_screen(self)
@@ -17608,6 +17948,8 @@ class ChatScreen(BaseAppScreen):
                 # already schedule their checked reads through inputs(); a cold
                 # rail must not hold a completed reply behind that worker.
                 await self._sync_native_console_transcript()
+                if not poll_is_current():
+                    return False
                 if self._sync_console_rail_and_controls() is False:
                     self._console_control_bar_replay_whole_sync = True
                     self._request_console_control_bar_sync(delayed=True)
@@ -17633,8 +17975,10 @@ class ChatScreen(BaseAppScreen):
                     return False
             self._dispatch_console_rail_preference_prune()
             self._session.schedule_manual_read_acknowledgement()
-            if not self._console_attach_sync_complete and visit.can_complete(
-                self._current_console_attach_visit()
+            if (
+                poll_record is None
+                and not self._console_attach_sync_complete
+                and visit.can_complete(self._current_console_attach_visit())
             ):
                 self._console_attach_sync_complete = True
                 if not (
@@ -17642,7 +17986,19 @@ class ChatScreen(BaseAppScreen):
                     or self._console_attach_reconcile_running
                 ):
                     self.call_after_refresh(self._reconcile_console_after_attach)
+            if not poll_is_current():
+                return False
+            if (
+                poll_record is None
+                and not self._console_sync_requested
+                and full_source is not None
+                and self._console_poll_source_is_current(full_source)
+            ):
+                self._console_completed_full_source = full_source
             return True
+        except _ConsolePreparingPollChanged:
+            self._console_sync_requested = True
+            return False
         except Exception:
             # Teardown-scoped ONLY. A tick that was mid-flight when the
             # screen was closed is querying widgets Textual has already
@@ -17663,6 +18019,9 @@ class ChatScreen(BaseAppScreen):
             # fmt: on
             return False
         finally:
+            if poll_record is not None:
+                self._console_preparing_display_task = None
+                self._console_preparing_display_record = None
             self._record_ui_worker_finished("console-sync")
             self._console_sync_in_progress = False
             if (
@@ -17683,7 +18042,9 @@ class ChatScreen(BaseAppScreen):
                         group="console-sync",
                     )
 
-    async def _sync_console_native_session_tabs(self) -> None:
+    async def _sync_console_native_session_tabs(
+        self, *, _preparing_record=None
+    ) -> bool | None:
         """Refresh native Console session tabs from store state."""
         self._console_session_tabs_sync_calls += 1
         try:
@@ -17697,7 +18058,15 @@ class ChatScreen(BaseAppScreen):
                         )
                     except QueryError:
                         return
-                    store = self._ensure_console_chat_store()
+                    if _preparing_record is not None:
+                        if (
+                            self._console_preparing_poll_record()
+                            is not _preparing_record
+                        ):
+                            return False  # Escalate only after releasing this lock.
+                        store = self._console_chat_store
+                    else:
+                        store = self._ensure_console_chat_store()
                     sessions = store.sessions()
                     active_session_id = store.active_session_id
                     active_session = next(
@@ -17712,6 +18081,8 @@ class ChatScreen(BaseAppScreen):
                     # publication owns pristine-default convergence; only
                     # missing settings/blank creation need the live ensure.
                     if active_session is None or active_session.settings is None:
+                        if _preparing_record is not None:
+                            return False
                         self._session._ensure_active_console_session_settings()
                         store = self._ensure_console_chat_store()
                         sessions = store.sessions()
@@ -17746,6 +18117,12 @@ class ChatScreen(BaseAppScreen):
                     )
                     if _console_screen_is_torn_down(self):
                         return
+                    if (
+                        _preparing_record is not None
+                        and self._console_preparing_poll_record()
+                        is not _preparing_record
+                    ):
+                        return False
                     # The Surface's own lock/mount awaits permit owner changes.
                     # Repaint those changes within this same counted caller.
                     if self._console_chat_store is not store:
@@ -17769,7 +18146,9 @@ class ChatScreen(BaseAppScreen):
                     except QueryError:
                         return
                     if current_surface is surface:
-                        return
+                        return True if _preparing_record is not None else None
+                    if _preparing_record is not None:
+                        return False
         finally:
             self._console_session_tabs_sync_calls -= 1
 
@@ -17814,7 +18193,7 @@ class ChatScreen(BaseAppScreen):
             return
 
         async def _poll_transcript() -> None:
-            if await self._sync_native_console_chat_ui() is False:
+            if await self._sync_console_poll_display_ui() is False:
                 # Deferred work still owes its final full refresh, even when
                 # no turn remains active. Keep the existing poll owner alive.
                 return
@@ -25085,4 +25464,56 @@ _CONSOLE_RECEIVED_RAG_READERS = (
     (_stock_received_rag_top_k, _stock_received_rag_top_k.__code__),
     (_console_library_rag_source_scope, _console_library_rag_source_scope.__code__),
     (_console_library_rag_profile_top_k, _console_library_rag_profile_top_k.__code__),
+)
+
+
+_CONSOLE_PREPARING_POLL_SCREEN_READERS = tuple(
+    (name, getattr(ChatScreen, name), getattr(ChatScreen, name).__code__)
+    for name in (
+        "_sync_console_chat_core_state",
+        "_dispatch_active_console_roleplay_refresh",
+        "_global_chat_display_name",
+        "_console_agent_runtime_enabled",
+        "_ensure_console_agent_bridge",
+        "_ensure_console_chat_store",
+        "_ensure_console_chat_controller",
+        "_sync_console_native_session_tabs",
+    )
+)
+_CONSOLE_PREPARING_POLL_CONTROLLER_READERS = tuple(
+    (
+        name,
+        getattr(ConsoleChatController, name),
+        getattr(ConsoleChatController, name).__code__,
+    )
+    for name in (
+        "_provider_selection",
+        "in_flight_run_count",
+        "_live_busy_session_ids",
+        "activity_for",
+    )
+)
+
+
+class _ConsolePreparingPollChanged(RuntimeError):
+    """A display helper must leave its task before the original FULL repair."""
+
+
+_CONSOLE_PREPARING_POLL_FULL_SYNC = (
+    "_sync_native_console_chat_ui",
+    ChatScreen._sync_native_console_chat_ui,
+    ChatScreen._sync_native_console_chat_ui.__code__,
+)
+_CONSOLE_PREPARING_POLL_SESSION_READERS = tuple(
+    (
+        name,
+        getattr(ConsoleSessionController, name),
+        getattr(ConsoleSessionController, name).__code__,
+    )
+    for name in (
+        "_build_console_turn_execution_context",
+        "_build_console_turn_capture_selection",
+        "_resolve_turn_tool_policy_profile_id",
+        "_resolve_turn_persona_policy_rules",
+    )
 )

@@ -439,6 +439,13 @@ screen._console_sync_in_progress=False;screen._console_sync_requested=False
 screen._console_chat_store=None
 screen._console_chat_controller=None
 screen._console_context_read_snapshot=None
+# This synthetic control surface is unmounted and has no runtime owner.
+# Keep the original visit comparison without constructing unrelated services.
+screen._console_runtime=lambda:None
+screen._console_runtime_attachment_generation=None
+screen._console_attach_visit_generation=0
+screen._console_attach_sync_complete=False
+screen._is_active_console_screen=lambda:False
 screen._message=SimpleNamespace(reconcile_console_speech_context=no_sync)
 screen._session=SimpleNamespace(_sync_console_session_draft=no_sync,schedule_manual_read_acknowledgement=no_sync)
 screen._retrieval=SimpleNamespace(
@@ -691,7 +698,10 @@ if boundary=='core':
  screen._sync_console_chat_core_state=read_live
 else:
  screen._dispatch_active_console_roleplay_refresh=read_live
- screen._sync_console_mode_bar=begin_holding
+ # The original FULL now performs roleplay before its final mode bar.
+ # Hold its real lock immediately before that admission, after core retires.
+ async def hold_before_roleplay(*args,**kwargs):begin_holding()
+ screen._sync_console_native_session_tabs=hold_before_roleplay
 async def main():
  if boundary=='core':begin_holding()
  await screen._sync_native_console_chat_ui()

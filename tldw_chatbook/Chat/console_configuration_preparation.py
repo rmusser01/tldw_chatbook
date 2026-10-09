@@ -244,12 +244,17 @@ def _standard_configuration_references(app, refs) -> bool:
         ChangeReviewConsentService,
         _default_capability_reader,
     )
-    from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
-    from tldw_chatbook.Plugins.service import PluginService
-    from tldw_chatbook.Character_Chat.local_character_persona_service import (
-        LocalCharacterPersonaService,
-    )
-    from tldw_chatbook.MCP.console_snapshot import standard_console_sources
+
+    # Absent optional owners need no defining feature graph before receipt.
+    SkillTrustService = PluginService = LocalCharacterPersonaService = None
+    if refs.trust is not None:
+        from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
+    if refs.plugin is not None:
+        from tldw_chatbook.Plugins.service import PluginService
+    if refs.persona is not None:
+        from tldw_chatbook.Character_Chat.local_character_persona_service import (
+            LocalCharacterPersonaService,
+        )
 
     try:
         registry, local, visual, scratch = (
@@ -309,8 +314,11 @@ def _standard_configuration_references(app, refs) -> bool:
             name in vars(local) for name in ("_visible_records", "_summary_for_record")
         ):
             return False
-        if refs.mcp is not None and not standard_console_sources(refs.mcp):
-            return False
+        if refs.mcp is not None:
+            from tldw_chatbook.MCP.console_snapshot import standard_console_sources
+
+            if not standard_console_sources(refs.mcp):
+                return False
         for database in (
             refs.workspace_database,
             refs.chat_database,

@@ -40,3 +40,11 @@ This is a proposed routing contract, not a claim that existing invalidation sign
 ## Qualification
 
 Use original-callback causal controls and real mounted transitions before selecting the narrow route. Then run only the targeted controls in the plan and sequential original native/real-provider measurements on saved integrated sources. Count reductions, diagnostics and completed replies do not establish the under-one-second overhead or 100 ms input/render contract. Keep whole-phase attempts distinct from unique files or dispatch-only work, and physical process retirement distinct from app-owned native completion. No app, tests or native probes ran in this source-planning lane.
+
+## Accepted bounded manual-Preparing amendment (2026-10-08)
+
+The integration owner selected the sole-stock-unpromoted-manual-Preparing branch in TASK-34563.39 following source review and original mounted Task34563.38 qualification. Only this bounded route is accepted for implementation; the general polling proposal and its wider evidence gate remain Proposed. The implementation and original-callback/native qualification are pending.
+
+Use the completed-current-FULL source witness and exact received-intent/task/claim/input/attachment ownership described in the plan amendment. Compare controller selection with the detached receipt selection and keep the canonical live runtime gate, exact bridge and stock callbacks aligned. Recheck after retained awaits; changes and pending FULL/roleplay effects retain original FULL. Preserve the complete original helper sequence, explicit callers, wake/background/queue/viewless/custom/terminal routes and final timer settlement. A routine success never completes attachment or grants mutation authority.
+
+The manual action independently performs checked capture and submits its completed request configuration. Runtime wake and compatibility producers can use a cached controller runtime gate, and missing-settings selection can use cached provider fields; they therefore remain FULL. This concrete action boundary replaces a guessed general selection-equivalence signature for the first implementation. ADR126 native authority/retirement, ADR222 custody/fresh action capture and the original performance budgets remain unchanged.

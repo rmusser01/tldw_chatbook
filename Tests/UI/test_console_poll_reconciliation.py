@@ -33,6 +33,11 @@ async def _qualify_warm_capture_sources(case):
         app, case.store, case.controller, session_id=case.session.id
     ), "Warm original configuration sources are not eligible for worker capture"
     assert not case.probe.entered.is_set()
+    assert await _until(
+        lambda: case.console._console_attach_reconciled
+        and not case.console._console_attach_reconcile_running,
+        5,
+    ), "Original attachment workflow did not finish before stable Send qualification"
 
 
 class _OriginalPreparingPolls:
@@ -49,13 +54,27 @@ class _OriginalPreparingPolls:
         self.core_code = inspect.unwrap(
             ChatScreen._sync_console_chat_core_state
         ).__code__
+        self.eligibility_code = ChatScreen._console_preparing_poll_record.__code__
+        self.tab_code = ChatScreen._sync_console_native_session_tabs.__code__
+        self.transcript_code = ChatScreen._sync_native_console_transcript.__code__
+        self.roleplay_code = (
+            ChatScreen._dispatch_active_console_roleplay_refresh.__code__
+        )
         self.active = {}
         self.completed = []
 
     def _started(self, code, _offset):
         frame = sys._getframe(1)
         if code is self.poll_code and frame.f_locals.get("self") is self.case.console:
-            self.active[id(frame)] = {"core_returns": 0, "full_results": []}
+            self.active[id(frame)] = {
+                "core_returns": 0,
+                "roleplay_returns": 0,
+                "tab_returns": 0,
+                "transcript_returns": 0,
+                "full_results": [],
+                "eligibility_refusals": {},
+                "eligible_returns": 0,
+            }
 
     def _returned(self, code, _offset, value):
         frame = sys._getframe(1)
@@ -71,6 +90,18 @@ class _OriginalPreparingPolls:
             row["core_returns"] += 1
         elif code is self.full_code:
             row["full_results"].append(value)
+        elif code is self.tab_code:
+            row["tab_returns"] += 1
+        elif code is self.transcript_code:
+            row["transcript_returns"] += 1
+        elif code is self.roleplay_code:
+            row["roleplay_returns"] += 1
+        elif code is self.eligibility_code:
+            if value is self.record:
+                row["eligible_returns"] += 1
+            else:
+                refusals = row["eligibility_refusals"]
+                refusals[frame.f_lineno] = refusals.get(frame.f_lineno, 0) + 1
         elif code is self.poll_code:
             case = self.case
             row["held"] = (
@@ -96,7 +127,10 @@ class _OriginalPreparingPolls:
             for index, row in enumerate(self.completed)
             if row["held"]
             and not row["deferred"]
-            and not any(value is False for value in row["full_results"])
+            and row["full_results"]
+            and all(value is True for value in row["full_results"])
+            and row["tab_returns"] > 0
+            and row["transcript_returns"] > 0
         ]
 
     @contextlib.contextmanager
@@ -116,11 +150,26 @@ class _OriginalPreparingPolls:
                 self.poll_code,
                 monitoring.events.PY_START | monitoring.events.PY_RETURN,
             )
-            for code in (self.full_code, self.core_code):
+            for code in (
+                self.full_code,
+                self.core_code,
+                self.tab_code,
+                self.transcript_code,
+                self.roleplay_code,
+                self.eligibility_code,
+            ):
                 monitoring.set_local_events(tool, code, monitoring.events.PY_RETURN)
             yield self
         finally:
-            for code in (self.poll_code, self.full_code, self.core_code):
+            for code in (
+                self.poll_code,
+                self.full_code,
+                self.core_code,
+                self.tab_code,
+                self.transcript_code,
+                self.roleplay_code,
+                self.eligibility_code,
+            ):
                 monitoring.set_local_events(tool, code, 0)
             monitoring.register_callback(tool, monitoring.events.PY_START, None)
             monitoring.register_callback(tool, monitoring.events.PY_RETURN, None)
@@ -168,6 +217,7 @@ async def test_ordinary_preparing_polls_do_not_repeat_live_core_reconciliation(
         assert (
             sum(row["core_returns"] for row in steady_rows) == 0
         ), f"Unchanged Preparing polls repeated original live core reconciliation: {rows!r}"
+        assert sum(row["roleplay_returns"] for row in steady_rows) == 0, rows
 
 
 async def test_in_place_runtime_disable_reaches_next_real_send(monkeypatch):
@@ -351,8 +401,11 @@ def _assert_original_configuration_custody(case):
     assert not probe.retired()
 
 
+@pytest.mark.parametrize(
+    "preparing_display", [False, True], ids=["original-demand", "preparing-display"]
+)
 async def test_full_request_during_poll_await_replays_with_current_owner(
-    monkeypatch, record_property
+    monkeypatch, record_property, preparing_display
 ):
     """An original session activation cannot lose its full request in a poll."""
     import asyncio
@@ -365,7 +418,7 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
     )
 
     async with _received_console_case(
-        monkeypatch, "late-full-poll", durable=True
+        monkeypatch, f"late-full-poll-{preparing_display}", durable=True
     ) as case:
         await _qualify_warm_capture_sources(case)
         successor = case.store.create_session(
@@ -376,7 +429,7 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
         )
         case.store.set_session_draft(successor.id, "Current owner draft")
         _send(case, "enter")
-        await _held_received_record(case)
+        record = await _held_received_record(case)
         _assert_original_configuration_custody(case)
         console = case.console
         assert await _until(
@@ -385,6 +438,29 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
             and not console._console_control_bar_replay_whole_sync,
             5,
         ), "Original full reconciliation never became available for the poll hold"
+        if preparing_display:
+            successful_display = []
+
+            def completed_display(kind, label, frame, value):
+                if (
+                    kind == sys.monitoring.events.PY_RETURN
+                    and frame.f_locals.get("self") is console
+                    and frame.f_locals.get("poll_record") is record
+                    and value is True
+                    and asyncio.current_task()
+                    is console._console_transcript_sync_timer._task
+                ):
+                    successful_display.append(True)
+
+            with _original_transition_events(
+                [("completed_display", ChatScreen, "_sync_native_console_chat_ui")],
+                completed_display,
+            ):
+                assert await _until(
+                    lambda: bool(successful_display)
+                    and not console._console_sync_in_progress,
+                    5,
+                ), "No original natural Preparing display completed before the hold"
         surface = console.query_one("#console-session-surface", ConsoleSessionSurface)
         lock = surface._session_sync_lock
         assert type(lock) is asyncio.Lock and not lock.locked()
@@ -407,6 +483,7 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
         replay_code = ChatScreen._run_coalesced_control_bar_sync.__code__
         held_return, coalesced = {}, {}
         replay_entries = []
+        owned_deferred = set()
 
         def pending_state():
             # Plain fields only: diagnostic observation cannot advance the UI.
@@ -437,6 +514,9 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                     # This is the admitted full pass, not its coalesced tab-only path.
                     if "visit" not in full.f_locals:
                         return
+                    display_record = full.f_locals.get("poll_record")
+                    if preparing_display:
+                        assert display_record is record
                     assert tabs.f_locals["store"] is case.store
                     assert frame.f_locals["active_session_id"] == case.session.id
                     assert any(
@@ -451,6 +531,7 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                         tabs=id(tabs),
                         task=asyncio.current_task(),
                         future=value,
+                        preparing_display=display_record is record,
                     )
                 elif (
                     kind == sys.monitoring.events.PY_RETURN
@@ -472,7 +553,9 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
             elif label == "coalesced" and frame.f_locals.get("self") is console:
                 if kind == sys.monitoring.events.PY_START:
                     coalesced.clear()
-                    if held_return.get("requested") and held_return.get("replay"):
+                    # FULL finally may consume requested before PY_RETURN;
+                    # its retained replay flag still owns this continuation.
+                    if held_return.get("replay") or owned_deferred:
                         state = pending_state()
                         assert len(replay_entries) < 64
                         replay_entries.append(state)
@@ -490,6 +573,7 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                 immediate = (
                     parent is not None
                     and id(parent) == held["full"]
+                    and asyncio.current_task() is held["task"]
                     and not held.get("returned")
                 )
                 delayed = _transition_parent(frame, replay_code, console)
@@ -526,12 +610,20 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                         held
                         and id(frame) == held["full"]
                         and asyncio.current_task() is held["task"]
+                        and not held.get("returned")
                     ):
                         held["returned"] = True
                         held_return.update(pending_state(), result=value)
-                    full_results.append(
-                        (asyncio.current_task(), value, case.store.active_session_id)
-                    )
+                    task = asyncio.current_task()
+                    if (
+                        value is False
+                        and console._console_control_bar_replay_whole_sync
+                        and any(
+                            task is issued for _worker, issued, _work, _route in replays
+                        )
+                    ):
+                        owned_deferred.add(task)
+                    full_results.append((task, value, case.store.active_session_id))
 
         bindings = [
             ("poll", timer, "_callback"),
@@ -593,10 +685,16 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                 activation.result()
                 same_call = [row for row in publications if row[0] == held["tabs"]]
                 assert same_call and same_call[0][1] == case.session.id
-                assert any(
-                    owner == successor.id and any(s is successor for s in sessions)
-                    for _call, owner, sessions in same_call[1:]
-                ), "Original tab caller failed its owner replay"
+                if held["preparing_display"]:
+                    assert held_return["result"] is False
+                    assert (
+                        len(same_call) == 1
+                    ), "Display caller continued after its owner changed"
+                else:
+                    assert any(
+                        owner == successor.id and any(s is successor for s in sessions)
+                        for _call, owner, sessions in same_call[1:]
+                    ), "Original FULL tab caller failed its owner replay"
                 assert all(
                     worker._task is task and worker._work is work
                     for worker, task, work, _route in replays
@@ -608,6 +706,9 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                 assert case.composer.draft_text() == "Current owner draft"
                 assert console._console_session_tabs_sync_calls == 0
                 _assert_original_configuration_custody(case)
+                record_property(
+                    "late_full_held_preparing_display", held["preparing_display"]
+                )
                 record_property("late_full_original_replay_workers", len(replays))
                 record_property(
                     "same_original_tab_caller_owners", [row[1] for row in same_call]
