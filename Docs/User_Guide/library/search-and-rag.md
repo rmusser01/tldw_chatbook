@@ -79,9 +79,14 @@ other mode and resets the current results. Its tooltip names which mode a
 press switches *to* and, for RAG Answer, that it's the paid one: "Next:
 RAG Answer — calls a paid provider." / "Next: Search — stays local." Once you're in RAG Answer
 mode with a provider configured, the query row's status line (silent in
-Search mode) states the same fact before you press Run: "RAG Answer sends
-your question and the evidence to \<provider>. Search stays local." — a
-statement, not a confirmation gate; nothing blocks Run because of it.
+Search mode) names what Run will bill before you press it: "To openai ·
+gpt-4.1-mini: question + evidence" — the provider and the model from your
+saved defaults (Settings ▸ Providers & Models, the same `[chat_defaults]`
+pair First Run wrote; a model saved under the provider's own section is
+used when the defaults name none, and never another provider's model).
+If no model is saved anywhere the line says "its default model" rather
+than guessing. It is a statement, not a confirmation gate; nothing blocks
+Run because of it.
 
 Use Tab or Shift+Tab to reach the mode toggle, then Enter to switch. Focus
 stays on the toggle so Enter can switch back. Changing mode clears the current
@@ -312,7 +317,10 @@ tok)` when pricing for that model is known, or `provider · model · 1,240
 tok · pricing unknown` when it isn't — it never prints a dollar figure it
 can't source. A call that spent money but then failed outright still shows
 this line: a call that cost money says so even when it didn't produce a
-usable answer.
+usable answer. The model it names is the one the status line named before
+Run — the footer reports what the provider says it ran, so a provider that
+answers with a dated snapshot id (gpt-4.1-mini-2025-04-14 for
+gpt-4.1-mini) shows that longer name here.
 
 The same retrieval-coverage line shown above the evidence rows below
 (e.g. "Semantic search found nothing from: Notes.", "No strong semantic

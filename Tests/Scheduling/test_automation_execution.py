@@ -102,6 +102,26 @@ def test_resolve_execution_target_falls_through_to_library_provider(monkeypatch)
     assert target == {"provider": "deepseek", "model": None, "max_tokens": 1000}
 
 
+def test_resolve_execution_target_forwards_the_library_resolved_model(monkeypatch):
+    """TASK-34000.21 (AC#4): the Library resolver now returns the persisted
+    `[chat_defaults]` pair, and an automation that names no provider or
+    model of its own takes BOTH halves -- the un-mocked twin lives in
+    `Tests/Library/test_library_rag_answer_provider_resolution.py`."""
+    row = _definition_row(input={"question": "q"})
+    monkeypatch.setattr(automation_execution, "get_cli_setting", lambda *a, **k: None)
+    monkeypatch.setattr(
+        automation_execution,
+        "resolve_library_rag_answer_provider",
+        lambda: ("anthropic", "claude-haiku-4-5"),
+    )
+    target = resolve_execution_target(row)
+    assert target == {
+        "provider": "anthropic",
+        "model": "claude-haiku-4-5",
+        "max_tokens": 1000,
+    }
+
+
 def test_resolve_execution_target_max_tokens_capped_at_4000(monkeypatch):
     row = _definition_row(input={"question": "q", "max_tokens": 999999})
     monkeypatch.setattr(automation_execution, "get_cli_setting", lambda *a, **k: None)
