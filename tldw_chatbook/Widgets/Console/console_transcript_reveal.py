@@ -150,7 +150,7 @@ def hand_off_selection(
     elif paceable(transcript, pending_index, tail_start):
         # Up to a window of new rows below it (the 60 an Undo of a whole
         # short chat restores): a screenful at a time.
-        pace(transcript, pending_index, tail_start)
+        pace(transcript, pending_index, tail_start, keep_following=True)
     return start
 
 

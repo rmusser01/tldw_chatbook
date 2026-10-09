@@ -3197,9 +3197,9 @@ class ConsoleTranscript(VerticalScroll):
         #: one spurious upward hydration ABOVE the jump target. Latched in
         #: ``_recenter_window_on``, released once the placement lands.
         self._suppress_boundary_hydration = False
-        #: Last message of a window mounting a batch at a time, else ``None``
-        #: (TASK-33628.5.1 AC#3; ``console_transcript_fill``).
-        self._window_fill: str | None = None
+        #: (last message id, refollow stamp) of a window mounting a batch at a
+        #: time, else ``None`` (TASK-33628.5.1 AC#3; ``console_transcript_fill``).
+        self._window_fill: tuple[str, float | None] | None = None
         #: Console selection phase 5 (keyboard mode): the row currently
         #: armed for keyboard-driven text selection via `s`, or ``None``
         #: when the mode is off. Distinct from ``_selection_origin_row``
@@ -3504,15 +3504,15 @@ class ConsoleTranscript(VerticalScroll):
         super().release_anchor()
 
     def _check_anchor(self) -> None:
-        """Keep a far jump detached until its target is placed.
+        """Keep a far jump, or a window still filling, detached until it lands.
 
         A re-centered window replaces every row under a reader who was at the
         bottom, so the old offset clamps to the new bottom and Textual
         re-attaches the anchor. Pinned there with a hidden tail, the next sync
         tick's ghost-follow heal threw the jump away and re-windowed onto the
-        tail (TASK-33628.5.1). The latch lifts once the placement lands.
+        tail (TASK-33628.5.1); a fill re-attaches its reader itself when done.
         """
-        if not self._suppress_boundary_hydration:
+        if not self._suppress_boundary_hydration and self._window_fill is None:
             super()._check_anchor()
 
     @on(events.MouseScrollUp)

@@ -22,8 +22,12 @@ block fell from 191-308 ms to 122-158 ms at 3,000 messages; two-viewport
 batches left it at 143-205 ms.
 
 Pacing needs two-sided windowing (windowing and pruning on, sane
-watermarks), like the far-reveal bound it extends; a reader following the
-tail is never paced (the tail-follow paths own that window). A fill stops as
+watermarks), like the far-reveal bound it extends. A reader following the
+tail when an Undo brings rows back below a kept window (the usual state
+after deleting the last turns) is detached quietly while the batches land
+and follows the tail again once the window is whole, unless they scrolled
+meanwhile; a follower would otherwise ride each batch down, and the
+next sync's ghost-follow heal would mount the rest at once. A fill stops as
 soon as anything else moves the window: a send, End, the jump pill, scroll
 hydration past its end, or a session switch.
 
@@ -72,11 +76,10 @@ def paceable(transcript: ConsoleTranscript, first: int, end: int) -> bool:
     """Return True when ``_messages[first:end]`` should mount a batch at a time.
 
     Only a stretch longer than one batch that nothing has mounted yet is
-    held back (hiding mounted rows would unmount them), only for a reader who
-    is not following the tail, and only with two-sided windowing on: the
-    one-sided regimes never hold a hidden tail.
+    held back (hiding mounted rows would unmount them), and only with
+    two-sided windowing on: the one-sided regimes never hold a hidden tail.
     """
-    if not transcript._two_sided_active() or transcript._raw_anchor_engaged():
+    if not transcript._two_sided_active():
         return False
     if _batch_end(transcript, first, end) >= end:
         return False
@@ -84,29 +87,53 @@ def paceable(transcript: ConsoleTranscript, first: int, end: int) -> bool:
     return not any(message.id in mounted for message in transcript._messages[first:end])
 
 
-def pace(transcript: ConsoleTranscript, first: int, end: int) -> None:
+def pace(
+    transcript: ConsoleTranscript, first: int, end: int, *, keep_following: bool = False
+) -> None:
     """Reveal the window through one batch from ``first``; fill the rest later.
 
     The window's start is already set. ``_messages[:end]`` is the planned
     window; its end is remembered by its last message's id, so an ingest
     that shifts indices cannot move it.
+
+    Args:
+        transcript: The transcript whose window is being built.
+        first: Index the first batch starts at (the selection's turn).
+        end: Exclusive end of the planned window.
+        keep_following: A reader following the tail is detached while the
+            batches land and follows it again once the window is whole.
     """
     transcript._reveal_hidden_tail_through(_batch_end(transcript, first, end))
     if transcript._hidden_tail_start_index() >= end:
         transcript._window_fill = None
         return
-    transcript._window_fill = transcript._messages[end - 1].id
+    refollow = None
+    if keep_following and transcript._raw_anchor_engaged():
+        transcript._release_anchor_quietly()
+        refollow = monotonic()
+    transcript._window_fill = (transcript._messages[end - 1].id, refollow)
     _schedule(transcript)
 
 
 def _schedule(transcript: ConsoleTranscript) -> None:
-    end_id = transcript._window_fill
-    if end_id is not None:
-        _poll(transcript, end_id, monotonic() + _PATIENCE_S, settled=False)
+    fill = transcript._window_fill
+    if fill is not None:
+        _poll(transcript, fill, monotonic() + _PATIENCE_S, settled=False)
+
+
+def _finish(transcript: ConsoleTranscript, fill: tuple[str, float | None]) -> None:
+    """End a fill; a reader it detached follows the tail again unless they scrolled."""
+    transcript._window_fill = None
+    refollow = fill[1]
+    if refollow is not None and transcript._user_scroll_time <= refollow:
+        transcript.anchor()
 
 
 def _poll(
-    transcript: ConsoleTranscript, end_id: str, deadline: float, settled: bool
+    transcript: ConsoleTranscript,
+    fill: tuple[str, float | None],
+    deadline: float,
+    settled: bool,
 ) -> None:
     """Start the next batch once two checks a poll apart find the last settled.
 
@@ -115,19 +142,19 @@ def _poll(
     and by the next poll the screen has taken that request (its flag) or run
     the pass.
     """
-    if transcript._window_fill != end_id:
+    if transcript._window_fill is not fill:
         return
     if not transcript.is_mounted:
         transcript._window_fill = None
         return
     ready = _ready(transcript)
     if ready and settled:
-        transcript.call_later(fill_window, transcript, end_id)
+        transcript.call_later(fill_window, transcript, fill)
         return
     if monotonic() > deadline:
-        transcript._window_fill = None
+        _finish(transcript, fill)
         return
-    transcript.set_timer(_POLL_S, partial(_poll, transcript, end_id, deadline, ready))
+    transcript.set_timer(_POLL_S, partial(_poll, transcript, fill, deadline, ready))
 
 
 def _ready(transcript: ConsoleTranscript) -> bool:
@@ -161,15 +188,18 @@ def _ready(transcript: ConsoleTranscript) -> bool:
     )
 
 
-async def fill_window(transcript: ConsoleTranscript, end_id: str) -> None:
+async def fill_window(
+    transcript: ConsoleTranscript, fill: tuple[str, float | None]
+) -> None:
     """Reveal the next batch of a paced window, then wait for it to settle.
 
     Stops when the planned window is mounted, when its last message left the
     transcript or the window moved past it, or when the reader follows the
     tail again.
     """
-    if transcript._window_fill != end_id:
+    if transcript._window_fill is not fill:
         return
+    end_id = fill[0]
     if not transcript.is_mounted or transcript._raw_anchor_engaged():
         transcript._window_fill = None
         return
@@ -200,9 +230,9 @@ async def fill_window(transcript: ConsoleTranscript, end_id: str) -> None:
         finally:
             transcript._hydrating_scrollback = False
     transcript._schedule_prune_check()
-    if transcript._window_fill != end_id:
+    if transcript._window_fill is not fill:
         return
     if transcript._hidden_tail_start_index() <= target:
         _schedule(transcript)
     else:
-        transcript._window_fill = None
+        _finish(transcript, fill)

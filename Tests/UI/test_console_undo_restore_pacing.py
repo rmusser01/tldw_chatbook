@@ -231,3 +231,74 @@ async def test_select_delete_and_undo_from_the_first_message_mount_a_screenful_a
             assert any(f"Restored {count} messages" in n for n in notices), notices
         finally:
             await heartbeat.stop()
+
+
+@pytest.mark.asyncio
+async def test_undo_of_the_last_turns_keeps_following_and_mounts_a_screenful_at_a_time(
+    tmp_path,
+):
+    """5.1 AC#3: an Undo under a reader who follows the tail is paced too.
+
+    Deleting the last 50 of 3,000 messages leaves the reader at the bottom,
+    so Textual re-attaches the tail-follow. Fewer than a window come back,
+    so the Undo does not jump; on dev it mounted all 50 rows in one batch.
+    The reader still ends at the newest message, following it.
+    """
+    db = CharactersRAGDB(tmp_path / "long-chat.db", "long-chat")
+    rows = _chain(3_000)
+    conversation_id = _seed(db, rows)
+    app = _build_test_app()
+    app.chachanotes_db = db
+    app.notify = lambda *args, **kwargs: None
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=_SIZE) as pilot:
+        console, store, native, transcript = await _open(
+            host, pilot, db, conversation_id, rows[-1][0]
+        )
+        root, last = native[rows[-50][0]], native[rows[-1][0]]
+        batch_rows = _batch_rows(transcript)
+        heartbeat = _Heartbeat()
+        heartbeat.start()
+        try:
+            await _settled_rows(transcript, heartbeat)
+            transcript.select_message(root)
+            await _settled_rows(transcript, heartbeat)
+            await handle_console_delete_action(console._message, "delete", root)
+            confirm = f"#console-message-action-delete-confirm-{root}"
+            await _wait_for_selector(console, pilot, confirm, timeout=30.0)
+            console.query_one(confirm, Button).press()
+            await _until(
+                lambda: bool(host.screen.query("#console-delete-receipt-undo")),
+                "Undo to be offered",
+            )
+            await heartbeat.quiet()
+            # The precondition this case exists for.
+            assert transcript._raw_anchor_engaged(), "the Delete left a follower"
+
+            with _mounts(transcript) as batches:
+                host.screen.query_one("#console-delete-receipt-undo", Button).press()
+                await _until(
+                    lambda: not host.screen.query("#console-delete-receipt-box"),
+                    "the receipt to close after Undo",
+                )
+                mounted = await _settled_rows(transcript, heartbeat)
+
+            sizes = [len(batch["messages"]) for batch in batches]
+            assert sizes and max(sizes) <= batch_rows, (
+                f"one mount added {max(sizes)} rows "
+                f"(batches {sizes}, bound {batch_rows})"
+            )
+            windows = [batch for batch in batches if len(batch["messages"]) > 1]
+            early = [
+                (index, batch["unsized"])
+                for index, batch in enumerate(windows)
+                if index and not batch["laid_out"]
+            ]
+            assert not early, early
+            assert root in mounted and last in mounted
+            assert transcript.selected_message_id == root
+            assert transcript._raw_anchor_engaged(), "the reader stopped following"
+            await _until_painted(host, f"{rows[-1][0]} text")
+        finally:
+            await heartbeat.stop()
