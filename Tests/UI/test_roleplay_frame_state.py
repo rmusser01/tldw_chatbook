@@ -309,3 +309,42 @@ def test_b1_production_modules_carry_no_python_style_violation():
         for module in B1_PRODUCTION_MODULES
     }
     assert {module: found for module, found in violations.items() if found} == {}
+
+
+def test_degrade_order_is_pinned_at_each_step_boundary():
+    """Worst case (long server label, blocked, longest kind): each degrade
+    step is asserted at the widest width where it applies, and the previous
+    step one cell wider. Order: drop the server label, drop "Settings", then
+    show the bare "Server" (spec 1.3)."""
+    inputs = fs.RoleplayHeaderInputs(
+        mode="dictionaries",
+        provider_blocked=True,
+        runtime_source="server",
+        server_label="home-tldw.example.internal:8000",
+    )
+    kind = fs.header_kind(inputs.mode)
+    full = ("Server: home-tldw.example.internal:8000 · read-only", fs._blocked_text(0))
+    forms = [
+        full,
+        ("Server · read-only", "No chat provider · Settings ›"),
+        ("Server · read-only", "No chat provider ›"),
+        ("Server", "No chat provider ›"),
+    ]
+    needed = [
+        fs._required_cells(kind, ("", blocked), status) for status, blocked in forms
+    ]
+    assert needed == sorted(needed, reverse=True)
+    assert len(set(needed)) == len(needed)
+
+    def painted(width):
+        view = fs.build_header_view(inputs, width)
+        return (view.status_plain, view.blocked_chip)
+
+    for step, (form, need) in enumerate(zip(forms, needed, strict=True)):
+        assert painted(need) == form, (step, need)
+        if step:
+            # One cell narrower than the previous step's need: this step.
+            assert painted(needed[step - 1] - 1) == form, step
+    # Below the last step's need nothing shortens further.
+    assert painted(needed[-1] - 10) == forms[-1]
+    assert fs.LAST_DEGRADE_STEP == len(forms) - 1
