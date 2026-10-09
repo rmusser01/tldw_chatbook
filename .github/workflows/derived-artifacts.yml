@@ -120,6 +120,8 @@ jobs:
             Tests/Library/test_library_note_autosave_max_wait.py \
             Tests/Library/test_library_file_export.py \
             Tests/Architecture/test_notes_sync_snapshot_construction.py \
+            Tests/Library/test_library_media_source_link.py \
+            Tests/Library/test_library_notes_canvas_pending_lookup.py \
             Tests/Architecture/test_notes_sync_binding_profile_commits.py \
             Tests/Architecture/test_notes_sync_version_proxy_sites.py \
             Tests/Agents/test_mcp_unavailable_builtin_tools.py \

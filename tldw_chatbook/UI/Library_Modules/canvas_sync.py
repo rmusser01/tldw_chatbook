@@ -103,7 +103,16 @@ def _move_library_list_row_focus(focused: Widget | None, key: str) -> bool:
     step = -1 if key == "up" else 1
     new_index = index + step
     if 0 <= new_index < len(siblings):
-        siblings[new_index].focus()
+        # TASK-34000.7: reveal the row minimally, not centred. ``focus()``'s
+        # own path is ``Screen.set_focus(scroll_visible=True)`` ->
+        # ``scroll_to_center``, which jumps the list half a pane at every
+        # edge of a Down/Up walk (measured 7 rows per step at 160x45).
+        # ``scroll_visible`` scrolls each ancestor only as far as the row
+        # needs -- one press, one row, like ListView/OptionList -- and it is
+        # the no-op it always was when the row is already on screen.
+        target = siblings[new_index]
+        target.focus(scroll_visible=False)
+        target.scroll_visible(animate=False, immediate=True)
     return True
 
 

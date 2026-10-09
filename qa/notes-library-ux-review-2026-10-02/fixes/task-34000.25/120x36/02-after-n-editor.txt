@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌───────────────────────────┐  N    N  Note from A field guide to Markdown tables — Media keeps your place · Next:   │
+│ │ Navigat…    Collapse      │  a    o  Keep editing; changes save automatically.                                     │
+│ │     Import…               │  v    t    ‹ Notes   A field guide to Markdown tables                                  │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │       e                                                                                │
+│ │ ▊ Search Library…   ▎▊x▎  │       s                                                                                │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │           In the Library database only — no file on disk                               │
+│ │                           │          Note from A field guide to Markdown tables — Media keeps your place           │
+│ │ ────────────────────────  │              Edit     Preview     Info                                                 │
+│ │ Browse               ▾    │              Save     Use in Console        Discard new note                           │
+│ │    Media (23)             │<---      Title                                                                         │
+│ │    Conversations (0)      │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │  ▸ Notes (123)            │          ▊ A field guide to Markdown tables                                          ▎ │
+│ │    Prompts (0) — reuse    │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │    Skills (1)             │     --->                                                                               │
+│ │    Collections (0)        │          Keywords                                                                      │
+│ │    Search / RAG           │          ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│ │ ────────────────────────  │          ▊ Comma-separated keywords                                                  ▎ │
+│ │ Artifacts            ▾    │          ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│ │    All artifacts          │<---                                                                                    │
+│ │    Chatbooks            ▅ │          Body                                                                          │
+│ │    Reports                │          ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│ │ ────────────────────────  │          ┃ [A field guide to Markdown                                                ┃ │
+│ │ Create               ▾    │          ┃ tables](media://c31c7f79-e953-48c7-b7d6-6a5a9a9c0fac)                     ┃ │
+│ │    New note               │          ┃                                                                           ┃ │
+│ │    New prompt             │          ┃                                                                           ┃ │
+│ │    New skill              │          ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│ │  ▾ scroll for more        │                                                                                        │
+│ └───────────────────────────┘                                                                         6 words · 3:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

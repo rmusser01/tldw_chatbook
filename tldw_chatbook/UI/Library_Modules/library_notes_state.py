@@ -627,6 +627,18 @@ class LibraryNotesState:
     # happened to it in between.
     session_blank_id: str | None = None
 
+    # TASK-34000.25: where the caret lands once a just-created note's
+    # editor is ready. ``"title"`` is every create today (Blank note, the
+    # templates, ``n``/ctrl+n in Notes: the title is the seed, so it is
+    # the first thing to type). ``"body-end"`` is the Media Reader's Note
+    # action: the title is already the document's and the body opens
+    # with the ``[<title>](media://<uuid>)`` source line, so the caret
+    # belongs on the line after it. Written by ``_create_library_note``
+    # for EVERY create (so it always describes the latest one) and read
+    # by both the create projection and the editor-ready hook, which
+    # race each other to focus a control.
+    create_caret: str = "title"
+
     # (P0, xhigh review + live-verify round) Whether the user has
     # TOUCHED the title widget during this editor session. The
     # untouched-blank GC used to key blankness on

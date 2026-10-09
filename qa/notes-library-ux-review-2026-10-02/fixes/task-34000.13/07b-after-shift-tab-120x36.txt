@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Saved · Next: Keep editing; changes save         │
+│   a  │ Library notes · Ready                                  │  o  automatically.                                   │
+│   v  │ Notes (122)                                            │  t      ‹ Notes      Advisor meeting 2026-09-24      │
+│      │ These notes live in the Library's own database — for   │  e                                                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │      In the Library database only — no file on disk  │
+│      │ from files.                                            │     Saved                                            │
+│      │                                                        │                                                      │
+│      │ Filter                                                 │                                                      │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┌──────────────────────────────────────────────┐ │
+│      │ ▊ Filter notes… (Enter)                              ▎ │     │                                              │ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │Created   2026-10-08 23:50 · just now         │ │
+│      │                                                        │     │Modified  2026-10-08 23:50 · just now         │ │
+│      │    New     Sort: Newest     Select                     │<--- │Version   v2                                 ▂│ │
+│      │    Add from files…     Export                          │     │Words     60 words                            │ │
+│      │ Folders & placement                                    │     │Linked from (1)                               │ │
+│      │    New folder     Add to folder     Move note          │     │  Thesis outline — retrieval-augmented tutori │ │
+│      │    Remove placement                                    │     │Reuse & Export                                │ │
+│ ---> │                                                        │     │      Copy                                    │ │
+│      │                                                        │     │  Export Markdown                             │ │
+│      │  ▸ Agent_Lessons                                       │     │  Export text                                 │ │
+│      │  ▸ Journal                                             │     │Danger                                        │ │
+│      │  ▾ Meetings                                          ▇ │     │         Delete                               │ │
+│      │    Advisor meeting 2026-09-24 · now                    │     │Delete this note? Undo will be available in   │ │
+│      │    Standup 2026-09-29 · now                            │     │the Notes list.                               │ │
+│      │    Advisor meeting 2026-09-10 · now                    │     │                                              │ │
+│      │    ملاحظات الاجتماع — مراجعة المشروع · now             │     │ ┃    Cancel    ┃         Delete              │ │
+│      └────────────────────────────────────────────────────────┘     └──────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter cancel | tab switch button | esc cancel | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

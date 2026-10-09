@@ -461,9 +461,14 @@ silently replacing it with a partial or broad Library snapshot.
 
 Reader stays mounted beside Items and keeps one mode visible at a time:
 **Read**, **Analysis**, **Highlights**, or **Info**. The chosen mode persists
-while you move through items. Missing analysis or highlights produces an
-item-specific empty state; it does not silently switch modes. Leaving **Read**
-for another mode and returning drops you back at the same place in the text —
+while you move through items. An open item also survives a trip through the
+Library rail: press Notes (or any other rail row) and come back, and the
+Reader shows the same item on the same tab at the same place, with its Items
+row still marked `loaded` — only **‹ Back** (or Escape, in the narrower
+layouts where it leaves the Reader) returns you to the list. Missing analysis
+or highlights produces an item-specific empty state; it does not silently
+switch modes. Leaving **Read** for another mode and returning drops you back
+at the same place in the text —
 the reading position is restored even though the rendered body has to lay out
 again first.
 
@@ -559,10 +564,17 @@ still spans the pane.
 | Button | What it does |
 |---|---|
 | "Find" | Opens the search bar for the tab you are reading — the transcript on Read, the analysis on Analysis — focused and ready to type; a second press or Escape closes it. Walking with `]`/`[` keeps an active query but never moves your cursor into the field. This never filters Items. `Ctrl+F` opens it from the keyboard. When the tab you are on has nothing to search — Highlights and Info have no text — it reads "○ Find" and prints that tab's own reason on the line directly under the toolbar, not only in a tooltip (task-32362). |
+| "Note" | Opens a new note that names this document: the note is titled after the item and its first line is a `[title](media://…)` link back to it, with the caret on the line below, ready to type. `n` does the same from the keyboard (not while the Find box or the Items filter has focus — there it types an `n`). The Reader keeps your place: pressing the Media rail row brings back the same item, on the same tab, at the same scroll position, and the note stays open on your next visit to Notes. For a server item the button reads "○ Note" with the reason "Notes beside server items need server support". |
 | "Use in Console" | Stages this item as context for your next Console message. |
 | "Read later" ↔ "Remove later" | Toggles the loaded item's persisted reading-list state. |
-| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line (two on a Reader too narrow to fit all four actions side by side), never off the fold — the button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
+| "More" | Keeps secondary actions reachable: Edit metadata, Open original when available, Open manager, and Move to trash. Narrow layouts retain these actions here rather than hiding them. Opening it adds one toolbar row directly beneath this one — the tab row and the reading body shift down a single line, never off the fold. The button reads "More ▴" while the row is open, and focus stays on it so a second press closes the row. |
 | "Move to trash" | Two-step, title-specific confirmation. The one destructive action in this strip is set apart from the neutral ones — a left margin and the Library's quiet danger ink — so it never ends the row flush and unmarked. Success selects the adjacent item and leaves a bounded Undo receipt; Trash remains the durable recovery path. |
+
+The primary row holds five actions (Find, Note, Read later, Use in Console,
+More). On a Reader too narrow to fit all five side by side — counting
+"More ▴" so the row never reflows when More opens — the row is already two
+rows (Find · Note · Read later over Use in Console · More), More open or
+closed.
 
 *Verified against fix/media-riders-o — 2026-09-07 (tasks 31958/31959: live
 in tmux at 235x52 on a seeded scratch profile. A `plaintext` item with
@@ -841,7 +853,8 @@ layout tour above).
 heavy border while it holds focus, so the state is visible in a plain-text
 capture and not by colour alone (no overlay, so the text stays readable).
 From a focused Items row beside the Reader, the Reader's own keys stay
-live and are advertised with it: **]** / **[** walk items, **l** toggles
+live and are advertised with it: **]** / **[** walk items, **n** takes a
+note from the open document, **l** toggles
 read-later, **c** sends the item to Console, **t** arms Move to trash, and
 **s** enters Select mode — focus lands on the first (or first
 still-checked) row, so Down and Space work immediately, and Space toggles

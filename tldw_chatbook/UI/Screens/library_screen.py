@@ -408,6 +408,7 @@ from ...Widgets.destination_rail import (
 from ...Widgets.workbench_focus import (
     WorkbenchPaneTarget,
     focus_relative_workbench_pane,
+    widget_has_visible_region,
 )
 from ...Widgets.Library import (
     AdaptiveReaderShellResized,
@@ -699,6 +700,14 @@ def _library_ingest_options_for(owner: Any) -> dict[str, Any]:
 # than moved: it is new screen code, not part of the extracted support layer.)
 _MEDIA_SELECT_MODE_KEY = "s"
 _MEDIA_ROW_SELECT_KEY = "space"
+#: TASK-34000.25: how many LAYOUT-SIGNAL continuations (``LibraryMediaContent
+#: Body.run_when_laid_out`` -- the Raw view's index build, the Markdown's last
+#: mounted batch, or the next refresh once something is laid out) the
+#: Reader's reading-position restore may chain while the body has laid out
+#: NOTHING yet (``max_scroll_y == 0``), before giving up on an item that
+#: never lays out. Separate from task-31968's eight-refresh budget for a
+#: body that is laid out but still growing.
+_MEDIA_PROGRESS_RESTORE_LAYOUT_SIGNALS = 48
 #: Qodo on #2378: one name for the review-set auto-resume worker group, shared
 #: by registration (_maybe_auto_resume_review_set) and cancellation.
 _REVIEW_SET_RESUME_WORKER_GROUP = "library_review_set_resume"
@@ -964,6 +973,14 @@ _LIBRARY_NOTE_EDITOR_ENTER_LABELS = {
     "library-note-context-delete": "delete note",
 }
 
+#: TASK-34000.8 AC#3: the editor header's task row. Their Enter chip is
+#: advertised only while the focused control has a visible region
+#: (``_library_focus_enter_label``); the rest of the editor's stops are
+#: never laid out off-pane.
+_LIBRARY_NOTE_TASK_ROW_IDS = frozenset(
+    {"library-note-save", "library-note-use-in-console", "library-note-discard-new"}
+)
+
 #: task-32539 AC#1: the Notes LIST tier is static, so after a confirmed
 #: delete -- where focus now parks on the receipt's Undo -- the footer said
 #: nothing about the one recovery action on screen. Only the receipt's own
@@ -1197,6 +1214,12 @@ class LibraryScreen(BaseAppScreen):
         # (grep the BINDINGS above) and is not a printable key, so it works
         # from inside the Reader's own text controls too.
         Binding("ctrl+f", "library_media_reader_find", "Find", show=False),
+        # TASK-34000.25 (reading-desk §4.1/§4.5): ``n`` takes a note from the
+        # open document. ``check_action`` gates it to a settled LOCAL Reader
+        # with no text field focused, so it still types in the Find box and
+        # the search/filter inputs; the Notes-side ``n`` (``library_notes_new``)
+        # gates on the Notes rows, so the two can never both be live.
+        Binding("n", "library_media_take_note", "Note", show=False),
         # task-28241: review-set keys, gated in check_action to a plain Reader
         # with a set active. "R" exits (the set stays resumable); "m" toggles
         # the current item's done mark (the manual counterpart to ]'s auto-mark).
@@ -4395,6 +4418,10 @@ class LibraryScreen(BaseAppScreen):
                         "library_media_reader_find",
                         "close find" if self._media_state.find_open else "find",
                     ),
+                    # TASK-34000.25: through its own gate (local item, no
+                    # text field focused), so the chip drops while the
+                    # caret is in the Find box, where ``n`` types.
+                    ("n", "library_media_take_note", "note"),
                     ("l", "library_media_read_later", "read later"),
                     ("c", "library_media_use_in_console", "use in Console"),
                     ("t", "library_media_move_to_trash", "trash"),
@@ -4616,6 +4643,16 @@ class LibraryScreen(BaseAppScreen):
         navigator_label = _LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS.get(widget_id)
         if navigator_label:
             return navigator_label
+        # TASK-34000.8 AC#3: the footer never advertises "enter save note"
+        # (or the other task-row actions) for a control the user cannot
+        # see. Before the header followed the pane's width, F6 focused a
+        # Save painted off a 120-column terminal and the footer named it.
+        if (
+            widget_id in _LIBRARY_NOTE_TASK_ROW_IDS
+            and focused is not None
+            and not widget_has_visible_region(focused)
+        ):
+            return ""
         return _LIBRARY_NOTE_EDITOR_ENTER_LABELS.get(widget_id, "")
 
     def _with_library_notes_focus_chip(
@@ -6786,6 +6823,12 @@ class LibraryScreen(BaseAppScreen):
         # shrank (see ``apply_pane_width``).
         for canvas in self.query("#library-notes-canvas"):
             canvas.apply_pane_width(layout.items_width)
+        # TASK-34000.8: and the EDITOR pane's width to the work pane, so the
+        # note header's shape follows the pane it lives in (one row or
+        # stacked), not the shell's 120-column breakpoint -- at 120x36 the
+        # pane is 48 cells and Save was painted off the terminal.
+        for work_pane in self.query("#library-note-work-pane"):
+            work_pane.apply_work_width(layout.reader_width)
 
     def _sync_library_file_notes_reader_layout_from_shell(
         self,
@@ -9077,13 +9120,25 @@ class LibraryScreen(BaseAppScreen):
         # works.
         if event.key != "n":
             return
-        if not self.check_action("library_notes_new", ()):
+        if self.check_action("library_notes_new", ()):
+            self.run_worker(
+                self.action_library_notes_new(),
+                exclusive=True,
+                group="library_rail_row_switch",
+            )
+            event.stop()
+            event.prevent_default()
             return
-        self.run_worker(
-            self.action_library_notes_new(),
-            exclusive=True,
-            group="library_rail_row_switch",
-        )
+        # TASK-34000.25: in a settled local Media Reader the same key takes a
+        # note FROM the open document (reading-desk §4.1), through its own
+        # ``check_action`` gate -- the Notes gate above is false on the Media
+        # row, and this one is false everywhere else, so exactly one of the
+        # two can claim the key. Dispatched here, after the Notes case,
+        # rather than left to the Binding alone so the two ``n`` owners read
+        # in one place; the Binding stays for F1 and the footer.
+        if not self.check_action("library_media_take_note", ()):
+            return
+        self.action_library_media_take_note()
         event.stop()
         event.prevent_default()
 
@@ -22606,6 +22661,30 @@ class LibraryScreen(BaseAppScreen):
             )
             return False
 
+    def _rail_switch_keeps_media_reader(self) -> bool:
+        """Whether a rail press leaves the open Media Reader as it is.
+
+        TASK-34000.25 (S-02): true for a SETTLED LOCAL item -- the viewer is
+        the live view, no detail request is pending, the loaded identity is
+        the selected one and local (``local:media:<id>``), and the detail it
+        was composed from is still held. A server detail (reading progress
+        is local-only, and the row has no Items entry to mark), a mid-load
+        traversal and the list/Trash views all fall to the existing reset.
+        A pure read of state: safe to ask on the way OUT of Media and on the
+        way back IN, where the Reader is rebuilt from the retained detail.
+        """
+        session = self._media_state.reader_session
+        loaded_id = session.loaded_id
+        return (
+            self._media_state.view == "viewer"
+            and session.pending_request is None
+            and not session.external_detail
+            and loaded_id is not None
+            and loaded_id.startswith("local:media:")
+            and loaded_id == self._media_state.selected_media_id
+            and isinstance(self._media_state.detail, Mapping)
+        )
+
     async def _select_library_rail_row(self, row_id: str) -> None:
         """Apply a rail-row selection and recompose the canvas from it.
 
@@ -22653,7 +22732,14 @@ class LibraryScreen(BaseAppScreen):
         }
         note_snapshot = self._library_note_session.snapshot
         retain_note_session = (
-            self._library_selected_row_id in retained_reader_rows
+            # TASK-34000.25 (S-02): a note born from Create ▸ New note is
+            # opened with the Create row still selected while its create
+            # settles, so Create is a row a retained switch may START from
+            # (never land on -- landing on Create is a new note).
+            (
+                self._library_selected_row_id in retained_reader_rows
+                or self._library_selected_row_id == LIBRARY_ROW_CREATE_NOTE
+            )
             and row_id in retained_reader_rows
             and not (
                 self._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
@@ -22664,7 +22750,6 @@ class LibraryScreen(BaseAppScreen):
             and self._notes_state.load_state == "loaded"
             and note_snapshot is not None
             and note_snapshot.note_id == self._notes_state.selected_note_id
-            and self._notes_state.session_blank_id is None
             and not note_snapshot.saving
             and not note_snapshot.in_conflict
             and self._notes_state.autosave_state in {"idle", "saved"}
@@ -22673,6 +22758,26 @@ class LibraryScreen(BaseAppScreen):
             and self._library_note_session.destructive_admission is None
             and not self._library_note_session.conflict_resolution_running
         )
+        if retain_note_session and self._notes_state.session_blank_id is not None:
+            # TASK-34000.25 (S-02, review capture 28): this gate used to be
+            # ``session_blank_id is None`` -- and a New-note note keeps that
+            # id until an EXPLICIT Save (an autosave deliberately never clears
+            # it, see ``_gc_pending_blank_note``), so a note the user had
+            # typed into and autosaved was flushed and CLOSED by the next
+            # rail press while a note opened from the list survived. What
+            # the id protects is the untouched-blank GC, so ask that rule
+            # directly: an effectively-empty session blank (never typed, or
+            # typed then emptied) still takes the flush branch below and is
+            # discarded there exactly as before; a blank the user has
+            # invested text in is retained like any other note. The id itself
+            # stays set, so a later emptied-out exit still GCs the row.
+            from ..Library_Modules.library_pending_work import (
+                gc_untouched_session_blank_note,
+            )
+
+            retain_note_session = not await gc_untouched_session_blank_note(
+                self, discard=False
+            )
         if retain_note_session:
             self._invalidate_library_note_autosave()
         else:
@@ -22798,19 +22903,35 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.explicit_stage_intent = row_id in LIBRARY_NOTES_RAIL_ROWS
         if self._notes_state.explicit_stage_intent:
             self._notes_state.stage = "notes"
-        # A rail-row press is always a fresh entry into a content type, so
-        # the media canvas must never resume a previously opened viewer
-        # (e.g. Browse Media -> open item -> Browse Conversations -> Browse
-        # Media again must show the list, not the stale viewer).
-        self._media_state.view = "list"
-        self._media_state.detail = None
-        self._media_state.composed_detail = None
+        # A rail-row press is a fresh entry for the LIST routes. For Media the
+        # open Reader is reading state the user owns (TASK-34000.25, review
+        # finding S-02): Browse Media -> open item -> rail Notes -> rail
+        # Media used to show "Select a media item to read it here." beside a
+        # row still marked ``loaded`` (L-16), and a note-taking round trip
+        # cost the item, its tab and its scroll every time. A settled local
+        # item therefore keeps its view, detail, tab, highlights and reading
+        # position across every rail press; "‹ Back" (``#library-media-back``,
+        # ``_exit_library_media_viewer``) and Escape remain the way to the
+        # list. Transient sub-states (edit, delete confirm, analysis edit,
+        # Find) still close here, and anything short of a settled local item
+        # (pending request, server detail, no detail) resets as before.
+        keep_media_reader = self._rail_switch_keeps_media_reader()
+        if keep_media_reader:
+            # The reading position is captured on row selection and on a
+            # tab change; a rail press is the third way to leave the body.
+            # The same ONE writer as those two (TASK-22210's coalesced,
+            # deduplicated progress write) -- no new data work in this seam.
+            self._capture_library_media_loaded_progress()
+        else:
+            self._media_state.view = "list"
+            self._media_state.detail = None
+            self._media_state.composed_detail = None
+            self._media_state.highlights = []
+            self._media_state.content_mode = "raw"
         self._media_state.editing = False
         self._media_state.confirming_delete = False
-        self._media_state.highlights = []
         self._media_state.editing_analysis = False
         self._close_library_media_find()
-        self._media_state.content_mode = "raw"
         self._notes_state.filter = ""
         self._notes_state.filter_records = None
         self._notes_state.filter_generation += 1
@@ -22882,6 +23003,25 @@ class LibraryScreen(BaseAppScreen):
             replaced = True
         if not replaced:
             await self.recompose()
+        if (
+            keep_media_reader
+            and self._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
+            and self._media_state.reader_session.loaded_id is not None
+        ):
+            # TASK-34000.25: the Reader was just rebuilt from the retained
+            # detail (the route swap's ``swap_work``, or the whole-screen
+            # recompose). Put the body back where the user left it through
+            # the ONE restore owner (task-31954), riding the viewer's own
+            # post-sync hook exactly as ``handle_library_media_reader_mode``
+            # does after ``set_mode`` -- never a second scheduler. The sync
+            # also re-registers the footer, so the Reader's keys are
+            # advertised again on arrival.
+            self._after_library_media_viewer_sync(
+                partial(
+                    self._restore_library_media_loaded_progress,
+                    self._media_state.reader_session.loaded_id,
+                )
+            )
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_COLLECTIONS:
             self.run_worker(
                 self._load_library_collections_capture_entry(),
@@ -26073,6 +26213,7 @@ class LibraryScreen(BaseAppScreen):
             "library_media_use_in_console",
             "library_media_move_to_trash",
             "library_media_reader_find",
+            "library_media_take_note",
         ):
             # task-28027: Reader action-row accelerators. Only in a plain
             # media Reader (no edit/confirm/analysis-edit sub-state). Read-
@@ -26114,6 +26255,16 @@ class LibraryScreen(BaseAppScreen):
                 return False
             if action == "library_media_use_in_console":
                 return True
+            if action == "library_media_take_note":
+                # TASK-34000.25: local items only (the note names the item by
+                # its local uuid; the button is disabled with the reason for
+                # a server detail), and never while a text field has focus
+                # -- ``n`` in the Find box or the Items filter must type an
+                # "n". The footer reads this same gate, so it drops the chip
+                # the moment the caret enters a field.
+                return not session.external_detail and not isinstance(
+                    self.focused, (Input, TextArea)
+                )
             return not session.external_detail
         if action in (
             "library_media_exit_review",
@@ -31378,6 +31529,7 @@ class LibraryScreen(BaseAppScreen):
         keywords: Any = None,
         create_token: str | None = None,
         blank: bool = False,
+        caret_at_end: bool = False,
     ) -> LibraryNoteCreateOutcome:
         """Create a new local note from the in-canvas Create view and open it.
 
@@ -31415,6 +31567,11 @@ class LibraryScreen(BaseAppScreen):
                 but a blank-note row that is never touched is armed for
                 quiet deletion on exit instead of surviving as a permanent
                 literal "Untitled" row.
+            caret_at_end: TASK-34000.25 -- land the caret at the END of the
+                body once the editor is ready, instead of on the title. The
+                Media Reader's Note action creates a note whose title is
+                already the document's and whose body opens with the source
+                line, so the next keystroke belongs below that line.
 
         Returns:
             Typed distinction between pre-commit failure, committed recovery,
@@ -31588,12 +31745,15 @@ class LibraryScreen(BaseAppScreen):
         # (P0) A freshly created note's title is whatever the create seam
         # seeded -- untouched by definition.
         self._notes_state.title_user_edited = False
+        # TASK-34000.25: written for every create, so the editor-ready hook
+        # and the projection below agree on where the caret lands.
+        self._notes_state.create_caret = "body-end" if caret_at_end else "title"
         self._finish_library_note_create(active_token)
         if self.is_mounted:
 
             def finish_create_projection() -> None:
                 self._arm_library_note_editor()
-                self._focus_library_note_control("#library-note-title")
+                self._focus_library_note_caret_for_create()
 
             _sync_library_canvas(self, "notes", then=finish_create_projection)
         return LibraryNoteCreateOutcome("opened", created_id)
@@ -33695,7 +33855,7 @@ class LibraryScreen(BaseAppScreen):
         if offset is None:
             return
 
-        def settle(remaining: int) -> None:
+        def settle(remaining: int, unlaid: int) -> None:
             # A newer navigation may have superseded this restore while the
             # body was still laying out; only the loaded owner may land.
             if self._media_state.reader_session.loaded_id != expected_id:
@@ -33713,10 +33873,30 @@ class LibraryScreen(BaseAppScreen):
             scroller.scroll_to(
                 x=offset[0], y=offset[1], animate=False, force=True, immediate=True
             )
-            if remaining > 0 and offset[1] > 0 and int(scroller.scroll_y) < offset[1]:
-                self.call_after_refresh(settle, remaining - 1)
+            if offset[1] <= 0 or int(scroller.scroll_y) >= offset[1]:
+                return
+            if scroller.max_scroll_y <= 0:
+                # TASK-34000.25: NOTHING is laid out yet, so this pass says
+                # nothing about the body's final height and must not spend
+                # the layout budget. ``call_after_refresh`` is two message
+                # hops, not a layout pass: on the rail-return path all of
+                # task-31968's eight re-applies -- and 48 when the budget
+                # was simply raised -- ran on the same unindexed Raw view
+                # before its first Resize built the wrap index (measured in
+                # the TASK-34000.25 probe), and the offset stayed at the
+                # top. So the continuation waits on the body's LAYOUT
+                # signal (``run_when_laid_out``: the Raw view's index build,
+                # or the Markdown's last mounted batch), bounded so a body
+                # that never lays out (an empty item) still ends the chain.
+                # Still this one owner's inner continuation, not a second
+                # scheduler: nothing here re-claims the restore id.
+                if unlaid > 0:
+                    body.run_when_laid_out(partial(settle, remaining, unlaid - 1))
+                return
+            if remaining > 0:
+                self.call_after_refresh(settle, remaining - 1, unlaid)
 
-        settle(8)
+        settle(8, _MEDIA_PROGRESS_RESTORE_LAYOUT_SIGNALS)
 
     def _close_library_media_find(self) -> None:
         """Reset the content Find bar: collapsed, no query, first match.
@@ -33776,6 +33956,93 @@ class LibraryScreen(BaseAppScreen):
         reads).
         """
         self._toggle_library_media_find()
+
+    @on(Button.Pressed, "#library-media-take-note")
+    def handle_library_media_take_note(self, event: Button.Pressed) -> None:
+        """Take a note from the open document (TASK-34000.25).
+
+        Args:
+            event: The Reader toolbar's Note button press.
+        """
+        event.stop()
+        self.action_library_media_take_note()
+
+    def action_library_media_take_note(self) -> None:
+        """``n`` in the Reader: the same gesture as the Note button."""
+        if not self.check_action("library_media_take_note", ()):
+            return
+        self.run_worker(
+            self._take_library_media_note(),
+            exclusive=True,
+            group="library_rail_row_switch",
+        )
+
+    async def _take_library_media_note(self) -> None:
+        """Open a new note that names the open document, keeping the Reader.
+
+        TASK-34000.25 (reading-desk design §4.1, §5.1): the note is created
+        where New note puts notes today -- the Create route's own guards
+        (File Notes flush, source normalization, the Notes session's exit
+        flush, each of which may REFUSE and leave the row where it was) run
+        first, exactly as ``action_library_notes_new`` does -- titled after
+        the document, its first line ``[<title>](media://<uuid>)``, the
+        caret on the line after it. The Reader is left as it is: the rail
+        seam keeps a settled local item across the switch, and the reading
+        position is captured here before the pane changes hands, so rail
+        Media returns to the same item, tab and offset.
+
+        The link names ``Media.uuid`` and nothing else: an item whose detail
+        carries no uuid is refused with a visible reason rather than linked
+        by a device-local integer id that would read as portable.
+        """
+        # Deferred: a pure module the boot path never needs (ADR-097).
+        from tldw_chatbook.Library.library_media_source_link import (
+            MEDIA_SOURCE_UNTITLED_TITLE,
+            MediaSourceLinkError,
+            media_source_line,
+        )
+
+        detail = self._media_state.detail
+        if not isinstance(detail, Mapping):
+            return
+        session = self._media_state.reader_session
+        title = " ".join(
+            str(detail.get("title") or session.selected_title or "").split()
+        )
+        try:
+            source_line = media_source_line(title, detail.get("uuid"))
+        except MediaSourceLinkError as exc:
+            notify = getattr(self.app_instance, "notify", None)
+            if callable(notify):
+                notify(f"Could not take a note: {exc}", severity="warning")
+            return
+        # Reading position is captured by the rail seam (keep_media_reader).
+        await self._select_library_rail_row(LIBRARY_ROW_CREATE_NOTE)
+        if self._library_selected_row_id != LIBRARY_ROW_CREATE_NOTE:
+            # A retained note's exit flush refused (validation, conflict, a
+            # failed write). Its status lives on the Notes editor, which is
+            # not on screen here, so say why `n` did nothing (review M-2).
+            if callable(notify := getattr(self.app_instance, "notify", None)):
+                status = self._notes_controller._library_note_status_line()
+                notify(
+                    f"Finish the open note first — {status}", severity="warning"
+                )
+            return
+        self._notes_state.shortcut_status = f"Note from {title} — Media keeps your place"
+        # The same fallback the source line's link text uses: one name for
+        # an untitled document, in the title and in the first line.
+        self._start_library_note_from_media_source(
+            title=title or MEDIA_SOURCE_UNTITLED_TITLE,
+            content=source_line + "\n\n",
+        )
+
+    def _start_library_note_from_media_source(self, *, title: str, content: str) -> None:
+        return self._notes_controller._start_library_note_from_media_source(
+            title=title, content=content
+        )
+
+    def _focus_library_note_caret_for_create(self) -> None:
+        return self._notes_controller._focus_library_note_caret_for_create()
 
     def _toggle_library_media_find(self) -> None:
         """Open the Find bar for the tab being read, or close an open one."""

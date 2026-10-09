@@ -3932,6 +3932,24 @@ async def _wait_for_display(screen, pilot, selector, *, attempts=120):
     )
 
 
+async def _wait_for_visible(screen, pilot, selector, *, attempts=120):
+    """Wait until a widget hidden by VISIBILITY (its cells stay reserved) shows.
+
+    TASK-34000.8: Discard new note is ``visible``-toggled, not
+    ``display``-toggled, so the task row keeps its Discard-shown width;
+    ``_wait_for_display`` would return at once for it.
+    """
+    widget = await _wait_for_selector(screen, pilot, selector, attempts=attempts)
+    for _ in range(attempts):
+        if widget.display and widget.visible:
+            await pilot.pause()
+            return widget
+        await pilot.pause(0.02)
+    raise AssertionError(
+        f"{selector} never became visible. Visible text: {_visible_text(screen)}"
+    )
+
+
 def _widget_text(widget) -> str:
     """Render a widget's visible text for a poll loop's failure message."""
     for attribute in ("label", "renderable"):
@@ -9781,13 +9799,19 @@ async def test_library_shell_media_back_returns_to_list():
 
 
 @pytest.mark.asyncio
-async def test_library_shell_media_rail_reentry_resets_to_list():
-    """Re-entering Browse Media from the rail must show the list, not a stale viewer.
+async def test_library_shell_media_rail_reentry_restores_the_open_item_and_back_lists():
+    """Re-entering Browse Media from the rail restores the open Reader; ‹ Back
+    is the way to the list (TASK-34000.25, review finding S-02).
 
-    A rail-row press is always a fresh entry into a content type. If the
-    media viewer was left open on a previous visit, navigating away via
-    another rail row and then pressing "Browse Media" again must land on
-    the media list -- not resume the previously opened item's viewer.
+    This pin used to say the opposite ("a rail-row press is always a fresh
+    entry ... must land on the media list, not resume the previously opened
+    item's viewer"). That rule cost the researcher's note-taking loop the
+    item, its tab and its scroll on every rail switch, and left the Items
+    row marked ``loaded`` beside an empty Reader (L-16). The new contract:
+    a settled local item survives the round trip beside its ``loaded`` row,
+    and the explicit exit -- ``‹ Back`` / Escape, one seam
+    (``_exit_library_media_viewer``) -- still returns to the list, after
+    which a rail round trip is a fresh entry again.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), media=_two_media_items())
@@ -9802,6 +9826,14 @@ async def test_library_shell_media_rail_reentry_resets_to_list():
 
         screen.query_one("#library-media-row-1").press()
         await _wait_for_selector(screen, pilot, "#library-media-viewer-title")
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._media_state.reader_session.pending_request is None
+                and screen._media_state.reader_session.loaded_id == "local:media:1"
+            ),
+            message="the Reader never settled on the first item",
+        )
 
         screen.query_one("#library-row-browse-conversations").press()
         await pilot.pause()
@@ -9812,7 +9844,32 @@ async def test_library_shell_media_rail_reentry_resets_to_list():
         await pilot.pause()
 
         assert screen.query_one("#library-media-list")
-        assert not screen.query("#library-media-viewer-title")
+        assert screen.query("#library-media-viewer-title"), (
+            "the Reader lost the open item on re-entry"
+        )
+        assert screen._media_state.view == "viewer"
+        assert screen._media_state.reader_session.loaded_id == "local:media:1"
+        loaded_rows = [
+            row.id
+            for row in screen.query(".library-media-row").results(Button)
+            if " · loaded" in str(row.label)
+        ]
+        assert loaded_rows == ["library-media-row-1"]
+
+        # ‹ Back (compact-only at this size -- the same seam the button and
+        # Escape share) returns to the list; the next round trip is fresh.
+        screen._exit_library_media_viewer()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._media_state.view == "list"
+        screen.query_one("#library-row-browse-conversations").press()
+        await pilot.pause()
+        await pilot.pause()
+        screen.query_one("#library-row-browse-media").press()
+        await pilot.pause()
+        await pilot.pause()
+        assert screen._media_state.view == "list"
+        assert screen.query_one("#library-media-list")
 
 
 @pytest.mark.asyncio
@@ -23507,7 +23564,7 @@ async def test_library_shell_create_blank_note_lands_in_editor():
             lambda: getattr(screen.focused, "id", None) == "library-note-title",
             message="Successful Create never focused the title field.",
         )
-        assert screen.query_one("#library-note-discard-new", Button).display is True
+        assert screen.query_one("#library-note-discard-new", Button).visible is True
 
         for _ in range(150):
             if screen._local_source_counts.get("notes") == 3:
@@ -24267,7 +24324,7 @@ async def test_library_shell_discard_new_note_deletes_untouched_create():
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         screen.query_one("#library-notes-create-blank").press()
-        discard = await _wait_for_display(screen, pilot, "#library-note-discard-new")
+        discard = await _wait_for_visible(screen, pilot, "#library-note-discard-new")
         created_id = screen._notes_state.selected_note_id
 
         discard.press()
@@ -24310,7 +24367,7 @@ async def test_library_note_failed_discard_releases_destructive_admission() -> N
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         screen.query_one("#library-notes-create-blank").press()
-        discard = await _wait_for_display(screen, pilot, "#library-note-discard-new")
+        discard = await _wait_for_visible(screen, pilot, "#library-note-discard-new")
 
         discard.press()
         try:
@@ -24801,7 +24858,7 @@ async def test_library_note_60x20_untouched_new_allocation_keeps_discard_visible
             },
             focused_selector="#library-note-discard-new",
         )
-        assert screen.query_one("#library-note-discard-new").display is True
+        assert screen.query_one("#library-note-discard-new").visible is True
 
 
 @pytest.mark.asyncio
@@ -25014,11 +25071,11 @@ async def test_library_shell_discard_new_note_disappears_after_edit_or_noop_save
             pilot,
             lambda: (
                 bool(screen.query("#library-note-discard-new"))
-                and screen.query_one("#library-note-discard-new", Button).display
+                and screen.query_one("#library-note-discard-new", Button).visible
             ),
             message="Discard new note never became visible after create.",
         )
-        assert screen.query_one("#library-note-discard-new", Button).display is True
+        assert screen.query_one("#library-note-discard-new", Button).visible is True
 
         if acknowledge == "edit":
             screen.query_one("#library-note-title", Input).value = "Kept note"
@@ -25026,7 +25083,7 @@ async def test_library_shell_discard_new_note_disappears_after_edit_or_noop_save
             screen.query_one("#library-note-save", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen.query_one("#library-note-discard-new", Button).display,
+            lambda: not screen.query_one("#library-note-discard-new", Button).visible,
             message="Discard new note remained visible after keep intent.",
         )
 
@@ -34267,7 +34324,7 @@ async def test_library_note_pilot_duplicate_discard_runs_one_delete_and_blocks_e
             )
             await _wait_for_condition(
                 pilot,
-                lambda: discard.display,
+                lambda: discard.visible,
                 message="Untouched create never exposed Discard.",
             )
 
@@ -34311,7 +34368,7 @@ async def test_library_note_pilot_stale_create_token_blocks_discard_activation()
         discard = await _wait_for_selector(screen, pilot, "#library-note-discard-new")
         await _wait_for_condition(
             pilot,
-            lambda: discard.display,
+            lambda: discard.visible,
             message="Untouched create never exposed Discard.",
         )
 

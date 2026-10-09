@@ -454,6 +454,32 @@
     padding: $ds-space-0;
 }
 
+/* TASK-34000.25 (fix round 1): the primary row holds two label-sized groups
+   (Find · Note · Read later | Use in Console · More). Wide enough for the
+   whole row they sit side by side; narrower than the derived threshold (`library-media-reader-toolbar-stacked`)
+   (`LibraryMediaViewer._primary_toolbar_one_row_min_width`, applied from the
+   viewer's own `on_resize`) the second group drops under the first, so
+   "More ▴" never clips. The `.ds-toolbar` gutter is untouched. */
+#library-media-reader-primary-toolbar {
+    height: auto;
+}
+
+#library-media-reader-primary-toolbar.library-media-reader-toolbar-stacked {
+    layout: vertical;
+}
+
+.library-media-reader-primary-group {
+    width: auto;
+    height: auto;
+}
+
+.library-media-reader-primary-group > Button {
+    width: auto;
+    min-width: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+}
+
 /* task-4025: the Trash view's rows share the media list's row contract
    verbatim (one comma-joined rule, not a forked copy) -- the trash rows
    keep their OWN class only so `_focus_library_list_entry`'s
@@ -547,13 +573,41 @@
     max-width: $ds-width-full;
 }
 
+/* TASK-34000.7 (review N-04): the list IS the scroll owner at every width.
+   `#library-notes-list` is a plain Vertical, whose Textual default is
+   `overflow: hidden`; only the compact rule (`_library.tcss`,
+   `.library-notes-compact #library-notes-list`) ever gave it `overflow-y:
+   auto`. At 120+ columns the tree therefore ignored the wheel, and Down/Tab
+   moved focus onto rows painted below the pane border (`focus()` asks each
+   ancestor to scroll the row in; a hidden owner declines), so Enter opened
+   notes the user never saw. Same contract as the compact rule, no per-size
+   numbers: the rows left after the toolbars, scrolling vertically, never
+   horizontally. The one-cell scrollbar matches `#library-rail` so the two
+   overflow cues read as one. */
+#library-notes-list {
+    height: $ds-height-fill;
+    min-height: $ds-size-0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-size: 1 1;
+    scrollbar-color: $ds-text-muted;
+    scrollbar-color-hover: $ds-grid-line;
+    scrollbar-color-active: $ds-action-focus;
+}
+
 /* task-32127/32128: Button's own 16-cell minimum made "New / Sort: Newest /
    Select" 48 cells wide -- wider than the list pane itself, so Select, the
    Title sort option and the delete receipt's Undo were painted past the
    pane edge. The compact stage already sized these to their content; the
    ordinary stage does the same now, since the pane is never wide enough to
-   justify a 16-cell "New". */
-#library-notes-canvas .library-canvas-action {
+   justify a 16-cell "New".
+   TASK-34000.8 (review N-05): the editor header's buttons in the WORK pane
+   are content-sized by the same rule. Scoped to the list canvas alone, the
+   header's six compact Buttons each kept the 16-cell minimum -- about 40
+   cells of padding on a row whose pane has 48 cells at 120x36 -- which is
+   what pushed Save and Use in Console past the pane edge. */
+#library-notes-canvas .library-canvas-action,
+#library-note-work-pane .library-canvas-action {
     width: auto;
     min-width: $ds-size-0;
 }
@@ -1185,6 +1239,21 @@
 
 #library-note-context-region {
     border: solid $ds-grid-line;
+}
+
+/* TASK-34000.13 (review N-10): the delete prompt is a Vertical inside the
+   Info VerticalScroll, and only the compact rule (`_library.tcss`) ever
+   gave it a height. On the wide stage it kept Textual's default
+   `height: 1fr; overflow: hidden`, which inside a scrolling parent means
+   "the rows left over": one row at 120x36 (the copy clipped, Cancel and
+   Delete painted on the screen's last row, outside the Info border) and
+   eleven at 160x45. Size it by its content at every width -- the copy may
+   wrap and the button row under it must still paint. The compact rule's
+   two-row box still outranks this one by specificity. */
+#library-note-delete-confirmation {
+    height: auto;
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
 }
 
 #library-note-preview-region:focus,

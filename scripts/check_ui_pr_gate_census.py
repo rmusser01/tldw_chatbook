@@ -142,7 +142,43 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # 20-minute cap. It did not: shard 3 timed out again with the file removed,
 # and none of that shard's 581 tests ran the acknowledgement. The shard was
 # at capacity, which the fourth shard (TASK-34353, a920bfe149) fixed.
-MINIMUM_FILES = 155
+# TASK-34000.7 (2026-10-08) raised it to 156:
+# Tests/UI/test_library_notes_tree_scrolls_wide.py -- the wide Library Notes
+# tree is a scroll owner and a Down walk keeps the focused row in view
+# (120x36/160x45 plus the 80x24/100x30 compact pins), 6 tests, about
+# 26 s locally. The slower variants (200x50/235x52, wheel events, the
+# breakpoint round trip, the Trash opener) stay in
+# test_library_notes_tree_scrolls_wide_extended.py, outside the lane.
+# TASK-34000.13 (2026-10-08) raised it to 157:
+# Tests/UI/test_library_note_delete_prompt_visible.py -- Info > Delete shows
+# the whole prompt (copy, Cancel, Delete) inside the Info box at 120x36 and
+# 80x24, focus lands on a visible Cancel, Tab/Shift+Tab stay inside, and
+# Cancel restores Info's scroll; 4 tests, about 14 s locally. The slower
+# variants (160x30/160x45/235x52, the resize while open, the real-DB
+# "Linked from" case and the DB-level Cancel/Delete checks) stay in
+# test_library_note_delete_prompt_visible_extended.py, outside the lane.
+# TASK-34000.8 (2026-10-09) raised it to 158:
+# Tests/UI/test_library_note_header_fits_pane.py -- the note editor's Save
+# and the whole "Use in Console" have a region inside the editor pane at
+# 120x36 and 160x45, Discard new note is whole and its hiding never moves
+# the mode row, widening 119 -> 235 never hides a header control, the save
+# state is never a one-column strip, and F6/Tab/the footer only name a Save
+# the user can see; 6 tests, about 22 s locally. The slower variants (140x40,
+# 200x50 and 235x52 with the rail open, the long title, 200x24, the
+# 235 -> 120 -> 235 round trip, the delete prompt while stacked) stay in
+# test_library_note_header_fits_pane_extended.py, outside the lane.
+# TASK-34000.25 (2026-10-09) raised it to 159:
+# Tests/UI/test_library_rail_switch_keeps_reader_and_note.py -- a rail round
+# trip keeps the open Media item (tab, scroll, the row's loaded marker) and a
+# New-note note with autosaved text; a dirty note switched inside the
+# debounce comes back with its text, the next autosave saves it and the DB
+# version equals the snapshot's at every step; `n` in the Reader creates a
+# note titled after the document whose first line is the media:// source
+# link; 4 tests, about 29 s locally. The slower arms (the Info tab, the real
+# external-edit conflict, `n` inside Find, the server-item refusal, the
+# untouched-blank GC, the vetoed title, Back at 100x30, 120x36) stay in
+# test_library_rail_switch_keeps_reader_and_note_extended.py, outside the lane.
+MINIMUM_FILES = 159
 
 
 def read_census(path: Path) -> list[str]:

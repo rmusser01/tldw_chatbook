@@ -3575,7 +3575,54 @@ class LibraryNotesController:
             return
         self._arm_library_note_editor()
         if self._library_note_session.untouched_create_token is not None:
+            self._focus_library_note_caret_for_create()
+
+    def _focus_library_note_caret_for_create(self) -> None:
+        """Land the caret where the latest create asked (TASK-34000.25).
+
+        Every create landed on the title: it is the seed, so it is the
+        first thing to type. The Media Reader's Note action already has
+        the document's title and opens the body with the source line, so
+        it asks for the END of the body instead (``create_caret ==
+        "body-end"``). Called from both the create projection and the
+        editor-ready hook, which race to focus a control; reading one
+        state field keeps them in agreement whichever runs last.
+        """
+        if self._library_notes_create_caret != "body-end":
             self._focus_library_note_control("#library-note-title")
+            return
+        try:
+            body = self.query_one("#library-note-body", TextArea)
+        except (NoMatches, QueryError):
+            return
+        body.move_cursor(body.document.end)
+        body.focus()
+
+    def _start_library_note_from_media_source(
+        self, *, title: str, content: str
+    ) -> None:
+        """Commit and open one note that names a Media item (TASK-34000.25).
+
+        The Media Reader's Note action: the same create seam as Blank note
+        and the templates (``_create_library_note`` -- one create token,
+        one mutation interlock), with the document's title, the source
+        line as the body and the caret after it. NOT a session blank
+        (``blank=False``): like a template, the note already carries text
+        the user asked for, so an untouched one is kept, not GC'd.
+        """
+        create_token = self._begin_library_note_create()
+        if create_token is None:
+            return
+        self.run_worker(
+            self._create_library_note(
+                title=title,
+                content=content,
+                create_token=create_token,
+                caret_at_end=True,
+            ),
+            exclusive=True,
+            group="library_note_mutation",
+        )
     def _reset_library_note_editor_state(self) -> None:
         """Clear all in-canvas Library note editor/save state.
 
@@ -5743,7 +5790,35 @@ class LibraryNotesController:
         # exactly as the user left it; ``_restore_library_note_delete_
         # origin`` below is then a no-op restore, same as it always was.
         self._apply_library_note_presentation_state()
-        self._focus_library_note_control("#library-note-delete-cancel")
+        # TASK-34000.13 (N-10): the prompt has just been switched on and has
+        # no geometry until the next layout pass, so a plain ``focus()`` here
+        # scrolled Info toward a box that measured nothing (live at 120x36
+        # the user saw only the footer change). Reveal it after the refresh;
+        # a timer is not an option (``set_timer(0)`` never fires).
+        self.call_after_refresh(self._reveal_library_note_delete_prompt)
+
+    def _reveal_library_note_delete_prompt(self) -> None:
+        """Scroll Info to the whole delete prompt, then focus Cancel in place.
+
+        Runs via ``call_after_refresh`` once the prompt has been laid out.
+        The block is revealed as one unit so the copy AND both buttons sit
+        inside Info's viewport (Delete stays above it when it fits); Cancel
+        is then focused WITHOUT its own scroll so the viewport stays where
+        the reveal put it instead of centring on the button. The origin
+        offset captured before the prompt opened is untouched -- Cancel
+        restores it (task-32268).
+        """
+        if not self._library_note_confirming_delete:
+            return
+        try:
+            prompt = self.query_one("#library-note-delete-confirmation", Widget)
+        except (NoMatches, QueryError):
+            return
+        if not prompt.display:
+            return
+        prompt.scroll_visible(animate=False, immediate=True, force=True)
+        self._focus_library_note_control_in_place("#library-note-delete-cancel")
+
     def _focus_library_note_control(self, selector: str) -> None:
         """Focus one stable note control when its presentation is visible."""
         self._focus_library_control(selector)

@@ -906,7 +906,33 @@ _BUDGETS: dict[str, tuple[str, int, int]] = {
     #: between decomposition moves. Re-set to the exact measurement (never
     #: above it); decomposition tracked in TASK-32809.3. 33204/1276 ->
     #: 35793/1330.
-    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 35855, 1330),
+    #: 2026-10-09, TASK-34000.8: 35855/1330 -> 36726/1337, owner decision
+    #: (2026-10-04 ruling: a fix over a size ratchet raises the row to the
+    #: measured value; never move or reflow code to make it fit). The row
+    #: was already red on the base on BOTH counts (36701 lines and 1337
+    #: methods of feature work landed since the 35855/1330 pin); this task
+    #: adds 25 lines and no method: the work pane receives the shell's
+    #: resolved reader width (`apply_work_width`) and the footer's Enter
+    #: chip is withheld for a task-row control with no visible region.
+    #: Re-set to the exact measurement, never above it.
+    #: 2026-10-09, TASK-34000.25: 36726/1337 -> 36956/1343, owner decision
+    #: (same 2026-10-04 ruling). This task's code, +230 lines / +6 methods:
+    #: the rail seam keeps a settled local Media item and a New-note note
+    #: across a rail press (`_rail_switch_keeps_media_reader`, the S-02
+    #: reset-block rewrite, the return-leg restore), the Reader's Note action
+    #: (`handle_/action_/_take_library_media_note` and two one-line
+    #: delegators), the `library_media_take_note` gate, key and footer chip,
+    #: and the restore owner's layout-signal wait. Re-set to the exact
+    #: measurement, never above it.
+    #: 2026-10-09, TASK-34000.25 fix round 1: 36956 -> 36965 (+9), same
+    #: owner decision: the Reader's `n` names the veto when a retained
+    #: note's exit flush refuses (review M-2) and the restore budget's
+    #: comment says what it counts (M-3). No new method.
+    #: 2026-10-09, PR #3055 review (Minor 5): 36965 -> 36968 (+3), same
+    #: owner decision: the Reader's Note action titles an untitled document
+    #: with the source line's own `MEDIA_SOURCE_UNTITLED_TITLE` (one import
+    #: line, one two-line comment). No new method.
+    "tldw_chatbook/UI/Screens/library_screen.py": ("LibraryScreen", 36968, 1343),
 }
 
 # Retired 2026-09-19 (core-review TASK-32809.1). This was a one-time guard

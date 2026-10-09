@@ -423,7 +423,37 @@ _BUDGETS: dict[str, int] = {
     # `library_notes_sync_attention.py` (which now also answers whether the
     # note's sync folder is held for attention); the controller keeps a
     # three-line delegator and one scheduling call.
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6311,
+    #
+    # 2026-10-08, TASK-34000.13: 6311 -> 6337 (+26), owner decision
+    # (2026-10-04 ruling: a fix over a size ratchet raises the row to the
+    # measured value; never move or reflow code to make it fit). The
+    # delete prompt is now revealed after the refresh:
+    # `handle_library_note_delete` schedules
+    # `_reveal_library_note_delete_prompt` (scroll the whole prompt into
+    # Info, focus Cancel in place) via `call_after_refresh`.
+    #
+    # 2026-10-09, TASK-34000.8: 6337 -> 6338 (+1), owner decision (same
+    # ruling). Not this task's code: the TASK-34000.13 review commit
+    # (8a8970dd2e, "blank line before _reveal_library_note_delete_prompt")
+    # added one line after the 6337 pin was measured, so the row was red on
+    # the base. Re-set to the exact measurement.
+    #
+    # 2026-10-09, TASK-34000.25: 6338 -> 6383 (+45), owner decision (same
+    # 2026-10-04 ruling: a fix over a size ratchet raises the row to the
+    # measured value; never move or reflow code to make it fit). This task's
+    # code: the Media Reader's Note action creates its note through the one
+    # create seam (`_start_library_note_from_media_source`, beside
+    # `_start_library_blank_note`) and the caret lands where the latest
+    # create asked (`_focus_library_note_caret_for_create`, read by both the
+    # create projection and the editor-ready hook). Re-set to the exact
+    # measurement.
+    #
+    # 2026-10-09, PR #3055 review (Minor 4): 6383 -> 6386 (+3), owner
+    # decision (same 2026-10-04 ruling). Three blank lines between
+    # consecutive method definitions (`_focus_library_note_caret_for_create`,
+    # `_start_library_note_from_media_source`, `_focus_library_note_control`)
+    # that the adapt batch left out. Re-set to the exact measurement.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6386,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_

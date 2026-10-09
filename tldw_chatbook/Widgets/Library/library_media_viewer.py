@@ -44,6 +44,10 @@ from tldw_chatbook.Widgets.Library.library_media_content import (
     LibraryMediaContentSearchControls,
 )
 
+#: TASK-34000.25: why the Reader's Note action is off for a server detail --
+#: one string for the button's tooltip and the key's refusal.
+MEDIA_TAKE_NOTE_EXTERNAL_REASON = "Notes beside server items need server support"
+
 
 #: task-31635 (critique #5 item 12): when the Media list load failed and
 #: left NO rows behind (see ``_library_media_list_unselectable``), there is
@@ -400,50 +404,151 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
 
         yield from self._compose_active_body()
 
+    def _primary_toolbar_labels(self) -> tuple[str, ...]:
+        """The primary row's labels as composed, with More in its OPEN form.
+
+        The open-state suffix is always counted so opening More can never
+        push the row past the pane; the Read later / Remove later twin is
+        read live, so a Reader that fits "Read later" on one row keeps it
+        (120x36: 50 of 50 cells, as before the fifth button) and stacks only
+        when the longer twin genuinely would not fit. Mirrors the strings
+        ``_compose_primary_toolbar`` composes; a label change there is a
+        threshold change here.
+
+        This deliberately over-counts More: always its open "More \u25b4"
+        form (even for external details where it may not open). Note is
+        counted exactly as composed -- "\u25cb Note" (+2 cells) for a server
+        detail, plain "Note" otherwise -- so the threshold never under-counts
+        the row (PR #3055 review, Minor 3). It errs safe -- at worst the row
+        stacks a little early, it never overflows the pane.
+        """
+        return (
+            "Find",
+            library_disabled_action_label("Note", self.external_detail),
+            "Remove later" if self.viewer.read_later else "Read later",
+            "Use in Console",
+            "More \u25b4",
+        )
+
+    def _primary_toolbar_one_row_min_width(self) -> int:
+        """Content cells the five actions need on one row.
+
+        Each label-sized compact Button is ``len(label) + 2`` (Textual's
+        ``line-pad``), the two ``.ds-toolbar`` gutters add 2. Derived, so the
+        fifth button (TASK-34000.25) and any future label change move the
+        threshold with them -- never a per-size number.
+        """
+        return sum(len(label) + 2 for label in self._primary_toolbar_labels()) + 2
+
+    def _primary_toolbar_stacked(self, content_width: int) -> bool:
+        """Whether the primary row stacks its two groups at ``content_width``.
+
+        A zero width (pre-layout) composes the one-row shape; the first
+        ``Resize`` corrects it before paint.
+        """
+        return 0 < content_width < self._primary_toolbar_one_row_min_width()
+
+    def on_resize(self, _event: Any = None) -> None:
+        """Re-shape the primary row for the Reader's real width (TASK-34000.25)."""
+        try:
+            toolbar = self.query_one("#library-media-reader-primary-toolbar")
+        except (NoMatches, QueryError):
+            return
+        toolbar.set_class(
+            self._primary_toolbar_stacked(self.content_region.width or self.size.width),
+            "library-media-reader-toolbar-stacked",
+        )
+
     def _compose_primary_toolbar(self) -> ComposeResult:
-        """Render the always-reachable Reader actions."""
-        with Horizontal(
+        """Render the always-reachable Reader actions.
+
+        TASK-34000.25 fix round 1: the row gained a fifth button (Note), and
+        at the narrowest pinned Reader (100x30, 46 content cells) the five
+        labels no longer fit beside the ``More \u25b4`` open-state suffix. The
+        answer is layout, not padding: the buttons compose in two groups
+        inside one toolbar container that lays them side by side
+        (``layout: horizontal``) when the Reader is wide enough for the full
+        row, and one group under the other (``library-media-reader-toolbar-stacked``) when it is not --
+        the threshold is derived from the labels themselves
+        (:meth:`_primary_toolbar_one_row_min_width`) and applied from this
+        widget's own ``on_resize``, so no size is special-cased and the
+        ``.ds-toolbar`` gutter stays.
+        """
+        primary = Horizontal(
             classes="ds-toolbar", id="library-media-reader-primary-toolbar"
-        ):
-            # Qodo on #2378: an Analysis tab with nothing to search has no
-            # bar to mount -- say why Find is off instead of toggling silently.
-            find_reason = analysis_find_unavailable_reason(
-                mode=self.reader_mode,
-                analysis=self.viewer.analysis,
-                generating=self.generating_analysis,
-                editing=self.editing_analysis,
-                # Qodo 4 on #2602: an external detail composes the READ body
-                # whatever mode the session carried in, so the gate needs to
-                # know -- without this the KEY opened Find on a server
-                # document while this button stayed disabled, the exact
-                # key/control divergence one shared gate exists to prevent.
-                external=self.external_detail,
-            )
-            find = Button(
-                library_disabled_action_label("Find", bool(find_reason)),
-                id="library-media-reader-find",
-                compact=True,
-            )
-            if find_reason:
-                find.disabled = True
-                find.tooltip = find_reason
-            yield find
-            if not self.external_detail:
-                yield Button(
-                    "Remove later" if self.viewer.read_later else "Read later",
-                    id="library-media-read-later",
+        )
+        primary.set_class(
+            self._primary_toolbar_stacked(self.content_region.width or self.size.width),
+            "library-media-reader-toolbar-stacked",
+        )
+        with primary:
+            with Horizontal(
+                id="library-media-reader-primary-group-read",
+                classes="library-media-reader-primary-group",
+            ):
+                # Qodo on #2378: an Analysis tab with nothing to search has no
+                # bar to mount -- say why Find is off instead of toggling silently.
+                find_reason = analysis_find_unavailable_reason(
+                    mode=self.reader_mode,
+                    analysis=self.viewer.analysis,
+                    generating=self.generating_analysis,
+                    editing=self.editing_analysis,
+                    # Qodo 4 on #2602: an external detail composes the READ body
+                    # whatever mode the session carried in, so the gate needs to
+                    # know -- without this the KEY opened Find on a server
+                    # document while this button stayed disabled, the exact
+                    # key/control divergence one shared gate exists to prevent.
+                    external=self.external_detail,
+                )
+                find = Button(
+                    library_disabled_action_label("Find", bool(find_reason)),
+                    id="library-media-reader-find",
                     compact=True,
                 )
-            yield Button("Use in Console", id="library-media-use-in-chat", compact=True)
-            if not self.external_detail or self.viewer.original_source:
-                # task-31633 AC#3: the glyph is the disclosure state. The
-                # actions render as ONE toolbar row under this one, so
-                # nothing else on screen says whether More is open.
-                yield Button(
-                    "More \u25b4" if self.more_open else "More",
-                    id="library-media-reader-more",
+                if find_reason:
+                    find.disabled = True
+                    find.tooltip = find_reason
+                yield find
+                # TASK-34000.25 (reading-desk design §4.5): take a note from
+                # the open document without re-finding it on the way back.
+                # Refused with its reason for a server detail -- the note
+                # names the item by its local ``Media.uuid`` (§5.1), which a
+                # server detail does not carry, and reading progress is
+                # local-only (design non-goal). The key (``n``) shares the
+                # gate the button reads.
+                note = Button(
+                    library_disabled_action_label("Note", self.external_detail),
+                    id="library-media-take-note",
                     compact=True,
                 )
+                if self.external_detail:
+                    note.disabled = True
+                    note.tooltip = MEDIA_TAKE_NOTE_EXTERNAL_REASON
+                else:
+                    note.tooltip = "Take a note from this document (n)"
+                yield note
+                if not self.external_detail:
+                    yield Button(
+                        "Remove later" if self.viewer.read_later else "Read later",
+                        id="library-media-read-later",
+                        compact=True,
+                    )
+            with Horizontal(
+                id="library-media-reader-primary-group-act",
+                classes="library-media-reader-primary-group",
+            ):
+                yield Button(
+                    "Use in Console", id="library-media-use-in-chat", compact=True
+                )
+                if not self.external_detail or self.viewer.original_source:
+                    # task-31633 AC#3: the glyph is the disclosure state. The
+                    # actions render as ONE toolbar row under this one, so
+                    # nothing else on screen says whether More is open.
+                    yield Button(
+                        "More \u25b4" if self.more_open else "More",
+                        id="library-media-reader-more",
+                        compact=True,
+                    )
         if find_reason:
             # task-32362 (critique #10, A cap 42): the "\u25cb" said blocked and
             # nothing said why unless you hovered -- the same gap task-31981

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Input, Static
 
@@ -17,6 +17,7 @@ from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 from tldw_chatbook.Widgets.workbench_focus import (
     WorkbenchPaneTarget,
     focus_relative_workbench_pane,
+    widget_has_visible_region,
 )
 
 
@@ -25,6 +26,68 @@ class _FocusFallbackScreen(Screen[None]):
         with Vertical(id="fallback-pane"):
             yield Static("Passive target", id="passive-target")
             yield Input(id="focusable-target")
+
+
+class _ScrolledPaneScreen(Screen[None]):
+    """A scrollable pane whose first preferred control is scrolled out of view."""
+
+    DEFAULT_CSS = """
+    #scrolled-pane { height: 6; }
+    #scrolled-pane Input { height: 1; border: none; }
+    #scrolled-pane Static { height: 1; }
+    """
+
+    def compose(self):
+        with VerticalScroll(id="scrolled-pane"):
+            yield Input(id="first")
+            for index in range(40):
+                yield Static(f"filler {index}")
+            yield Input(id="last")
+
+
+class _ClippedPaneScreen(Screen[None]):
+    """A non-scrollable pane that clips a control laid out past its edge."""
+
+    DEFAULT_CSS = """
+    #clipped-pane { width: 24; height: 3; overflow: hidden hidden; }
+    #clipped-row { width: 60; height: 3; overflow: hidden hidden; }
+    #clipped-row Input { width: 20; height: 1; border: none; }
+    """
+
+    def compose(self):
+        with Vertical(id="clipped-pane"):
+            with Horizontal(id="clipped-row"):
+                yield Input(id="near")
+                yield Input(id="far")
+
+
+class _NestedClippedPaneScreen(Screen[None]):
+    """A scrollable pane laid out past the bottom of a parent that cannot scroll.
+
+    ``seen`` is the parent's first row; the scroll pane starts on the row
+    after the parent's last visible one, so nothing inside it is painted
+    and no scrolling of the pane can change that.
+    """
+
+    DEFAULT_CSS = """
+    #nested-outer { height: 4; overflow: hidden hidden; }
+    #nested-outer > Static { height: 1; }
+    #nested-outer > Input { height: 1; border: none; }
+    #nested-pane { height: 6; }
+    #nested-pane Input { height: 1; border: none; }
+    #nested-pane Static { height: 1; }
+    """
+
+    def compose(self):
+        with Vertical(id="nested-outer"):
+            yield Input(id="seen")
+            for index in range(3):
+                yield Static(f"outer row {index}")
+            with VerticalScroll(id="nested-pane"):
+                yield Input(id="buried")
+                for index in range(40):
+                    yield Static(f"filler {index}")
+                yield Input(id="buried-last")
 
 
 @pytest.fixture(autouse=True)
@@ -361,6 +424,126 @@ def test_workbench_screens_expose_f6_bindings_without_ctrl_arrow_conflicts():
         assert "shift+f6" in keys
         assert "ctrl+left" not in keys
         assert "ctrl+right" not in keys
+
+
+@pytest.mark.asyncio
+async def test_workbench_focus_lands_on_a_scrolled_out_preferred_target_and_reveals_it():
+    """TASK-34000.8 fix round 1 (review I-1): a preferred control that is
+    merely SCROLLED out of view inside a scrollable pane is still the
+    landing -- focusing it lets Textual scroll it into view. Only a control
+    no scrolling ancestor could reveal is passed over.
+
+    RED on 8b935e56e6: the pass-over skipped ``first`` (region y < 0) and
+    F6 landed on ``last``.
+    """
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        app.push_screen(_ScrolledPaneScreen())
+        await pilot.pause()
+        screen = app.screen
+        pane = screen.query_one("#scrolled-pane", VerticalScroll)
+        first = screen.query_one("#first", Input)
+        pane.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        await pilot.pause()
+        assert not pane.region.contains_region(first.region), (
+            f"sanity: first is still in view at {first.region} (pane {pane.region})"
+        )
+
+        focused = focus_relative_workbench_pane(
+            screen,
+            (WorkbenchPaneTarget("scrolled-pane", ("first", "last")),),
+            direction=1,
+        )
+
+        assert getattr(focused, "id", None) == "first", f"landed on {focused!r}"
+        await _wait_for_focused_id(app, pilot, "first")
+        await pilot.pause()
+        assert pane.region.contains_region(first.region), (
+            f"focus did not scroll first into view: {first.region} vs {pane.region}"
+        )
+        assert widget_has_visible_region(first)
+
+
+@pytest.mark.asyncio
+async def test_workbench_focus_passes_over_a_control_clipped_by_a_non_scrollable_pane():
+    """TASK-34000.8 AC#3: a preferred control laid out past the edge of a
+    pane that cannot scroll (the note editor's Save at the old header
+    shape) is passed over for the next preferred control that is on
+    screen; the footer-chip helper reports it as not visible even though
+    its region lies inside the screen's bounds (review M-1 -- RED on
+    8b935e56e6, where the helper tested ``screen.region`` alone).
+    """
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        app.push_screen(_ClippedPaneScreen())
+        await pilot.pause()
+        screen = app.screen
+        pane = screen.query_one("#clipped-pane")
+        far = screen.query_one("#far", Input)
+        near = screen.query_one("#near", Input)
+        assert screen.region.contains_region(far.region), "sanity: far is inside the screen"
+        assert not pane.region.contains_region(far.region), "sanity: far is clipped by its pane"
+        assert widget_has_visible_region(far) is False
+        assert widget_has_visible_region(near) is True
+
+        focused = focus_relative_workbench_pane(
+            screen,
+            (WorkbenchPaneTarget("clipped-pane", ("far", "near")),),
+            direction=1,
+        )
+
+        assert getattr(focused, "id", None) == "near", f"landed on {focused!r}"
+        await _wait_for_focused_id(app, pilot, "near")
+
+
+@pytest.mark.asyncio
+async def test_workbench_focus_passes_over_a_scrolled_out_control_whose_pane_is_itself_clipped():
+    """PR #3055 review (Important 2): a control scrolled out of a scrollable
+    pane that is ITSELF clipped by a non-scrollable parent is passed over.
+    Scrolling the pane would bring the control into the pane's content
+    region, but that region is never painted, so no scrolling reveals it.
+    Every ancestor that clips the control has to be able to scroll it in.
+
+    RED on bbc7c2c6d2: the walk stopped at the first clipping ancestor (the
+    scrollable pane) and F6 landed on ``buried``.
+    """
+    app = _build_test_app()
+    app.app_config["_first_run"] = False
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        app.push_screen(_NestedClippedPaneScreen())
+        await pilot.pause()
+        screen = app.screen
+        outer = screen.query_one("#nested-outer")
+        pane = screen.query_one("#nested-pane", VerticalScroll)
+        buried = screen.query_one("#buried", Input)
+        seen = screen.query_one("#seen", Input)
+        pane.scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        await pilot.pause()
+        assert not pane.content_region.contains_region(buried.region), (
+            f"sanity: buried is still in view at {buried.region} (pane {pane.region})"
+        )
+        assert pane.allow_vertical_scroll, "sanity: the pane can scroll"
+        assert not outer.content_region.contains_region(pane.region), (
+            f"sanity: the pane is not clipped by its parent ({pane.region} in {outer.region})"
+        )
+        assert widget_has_visible_region(buried) is False
+        assert widget_has_visible_region(seen) is True
+
+        focused = focus_relative_workbench_pane(
+            screen,
+            (WorkbenchPaneTarget("nested-outer", ("buried", "seen")),),
+            direction=1,
+        )
+
+        assert getattr(focused, "id", None) == "seen", f"landed on {focused!r}"
+        await _wait_for_focused_id(app, pilot, "seen")
 
 
 @pytest.mark.asyncio

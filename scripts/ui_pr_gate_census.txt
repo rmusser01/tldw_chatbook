@@ -88,12 +88,16 @@ Tests/UI/test_library_export_progress_apply.py
 Tests/UI/test_library_export_replace_confirm.py
 Tests/UI/test_library_footer_focus.py
 Tests/UI/test_library_grip_capture.py
+Tests/UI/test_library_note_delete_prompt_visible.py
+Tests/UI/test_library_note_header_fits_pane.py
 Tests/UI/test_library_notes_sync_attention.py
 Tests/UI/test_library_notes_sync_delete_restore.py
+Tests/UI/test_library_notes_tree_scrolls_wide.py
 Tests/UI/test_library_notes_work_session.py
 Tests/UI/test_library_prompt_history_controller.py
 Tests/UI/test_library_quit_guard.py
 Tests/UI/test_library_rag_legacy_chunk_report.py
+Tests/UI/test_library_rail_switch_keeps_reader_and_note.py
 Tests/UI/test_library_reader_console_delete_refresh.py
 Tests/UI/test_library_url_ingest_submit.py
 Tests/UI/test_llm_screen_ollama_probe_nonblocking.py

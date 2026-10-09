@@ -203,6 +203,27 @@ passes `layout=` nor carries a stated exemption. Two things that census taught:
 
 ---
 
+## `call_after_refresh` is two message hops, not a layout pass — a refresh-counted wait can never see a widget's first `Resize` (TASK-34000.25, 2026-10-09)
+
+`MessagePump.call_after_refresh` posts `InvokeLater` to itself and then `call_later`s
+the callback on the app: it runs after the pending messages, with no real time and no
+compositor reflow in between. A chain that re-arms itself through it therefore burns
+its whole budget inside one frame. Incident: the Media Reader's reading-position
+restore (task-31968's `settle(8)`, one `scroll_to(immediate=True)` per hop, re-armed
+while the offset clamped short) was moved onto the rail-return path. The Raw view
+builds its wrap index on its FIRST `Resize` — delivered by the compositor after a
+layout, i.e. a frame later — so all eight re-applies ran on the same unindexed view at
+`max_scroll_y == 0`, and raising the budget to 48 changed nothing (the probe recorded 48
+of 48 at 0, then 287 rows one `pilot.pause()` later). Routing the hop through
+`call_later` was no better: same reason. The fix was a layout SIGNAL, not a count: the
+Raw view posts `Indexed` after `_build_index_now`, Textual's `Markdown` posts
+`TableOfContentsUpdated` after its last block batch mounts, and
+`LibraryMediaContentBody.run_when_laid_out` hands the continuation to whichever applies.
+Rule: `call_after_refresh` orders you after *messages already queued*; it says nothing
+about layout. To wait for geometry, wait for the event that produces it (`Resize`, a
+widget's own "built" message), and keep a refresh-count only as the bound on a body that
+is already laid out and merely growing.
+
 ## `set_timer(0.0)` never fires — silently
 
 **TASK-21110, 2026-08-23.** The splash/initial-screen overlap is armed with
@@ -391,6 +412,25 @@ the no-super convention with an AST scan that fails if any screen/modal/widget
 re-introduces a `super().on_*()` call to a dispatched handler.
 
 ---
+
+## `is_mounted` is still False inside `on_mount` — a guard on it makes the mount-time apply a silent no-op (TASK-34000.25, 2026-10-09)
+
+Textual sets `_is_mounted = True` in the `finally` AFTER `_dispatch_message(events.Mount())`
+returns (`message_pump.py`, `_pre_process`), so any method called from an `on_mount` handler
+that early-returns on `not self.is_mounted` stores its input and applies nothing. Incident:
+`LibraryNotesCanvas.apply_session_state` guards on `is_mounted`; `on_mount` →
+`_apply_post_compose_state` called it to set the editor's `display` flags, and the call never
+passed the guard — a freshly composed editor kept every surface as composed, with the "This
+note changed elsewhere — Overwrite / Reload" callout visible under "Saved". Every other open
+path re-synced a moment later and masked it; the rail return to a retained, untouched note did
+not, which is the review's "false conflict render" (S-02), reproduced live at 160x45 and in a
+Pilot probe that logged `is_mounted=False` at both calls. Widening the guard to `is_attached`
+was NOT the fix: the dead apply had been dead since the canvas was written, and two pinned
+behaviours (the emptied-blank GC on Back, the compact Preview scroll memory) went red once it
+ran. The fix composes the display-gated surfaces from the state in `_compose_editor` itself.
+Rule: inside `on_mount`, `is_mounted` is False; a compose must not rely on a later apply to
+hide what it composed, and before "repairing" a dead mount-time call, run the pinned suite —
+code has grown around its absence.
 
 ## A cached widget reference cannot be validated by `is_mounted` — it lags detachment, and `_pruning` marks the corpse first
 
@@ -850,6 +890,85 @@ the hint. The fix was a `Label`: its own `DEFAULT_CSS` is `width: auto`, which e
 loads. **What to do:** give a widget added to a shared row geometry that holds without the
 bundle: the widget type's own `DEFAULT_CSS`, or the owning class's `DEFAULT_CSS`. Then
 probe `region` once under a bare harness as well as under `TldwCli.CSS_PATH`.
+
+## A focus walker's geometry guard must PASS OVER an off-screen target, never rule it out
+
+**TASK-34000.8, 2026-10-09.** F6 landed on the Library note editor's Save while
+its region sat past the right edge of a 120-column terminal (the header was one
+strip shaped from the shell's breakpoint, not the pane's width). The obvious
+guard -- in `Widgets/workbench_focus.py`, skip a preferred target whose region is
+empty or outside `screen.region` -- fixed that and broke
+`test_narrow_f6_reveals_reader_and_returns_through_items_grip` at 50x25: the narrow
+Artifacts stage keeps its reader COLLAPSED until F6 focuses `#library-artifacts-body`,
+and that focus is what reveals it. An unseen target is sometimes the whole point of
+the walk. The rule that holds both: prefer the first preferred target that is on
+screen; only when none is, fall back to the first focusable one (focusing it may
+reveal its pane). "Empty region" is never disqualifying on its own -- a collapsed
+pane's child has one too. And "outside the screen" is not disqualifying either
+(review I-1 of the same task): a control a scrollable pane has merely SCROLLED out
+of view (`region.y < 0`, `allow_vertical_scroll` True on the pane) must stay the
+landing, because `focus()` scrolls it in -- F6 into a scrolled Settings form landed
+mid-form before that was pinned. The pass-over applies only to a control that no
+scrolling ancestor could reveal: clipped by a non-scrollable ancestor on an axis it
+cannot scroll (`_scrolling_could_reveal` in `Widgets/workbench_focus.py`). Measure
+visibility against the compositor's clip (`screen.find_widget(w).clip`), not
+`screen.region`: a control past its own pane's edge is inside the screen and still
+unseeable. And "a scrollable ancestor clips it" is not the end of the walk (PR #3055
+review, Important 2): the first version returned True at the first scrollable
+clipping ancestor, so a control scrolled out of a pane that was ITSELF laid out past
+a non-scrollable parent's edge counted as revealable and F6 landed on it
+(`test_workbench_focus_passes_over_a_scrolled_out_control_whose_pane_is_itself_clipped`).
+Scrolling brings the control into that pane's content region at best, so continue the
+walk with that region in hand: every clipping ancestor has to be scrollable on the
+overflowed axis.
+
+Two measurements from the same task worth keeping: (1) a content-sized compact
+`Button` is `len(label) + 4` cells on the wide stage -- `padding: 0 1` plus
+Textual's `line-pad: 1` on both sides -- and horizontal sibling margins COLLAPSE
+to the larger one (a `margin-left: 4` after a `margin-right: 1` costs 4, not 5),
+so derive a row's one-line minimum from the labels and measure the chrome once;
+(2) to keep a sibling from moving when a control comes and goes, hide the control
+with `visible = False` (cells reserved, dropped from `focus_chain` and
+`get_widget_at` in 8.2.8), not `display = False` -- it replaces a hand-measured
+`min-width` that was only ever right at one size.
+
+---
+
+## `allow_vertical_scroll` is False whenever the content fits -- a scroll-owner test needs overflow
+
+**TASK-34000.7, 2026-10-08.** The fix gave the wide `#library-notes-list` `overflow-y: auto`,
+and the gated test pinned it with `lst.allow_vertical_scroll is True` at 120x36 and 160x45
+(green). The extended sibling asserted the same at 200x50, 235x52, 100x50 and 119x40 and all
+four failed on the FIXED tree with `allow_vertical_scroll` False, `overflow_y=auto`. Textual's
+property is `is_scrollable and show_vertical_scrollbar`, and the scrollbar is shown only when
+`virtual_size` exceeds the container -- the 22-row first page simply fit those panes, so there
+was nothing to scroll. The assertion was measuring the fixture, not the rule.
+
+**What to do.** Assert the rule's intent (`styles.overflow_y == "auto"`) separately from the
+geometry, and make the content overflow before asserting `allow_vertical_scroll`, `scroll_y` or
+a reveal -- here by pressing the real "More notes" pager twice (which also proved the pager
+reachable). A `max_scroll_y > 0` sanity assertion first turns "fits" into a readable failure
+instead of a false RED. And re-resolve the list after any reload: the pager press replaces
+`#library-notes-list` (see the recompose entry above), so the pre-press handle has no children.
+
+## A reveal-on-open is not a reveal-on-resize -- Textual never re-scrolls the focused widget
+
+**TASK-34000.13, 2026-10-08.** The Library Notes delete prompt got its fix in two halves: an
+app-tier `height: auto` (it had been a `1fr` child squeezed to the one leftover row inside Info's
+`VerticalScroll`) and a `call_after_refresh` reveal that scrolls the whole prompt into Info and
+focuses Cancel in place. The gated arms were green. The extended arm that opened the prompt at
+160x45 and resized to 120x36 was RED on the FIXED tree: `max_scroll_y=3`, `scroll_y=0`, both
+buttons below Info's fold, Tab still trapped inside the prompt -- the review's blind-Enter shape
+again, one resize later. Textual re-lays out on resize but does not scroll a focused widget back
+into view; `focus()`'s `scroll_visible` happens once, at focus time.
+
+**What to do.** A "scroll X into view when it appears" fix needs a second owner for "keep X in view
+while it is open". The cheapest durable one here was the destination widget's own `on_resize`
+(`LibraryNotesCanvas._keep_delete_prompt_in_view`: if the prompt is displayed,
+`call_after_refresh(prompt.scroll_visible, immediate=True, force=True)`, no focus change -- the
+user may be on Delete by then), which also keeps the screen's already-breached size ratchet
+untouched. And put the resize-while-open arm in the extended sibling of any reveal fix: it is the
+one arm the open-time test cannot stand in for.
 
 ## A one-edge `margin-bottom` rule replaces the whole margin, not just its edge
 

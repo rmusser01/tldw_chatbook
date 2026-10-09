@@ -522,6 +522,16 @@ async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
     the row's own excess space happens to be exhausted before Discard's
     width matters, so the shift this pins does not reproduce there --
     checked by hand against a reverted copy of the CSS fix before landing.
+
+    TASK-34000.8: the reservation is now made by construction -- Discard
+    new note stays IN LAYOUT (``visible``, not ``display``), so the task
+    row is always its Discard-shown width -- and the hand-measured
+    ``min-width: 61`` is gone (it applied from the shell's 120-column
+    breakpoint up, where it pushed Save off a 48-cell pane). The review
+    round 1 F9 pin on that constant asserted the implementation (a CSS
+    number), not the promise; its behavioural half is kept here: the mode
+    row's x AND the task row's width are the same with and without Discard,
+    and the hidden Discard is not Tab-reachable.
     """
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -541,14 +551,15 @@ async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
         discard = screen.query_one("#library-note-discard-new", Button)
         mode_controls = screen.query_one("#library-note-mode-controls")
         task_actions = screen.query_one("#library-note-task-actions")
-        # task-32623 review round 1, F9: pin the hand-measured CSS constant
-        # itself, not just the no-shift behaviour it produces -- a drift in
-        # the number could still happen to not shift anything today and
-        # silently stop reserving the row's real widest width.
-        assert task_actions.styles.min_width is not None
-        assert task_actions.styles.min_width.value == 61
-        assert discard.display is True, "untouched new note should offer Discard"
+        assert discard.display is True and discard.visible is True, (
+            "untouched new note should offer Discard"
+        )
+        assert discard in screen.focus_chain
         x_with_discard = mode_controls.region.x
+        width_with_discard = task_actions.region.width
+        assert width_with_discard >= discard.region.right - task_actions.region.x, (
+            "sanity: the task row does not even hold Discard"
+        )
 
         body = screen.query_one("#library-note-body", TextArea)
         body.text = "typed content"
@@ -556,16 +567,24 @@ async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen.query_one("#library-note-discard-new", Button).display is False
+                screen.query_one("#library-note-discard-new", Button).visible is False
             ),
             message="Discard new note never disappeared after typing.",
         )
+        await pilot.pause()
         x_without_discard = mode_controls.region.x
 
         assert x_without_discard == x_with_discard, (
             f"Edit/Preview/Info moved from x={x_with_discard} to "
             f"x={x_without_discard} when Discard new note disappeared."
         )
+        assert task_actions.region.width == width_with_discard, (
+            f"The task row shrank from {width_with_discard} to "
+            f"{task_actions.region.width} when Discard new note disappeared."
+        )
+        assert discard.display is True, "Discard must keep its cells (visibility, not display)"
+        assert discard not in screen.focus_chain, "a hidden Discard is Tab-reachable"
+        assert discard not in screen._compositor.visible_widgets
 
 
 @pytest.mark.asyncio
