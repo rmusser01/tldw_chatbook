@@ -397,12 +397,17 @@ statistics tools.
   with **Restore**.
   Slash commands, typed `! ` commands, Enter during a run (which queues) and
   a send behind a **Blocked** turn (which is refused) skip this step.
-- Console stays responsive while it prepares the turn. Keys you type go into
-  the composer and stay there for your next message. An Enter pressed in that
-  moment is handled once the turn is accepted, and only in the tab where you
-  pressed it, so pressing Enter twice never sends the same text twice. If you
-  switch tabs, the turn is still sent from its own tab (or, in the first
-  instant after Enter, stopped with a notice and its draft kept there).
+- Console stays responsive while it prepares the turn. Enter sends exactly
+  what the composer held when you pressed it; anything you type afterwards
+  stays in the composer for your next message. An Enter on an empty composer
+  sends nothing but a staged image, even if you start typing right after it.
+  Pressing Enter again while the first message is being prepared never sends
+  it twice: a bare second Enter does nothing, and if you typed something new,
+  Console says "Not sent: your previous message is still being sent." and
+  keeps your text in the composer to send in a moment. An Enter is only ever
+  sent in the tab where you pressed it. If you switch tabs, the turn is still
+  sent from its own tab (or, in the first instant after Enter, stopped with a
+  notice and its draft kept there).
 - The reply row then appears with a dim "Generating…" placeholder and streams
   in with a "[streaming]" suffix until it completes.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's

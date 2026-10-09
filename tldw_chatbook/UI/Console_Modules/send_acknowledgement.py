@@ -28,7 +28,9 @@ TASK-33620.15: the Send button and the Workbench's send now start here too
 (``request_visible_send``), and the send runs as its own task: awaited from
 the app pump's callback, as it was, every await of it held key delivery.
 A send request made while one runs is replayed when it settles, as the busy
-app pump used to replay it, and only in the chat it was made in.
+app pump used to replay it, only in the chat it was made in, and with the
+draft captured at its own press (lead ruling: keys typed after a press are
+the next draft).
 
 Imported on the first send only, so it adds nothing to the ADR-097 boot
 census; boot-time readers go through ``getattr(screen, ACK_ATTRIBUTE)``.
@@ -57,6 +59,7 @@ from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     blocked_turn_reason,
 )
 from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    ConsoleDraftStash,
     classify_console_raw_draft,
 )
 
@@ -66,6 +69,15 @@ ACK_ATTRIBUTE = "_console_send_ack"
 FLIGHT_ATTRIBUTE = "_console_send_flight"
 #: Run chip / hidden mode-bar copy while a send is acknowledged.
 SENDING_RUN_COPY = "Sending…"
+#: A press while the composer still shows a draft being sent (TASK-33620.15).
+DEFERRED_PRESS_REFUSED = (
+    "Not sent: your previous message is still being sent. This text stays in "
+    "the composer; send it again in a moment."
+)
+#: A deferred press whose chat is no longer the one on screen.
+CHAT_CHANGED_COPY = (
+    "Console chat changed before send; the draft was kept in its original chat."
+)
 #: Frame-length waits the hand-off may spend on the acknowledgement's layout.
 _PAINT_HOPS = 6
 _PAINT_HOP_SECONDS = 1 / 60
@@ -412,7 +424,6 @@ def request_visible_send(
     screen: Any,
     *,
     guard: Callable[[], bool] | None = None,
-    made_in: str | None = None,
 ) -> None:
     """Capture the visible draft now and send it, acknowledged (TASK-33620.15).
 
@@ -421,61 +432,47 @@ def request_visible_send(
     Enter only) and the same send: a task the app pump starts and never
     awaits, so its admission never holds key delivery.
 
+    What is sent is what the composer held at this press (lead ruling); keys
+    typed after it stay as the next draft (TASK-340). A press made while
+    another visible send is scheduled or running is handled by ``_defer``.
+
     Args:
         screen: The Console ``ChatScreen``.
-        guard: Enter's check that the Send action is available, run once the
-            draft is captured; ``False`` releases the capture unsent.
-        made_in: Set on a deferred request's replay: the chat it was made in.
+        guard: Enter's check that the Send action is available, run when the
+            send is scheduled; ``False`` releases the capture unsent.
     """
-    from tldw_chatbook.UI.Screens.chat_screen import _ConsolePendingSend
-
-    if screen._console_pending_send is not None:
-        # A send keypress is already scheduled on the app pump; a second
-        # Enter in that window must not enqueue it twice.
-        return
     session_id = screen._console_visible_send_session_id()
-    flight = _flight(screen)
-    if flight.tasks:
-        # The app pump used to hold this request until the running send's
-        # admission returned; replay the latest one then (one request, as the
-        # second Enter of a double press would have found an empty draft).
-        flight.deferred = partial(
-            request_visible_send, screen, guard=guard, made_in=session_id
-        )
-        return
-    if made_in is not None and made_in != session_id:
-        # Its chat was left meanwhile (the held pump ran it there first): it
-        # must never send the draft now on screen. That chat keeps its draft.
-        return
     if session_id is None:
         screen.app_instance.notify("Console send is unavailable.", severity="error")
         return
     composer = screen._console_composer_or_none()
-    # TASK-340: capture the payload now so printable keys handled before the
-    # scheduled callback belong to the next draft.
     stash = composer.capture_draft_for_send() if composer is not None else None
-    pending_send = _ConsolePendingSend(session_id, stash, object())
-    screen._console_pending_send = pending_send
-    if stash is not None:
-        try:
-            screen._ensure_console_chat_store().set_session_draft(
-                session_id, stash.text
-            )
-        except KeyError:
-            screen._console_pending_send = None
-            return
-    if guard is not None and not guard():
-        screen._console_pending_send = None
-        return
-    schedule_acknowledged_send(screen, pending_send)
+    request = _Request(session_id, stash, guard)
+    flight = _flight(screen)
+    if screen._console_pending_send is not None or flight.tasks or flight.deferred:
+        _defer(screen, flight, request)
+    elif _record_draft(screen, request):
+        _schedule(screen, flight, request)
+
+
+@dataclass(frozen=True)
+class _Request:
+    """One send press: its chat, its capture, and Enter's Send-action check."""
+
+    session_id: str
+    stash: ConsoleDraftStash | None
+    guard: Callable[[], bool] | None
 
 
 @dataclass
 class _SendFlight:
-    """The screen's visible sends still running, and one deferred request."""
+    """The screen's visible sends still running, and one deferred press."""
 
     tasks: set[asyncio.Task[Any]] = field(default_factory=set)
-    deferred: Callable[[], None] | None = None
+    #: The capture of the send scheduled or running; the composer keeps
+    #: showing it until that send commits it.
+    running: ConsoleDraftStash | None = None
+    deferred: _Request | None = None
 
 
 def _flight(screen: Any) -> _SendFlight:
@@ -484,6 +481,79 @@ def _flight(screen: Any) -> _SendFlight:
         flight = _SendFlight()
         setattr(screen, FLIGHT_ATTRIBUTE, flight)
     return flight
+
+
+def _record_draft(screen: Any, request: _Request) -> bool:
+    """Mirror the captured draft into its chat; False if the chat is gone."""
+    if request.stash is None:
+        return True
+    try:
+        screen._ensure_console_chat_store().set_session_draft(
+            request.session_id, request.stash.text
+        )
+    except KeyError:
+        return False
+    return True
+
+
+def _schedule(screen: Any, flight: _SendFlight, request: _Request) -> None:
+    from tldw_chatbook.UI.Screens.chat_screen import _ConsolePendingSend
+
+    pending_send = _ConsolePendingSend(request.session_id, request.stash, object())
+    screen._console_pending_send = pending_send
+    if request.guard is not None and not request.guard():
+        screen._console_pending_send = None
+        return
+    flight.running = request.stash
+    schedule_acknowledged_send(screen, pending_send)
+
+
+def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
+    """Hold a press made while a visible send is scheduled or running.
+
+    The busy app pump used to run such a press after the running send's
+    admission, so it captured only what had been typed before it. It is
+    captured at the press now and replayed with that capture once the
+    running send settles, only in the chat it was made in (``_replay``).
+
+    A capture leaves the composer only when its send commits it. While the
+    composer still shows one -- the running send's, or a deferred press's
+    -- this press's own text cannot be told apart from it: a repeat press
+    (nothing new typed) is dropped, and a press with new text is refused
+    with a notice and its text stays in the composer. Only one press is
+    held at a time, so it is never overwritten.
+    """
+    stash = request.stash
+    if stash is None:  # Nothing typed: only a staged image is worth sending.
+        image = screen._console_pending_image_attachment() is not None
+        if image and flight.deferred is None:
+            flight.deferred = request
+        return
+    deferred = flight.deferred.stash if flight.deferred is not None else None
+    held = [c for c in (flight.running, deferred) if c is not None]
+    if any((c.text, c.generation) == (stash.text, stash.generation) for c in held):
+        return
+    if flight.deferred is not None or any(
+        c.generation == stash.generation for c in held
+    ):
+        screen.app_instance.notify(DEFERRED_PRESS_REFUSED, severity="warning")
+        return
+    if _record_draft(screen, request):
+        flight.deferred = request
+
+
+def _replay(screen: Any, flight: _SendFlight) -> None:
+    request = flight.deferred
+    if request is None or flight.tasks or screen._console_pending_send is not None:
+        return  # Another send holds the slot; its settling replays this one.
+    flight.deferred = None
+    if _torn_down(screen):
+        return
+    if screen._console_visible_send_session_id() != request.session_id:
+        # Never send in the chat now on screen; the press's chat keeps its draft.
+        screen.app_instance.notify(CHAT_CHANGED_COPY, severity="warning")
+        return
+    _schedule(screen, flight, request)
 
 
 def _start_send(screen: Any, send: Callable[[], Awaitable[bool]]) -> None:
@@ -504,10 +574,11 @@ def _send_settled(screen: Any, flight: _SendFlight, task: asyncio.Task[Any]) -> 
     flight.tasks.discard(task)
     if not task.cancelled() and (error := task.exception()) is not None:
         screen.app.call_later(_raise, error)
-    if not flight.tasks and (deferred := flight.deferred) is not None:
-        flight.deferred = None
-        if not _torn_down(screen):
-            screen.call_later(deferred)
+    if flight.tasks or screen._console_pending_send is not None:
+        return
+    flight.running = None
+    if flight.deferred is not None and not _torn_down(screen):
+        screen.call_later(_replay, screen, flight)
 
 
 def _raise(error: BaseException) -> None:

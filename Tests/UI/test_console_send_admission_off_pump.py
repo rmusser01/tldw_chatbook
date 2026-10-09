@@ -24,6 +24,7 @@ screen when their send starts is the same "Sending…" acknowledgement.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import threading
 
@@ -372,6 +373,209 @@ async def test_leaving_a_tab_while_its_send_is_admitted_still_sends_it_there():
             assert _users(console, session_b) == []
             assert store.session_draft(session_b) == B_DRAFT
             assert not [n for n in notices if "API key" in n], notices
+
+
+def _sent_or_queued(console, session_id: str) -> list[str]:
+    controller = console._ensure_console_chat_controller()
+    queued = controller.prompt_queue_registry.snapshot(session_id).entries
+    return _users(console, session_id) + [entry.preview for entry in queued]
+
+
+def _record_notices(host) -> list[str]:
+    notices: list[str] = []
+    real_notify = host.app_instance.notify
+    host.app_instance.notify = lambda message, **kwargs: (
+        notices.append(str(message)),
+        real_notify(message, **kwargs),
+    )
+    return notices
+
+
+def _hold_first_send_tail(console) -> asyncio.Event:
+    """Keep the first visible send running after its own dispatch returns.
+
+    A send request made meanwhile is deferred until the running send
+    settles. Released once the first turn has finished (``_first_turn_done``),
+    the deferred request is an ordinary second turn, so what it carries is
+    what reaches the provider. (Released earlier it meets "Preparing the
+    current turn" and is refused, whatever it captured.)
+    """
+    tail = asyncio.Event()
+    real_send = console._send_console_message_from_visible_action
+    calls: list[object] = []
+
+    async def send_then_hold(**kwargs):
+        calls.append(kwargs)
+        sent = await real_send(**kwargs)
+        if len(calls) == 1:
+            await tail.wait()
+        return sent
+
+    console._send_console_message_from_visible_action = send_then_hold
+    return tail
+
+
+def _allow_second_turns(host) -> None:
+    """A second turn reads its persisted chat's archive state; none archived."""
+    from types import SimpleNamespace
+
+    host.app_instance.local_chat_conversation_service = SimpleNamespace(
+        db=SimpleNamespace(is_memory_db=True),
+        get_conversation_archive_states=lambda _ids: {},
+    )
+
+
+def _first_turn_done(host, console) -> bool:
+    if REPLY not in "\n".join(_painted_lines(host)):
+        return False
+    controller = console._ensure_console_chat_controller()
+    activity = controller.activity_for(console._console_chat_store.active_session_id)
+    return not (activity.occupies_slot or activity.accepted_live_turn)
+
+
+@pytest.mark.asyncio
+async def test_an_enter_made_while_the_sent_draft_still_shows_never_takes_later_keys():
+    """Lead ruling: a deferred Enter sends only what the composer held then.
+
+    Enter, then "y" and Enter while the first send is admitted, then "z". The
+    deferred Enter was replayed once the first send settled by capturing the
+    composer at that moment, so "z" -- typed after it -- was sent with it
+    ("yz"). At that press the composer still showed the first send's
+    uncommitted draft, so "y" alone cannot be captured safely: the press is
+    refused with a notice, and everything typed stays in the composer.
+    """
+    host, gateway, _timeline = build()
+    _allow_second_turns(host)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            notices = _record_notices(host)
+            tail = _hold_first_send_tail(console)
+            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                press(host, "y", "y")
+                press(host, "enter", "\r")
+                press(host, "z", "z")
+                await until(lambda: composer.draft_text().endswith("z"), timeout=10)
+            finally:
+                hold.release.set()
+            try:
+                await until(lambda: _first_turn_done(host, console))
+            finally:
+                tail.set()
+            await _settled(console, pilot)
+            await until(lambda: _first_turn_done(host, console))
+            await _settled(console, pilot)
+            session_id = console._console_chat_store.active_session_id
+            assert _sent_or_queued(console, session_id) == [DRAFT]
+            assert composer.draft_text() == "yz"
+            assert [n for n in notices if "still being sent" in n], notices
+
+
+@pytest.mark.asyncio
+async def test_an_enter_deferred_behind_a_send_sends_its_own_capture_only():
+    """Lead ruling: the deferred Enter carries the draft captured at its press.
+
+    The first send's draft has left the composer, but its send is still
+    running, so a second Enter is deferred. It replayed by capturing the
+    composer when it ran, so "z", typed after that Enter, was sent with it
+    ("yz"). It now sends "y", and "z" stays as the next draft.
+    """
+    host, gateway, _timeline = build()
+    _allow_second_turns(host)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            tail = _hold_first_send_tail(console)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(lambda: composer.draft_text() == "", timeout=ENTRY_SECONDS)
+                press(host, "y", "y")
+                press(host, "enter", "\r")
+                press(host, "z", "z")
+                await until(lambda: composer.draft_text() == "yz", timeout=10)
+                await until(lambda: _first_turn_done(host, console))
+            finally:
+                tail.set()
+            await _settled(console, pilot)
+            session_id = console._console_chat_store.active_session_id
+            await until(lambda: len(_sent_or_queued(console, session_id)) >= 2)
+            assert _sent_or_queued(console, session_id) == [DRAFT, "y"]
+            assert composer.draft_text() == "z"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("typed", ["hi", "! pwd"], ids=["chat", "raw"])
+async def test_enter_on_an_empty_composer_never_sends_text_typed_after_it(typed):
+    """An empty capture has nothing to send (no image staged); also on dev.
+
+    Enter on an empty composer captures nothing, and the send then read the
+    live composer instead: text typed straight after that Enter was sent, and
+    a ``! `` command typed after it was started.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft("")
+            await pilot.pause()
+            started: list[object] = []
+            console._raw_cli.start_user_command = lambda stash: started.append(stash)
+            gateway.validation_release.set()
+            press(host, "enter", "\r")
+            for char in typed:
+                key = {"!": "exclamation_mark", " ": "space"}.get(char, char)
+                press(host, key, char)
+            await until(lambda: composer.draft_text() == typed or bool(started))
+            await _settled(console, pilot)
+            session_id = console._console_chat_store.active_session_id
+            assert [stash.text for stash in started] == []
+            assert _sent_or_queued(console, session_id) == []
+            assert gateway.stream_calls == 0
+            assert composer.draft_text() == typed
+
+
+@pytest.mark.asyncio
+async def test_an_image_only_enter_never_takes_text_typed_after_it():
+    """An empty capture with an image staged sends the image and no text.
+
+    The send read the live composer for its draft, so text typed after the
+    Enter rode along with the image. Read as an image-only draft, it was
+    still captured from the live composer for the send to commit: accepted,
+    that would take the later text out of the composer unsent.
+    """
+    from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+        ConsolePromptDispatchResult,
+        ConsolePromptDispatchStatus,
+    )
+
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft("")
+            await pilot.pause()
+            console._console_pending_image_attachment = lambda: object()
+            dispatched: list[tuple[str, object]] = []
+
+            async def hook_dispatch(draft, *, session_id, stash, dispatch):
+                dispatched.append((draft, stash.text if stash else None))
+                return ConsolePromptDispatchResult(
+                    ConsolePromptDispatchStatus.SENT, session_id
+                )
+
+            console._hooks.dispatch = hook_dispatch
+            press(host, "enter", "\r")
+            press(host, "h", "h")
+            press(host, "i", "i")
+            await until(lambda: bool(dispatched) and composer.draft_text() == "hi")
+            await _settled(console, pilot)
+            assert dispatched == [("", None)]
+            assert composer.draft_text() == "hi"
 
 
 @pytest.mark.asyncio

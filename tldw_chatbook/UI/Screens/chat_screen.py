@@ -18879,12 +18879,10 @@ class ChatScreen(BaseAppScreen):
             self._console_composer_or_none,
             self._raw_cli.start_user_command,
             commit_captured=partial(_commit_captured_console_draft, self, session_id),
+            captured=pending_send_token is not None,
         )
         if raw_cli_handled:
             return False
-        if pending_send_token is None and composer is not None:
-            stash = composer.capture_draft_for_send()
-            draft = stash.text if stash is not None else draft
         if not draft.strip() and self._console_pending_image_attachment() is None:
             self._focus_console_composer_if_needed(force=True)
             return False
@@ -19026,7 +19024,7 @@ class ChatScreen(BaseAppScreen):
         ) as diagnostic:
             if session_id is None:
                 session_id = self._console_visible_send_session_id()
-            if stash is None:
+            if stash is None and draft:  # An image-only send has no draft.
                 composer = self._console_composer_or_none()
                 stash = composer.capture_draft_for_send() if composer else None
             result = await self._hooks.dispatch(

@@ -120,6 +120,8 @@ def prepare_visible_send(
     composer_accessor: Callable[[], Any | None],
     start_user_command: Callable[[ConsoleDraftStash], Any],
     commit_captured: Callable[[ConsoleDraftStash], Any] | None = None,
+    *,
+    captured: bool = False,
 ) -> tuple[ConsoleDraftStash | None, Any | None, str, bool]:
     """Classify a visible draft and consume direct raw submissions.
 
@@ -127,6 +129,12 @@ def prepare_visible_send(
     Send and the Workbench's send capture without clearing -- out of the
     composer before the command starts, as the destructive stash did, so a
     refusal restores it once instead of beside the live copy.
+
+    ``captured``: ``stash`` is what the composer held at the press. Text
+    typed since then is the next draft, so an empty capture (``None``) sends
+    nothing but a staged image: the live composer is never read, sent or
+    started as a command (on dev it was). Without it the draft is captured
+    here.
     """
     if stash is not None:
         classified = classify_console_raw_draft(stash)
@@ -138,6 +146,8 @@ def prepare_visible_send(
         if classified.kind == "escaped_chat":
             stash = unescape_console_raw_chat_stash(stash)
     composer = composer_accessor()
+    if stash is None and captured:
+        return None, composer, "", False
     if stash is None and composer is not None:
         stash = composer.stash_raw_cli_draft_for_send()
         if stash is None and composer.draft_text().startswith(r"\! "):
@@ -156,6 +166,9 @@ def prepare_visible_send(
     )
     if stash is None and draft.startswith(r"\! "):
         draft = draft[1:]
+    if not captured and composer is not None:
+        stash = composer.capture_draft_for_send()
+        draft = stash.text if stash is not None else draft
     return stash, composer, draft, False
 
 
