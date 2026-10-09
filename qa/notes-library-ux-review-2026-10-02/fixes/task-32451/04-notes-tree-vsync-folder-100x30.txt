@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N   Library notes · Ready · Next: Create a     N  Select a note to edit it here.
+  a   note or add from files.                    o
+  v   Notes (1)                                  t
+      Filter  Filter notes… (Enter)              e
+        New     Sort: Newest     ○ Select        s
+        Add from files…     Export     Manage
+        New folder
+
+--->  ▸ Agent_Lessons
+      ▸ VSync  ⇄ Sync managed
+
+                                               <---
+
+
+
+--->
+
+
+
+
+
+
+
+
+  esc rail | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

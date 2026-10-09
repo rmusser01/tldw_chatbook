@@ -54,6 +54,11 @@ FAST_LANE_TARGETS = (
     # carrying its time. About 6 s together; nothing else gated them.
     "Tests/Library/test_library_file_export.py",
     "Tests/Architecture/test_notes_sync_snapshot_construction.py",
+    # TASK-32451: every Manage sync folders row is titled with its folder's
+    # name through the published snapshot (real runtime over a tmp DB and
+    # vault; the honest fallbacks; no path on the snapshot, row or log).
+    # About 7 s.
+    "Tests/Notes/test_notes_sync_root_display_name.py",
     # TASK-34000.21: Library RAG Answer resolves the persisted
     # `[chat_defaults]` provider AND model (never borrowing one across
     # providers), names both on the line above Run, and the scheduled

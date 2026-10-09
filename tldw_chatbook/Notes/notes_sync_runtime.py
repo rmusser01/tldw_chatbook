@@ -274,6 +274,56 @@ class NotesSyncRootRefused(RuntimeError):
         super().__init__(code)
 
 
+#: TASK-32451: the row title for a root that has no managed folder yet.
+#: Both name what the root IS; neither claims a name is "unavailable".
+MIGRATED_ROOT_DISPLAY_NAME = "Migrated notes — review to finish setup"
+SETTING_UP_ROOT_DISPLAY_NAME = "Sync folder (setting up)"
+_ROOT_LABEL_MAX_CHARS = 160
+
+
+def _is_bounded_root_label(label: str) -> bool:
+    """The bounds ``NotesSyncRootSetup`` enforces on a typed display name."""
+
+    return (
+        bool(label.strip())
+        and len(label) <= _ROOT_LABEL_MAX_CHARS
+        and "\n" not in label
+        and "/" not in label
+        and "\\" not in label
+    )
+
+
+def _bounded_root_label(name: object) -> str:
+    """Shape a folder name into a row title, or ``""`` when nothing is left.
+
+    A folder name is already a validated path segment (no ``/`` or ``\\``),
+    but it may be longer than a typed label or carry a newline from an
+    older row; the projection truncates and flattens rather than refusing
+    to publish a status over a name.
+    """
+
+    if type(name) is not str:
+        return ""
+    label = " ".join(name.replace("/", " ").replace("\\", " ").split())
+    return label[:_ROOT_LABEL_MAX_CHARS].rstrip()
+
+
+def _fallback_root_display_name(root: NotesSyncRootRecord) -> str:
+    """The honest title for a root with no folder name to show.
+
+    A migrated legacy candidate has no user-typed name until it is activated
+    (activation names its folder); until then the row says what it is and
+    what finishes it. Any other folder-less root is mid-setup.
+    """
+
+    if (
+        root.state is NotesSyncRootState.PAUSED
+        and root.last_status_code == "migration_review_required"
+    ):
+        return MIGRATED_ROOT_DISPLAY_NAME
+    return SETTING_UP_ROOT_DISPLAY_NAME
+
+
 @dataclass(frozen=True, slots=True)
 class NotesSyncRootRuntimeSnapshot:
     """Path-free status projection for one lasting-sync root.
@@ -291,6 +341,12 @@ class NotesSyncRootRuntimeSnapshot:
     it starts the watcher, and a backup fence stops the watcher without
     publishing anything). A healthy status with ``watching`` False is a row
     nothing is carrying changes for; the projection says so.
+
+    ``display_name`` (TASK-32451) is the root's managed folder's name -- the
+    label the user typed at setup, the same one the Notes tree shows -- or
+    one of the owner's honest fallbacks for a root that has no folder yet.
+    A bounded non-path label, never a path: ``""`` only for a snapshot
+    built by hand.
     """
 
     root_id: str
@@ -299,6 +355,7 @@ class NotesSyncRootRuntimeSnapshot:
     action_id: str | None = None
     published_at: float | None = None
     watching: bool = True
+    display_name: str = ""
 
     def __post_init__(self) -> None:
         validate_notes_sync_opaque_id(self.root_id, field_name="root_id")
@@ -309,6 +366,10 @@ class NotesSyncRootRuntimeSnapshot:
             raise TypeError("published_at must be a float or None")
         if type(self.watching) is not bool:
             raise TypeError("watching must be a bool")
+        if type(self.display_name) is not str:
+            raise TypeError("display_name must be a str")
+        if self.display_name and not _is_bounded_root_label(self.display_name):
+            raise ValueError("display_name must be a bounded non-path label")
 
 
 @dataclass(frozen=True, slots=True)
@@ -714,6 +775,8 @@ class _RuntimeAdapter(Protocol):
 
     async def rollback_root_folder(self, receipt: object) -> None: ...
 
+    async def root_display_name(self, root: NotesSyncRootRecord) -> str: ...
+
     async def build_conflict_comparison(
         self,
         root: NotesSyncRootRecord,
@@ -867,6 +930,27 @@ class _ProductionRuntimeAdapter:
             expected_version=receipt[1],
             user_id=self._user_id,
         )
+
+    async def root_display_name(self, root: NotesSyncRootRecord) -> str:
+        """The root's managed folder's name, or ``""`` when it has none.
+
+        TASK-32451: the name the user typed at setup IS the folder's name
+        (:meth:`create_root_folder`), so the folder is the one authority for
+        it. A soft-deleted folder still answers (``include_deleted=True``):
+        the user still recognises the name, and the row's status line is
+        what says something is wrong. Only the name leaves this method,
+        never the folder's path.
+        """
+
+        if root.logical_folder_id is None:
+            return ""
+        folder = await self._service.get_note_folder_by_id_for_sync(
+            scope=ScopeType.LOCAL_NOTE,
+            folder_id=root.logical_folder_id,
+            include_deleted=True,
+            user_id=self._user_id,
+        )
+        return _bounded_root_label(getattr(folder, "name", None))
 
     def _notes(self, root: NotesSyncRootRecord) -> NotesScopeSyncAuthority:
         return NotesScopeSyncAuthority(
@@ -1748,6 +1832,11 @@ class NotesSyncRuntimeOwner:
             Callable[[NotesSyncRootRuntimeSnapshot], None]
         ] = []
         self._root_paths: dict[str, str] = {}
+        #: TASK-32451: root id -> the row title ``_publish`` stamps. Filled
+        #: from each root's managed folder at startup, from the typed name
+        #: at setup review and activation; released with the setup
+        #: authority. Never a path.
+        self._root_names: dict[str, str] = {}
         self._mutation_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
@@ -2266,6 +2355,7 @@ class NotesSyncRuntimeOwner:
             self._root_paths = {
                 root_id: root.canonical_path for root_id, root in roots.items()
             }
+            await self._load_root_names(roots)
             incomplete_operations = await self._maintenance_offload(
                 self._store.list_incomplete_operations
             )
@@ -2422,6 +2512,27 @@ class NotesSyncRuntimeOwner:
         if self._admission_open:
             self._status = "failed"
             self._next_action = "sync_now"
+
+    async def _load_root_names(self, roots: Mapping[str, NotesSyncRootRecord]) -> None:
+        """Name every loaded root before anything is published for it.
+
+        TASK-32451. The adapter reads the name from the root's managed
+        folder; a fake without ``root_display_name`` (two test adapters),
+        a root without a folder, or a read that fails all land on the
+        honest fallback for what the root IS. A name failure is logged by
+        class only and never fails the runtime -- the rows keep their
+        status; only the title is a fallback.
+        """
+
+        resolve = getattr(self._adapter, "root_display_name", None)
+        for root_id, root in roots.items():
+            name = ""
+            if callable(resolve):
+                try:
+                    name = _bounded_root_label(await resolve(root))
+                except Exception as error:
+                    _log_bounded_failure("root name", error)
+            self._root_names[root_id] = name or _fallback_root_display_name(root)
 
     async def _load_roots(self) -> dict[str, NotesSyncRootRecord]:
         summaries = await self._maintenance_offload(self._store.list_root_summaries)
@@ -2701,6 +2812,9 @@ class NotesSyncRuntimeOwner:
                 state=NotesSyncRootState.PENDING,
             )
             self._root_paths[root_id] = setup.canonical_path
+            # TASK-32451: a status published during this review (a refused
+            # lease, attention) is titled with the name the user just typed.
+            self._root_names[root_id] = _bounded_root_label(setup.display_name)
             # task-32535: the pass runs during this review, so the flag has
             # to be known before the folder is observed.
             self._adapter.remember_obsidian_mode(root_id, setup.obsidian_mode)
@@ -2749,6 +2863,7 @@ class NotesSyncRuntimeOwner:
         self._admission_reasons.pop(root_id, None)
         self._setup_reviews.pop(root_id, None)
         self._root_paths.pop(root_id, None)
+        self._root_names.pop(root_id, None)
         self._root_status.pop(root_id, None)
 
     async def _retire_failed_setup(self, root_id: str) -> None:
@@ -4409,6 +4524,10 @@ class NotesSyncRuntimeOwner:
                 self._store.assign_root_folder, root_id, logical_folder_id
             )
             attached = True
+            # TASK-32451: the folder now exists under this name; every
+            # status published from here on is titled with it (a migrated
+            # candidate's fallback title ends here too).
+            self._root_names[root_id] = _bounded_root_label(display_name)
             planned_root = replace(root, logical_folder_id=logical_folder_id)
             authority = await self._fresh_authority(planned_root)
             if authority.plan != reviewed:
@@ -4624,7 +4743,12 @@ class NotesSyncRuntimeOwner:
                 self._store.update_root_status, root_id, status
             )
         snapshot = NotesSyncRootRuntimeSnapshot(
-            root_id, status, next_action, action_id, published_at=time.time()
+            root_id,
+            status,
+            next_action,
+            action_id,
+            published_at=time.time(),
+            display_name=self._root_names.get(root_id, ""),
         )
         self._root_status[root_id] = snapshot
         self._notify_status_listeners(snapshot)

@@ -810,9 +810,12 @@ class LibraryNotesSyncController:
             # TASK-32633 slice (N-03): the healthy label is dated from the
             # publication, so "Up to date" never reads as a standing promise.
             status_label = root_status_label(status, root.published_at)
+        # TASK-32451: the runtime stamps the root's folder name (or its
+        # honest fallback) on every publication; the bare fallback here is
+        # reachable only from a hand-built snapshot.
         return LastingSyncRootRow(
             root.root_id,
-            "Sync folder (name unavailable before cutover)",
+            root.display_name or "Sync folder",
             status,
             next_action,
             status_label,
