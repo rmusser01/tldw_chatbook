@@ -2,8 +2,9 @@
 id: TASK-34437
 title: Remove remaining legacy streaming no-op on ChatMessage and dangling tool-widget
   doc sketch
-status: To Do
+status: In Progress
 created_date: 2026-10-08 00:36
+updated_date: 2026-10-09 05:05
 ---
 
 ## Description

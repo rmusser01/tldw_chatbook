@@ -3,7 +3,7 @@ id: TASK-34434
 title: Fix flashrank rerank passages missing id so rerank actually ranks
 status: Done
 created_date: 2026-10-08 00:35
-updated_date: 2026-10-09 05:00
+updated_date: 2026-10-09 05:05
 ---
 
 ## Description
@@ -14,7 +14,7 @@ Follow-up from TASK-34413: rerank_results builds passages without id and validat
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Real flashrank output re-orders passages,Golden + fake-factory tests updated to the real contract,Fallback semantics preserved
+- [x] #1 Real flashrank output re-orders passages,Golden + fake-factory tests updated to the real contract,Fallback semantics preserved
 <!-- AC:END -->
 
 ## Implementation Plan
