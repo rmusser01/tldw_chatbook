@@ -55,6 +55,21 @@ ASCII_GLYPH_FALLBACKS: dict[str, str] = {
     # Composer furniture.
     "▌": "|",  # draft caret
     "📎": "[+]",  # staged attachment indicator
+    # Roleplay frame vocabulary (spec section 4.12; frame slice B1): breadcrumb
+    # and return arrows, the truncation ellipsis, separators, the indent key
+    # and arrow-key names, and the multiplication sign ("✕" above is the
+    # close glyph, a different character).
+    "›": ">",  # breadcrumb / "go there" (Settings ›)
+    "‹": "<",  # return crumb (‹ Library)
+    "…": "...",  # truncation ellipsis
+    "·": "-",  # inline separator
+    "—": "-",  # em dash in copy
+    "⇥": ">|",  # tab key
+    "→": "->",  # right arrow key
+    "←": "<-",  # left arrow key
+    "↑": "^",  # up arrow key
+    "↓": "v",  # down arrow key
+    "×": "x",  # multiplication sign
 }
 
 _ASCII_MODE = False
