@@ -436,6 +436,12 @@ def build_console_context_cost_state(
             f"Context: ~{format_context_tokens(used)} / "
             f"{format_context_tokens(ceiling)} safe input ({fullness} full)"
         )
+        if (
+            context.model_window_tokens is not None
+            and not context.model_window_verified
+        ):
+            # TASK-33007 #12: a fallback window is unknown, its size assumed.
+            context_line += " (assumed; window unknown)"
     conversation = format_context_tokens(context.conversation_tokens)
     budget = format_context_tokens(context.conversation_budget_tokens)
     prefix = "~" if context.conversation_tokens is not None else ""

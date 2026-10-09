@@ -258,22 +258,26 @@ def _fit(text: str, width: int) -> str:
 
 
 def context_copy(tokens: int, verified: bool) -> str:
-    """Return a context window's short size, e.g. ``"200k"`` or ``"~32k"``.
+    """Return a context window's short size, e.g. ``"200k"``, or ``"?"``.
 
     Args:
         tokens: The window size in tokens.
-        verified: Whether the size is known; an estimate starts with ``~``.
+        verified: Whether the size is known. A provider or application
+            fallback is a guess, so it reads ``"?"`` (unknown), never a size
+            (TASK-33007 #12).
 
     Returns:
-        The size in ``k`` or ``M`` units.
+        The size in ``k`` or ``M`` units, or ``"?"``.
     """
+    if not verified:
+        return "?"
     if tokens >= 1_000_000:
         size = f"{round(tokens / 1_000_000, 1):g}M"
     elif tokens >= 1_000:
         size = f"{tokens // 1_000}k"
     else:
         size = str(tokens)
-    return size if verified else f"~{size}"
+    return size
 
 
 def _temperature_in_range(value: float) -> bool:

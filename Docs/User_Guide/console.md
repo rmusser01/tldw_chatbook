@@ -482,9 +482,10 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   word and the context window (e.g. "claude-sonnet-4-5 · Anthropic  this chat
   Ready · not tested · 200k context"), then **Change  Alt+M**. When no
   catalog knows the model's window, the row says so in the words Settings ▸
-  Providers & Models ▸ Advanced uses: "context unknown, 32k assumed", the
-  fallback size budgets use until you enter the real limit there; Request
-  estimate ends "(assumed; window unknown)". A long model
+  Providers & Models ▸ Advanced uses: "context unknown". Request estimate
+  then ends "(assumed; window unknown)" and the Context view names the
+  fallback size budgets use until you enter the real limit there (e.g.
+  "unknown, 32,000 assumed"). A long model
   id shows whole; only an id wider than the row is shortened in the middle,
   keeping its start and its end (a GGUF file's quant), and the provider's
   name is never cut. Below 100 columns the row shows only the pair and
@@ -708,9 +709,10 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   Change a provider's settings or use it, and its refusal is a NEEDS SETUP
   row again.
 
-Each row shows the model, the provider's name, its context size (`~` marks
-an estimate), readiness and last use. Readiness comes from your
-configuration plus any connection test of that provider's connection this
+Each row shows the model, the provider's name, its context size, readiness
+and last use. A size no catalog knows reads `?` (unknown), never a guess;
+once a chat uses that model, the Context view of Chat settings names the size
+it assumes. Readiness comes from your configuration plus any connection test of that provider's connection this
 session, in the same words as the rest of the Console: "Ready · not tested",
 "Ready · reachable 14:01" once a local server's model listing answered,
 "Ready · verified 14:01" once a cloud key was accepted, or "Not ready · no
