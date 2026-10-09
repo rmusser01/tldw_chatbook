@@ -358,7 +358,8 @@ To run a command, physically type the exact prefix `! ` (exclamation mark,
 space), then type or paste the command body and send. Pasting the prefix cannot
 select raw mode; this prevents a pasted prompt from silently turning into host
 execution. A physically typed prefix may be followed by pasted command text.
-Start with `\! ` to send an ordinary chat message beginning with literal `! `.
+Start with `\! ` to send an ordinary chat message beginning with literal `! `;
+it is sent without the backslash and leaves the composer like any message.
 When raw mode is recognized, the composer turns red and identifies host access
 before you send. Enter, **Send** and the Workbench's send all take the command
 out of the composer; if Console refuses it (raw CLI locked or not armed, for
@@ -413,11 +414,14 @@ statistics tools.
   Enter, is handled once the first send finishes, the way any Enter is at
   that moment (during a reply it queues), unless something else (a spoken
   "Console, send.") has sent that text by then: nothing you typed is sent
-  twice. If you change the message itself while it is being sent (not just
-  add to its end), it is still sent as it was when you pressed Enter; the
-  composer keeps your changed text and Console says "Your message was sent,
-  but the composer still shows it …", so you do not send it again by
-  accident. An Enter is only ever sent in the tab where you pressed it. If
+  twice. Clearing the composer after you press Enter does not cancel that
+  Enter: it still sends what it captured. If you change the message itself
+  while it is being sent (not just add to its end), it is still sent as it
+  was when you pressed Enter; when the composer still holds it, Console keeps
+  your changed text and says "Your message was sent, but the composer still
+  shows it …", so you do not send it again by accident. If you cleared or
+  replaced it, nothing is said: what is there is your next message. An Enter
+  is only ever sent in the tab where you pressed it. If
   you switch tabs, the turn is still sent from its own tab (or, in the first
   instant after Enter, stopped with a notice and its draft kept there), and
   the sent text leaves that tab's draft; anything you typed after it stays.
