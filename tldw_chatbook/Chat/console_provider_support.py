@@ -180,20 +180,22 @@ class ModelConfigField:
 
 #: The one field table: every editor's label, help and range for each field
 #: (Alt+M popover, Chat settings, Settings model defaults and Console
-#: Behavior fallbacks). Labels stay within the modal's 23-cell label column.
+#: Behavior fallbacks). Labels stay within the modal's 23-cell label column;
+#: a model field's help stays within 55 cells, so Settings rows show it
+#: whole at 211x44 (Model defaults has 61, Console Behavior 55).
 MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
     field.name: field
     for field in (
         ModelConfigField(
             "temperature",
             "Temperature",
-            "How varied replies are: lower is focused, higher is more varied.",
+            "Lower keeps replies focused; higher makes them varied.",
             "0.0 to 2.0",
         ),
         ModelConfigField(
             "top_p",
             "Top P",
-            "Sample only from the likeliest tokens whose chances add up to P.",
+            "Sample only from the top tokens whose chances sum to P.",
             "0.0 to 1.0",
         ),
         ModelConfigField(
@@ -217,7 +219,7 @@ MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
         ModelConfigField(
             "seed",
             "Seed",
-            "Fixed number that makes replies repeatable where the provider allows it.",
+            "Fixed number for repeatable replies, where supported.",
             "whole number, 0 or more",
         ),
         ModelConfigField(
@@ -229,7 +231,7 @@ MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
         ModelConfigField(
             "frequency_penalty",
             "Frequency penalty",
-            "Higher values make the model repeat the same words less.",
+            "Higher values make the model repeat words less.",
             "-2.0 to 2.0",
         ),
         ModelConfigField(
@@ -253,7 +255,7 @@ MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
         ModelConfigField(
             "thinking_effort",
             "Thinking",
-            "How much extended thinking the model does before it answers.",
+            "How much extended thinking comes before the answer.",
             "off, low, medium, high, xhigh or max",
         ),
         ModelConfigField(

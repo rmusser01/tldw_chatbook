@@ -24,7 +24,7 @@ from Tests.UI.test_settings_category_sweep import (
     _settle_settings,
 )
 from Tests.UI.test_settings_console_fallback_rows import _revert, _wait_until
-from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
+from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 from tldw_chatbook.Chat.console_provider_support import (
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
@@ -68,7 +68,9 @@ def _app(provider: str, model: str, *, profiles=None, chat_defaults=None):
         "llama_cpp": {"api_url": "http://127.0.0.1:9099"},
     }
     if profiles:
-        app.app_config["api_settings"][provider]["model_defaults"] = profiles
+        app.app_config["api_settings"].setdefault(provider, {})["model_defaults"] = (
+            profiles
+        )
     return app
 
 
@@ -400,6 +402,77 @@ async def test_sampling_is_one_closed_row_naming_what_anthropic_does_not_accept(
         assert hidden_list.region.height >= 1
         for name in ("top_p", "top_k"):
             assert screen.query_one(f"#{_cid(name)}-row").region.height == 1, name
+
+
+#: A value for every Model defaults field, so each shown row reads its help.
+_EVERY_FIELD_SET = {
+    "temperature": 0.5,
+    "max_tokens": 2048,
+    "streaming": True,
+    "reasoning_effort": "low",
+    "reasoning_summary": "auto",
+    "verbosity": "low",
+    "thinking_effort": "low",
+    "thinking_budget_tokens": 2048,
+    "top_p": 0.9,
+    "min_p": 0.05,
+    "top_k": 40,
+    "seed": 7,
+    "presence_penalty": 0.1,
+    "frequency_penalty": 0.1,
+}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)], ids=["211x44", "235x52"])
+async def test_every_row_paints_its_whole_help(request, size):
+    """Capture 04 (TASK-33007): Temperature's help was cut to "…higher is more
+    var…" at 211x44. Every field's help, painted in its row with Sampling
+    open, is whole at both full-screen sizes. Three providers between them
+    show all fourteen rows."""
+    checked: set[str] = set()
+    cut: list[tuple[str, str, int, str]] = []
+    for provider, model in (
+        ("openai", "gpt-5.6-terra"),
+        ("anthropic", "claude-sonnet-4-5"),
+        ("llama_cpp", "qwen"),
+    ):
+        app = _app(provider, model, profiles={model: dict(_EVERY_FIELD_SET)})
+        host = _SettingsCssHarness(app, "settings")
+        async with host.run_test(size=size) as pilot:
+            screen = await _open(host, pilot)
+            screen.query_one("#settings-model-sampling", Collapsible).collapsed = False
+            await pilot.pause()
+            for name in CORE_FIELDS + SAMPLING_FIELDS:
+                row = screen.query_one(f"#{_cid(name)}-row")
+                if row.has_class("settings-gated-profile-hidden"):
+                    continue
+                help_line = screen.query_one(f"#{_cid(name)}-help", Static)
+                assert str(help_line.renderable) == MODEL_CONFIG_FIELDS[name].help, (
+                    provider,
+                    name,
+                )
+                help_line.scroll_visible(animate=False, immediate=True)
+                await pilot.pause()
+                painted = "".join(_region_rows(screen, help_line)).rstrip()
+                if painted != MODEL_CONFIG_FIELDS[name].help:
+                    width = help_line.content_region.width
+                    cut.append((provider, name, width, painted))
+                checked.add(name)
+    assert checked == set(CORE_FIELDS + SAMPLING_FIELDS)
+    assert not cut, "\n".join(map(str, cut))
+
+
+def test_every_row_help_fits_console_behaviors_narrower_column():
+    """Console Behavior's fallback rows show the same help in 55 cells at
+    211x44 (Model defaults has 61), so no field's help may be longer."""
+    long = {
+        name: len(MODEL_CONFIG_FIELDS[name].help)
+        for name in CORE_FIELDS + SAMPLING_FIELDS
+        if len(MODEL_CONFIG_FIELDS[name].help) > 55
+    }
+    assert long == {}
 
 
 @pytest.mark.asyncio
