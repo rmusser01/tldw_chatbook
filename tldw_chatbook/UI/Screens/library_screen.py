@@ -408,6 +408,7 @@ from ...Widgets.destination_rail import (
 from ...Widgets.workbench_focus import (
     WorkbenchPaneTarget,
     focus_relative_workbench_pane,
+    widget_has_visible_region,
 )
 from ...Widgets.Library import (
     AdaptiveReaderShellResized,
@@ -963,6 +964,14 @@ _LIBRARY_NOTE_EDITOR_ENTER_LABELS = {
     "library-note-context-export-txt": "export text",
     "library-note-context-delete": "delete note",
 }
+
+#: TASK-34000.8 AC#3: the editor header's task row. Their Enter chip is
+#: advertised only while the focused control has a visible region
+#: (``_library_focus_enter_label``); the rest of the editor's stops are
+#: never laid out off-pane.
+_LIBRARY_NOTE_TASK_ROW_IDS = frozenset(
+    {"library-note-save", "library-note-use-in-console", "library-note-discard-new"}
+)
 
 #: task-32539 AC#1: the Notes LIST tier is static, so after a confirmed
 #: delete -- where focus now parks on the receipt's Undo -- the footer said
@@ -4616,6 +4625,16 @@ class LibraryScreen(BaseAppScreen):
         navigator_label = _LIBRARY_NOTES_NAVIGATOR_ENTER_LABELS.get(widget_id)
         if navigator_label:
             return navigator_label
+        # TASK-34000.8 AC#3: the footer never advertises "enter save note"
+        # (or the other task-row actions) for a control the user cannot
+        # see. Before the header followed the pane's width, F6 focused a
+        # Save painted off a 120-column terminal and the footer named it.
+        if (
+            widget_id in _LIBRARY_NOTE_TASK_ROW_IDS
+            and focused is not None
+            and not widget_has_visible_region(focused)
+        ):
+            return ""
         return _LIBRARY_NOTE_EDITOR_ENTER_LABELS.get(widget_id, "")
 
     def _with_library_notes_focus_chip(
@@ -6786,6 +6805,12 @@ class LibraryScreen(BaseAppScreen):
         # shrank (see ``apply_pane_width``).
         for canvas in self.query("#library-notes-canvas"):
             canvas.apply_pane_width(layout.items_width)
+        # TASK-34000.8: and the EDITOR pane's width to the work pane, so the
+        # note header's shape follows the pane it lives in (one row or
+        # stacked), not the shell's 120-column breakpoint -- at 120x36 the
+        # pane is 48 cells and Save was painted off the terminal.
+        for work_pane in self.query("#library-note-work-pane"):
+            work_pane.apply_work_width(layout.reader_width)
 
     def _sync_library_file_notes_reader_layout_from_shell(
         self,

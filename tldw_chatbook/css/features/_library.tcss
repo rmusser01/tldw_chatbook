@@ -946,15 +946,14 @@ with stray left-edge border fragments), and padding 0 1 so the full
     border: none;
 }
 
-/* TASK-32623: reserve the widest action row so toggling Discard cannot move
-   its sibling mode controls. Compact rows already have fixed geometry. */
-#library-note-task-actions {
-    min-width: $ds-library-note-task-actions-min-width;
-}
-
-#library-shell-grid.library-notes-compact #library-note-task-actions {
-    min-width: $ds-size-0;
-}
+/* TASK-32623's guarantee (toggling Discard never moves the mode controls)
+   is kept by construction since TASK-34000.8: Discard new note stays IN
+   LAYOUT (`visibility: hidden` reserves its cells) instead of being
+   `display`-toggled, so `#library-note-task-actions` is always its widest
+   width and needs no hand-measured `min-width`. The 61-cell reservation
+   that lived here applied from the shell's 120-column breakpoint up, where
+   the editor pane is 48 cells wide -- it pushed Save and Use in Console
+   off the pane (review N-05). */
 
 /* Branch continuations are list rows, not toolbar actions. Keep their full
    status and recovery copy visible when the compact toolbar geometry above

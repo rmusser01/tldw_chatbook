@@ -3932,6 +3932,24 @@ async def _wait_for_display(screen, pilot, selector, *, attempts=120):
     )
 
 
+async def _wait_for_visible(screen, pilot, selector, *, attempts=120):
+    """Wait until a widget hidden by VISIBILITY (its cells stay reserved) shows.
+
+    TASK-34000.8: Discard new note is ``visible``-toggled, not
+    ``display``-toggled, so the task row keeps its Discard-shown width;
+    ``_wait_for_display`` would return at once for it.
+    """
+    widget = await _wait_for_selector(screen, pilot, selector, attempts=attempts)
+    for _ in range(attempts):
+        if widget.display and widget.visible:
+            await pilot.pause()
+            return widget
+        await pilot.pause(0.02)
+    raise AssertionError(
+        f"{selector} never became visible. Visible text: {_visible_text(screen)}"
+    )
+
+
 def _widget_text(widget) -> str:
     """Render a widget's visible text for a poll loop's failure message."""
     for attribute in ("label", "renderable"):
@@ -23507,7 +23525,7 @@ async def test_library_shell_create_blank_note_lands_in_editor():
             lambda: getattr(screen.focused, "id", None) == "library-note-title",
             message="Successful Create never focused the title field.",
         )
-        assert screen.query_one("#library-note-discard-new", Button).display is True
+        assert screen.query_one("#library-note-discard-new", Button).visible is True
 
         for _ in range(150):
             if screen._local_source_counts.get("notes") == 3:
@@ -24267,7 +24285,7 @@ async def test_library_shell_discard_new_note_deletes_untouched_create():
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         screen.query_one("#library-notes-create-blank").press()
-        discard = await _wait_for_display(screen, pilot, "#library-note-discard-new")
+        discard = await _wait_for_visible(screen, pilot, "#library-note-discard-new")
         created_id = screen._notes_state.selected_note_id
 
         discard.press()
@@ -24310,7 +24328,7 @@ async def test_library_note_failed_discard_releases_destructive_admission() -> N
         screen.query_one("#library-row-create-note").press()
         await _wait_for_selector(screen, pilot, "#library-notes-create-blank")
         screen.query_one("#library-notes-create-blank").press()
-        discard = await _wait_for_display(screen, pilot, "#library-note-discard-new")
+        discard = await _wait_for_visible(screen, pilot, "#library-note-discard-new")
 
         discard.press()
         try:
@@ -24801,7 +24819,7 @@ async def test_library_note_60x20_untouched_new_allocation_keeps_discard_visible
             },
             focused_selector="#library-note-discard-new",
         )
-        assert screen.query_one("#library-note-discard-new").display is True
+        assert screen.query_one("#library-note-discard-new").visible is True
 
 
 @pytest.mark.asyncio
@@ -25014,11 +25032,11 @@ async def test_library_shell_discard_new_note_disappears_after_edit_or_noop_save
             pilot,
             lambda: (
                 bool(screen.query("#library-note-discard-new"))
-                and screen.query_one("#library-note-discard-new", Button).display
+                and screen.query_one("#library-note-discard-new", Button).visible
             ),
             message="Discard new note never became visible after create.",
         )
-        assert screen.query_one("#library-note-discard-new", Button).display is True
+        assert screen.query_one("#library-note-discard-new", Button).visible is True
 
         if acknowledge == "edit":
             screen.query_one("#library-note-title", Input).value = "Kept note"
@@ -25026,7 +25044,7 @@ async def test_library_shell_discard_new_note_disappears_after_edit_or_noop_save
             screen.query_one("#library-note-save", Button).press()
         await _wait_for_condition(
             pilot,
-            lambda: not screen.query_one("#library-note-discard-new", Button).display,
+            lambda: not screen.query_one("#library-note-discard-new", Button).visible,
             message="Discard new note remained visible after keep intent.",
         )
 
@@ -34267,7 +34285,7 @@ async def test_library_note_pilot_duplicate_discard_runs_one_delete_and_blocks_e
             )
             await _wait_for_condition(
                 pilot,
-                lambda: discard.display,
+                lambda: discard.visible,
                 message="Untouched create never exposed Discard.",
             )
 
@@ -34311,7 +34329,7 @@ async def test_library_note_pilot_stale_create_token_blocks_discard_activation()
         discard = await _wait_for_selector(screen, pilot, "#library-note-discard-new")
         await _wait_for_condition(
             pilot,
-            lambda: discard.display,
+            lambda: discard.visible,
             message="Untouched create never exposed Discard.",
         )
 

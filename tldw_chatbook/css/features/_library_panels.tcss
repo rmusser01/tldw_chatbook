@@ -574,8 +574,14 @@
    Title sort option and the delete receipt's Undo were painted past the
    pane edge. The compact stage already sized these to their content; the
    ordinary stage does the same now, since the pane is never wide enough to
-   justify a 16-cell "New". */
-#library-notes-canvas .library-canvas-action {
+   justify a 16-cell "New".
+   TASK-34000.8 (review N-05): the editor header's buttons in the WORK pane
+   are content-sized by the same rule. Scoped to the list canvas alone, the
+   header's six compact Buttons each kept the 16-cell minimum -- about 40
+   cells of padding on a row whose pane has 48 cells at 120x36 -- which is
+   what pushed Save and Use in Console past the pane edge. */
+#library-notes-canvas .library-canvas-action,
+#library-note-work-pane .library-canvas-action {
     width: auto;
     min-width: $ds-size-0;
 }

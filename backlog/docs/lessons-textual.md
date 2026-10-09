@@ -851,6 +851,33 @@ loads. **What to do:** give a widget added to a shared row geometry that holds w
 bundle: the widget type's own `DEFAULT_CSS`, or the owning class's `DEFAULT_CSS`. Then
 probe `region` once under a bare harness as well as under `TldwCli.CSS_PATH`.
 
+## A focus walker's geometry guard must PASS OVER an off-screen target, never rule it out
+
+**TASK-34000.8, 2026-10-09.** F6 landed on the Library note editor's Save while
+its region sat past the right edge of a 120-column terminal (the header was one
+strip shaped from the shell's breakpoint, not the pane's width). The obvious
+guard -- in `Widgets/workbench_focus.py`, skip a preferred target whose region is
+empty or outside `screen.region` -- fixed that and broke
+`test_narrow_f6_reveals_reader_and_returns_through_items_grip` at 50x25: the narrow
+Artifacts stage keeps its reader COLLAPSED until F6 focuses `#library-artifacts-body`,
+and that focus is what reveals it. An unseen target is sometimes the whole point of
+the walk. The rule that holds both: prefer the first preferred target that is on
+screen; only when none is, fall back to the first focusable one (focusing it may
+reveal its pane). "Empty region" is never disqualifying on its own -- a collapsed
+pane's child has one too.
+
+Two measurements from the same task worth keeping: (1) a content-sized compact
+`Button` is `len(label) + 4` cells on the wide stage -- `padding: 0 1` plus
+Textual's `line-pad: 1` on both sides -- and horizontal sibling margins COLLAPSE
+to the larger one (a `margin-left: 4` after a `margin-right: 1` costs 4, not 5),
+so derive a row's one-line minimum from the labels and measure the chrome once;
+(2) to keep a sibling from moving when a control comes and goes, hide the control
+with `visible = False` (cells reserved, dropped from `focus_chain` and
+`get_widget_at` in 8.2.8), not `display = False` -- it replaces a hand-measured
+`min-width` that was only ever right at one size.
+
+---
+
 ## `allow_vertical_scroll` is False whenever the content fits -- a scroll-owner test needs overflow
 
 **TASK-34000.7, 2026-10-08.** The fix gave the wide `#library-notes-list` `overflow-y: auto`,
