@@ -266,6 +266,9 @@ class ModelSearchPicker(Widget):
         self._provenance_provider_keys: set[str] = set()
         self._result_model_ids_by_option_id: dict[str, str] = {}
         self._committed_index: int | None = None
+        #: The filter typed for the shown list ("" for none, or the committed
+        #: id echoed back).
+        self._shown_query = ""
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         self._served_now_provider_keys: set[str] = set()
         self._load_errors: dict[str, bool] = {}
@@ -710,13 +713,16 @@ class ModelSearchPicker(Widget):
             )
             return
         if matched is not None:
-            self._set_status(
-                f"Showing {len(self._matches)} of {matched} matching models. "
-                "Type to narrow the list."
-            )
+            self._set_status(self._cap_note(matched))
             return
         self._set_status(
             f"{_count(len(model_ids), 'model')} available. Type to filter."
+        )
+
+    def _cap_note(self, matched: int) -> str:
+        return (
+            f"Showing {len(self._matches)} of {matched} matching models. "
+            "Type to narrow the list."
         )
 
     def _set_status(self, copy: str) -> None:
@@ -755,6 +761,7 @@ class ModelSearchPicker(Widget):
         self._matches = []
         self._result_model_ids_by_option_id = {}
         self._committed_index = None
+        self._shown_query = ""
         results.clear_options()
         results.display = False
 
@@ -786,21 +793,78 @@ class ModelSearchPicker(Widget):
         for model_id in self._matches:
             self._add_result(results, model_id)
         results.display = bool(self._matches)
-        self._render_match_status(normalized_query, len(model_ids))
+        self._show_typed_filter(results, normalized_query, len(model_ids))
+
+    def _show_typed_filter(
+        self, results: OptionList, normalized_query: str, matched: int
+    ) -> None:
+        """Highlight and count a typed filter; the committed id echoed is none.
+
+        Args:
+            results: The rendered list.
+            normalized_query: The filter the list was built for.
+            matched: How many rows matched it, before the MAX_RESULTS cap.
+        """
+        committed = (self._selected_model or "").lower()
+        self._shown_query = "" if normalized_query == committed else normalized_query
+        self._highlight_typed_match(results)
+        self._render_match_status(self._shown_query, matched)
 
     def _render_match_status(self, normalized_query: str, matched: int) -> None:
-        """Name an empty filter, or a list the MAX_RESULTS cap cut short."""
-        if (
+        """Count a typed filter's matches; with none typed, the catalog line.
+
+        TASK-33007 capture fix 8: a typed filter says how many rows match,
+        as Settings' Provider list does, instead of the whole catalog's line.
+        """
+        capped = matched > len(self._matches)
+        if normalized_query and capped:
+            self._set_status(self._cap_note(matched))
+        elif normalized_query and matched:
+            self._set_status(f"{matched} found · Enter picks · Esc cancels")
+        elif (
             normalized_query
-            and not matched
             and self._catalog_model_ids()
             and not self._load_errors.get(provider_config_key(self._provider), False)
         ):
             self._set_status("No matching models. Clear the filter or use Custom ID.")
         else:
-            self._render_catalog_status(
-                matched if matched > len(self._matches) else None
-            )
+            self._render_catalog_status(matched if capped else None)
+
+    def _option_model_id(self, option: Option, index: int | None) -> str | None:
+        """Return the model id a result row stands for (None for a heading)."""
+        if option.id is not None:
+            return self._result_model_ids_by_option_id.get(option.id)
+        if index is None or not 0 <= index < len(self._matches):
+            return None
+        match = self._matches[index]
+        return (
+            match.model_id if isinstance(match, ResolvedProviderModelOption) else match
+        )
+
+    def _highlight_typed_match(self, results: OptionList) -> bool:
+        """Highlight the row Enter picks while a filter is typed.
+
+        An id typed in full, else the first match (TASK-33007 capture fix 8).
+
+        Returns:
+            Whether a row was highlighted.
+        """
+        rows = [
+            (index, self._option_model_id(option, index) or "")
+            for index, option in enumerate(results.options)
+            if not option.disabled
+        ]
+        if not self._shown_query or not rows:
+            return False
+        results.highlighted = next(
+            (
+                index
+                for index, model_id in rows
+                if model_id.lower() == self._shown_query
+            ),
+            rows[0][0],
+        )
+        return True
 
     def _render_provenance_matches(
         self,
@@ -851,7 +915,7 @@ class ModelSearchPicker(Widget):
                 self._result_model_ids_by_option_id[option_id] = option.model_id
                 self._add_result(results, option.model_id, option_id)
         results.display = bool(self._matches)
-        self._render_match_status(normalized_query, len(ordered_options))
+        self._show_typed_filter(results, normalized_query, len(ordered_options))
 
     def _capped(self, entries: list, model_id_of) -> list:
         """The first MAX_RESULTS entries; a committed model past the cap takes
@@ -975,26 +1039,18 @@ class ModelSearchPicker(Widget):
             (model_id for model_id in match_model_ids if model_id.lower() == query),
             None,
         )
+        results = self.query_one("#model-search-picker-results", OptionList)
         if exact is not None:
             self._commit_catalog_model(exact)
-        elif len(match_model_ids) == 1:
-            self._commit_catalog_model(match_model_ids[0])
+        elif results.display and results.highlighted is not None:
+            # The typed filter's highlighted row (TASK-33007 capture fix 8).
+            results.action_select()
 
     @on(OptionList.OptionSelected, "#model-search-picker-results")
     def _handle_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option.id is not None:
-            model_id = self._result_model_ids_by_option_id.get(event.option.id)
-            if model_id is not None:
-                self._commit_catalog_model(model_id)
-            return
-        index = event.option_index
-        if index is None or not (0 <= index < len(self._matches)):
-            return
-        model = self._matches[index]
-        if isinstance(model, ResolvedProviderModelOption):
-            self._commit_catalog_model(model.model_id)
-        else:
-            self._commit_catalog_model(model)
+        model_id = self._option_model_id(event.option, event.option_index)
+        if model_id is not None:
+            self._commit_catalog_model(model_id)
 
     @on(Button.Pressed, "#model-search-picker-custom")
     def _toggle_custom(self, event: Button.Pressed) -> None:
@@ -1038,6 +1094,9 @@ class ModelSearchPicker(Widget):
         if event.key == "down" and self._matches:
             results = self.query_one("#model-search-picker-results", OptionList)
             results.focus()
+            if self._highlight_typed_match(results):
+                event.stop()
+                return
             # The committed model first (C7(b)), else the first enabled row.
             results.highlighted = next(
                 (

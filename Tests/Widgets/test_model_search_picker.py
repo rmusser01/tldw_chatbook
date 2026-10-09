@@ -903,11 +903,13 @@ async def test_truncated_results_say_how_many_matched_and_that_typing_narrows():
         )
 
         # Narrowing under the cap drops the note: the list is complete again.
+        # Rewritten on purpose (TASK-33007 capture fix 8): a typed filter
+        # counts its own matches, as the Settings Provider list does.
         await _set_query(pilot, "vendor/m2")
         assert _result_prompts(_results(app)) == [
             f"vendor/m{index}" for index in range(20, cap + 5)
         ]
-        assert _status_text(app) == f"{cap + 5} models available. Type to filter."
+        assert _status_text(app) == "5 found · Enter picks · Esc cancels"
 
 
 _OVER_CAP_IDS = [
@@ -1374,3 +1376,50 @@ async def test_a_committed_model_past_the_result_cap_stays_marked_and_first():
         assert prompts[-2:] == ["Saved fallback", f"{committed}  {CURRENT_MARK}"]
         assert len(picker._matches) == cap
         assert results.highlighted == len(prompts) - 1
+
+
+@pytest.mark.asyncio
+async def test_a_typed_filter_counts_matches_highlights_the_first_and_enter_picks_it():
+    """Capture 02 (TASK-33007 fix 8): with a filter typed the status still
+    read "Showing 14 configured models", and no row was highlighted, so
+    Enter picked nothing. A name typed in full is the one highlighted."""
+    app = PickerTestApp(
+        {"OpenRouter": ["a/big", "a/mini-two", "a/mini", "c/other"]},
+        (),
+        current_model="a/big",
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        picker = app.query_one(ModelSearchPicker)
+        field = app.query_one("#model-search-picker-input", Input)
+        results = _results(app)
+        assert _status_text(app) == (
+            "Live catalog unavailable. Showing 4 configured models."
+        )
+
+        field.focus()
+        await pilot.pause()
+        await pilot.press(*"mini")
+        await pilot.pause()
+        assert _result_prompts(results) == ["a/mini-two", "a/mini"]
+        assert _status_text(app) == "2 found · Enter picks · Esc cancels"
+        assert results.highlighted == 0
+
+        await pilot.press(*"/mini")
+        await pilot.pause()
+        assert field.value == "mini/mini"
+        assert _status_text(app) == (
+            "No matching models. Clear the filter or use Custom ID."
+        )
+
+        field.value = "a/mini"
+        await pilot.pause()
+        assert _result_prompts(results) == ["a/mini-two", "a/mini"]
+        assert results.highlighted == 1  # typed in full
+
+        field.value = "mini-t"
+        await pilot.pause()
+        assert results.highlighted == 0
+        await pilot.press("enter")
+        await pilot.pause()
+        assert picker.value == "a/mini-two"

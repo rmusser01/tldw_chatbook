@@ -158,8 +158,6 @@ _PROVIDER_GROUPS = (
 )
 #: TASK-33007.2: providers the user set up lead the picker.
 _CONFIGURED_GROUP = ("configured", "Configured")
-#: How many configured providers the picker summary names before "+N".
-_SUMMARY_NAMED_PROVIDERS = 2
 
 
 def _overview_rows(
@@ -307,26 +305,20 @@ def provider_picker_summary(groups: Sequence[ProviderPickerGroup]) -> str:
         groups: ``build_provider_picker_groups`` output for an empty query.
 
     Returns:
-        E.g. "configured: Anthropic, OpenAI · 24 more" -- the list leads with
-        those; it labels legacy aliases, which it lists last.
+        E.g. "3 of 60 configured · listed first": counts, not names, so it
+        fits the Provider row's help at 211x44 (TASK-33007 capture fix 5).
     """
-    names = [
-        option.label
+    listed = {_CONFIGURED_GROUP[0], *(group_id for group_id, _ in _PROVIDER_GROUPS)}
+    counts = {
+        group.group_id: len(group.options)
         for group in groups
-        if group.group_id == _CONFIGURED_GROUP[0]
-        for option in group.options
-    ]
-    rest = sum(
-        len(group.options)
-        for group in groups
-        if group.group_id in {group_id for group_id, _label in _PROVIDER_GROUPS}
-    )
-    if not names:
-        return f"none configured yet · {rest} providers"
-    shown = ", ".join(names[:_SUMMARY_NAMED_PROVIDERS])
-    if len(names) > _SUMMARY_NAMED_PROVIDERS:
-        shown += f" +{len(names) - _SUMMARY_NAMED_PROVIDERS}"
-    return f"configured: {shown} · {rest} more"
+        if group.group_id in listed
+    }
+    configured = counts.get(_CONFIGURED_GROUP[0], 0)
+    total = sum(counts.values())
+    if not configured:
+        return f"none of {total} configured yet"
+    return f"{configured} of {total} configured · listed first"
 
 
 def configured_provider_keys(

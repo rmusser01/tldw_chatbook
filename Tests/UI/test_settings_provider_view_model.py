@@ -171,7 +171,10 @@ def test_provider_picker_without_configured_providers_keeps_catalog_groups():
     ]
 
 
-def test_provider_picker_summary_names_configured_providers_and_the_rest():
+def test_provider_picker_summary_counts_configured_providers_of_all():
+    """Rewritten on purpose (TASK-33007 capture fix 5): naming the providers
+    ("configured: Anthropic, Azure OpenAI +1 · 57 more") was cut at 211x44,
+    and "+1 · 57 more" read as two counts of one thing."""
     from tldw_chatbook.UI.Screens.settings_provider_view_model import (
         build_provider_picker_groups,
         provider_picker_summary,
@@ -188,13 +191,9 @@ def test_provider_picker_summary_names_configured_providers_and_the_rest():
     )
     none = build_provider_picker_groups(_catalog(), "openai", "")
 
-    assert provider_picker_summary(some) == (
-        "configured: Anthropic, Ollama · 3 more"
-    )
-    assert provider_picker_summary(many) == (
-        "configured: Anthropic, Custom OpenAI-compatible +2 · 1 more"
-    )
-    assert provider_picker_summary(none) == "none configured yet · 5 providers"
+    assert provider_picker_summary(some) == "2 of 5 configured · listed first"
+    assert provider_picker_summary(many) == "4 of 5 configured · listed first"
+    assert provider_picker_summary(none) == "none of 5 configured yet"
 
 
 def test_configured_provider_keys_reads_credentials_and_own_endpoints():

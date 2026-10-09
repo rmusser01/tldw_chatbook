@@ -527,3 +527,46 @@ async def test_slash_search_for_model_lands_on_the_picker_field(request):
         screen._land_search_focus_on_field(field_id, label)
         await pilot.pause()
         assert host.focused is screen.query_one("#model-search-picker-input", Input)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_typed_filter_counts_matches_and_enter_picks_the_first(request):
+    """Capture 02 (TASK-33007 fix 8): with a filter typed the status still
+    read "Showing 14 configured models" and no row was highlighted. It says
+    how many match, the first is highlighted under its group heading, and
+    Enter picks it."""
+    app = _app(
+        "openai",
+        "gpt-4o",
+        catalog=("gpt-4o", "o4-mini-2025-04-16", "o3-mini-2025-01-31", "gpt-4.1"),
+    )
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        picker, field, results, adapter = _widgets(screen)
+        status = picker.query_one("#model-search-picker-status", Static)
+
+        field.focus()
+        await pilot.pause()
+        await pilot.press(*"mini")
+        await pilot.pause()
+
+        assert _rows(results) == [
+            "Current catalog",
+            "o4-mini-2025-04-16",
+            "o3-mini-2025-01-31",
+        ]
+        assert str(status.renderable) == "2 found · Enter picks · Esc cancels"
+        assert results.highlighted == 1
+        painted = "\n".join(_region_rows(screen, picker))
+        assert "2 found · Enter picks · Esc cancels" in painted, painted
+
+        await pilot.press("enter")
+        await pilot.pause()
+        assert adapter.value == picker.value == "o4-mini-2025-04-16"
+        assert str(screen.query_one("#settings-model-source", Static).renderable) == (
+            "edited *"
+        )

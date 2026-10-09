@@ -113,6 +113,7 @@ from ...Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
     provider_credential_source,
+    required_base_url_target,
 )
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
@@ -268,10 +269,7 @@ from ...Utils.console_background_effects import (
 )
 from ...Utils.path_validation import validate_path_simple
 from ..Navigation.base_app_screen import BaseAppScreen
-from .provider_model_resolution import (
-    EffectiveProviderModel,
-    resolve_effective_provider_model,
-)
+from .provider_model_resolution import resolve_effective_provider_model
 from .settings_config_adapter import (
     SettingsConfigAdapter,
     failure_status_text,
@@ -1276,6 +1274,8 @@ _FOCUSED_FIELD_GUIDANCE_METHODS: dict[SettingsCategoryId, str] = {
 MODEL_CATALOG_FIELD_IDS = frozenset(
     MODEL_CATALOG_CHECKBOX_IDS | {"settings-model-catalog-stale-hours"}
 )
+#: The "Review restored OpenAI connection" action; a review applies at once.
+OPENAI_RECONNECT_REVIEW_ID = "settings-openai-reconnect-review"
 
 RAW_CLI_PERMITTED_DRAFT_KEY = "console.raw_cli_permitted"
 CANVAS_ENABLED_DRAFT_KEY = "canvas.enabled"
@@ -3325,6 +3325,8 @@ class SettingsScreen(BaseAppScreen):
         self._openai_reconnect_token = None
         self._openai_reconnect_busy = False
         self._openai_reconnect_prompt_open = False
+        #: Whether a restored OpenAI connection awaits review; None until read.
+        self._openai_reconnect_pending: bool | None = None
         self._local_model_review_token = None
         self._local_model_review_busy = False
         self._local_model_review_prompt_open = False
@@ -12650,33 +12652,25 @@ class SettingsScreen(BaseAppScreen):
 
     def _resolve_provider_model_for_settings(self):
         draft = self._provider_draft()
-        settings_provider = (
-            draft.values["provider"]
-            if draft is not None and "provider" in draft.values
-            else None
-        )
-        settings_model = (
-            draft.values["model"]
-            if draft is not None and "model" in draft.values
-            else None
-        )
+        staged = draft.values if draft is not None else {}
         resolved = resolve_effective_provider_model(
             self._chat_defaults(),
-            settings_provider=settings_provider,
-            settings_model=settings_model,
+            settings_provider=staged.get("provider"),
+            settings_model=staged.get("model"),
         )
-        if (
-            draft is not None
-            and "model" in draft.values
-            and not str(draft.values.get("model") or "").strip()
-        ):
-            return EffectiveProviderModel(
-                provider=resolved.provider,
-                model="",
-                provider_source=resolved.provider_source,
-                model_source="settings_draft",
-            )
-        return resolved
+        if "model" in staged and not str(staged.get("model") or "").strip():
+            resolved = replace(resolved, model="", model_source="settings_draft")
+        # The draft pins provider and model beside any edit, so each reads
+        # edited only when its own value differs from the saved one (captures
+        # 03 and 04: a staged Temperature alone marked both).
+        dirty = draft.dirty_keys if draft is not None else set()
+        return replace(
+            resolved,
+            provider_source=(
+                resolved.provider_source if "provider" in dirty else "chat_defaults"
+            ),
+            model_source=resolved.model_source if "model" in dirty else "chat_defaults",
+        )
 
     def _provider_loaded_setting_values(self) -> dict[str, object]:
         resolved = resolve_effective_provider_model(self._chat_defaults())
@@ -14383,13 +14377,15 @@ class SettingsScreen(BaseAppScreen):
             self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
+        # Capture fix 6: each fits the field (25 cells at 211x44); the row's
+        # Source word already says where a key comes from.
         if readiness.subscription_status is not None:
-            return "Claude subscription selected; API key is not used"
+            return "Subscription in use"
         if not readiness.requires_api_key:
             return "No credential required"
         if self._provider_saved_api_key_present(provider):
-            return "Local config key saved; paste a replacement to change it"
-        return "Paste API key to save locally in config"
+            return "Paste to replace"
+        return "Paste API key"
 
     def _provider_credential_placeholder(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -14943,19 +14939,17 @@ class SettingsScreen(BaseAppScreen):
         The rows stay visible and keep their values, so switching back to an
         API key loses nothing (TASK-34201).
         """
+        from ..Settings_Modules.providers_models_card import auth_source_row_copy
+
         try:
             row = self.query_one("#settings-provider-auth-source-row", Horizontal)
             selector = self.query_one("#settings-provider-auth-source", Select)
-            guidance = self.query_one(
-                "#settings-provider-auth-source-guidance", Static
-            )
         except QueryError:
             return
         is_anthropic = provider_config_key(provider) == "anthropic"
         value = self._provider_auth_source_value(provider)
         subscription = is_anthropic and value == _anthropic_auth_sources()[1]
         row.set_class(not is_anthropic, "settings-gated-profile-hidden")
-        guidance.set_class(not is_anthropic, "settings-gated-profile-hidden")
         selector.disabled = not is_anthropic
         if is_anthropic and selector.value != value:
             self._syncing_provider_auth_source = True
@@ -14964,11 +14958,11 @@ class SettingsScreen(BaseAppScreen):
                     selector.value = value
             finally:
                 self._syncing_provider_auth_source = False
-        guidance.update(
-            ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
-            if subscription
-            else ANTHROPIC_API_KEY_GUIDANCE_COPY
-        )
+        word, help_line = auth_source_row_copy(self, provider)
+        self._set_static_text("#settings-provider-auth-source-word", word)
+        self._set_static_text("#settings-provider-auth-source-guidance", help_line)
+        if self._active_settings_field_id == "settings-provider-auth-source":
+            self._refresh_provider_field_guidance()
         locked = self._provider_is_registry_id(provider)
         for selector_id in (
             "#settings-provider-api-key",
@@ -15364,6 +15358,8 @@ class SettingsScreen(BaseAppScreen):
             return PROVIDER_ENDPOINT_PLACEHOLDERS[provider_key]
         if provider_key in API_URL_PROVIDER_KEYS:
             return "https://host:port/v1"
+        if target := required_base_url_target(provider_key):
+            return f"Enter your {target}"
         return "Optional provider endpoint override"
 
     @staticmethod
@@ -17028,8 +17024,10 @@ class SettingsScreen(BaseAppScreen):
 
     def _update_provider_dynamic_widgets(self) -> None:
         from ..Settings_Modules.providers_models_card import (
+            AppliesToLine,
             applies_to_copy,
             refresh_connect_rows,
+            sync_openai_reconnect_row,
         )
 
         try:
@@ -17053,9 +17051,12 @@ class SettingsScreen(BaseAppScreen):
         # TASK-33007.2: each Connect row says its own source; the separate
         # readiness block is gone.
         refresh_connect_rows(self, provider, endpoint)
-        self._set_static_text(
-            "#settings-model-applies-to", applies_to_copy(self, provider, model)
-        )
+        try:
+            self.query_one("#settings-model-applies-to", AppliesToLine).say(
+                *applies_to_copy(self, provider, model)
+            )
+        except QueryError:
+            pass
         self._set_static_text(
             "#settings-provider-inspector-readiness", self._provider_readiness_label()
         )
@@ -17075,12 +17076,7 @@ class SettingsScreen(BaseAppScreen):
             guidance.set_class(not hosted_guidance, "settings-gated-profile-hidden")
         except QueryError:
             pass
-        try:
-            reconnect = self.query_one("#settings-openai-reconnect-review", Button)
-            reconnect.display = provider_config_key(provider) == "openai"
-            reconnect.disabled = self._openai_reconnect_busy
-        except QueryError:
-            pass
+        sync_openai_reconnect_row(self, provider)
         self._refresh_generation_support_summary(provider, model)
         self._sync_provider_api_mode_widget(provider)
         self._sync_provider_registry_lock(provider)
@@ -17168,7 +17164,8 @@ class SettingsScreen(BaseAppScreen):
         rows = self._provider_field_guidance_rows_base()
         save_copy = (
             INSTANT_APPLY_BEHAVIOR_COPY
-            if self._active_settings_field_id in MODEL_CATALOG_FIELD_IDS
+            if self._active_settings_field_id
+            in {*MODEL_CATALOG_FIELD_IDS, OPENAI_RECONNECT_REVIEW_ID}
             else STAGED_SAVE_BEHAVIOR_COPY
         )
         return self._with_save_behavior_row(rows, save_copy)
@@ -17286,6 +17283,10 @@ class SettingsScreen(BaseAppScreen):
                 ("Saved as", endpoint_key),
                 ("Validation", f"{endpoint.valid_range} when set"),
             )
+        from ..Settings_Modules.providers_models_card import connect_field_guide
+
+        if (guide := connect_field_guide(self, field_id)) is not None:
+            return guide
         if field_id == "settings-provider-api-mode":
             purpose = (
                 QWENCLOUD_PROVIDER_TABLE_INVALID_COPY
@@ -29071,6 +29072,8 @@ class SettingsScreen(BaseAppScreen):
             message = (
                 "OpenAI connection changed or is unavailable. Request a fresh review."
             )
+        else:
+            self._openai_reconnect_pending = False  # reviewed: the row goes
         finally:
             self._openai_reconnect_busy = False
         if self.is_mounted and self.app.is_running:
@@ -29477,6 +29480,12 @@ class SettingsScreen(BaseAppScreen):
             finally:
                 self._syncing_provider_endpoint = False
         self._sync_provider_credential_widget(staged_provider)
+        if provider_changed and provider_config_key(staged_provider) == "openai":
+            from ..Settings_Modules.providers_models_card import (
+                refresh_openai_reconnect_pending,
+            )
+
+            refresh_openai_reconnect_pending(self)
         provider_default_model = (
             self._provider_model_default(staged_provider) if provider_changed else ""
         )

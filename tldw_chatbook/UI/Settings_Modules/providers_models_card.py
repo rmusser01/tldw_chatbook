@@ -18,12 +18,14 @@ from collections.abc import Mapping
 from functools import cache, partial
 from typing import TYPE_CHECKING, ClassVar
 
+from rich.cells import cell_len
 from textual import events
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.css.query import QueryError
 from textual.errors import NoWidget
+from textual.geometry import Size
 from textual.message import Message
 from textual.widgets import (
     Button,
@@ -51,6 +53,7 @@ from ...Chat.provider_readiness import (
     get_provider_readiness,
     provider_config_key,
     provider_credential_source,
+    required_base_url_target,
 )
 from ...config import provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
@@ -70,6 +73,7 @@ from ..Screens.settings_screen import (
     INSTANT_APPLY_BEHAVIOR_COPY,
     MODEL_DISCOVERY_CAPABILITY_WARNING,
     MODEL_DISCOVERY_EMPTY_COPY,
+    OPENAI_RECONNECT_REVIEW_ID,
     PROVIDER_MANUAL_SELECT_VALUE,
     PROVIDER_TEST_GUIDANCE,
     QWENCLOUD_API_MODE_HELP_COPY,
@@ -114,6 +118,17 @@ API_KEY_CLEAR_KEY = "ctrl+l"
 API_KEY_KEYS_HINT = f"(t) test · ({API_KEY_CLEAR_KEY}) clear"
 #: ADR-012:29: the env var is the safer path, and the field holds a name.
 ENV_VAR_HELP_COPY = "safer: keeps keys out of config.toml"
+#: Capture fix 7: Sign in with's one-line help per choice; the Inspector's
+#: guide for the field holds the long copy (ANTHROPIC_*_GUIDANCE_COPY).
+AUTH_SOURCE_API_KEY_HELP = "bills API credits through your key"
+AUTH_SOURCE_SUBSCRIPTION_HELP = "bills your Claude plan, not API credits"
+#: Capture fix 3: the Inspector's guide while the restored-connection review
+#: has focus (it read "None — Tab to a setting").
+RESTORED_CONNECTION_PURPOSE = (
+    "This profile was restored from a backup, so OpenAI requests wait until "
+    "you review the endpoint and key source they use. Enter opens the review; "
+    "no connection test runs."
+)
 #: TASK-33007.3: the Default model row's help; Custom ID shows while the
 #: picker holds focus.
 MODEL_PICKER_HELP_COPY = "type to search · Custom ID for others"
@@ -124,14 +139,16 @@ PROVIDER_CONTROL_TOOLTIP = (
 #: Focus can pass to the list's parent on a click; the list closes only
 #: once focus has really left the control (ModelSearchPicker's delay).
 _BLUR_CLOSE_DELAY_SECONDS = 0.05
-#: TASK-33007.4: who a Default model choice reaches (spec mock (c)).
-APPLIES_TO_NEW_CHATS = "new chats (Ctrl+T, temporary, workspace)."
-NO_CONSOLE_CHAT_COPY = "No Console chat is open."
+#: TASK-33007.4: who a Default model choice reaches (spec mock (c)). Capture
+#: fix 4: short enough for one row with a dated model id, so which new chats
+#: count moved to the Inspector's New chats row.
+APPLIES_TO_NEW_CHATS = "new chats;"
+NO_CONSOLE_CHAT_COPY = "no Console chat is open."
 #: A longer chat title is cut so the pair stays on the row's one line.
 _APPLIES_TO_TITLE_LIMIT = 24
 #: The Inspector's Applies to block: (id suffix, label, value).
 APPLIES_TO_INSPECTOR_ROWS = (
-    ("new", "New chats", "yes"),
+    ("new", "New chats", "yes (Ctrl+T, temporary, workspace)"),
     ("unused", "Unused open chats", "follow the saved default"),
     ("work", "Chats with work", "keep their own; switch there with Alt+M"),
     ("switch", "Model defaults", "chats that switch to this model pick them up"),
@@ -288,8 +305,9 @@ class DefaultModelPicker(ModelSearchPicker):
             # list opens only for the field being edited (as Provider's does).
             return
         super()._render_matches(query, show_empty_query=show_empty_query)
-        if self._committed_index is not None:
-            # AC#1: the saved default is highlighted as soon as the list opens.
+        if self._committed_index is not None and not self._shown_query:
+            # AC#1: the saved default is highlighted as soon as the list opens;
+            # a typed filter highlights the row Enter picks instead.
             self.query_one(
                 "#model-search-picker-results", OptionList
             ).highlighted = self._committed_index
@@ -480,6 +498,141 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
     return "missing", "paste one to save it in config"
 
 
+def auth_source_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
+    """Say where Anthropic's sign-in choice comes from and what it bills.
+
+    Args:
+        screen: The Settings screen holding the draft.
+        provider: The provider the form holds.
+
+    Returns:
+        The Sign in with row's Source word and its one-line help.
+    """
+    draft = screen._provider_draft()
+    if draft is not None and (
+        screen._provider_auth_source_draft_key(provider) in draft.dirty_keys
+    ):
+        word = "edited *"
+    elif "auth_source" in screen._provider_config(provider):
+        word = "config"
+    else:
+        word = "built-in"
+    subscription = (
+        screen._provider_auth_source_value(provider) == _anthropic_auth_sources()[1]
+    )
+    return word, (
+        AUTH_SOURCE_SUBSCRIPTION_HELP if subscription else AUTH_SOURCE_API_KEY_HELP
+    )
+
+
+def connect_field_guide(
+    screen: SettingsScreen, field_id: str | None
+) -> tuple[tuple[str, str], ...] | None:
+    """The Inspector's guide for Sign in with and the restored-connection review.
+
+    Capture fixes 3 and 7: with either focused the guide read "None — Tab to
+    a setting"; Sign in with's long copy left its row for here.
+
+    Args:
+        screen: The Settings screen holding the draft.
+        field_id: The focused widget's id.
+
+    Returns:
+        The guide's (label, value) rows, or None for any other field.
+    """
+    if field_id == "settings-provider-auth-source":
+        provider = screen._provider_widget_value()
+        subscription = (
+            screen._provider_auth_source_value(provider) == _anthropic_auth_sources()[1]
+        )
+        return (
+            ("Focused setting", "Sign in with"),
+            (
+                "Purpose",
+                ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
+                if subscription
+                else ANTHROPIC_API_KEY_GUIDANCE_COPY,
+            ),
+            ("Saved as", "api_settings.anthropic.auth_source"),
+            ("Validation", "API key or Claude subscription"),
+        )
+    if field_id == OPENAI_RECONNECT_REVIEW_ID:
+        return (
+            ("Focused setting", "Restored OpenAI connection"),
+            ("Purpose", RESTORED_CONNECTION_PURPOSE),
+            ("Saved as", "a review record per restored backup; not config.toml"),
+            ("Validation", "save or discard provider changes first"),
+        )
+    return None
+
+
+def sync_openai_reconnect_row(screen: SettingsScreen, provider: str) -> None:
+    """Show the review row only while a restored OpenAI connection awaits it.
+
+    Args:
+        screen: The Settings screen that owns the card.
+        provider: The provider the form holds.
+    """
+    read_openai_reconnect_once(screen, provider)
+    try:
+        row = screen.query_one("#settings-openai-reconnect-row", Horizontal)
+        review = screen.query_one(f"#{OPENAI_RECONNECT_REVIEW_ID}", Button)
+    except QueryError:
+        return
+    row.display = (
+        provider_config_key(provider) == "openai"
+        and screen._openai_reconnect_pending is True
+    )
+    review.disabled = screen._openai_reconnect_busy
+
+
+def read_openai_reconnect_once(screen: SettingsScreen, provider: str) -> None:
+    """Start the pending read the first time the card holds OpenAI.
+
+    Hidden until the read says otherwise; later reads come only from a
+    provider switch to OpenAI or a recorded review.
+
+    Args:
+        screen: The Settings screen that owns the card.
+        provider: The provider the form holds.
+    """
+    if (
+        provider_config_key(provider) == "openai"
+        and screen._openai_reconnect_pending is None
+    ):
+        screen._openai_reconnect_pending = False
+        screen.call_after_refresh(refresh_openai_reconnect_pending, screen)
+
+
+def refresh_openai_reconnect_pending(screen: SettingsScreen) -> None:
+    """Re-read, off the UI thread, whether a restored connection awaits review.
+
+    Capture fix 3: read when the card mounts and on a switch to OpenAI, and
+    cached on the screen, so no paint touches storage.
+
+    Args:
+        screen: The Settings screen that owns the card.
+    """
+
+    def read() -> None:
+        from ...LLM_Calls.recovery_review import openai_reconnect_pending
+
+        screen.app.call_from_thread(show, openai_reconnect_pending())
+
+    def show(pending: bool) -> None:
+        screen._openai_reconnect_pending = pending
+        if screen.is_mounted:
+            sync_openai_reconnect_row(screen, screen._provider_widget_value())
+
+    screen.run_worker(
+        read,
+        thread=True,
+        group="settings-openai-reconnect-pending",
+        exclusive=True,
+        exit_on_error=False,
+    )
+
+
 def env_var_source_word(screen: SettingsScreen, provider: str, env_var: str) -> str:
     """Say whether the key's env var is set in this shell.
 
@@ -519,18 +672,22 @@ def endpoint_row_copy(
     if registry is not None:
         url = registry[1] or "endpoint not found"
         return "this endpoint", f"{url} · edit in Custom endpoints"
-    provider_key = provider_config_key(provider)
+    local_server = provider_config_key(provider) in API_URL_PROVIDER_KEYS
+    # Capture 01c: Azure, Cloudflare and Databricks ship no URL either.
+    target = required_base_url_target(provider)
     draft = screen._provider_draft()
     if draft is not None and "endpoint" in draft.dirty_keys:
         word = "edited *"
     elif endpoint.strip():
         word = "config"
-    elif provider_key in API_URL_PROVIDER_KEYS:
+    elif local_server or target:
         word = "not set"
     else:
         word = "built-in"
-    if provider_key in API_URL_PROVIDER_KEYS:
+    if local_server:
         return word, "required: the server's base URL"
+    if target:
+        return word, f"required: your {target}"
     return word, "blank uses the provider default"
 
 
@@ -637,7 +794,49 @@ def provider_model_pair(screen: SettingsScreen, provider: object, model: object)
     return f"{name} · {str(model or '').strip() or 'no model'}"
 
 
-def applies_to_copy(screen: SettingsScreen, provider: str, model: str) -> str:
+class AppliesToLine(Static):
+    """The Applies-to row's text: one line, or broken before its pair.
+
+    Textual wraps at any space, a no-break one too, so a long chat title or
+    model id split the provider · model pair across lines (capture 03).
+    Wider than its row, the text breaks before the pair, never inside it.
+    """
+
+    def __init__(self, text: str, pair: str, **kwargs: object) -> None:
+        super().__init__(text, markup=False, **kwargs)
+        self.pair = pair
+
+    def say(self, text: str, pair: str) -> None:
+        """Show ``text``, which ends with ``pair`` ("" when it names none).
+
+        Args:
+            text: ``applies_to_copy``'s text.
+            pair: ``applies_to_copy``'s pair.
+        """
+        self.pair = pair
+        self.update(text)
+
+    def _fitted(self, width: int) -> str:
+        text = str(self.content)
+        head, found, tail = text.rpartition(f" {self.pair}")
+        if not (self.pair and found) or width <= 0 or cell_len(text) <= width:
+            return text
+        return f"{head}\n{self.pair}{tail}"
+
+    def render(self) -> Content:
+        """Lay the text out for the row's width."""
+        return Content(self._fitted(self.content_size.width))
+
+    def get_content_height(self, container: Size, viewport: Size, width: int) -> int:
+        """Count the rows the text takes at ``width``, as ``render`` lays it out."""
+        if width <= 0:  # as Widget's own: a zero-width pass has no rows
+            return 0
+        return Content(self._fitted(width)).get_height(self.styles, width)
+
+
+def applies_to_copy(
+    screen: SettingsScreen, provider: str, model: str
+) -> tuple[str, str]:
     """Say who the Default model reaches: new chats, then the open Console chat.
 
     D1 (ADR-095 as amended 2026-09-26): an unused open chat takes the new
@@ -651,7 +850,8 @@ def applies_to_copy(screen: SettingsScreen, provider: str, model: str) -> str:
         model: The model the card shows.
 
     Returns:
-        The Applies-to row's text.
+        The Applies-to row's text, and the provider · model pair it ends
+        with ("" when it names none).
     """
     from ...Chat.console_chat_store import ConsoleChatStore
     from ..Console_Modules.session import follows_saved_defaults
@@ -664,25 +864,29 @@ def applies_to_copy(screen: SettingsScreen, provider: str, model: str) -> str:
         else None
     )
     if session is None:
-        return f"{APPLIES_TO_NEW_CHATS} {NO_CONSOLE_CHAT_COPY}"
+        return f"{APPLIES_TO_NEW_CHATS} {NO_CONSOLE_CHAT_COPY}", ""
     title = session.title.strip() or "untitled"
     if len(title) > _APPLIES_TO_TITLE_LIMIT:
         # The pair is the point of the row; a long title gives way to it.
         title = title[: _APPLIES_TO_TITLE_LIMIT - 1].rstrip() + "…"
     generation = getattr(screen.app_instance, "console_new_chat_default_generation", 0)
     own = session.settings
-    chat = f"{APPLIES_TO_NEW_CHATS} Open chat “{title}”"
+    chat = f"{APPLIES_TO_NEW_CHATS} open chat “{title}”"
     if not follows_saved_defaults(
         store, session, generation if type(generation) is int else 0
     ):
         if own is None:  # made before the Console's last Make default
-            return f"{chat} has no settings of its own and does not take this default."
-        return f"{chat} keeps {provider_model_pair(screen, own.provider, own.model)}."
+            return (
+                f"{chat} has no settings of its own and does not take this default.",
+                "",
+            )
+        own_pair = provider_model_pair(screen, own.provider, own.model)
+        return f"{chat} keeps {own_pair}.", own_pair
     pair = provider_model_pair(screen, provider, model)
     if own is None and (session.has_user_work or store.has_messages(session.id)):
         # The Console gives a chat with no settings the saved defaults, work or not.
-        return f"{chat} has no settings of its own and will use {pair}."
-    return f"{chat} is unused and will use {pair}."
+        return f"{chat} has no settings of its own and will use {pair}.", pair
+    return f"{chat} is unused and will use {pair}.", pair
 
 
 def next_new_chat_lines(screen: SettingsScreen) -> tuple[str, str]:
@@ -1230,17 +1434,20 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 compact=True,
                 disabled=not is_anthropic,
             )
-        yield Static(
-            ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
-            if subscription_selected
-            else ANTHROPIC_API_KEY_GUIDANCE_COPY,
-            id="settings-provider-auth-source-guidance",
-            classes=(
-                "settings-status-row"
-                if is_anthropic
-                else "settings-status-row settings-gated-profile-hidden"
-            ),
-        )
+            # Capture fix 7: the shared row grammar, help on the same row.
+            auth_word, auth_help = auth_source_row_copy(screen, provider)
+            yield Static(
+                auth_word,
+                id="settings-provider-auth-source-word",
+                classes="settings-source-word",
+                markup=False,
+            )
+            yield Static(
+                auth_help,
+                id="settings-provider-auth-source-guidance",
+                classes="settings-row-help",
+                markup=False,
+            )
         key_word, key_help = api_key_row_copy(screen, provider)
         with Horizontal(
             id="settings-provider-api-key-row", classes="settings-input-row"
@@ -1395,13 +1602,38 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 else "settings-status-row settings-gated-profile-hidden"
             ),
         )
-        reconnect = Button(
-            "Review restored OpenAI connection",
-            id="settings-openai-reconnect-review",
+        # Capture fix 3: a Connect row, shown only while a restored OpenAI
+        # connection awaits review; the read is cached (at mount, and on a
+        # switch to OpenAI), so a paint never touches storage.
+        is_openai = provider_config_key(provider) == "openai"
+        read_openai_reconnect_once(screen, provider)
+        reconnect_row = Horizontal(
+            id="settings-openai-reconnect-row", classes="settings-input-row"
         )
-        reconnect.display = provider_config_key(provider) == "openai"
-        reconnect.disabled = screen._openai_reconnect_busy
-        yield reconnect
+        reconnect_row.display = is_openai and screen._openai_reconnect_pending is True
+        with reconnect_row:
+            yield Static("Connection", classes="settings-input-label")
+            yield Button(
+                "Review",
+                id=OPENAI_RECONNECT_REVIEW_ID,
+                compact=True,
+                disabled=screen._openai_reconnect_busy,
+                tooltip=(
+                    "Review restored OpenAI connection: allow requests through "
+                    "it. No connection test runs."
+                ),
+            )
+            yield Static(
+                "restored",
+                id="settings-openai-reconnect-source",
+                classes="settings-source-word",
+                markup=False,
+            )
+            yield Static(
+                "requests wait until you review it",
+                classes="settings-row-help",
+                markup=False,
+            )
         # task-189: the Test affordance closes the first-run Connect job.
         # TASK-33005.4: 't' is the non-generating key check (D2).
         with Horizontal(
@@ -1488,11 +1720,10 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         # TASK-33007.4 (AC#1): who this choice reaches, under the choice.
         with Horizontal(id="settings-model-applies-row", classes="settings-input-row"):
             yield Static("Applies to", classes="settings-input-label")
-            yield Static(
-                applies_to_copy(screen, provider, str(values["model"])),
+            yield AppliesToLine(
+                *applies_to_copy(screen, provider, str(values["model"])),
                 id="settings-model-applies-to",
                 classes="settings-applies-to",
-                markup=False,
             )
         # Parent AC#2: the return to Chat settings comes after Default model,
         # so its buttons never sit on the Tab walk from Provider to Model.
