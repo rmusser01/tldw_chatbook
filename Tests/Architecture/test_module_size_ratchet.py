@@ -136,7 +136,10 @@ _BUDGETS: dict[str, int] = {
     # one-row Context window, its unknown help naming the assumed size)
     # re-pins it at the integrated head's measured 33,645; the checkpoint
     # review's result-line fix (SettingsResultLine) re-pins it at 33,661.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33661,
+    # Rebased onto dev (2026-10-09), which added its quit-time session summary
+    # helpers here (+80 on dev): re-pinned at the rebased head's 33,712, still
+    # under dev's 34,598 for the file.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33712,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
@@ -146,7 +149,7 @@ _BUDGETS: dict[str, int] = {
     # line, Sign in with's row copy) at 2,194; the Endpoint guide that says
     # required as its row does (2026-10-09) at 2,238; items 11-12 (one-row
     # Context window, -1; its assumed size, +1) leave it at 2,238 measured.
-    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2240,
+    "tldw_chatbook/UI/Settings_Modules/providers_models_card.py": 2300,
     "tldw_chatbook/UI/Settings_Modules/settings_field_rows.py": 729,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved

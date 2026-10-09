@@ -55,7 +55,7 @@ from ...Chat.provider_readiness import (
     provider_credential_source,
     required_base_url_target,
 )
-from ...config import provider_settings_for_key
+from ...config import get_cli_setting, provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
@@ -88,6 +88,7 @@ from ..Screens.settings_screen import (
     _anthropic_auth_sources,
     _fold_long_tokens,
     _ProviderTestResult,
+    _session_summary_section_values,
 )
 from .settings_field_rows import compose_model_defaults, format_value
 
@@ -167,6 +168,8 @@ CONTEXT_WINDOW_DISCLOSURE_ID = "settings-advanced-context-window"
 SAVED_MODELS_DISCLOSURE_ID = "settings-advanced-saved-models"
 CATALOG_REFRESH_DISCLOSURE_ID = "settings-advanced-catalog-refresh"
 CUSTOM_ENDPOINTS_DISCLOSURE_ID = "settings-advanced-custom-endpoints"
+#: task-34384 (dev), ported into Advanced when Phase 7 was rebased onto it.
+SESSION_SUMMARY_DISCLOSURE_ID = "settings-advanced-session-summary"
 #: Prompt-cache snapshots keeps the id its tests already open it by.
 SNAPSHOTS_DISCLOSURE_ID = "settings-snapshot-controls"
 CATALOG_STARTUP_ID = "settings-model-catalog-auto-refresh"
@@ -1094,11 +1097,35 @@ def snapshots_summary(screen: SettingsScreen) -> str:
     )
 
 
+def session_summary_summary(screen: SettingsScreen) -> str:
+    """Say whether the quit-time session summary shows, and for how long.
+
+    Reads the mounted controls (they write immediately), else the config.
+
+    Args:
+        screen: The Settings screen.
+
+    Returns:
+        "applies immediately · Off", or "… · On · 3 s".
+    """
+    try:
+        enabled = screen.query_one("#settings-session-summary-enabled", Checkbox).value
+        duration = screen.query_one("#settings-session-summary-duration", Input).value
+    except QueryError:
+        enabled = bool(get_cli_setting("session_summary", "enabled", False))
+        duration = str(get_cli_setting("session_summary", "duration_seconds", 3))
+    values = _session_summary_section_values(enabled, duration)["session_summary"]
+    if not values["enabled"]:
+        return f"{APPLIES_IMMEDIATELY} · Off"
+    return f"{APPLIES_IMMEDIATELY} · On · {values['duration_seconds']} s"
+
+
 #: The Advanced disclosures in the card's order: id -> (name, summary).
 ADVANCED_DISCLOSURES = {
     CONTEXT_WINDOW_DISCLOSURE_ID: ("Context window", context_window_summary),
     SAVED_MODELS_DISCLOSURE_ID: ("Saved model list", saved_models_summary),
     CATALOG_REFRESH_DISCLOSURE_ID: ("Catalog refresh", catalog_refresh_summary),
+    SESSION_SUMMARY_DISCLOSURE_ID: ("Session summary on quit", session_summary_summary),
     CUSTOM_ENDPOINTS_DISCLOSURE_ID: ("Custom endpoints", custom_endpoints_summary),
     SNAPSHOTS_DISCLOSURE_ID: ("Prompt-cache snapshots", snapshots_summary),
 }
@@ -2008,6 +2035,39 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                             "released models after a first baseline."
                         ),
                     )
+        # task-34384 (issue #365): quit-time session usage summary, ported
+        # into Advanced when Phase 7 was rebased onto dev. Instant-apply like
+        # Catalog refresh; the pure helper's no-op guard keeps per-keystroke
+        # Input.Changed off the disk.
+        with (
+            advanced_disclosure(screen, SESSION_SUMMARY_DISCLOSURE_ID),
+            Vertical(
+                id="settings-session-summary-group",
+                classes="settings-instant-apply-group",
+            ),
+        ):
+            yield Static(
+                INSTANT_APPLY_BEHAVIOR_COPY,
+                id="settings-session-summary-instant-hint",
+                classes="settings-instant-apply-hint",
+            )
+            yield Checkbox(
+                "Show session usage summary when quitting",
+                value=bool(get_cli_setting("session_summary", "enabled", False)),
+                id="settings-session-summary-enabled",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Duration (seconds)", classes="settings-input-label")
+                yield Input(
+                    str(get_cli_setting("session_summary", "duration_seconds", 3)),
+                    id="settings-session-summary-duration",
+                    classes="settings-compact-input",
+                    type="integer",
+                    tooltip=(
+                        "How long the quit summary shows before auto-exit "
+                        "(1-30). Invalid or empty values fall back to 3 seconds."
+                    ),
+                )
         # ADR-146 task-7: named-endpoint management (rename / edit /
         # delete-with-reference-guard / slot conversion). Instant-apply
         # like the catalog block above: threaded config writes, one

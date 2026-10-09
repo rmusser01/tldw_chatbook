@@ -30457,11 +30457,13 @@ class SettingsScreen(BaseAppScreen):
     def handle_session_summary_toggle_changed(self, event: Checkbox.Changed) -> None:
         event.stop()
         self._persist_session_summary_settings()
+        self._refresh_advanced()  # the Advanced title says its state
 
     @on(Input.Changed, "#settings-session-summary-duration")
     def handle_session_summary_duration_changed(self, event: Input.Changed) -> None:
         event.stop()
         self._persist_session_summary_settings()
+        self._refresh_advanced()  # the Advanced title says its state
 
     @on(Select.Changed, "#settings-permission-summary-mode")
     def handle_permission_summary_mode_changed(self, event: Select.Changed) -> None:
