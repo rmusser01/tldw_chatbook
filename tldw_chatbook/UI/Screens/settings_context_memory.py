@@ -25,7 +25,7 @@ from ...Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
     normalize_thinking_history_policy,
 )
-from ...Utils.token_counter import get_table_model_token_limit
+from ...Utils.token_counter import resolve_context_window
 
 
 SUMMARY_PROMPT_ID = "console.rewind_summarize"
@@ -103,6 +103,9 @@ class ModelContextWindowState:
     effective_tokens: int | None
     detected_tokens: int | None
     configured_override_tokens: int | None
+    #: The fallback the Console budgets with while no source knows the
+    #: window (TASK-33007 #12): shown as "assumed", never staged as a value.
+    assumed_tokens: int | None = None
 
     @property
     def has_configured_override(self) -> bool:
@@ -253,11 +256,16 @@ def model_context_window_state(
                 detected_models[model_id] = next_entry
             else:
                 detected_models.pop(model_id, None)
-    detected = _capability_or_table_window(detected_section, provider, model_id)
+    # The resolver Chat settings reads, over this config minus the override.
+    resolved = resolve_context_window(
+        provider, model_id, capabilities=ModelCapabilities(detected_section)
+    )
+    detected = resolved.tokens if resolved.verified else None
     return ModelContextWindowState(
         configured_override or detected,
         detected,
         configured_override,
+        None if resolved.verified or configured_override else resolved.tokens,
     )
 
 
@@ -304,14 +312,6 @@ def _model_capabilities_section(
 ) -> dict[str, Any]:
     raw = (app_config or {}).get("model_capabilities", {})
     return deepcopy(dict(raw)) if isinstance(raw, Mapping) else {}
-
-
-def _capability_or_table_window(
-    section: Mapping[str, object], provider: str, model: str
-) -> int | None:
-    value = ModelCapabilities(dict(section)).get_context_window(provider, model)
-    valid = _valid_positive_int(value)
-    return valid or get_table_model_token_limit(model, provider)
 
 
 def _valid_positive_int(value: object) -> int | None:

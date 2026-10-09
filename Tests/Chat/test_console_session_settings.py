@@ -2429,7 +2429,8 @@ def test_unknown_openai_model_uses_shared_unverified_api_fallback() -> None:
     assert estimate.token_limit == 32000
     assert estimate.token_limit_verified is False
     assert estimate.token_limit_source == "application fallback"
-    assert "estimated; model unverified" in estimate.label
+    # TASK-33007 #12: the words Settings ▸ Advanced uses for a fallback.
+    assert "(assumed; window unknown)" in estimate.label
 
 
 def test_context_estimate_staged_text_delta_tracks_its_size() -> None:

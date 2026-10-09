@@ -198,6 +198,53 @@ async def test_model_row_paints_pair_source_readiness_context_and_change(size) -
         assert container.region.contains_region(change.region)
 
 
+#: TASK-33007 #12: the MODEL row's context words for the two models whose
+#: Settings ▸ Advanced titles test_settings_advanced_disclosures pins
+#: (CONTEXT_WINDOW_TITLES): a known size, or "unknown" -- the size assumed
+#: is said in Request estimate and the Context view, as Settings says it.
+CONTEXT_WINDOW_WORDS = {
+    "gpt-4o": " · 128k context",
+    "gpt-5.6-terra": " · context unknown ",
+}
+
+
+@pytest.mark.parametrize("model", sorted(CONTEXT_WINDOW_WORDS))
+@pytest.mark.asyncio
+async def test_model_row_says_what_settings_says_about_the_context_window(model):
+    """TASK-33007 #12: "~32k context" read as a known size while Settings ▸
+    Advanced said "unknown". The modal publishes the shared resolver's answer
+    (as the Console wires it) and a fallback says "unknown" in every place
+    the modal names the window: the MODEL row, Request estimate and the
+    Context view."""
+    from textual.widgets import Collapsible
+
+    from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+    async def resolver(draft):
+        return resolve_context_window(draft.provider, draft.model or "")
+
+    app = CoreFirstHarness()
+    modal = pick_modal(
+        app, _settings("openai", model), context_window_resolver=resolver
+    )
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        await settle(pilot, app)
+        line = _model_row_line(app, modal)
+        assert CONTEXT_WINDOW_WORDS[model] in line, line
+        assert "~" not in line, line
+        title = str(
+            modal.query_one(f"#{REQUEST_ESTIMATE_DISCLOSURE_ID}", Collapsible).title
+        )
+        window = str(modal.query_one("#console-context-model-window", Static).render())
+        if model == "gpt-4o":
+            assert "/ 128,000 tokens" in title and "unknown" not in title, title
+            assert window.endswith("128,000 tokens (model catalog)"), window
+        else:
+            assert title.endswith("/ 32,000 tokens (assumed; window unknown)"), title
+            assert window.endswith("unknown, 32,000 assumed"), window
+
+
 @pytest.mark.parametrize("size", [(211, 44), (235, 52)])
 @pytest.mark.parametrize(
     ("provider", "model"),
