@@ -54,40 +54,6 @@ dev closes the receipt *before* it restores, so the two numbers timed
 different things. Time both arms to the same user-visible end state (rows
 back and the receipt gone), n>=3 each, and report ranges for both.
 
-## "Paint, then call_after_refresh" does not put a new widget on screen before blocking work (TASK-33620.5, 2026-10-04)
-
-## A hold placed before the step you time makes every hand-off pass (TASK-33620.5, 2026-10-04)
-
-**Incident.** Enter had to put a "Sending…" row on screen before ~0.5 s of
-synchronous admission blocked the loop. The first cut waited for the row and
-Run chip to be laid out before handing the send off (frame-length timer hops),
-and its ordering test said that wait was needed. The checkpoint review ran
-other hand-offs against that test (dispatch right after the paint; one
-`call_after_refresh` hop; no loop yields at all): all passed 5/5. The test held
-the send's hook-permission snapshot inside `asyncio.to_thread` BEFORE
-admission, which gave the screen unlimited time to paint whatever the
-hand-off did. Rewritten to hold nothing and to read, from inside the
-synchronous admission, the last frame actually written (wrap `App._display`),
-the test still passed every hand-off: the harness send's own awaits before
-admission gave the screen its refresh. The no-wait hand-off went live on that
-evidence and lost the tab dot for the whole admission block (80x24, first and
-warm sends, tmux frame polling). Reading the frame when the SEND starts, not
-when admission starts, made the no-wait hand-off red 6/6 in the harness; one
-hop and the timer hops stayed indistinguishable there, and only live polling
-separated them (a new-tab send lost the dot with one hop; a warm send lost it
-with the hops until the tabs were relabelled before the row mounted).
-
-**Why it slipped through.** The first test's hold guaranteed "a frame precedes
-admission" for every implementation. The second test modelled production's
-yields with the harness's yields, which are longer. A green ordering test is
-evidence only if a plausible wrong implementation turns it red.
-
-**What to do.** For "X is on screen before blocking work", read the frame at
-the earliest point the blocking work could begin (here: the send starting),
-with no hold in front of it, and run the candidate implementations against the
-test. Where the harness cannot separate two candidates, poll the live terminal
-for the deciding case instead of keeping or deleting code on the test alone.
-
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 
 **TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
@@ -168,6 +134,39 @@ quit-prompt tests that flake under load to the same pattern.
 **What to do.** When a test checks what a dismissed screen returned, wait for the
 result itself (the callback's list is non-empty, or the opener's state changed), not
 for the screen to leave `screen_stack`.
+
+## A hold placed before the step you time makes every hand-off pass (TASK-33620.5, 2026-10-04)
+
+**Incident.** Enter had to put a "Sending…" row on screen before ~0.5 s of
+synchronous admission blocked the loop. The first cut waited for the row and
+Run chip to be laid out before handing the send off (frame-length timer hops),
+and its ordering test said that wait was needed. The checkpoint review ran
+other hand-offs against that test (dispatch right after the paint; one
+`call_after_refresh` hop; no loop yields at all): all passed 5/5. The test held
+the send's hook-permission snapshot inside `asyncio.to_thread` BEFORE
+admission, which gave the screen unlimited time to paint whatever the
+hand-off did. Rewritten to hold nothing and to read, from inside the
+synchronous admission, the last frame actually written (wrap `App._display`),
+the test still passed every hand-off: the harness send's own awaits before
+admission gave the screen its refresh. The no-wait hand-off went live on that
+evidence and lost the tab dot for the whole admission block (80x24, first and
+warm sends, tmux frame polling). Reading the frame when the SEND starts, not
+when admission starts, made the no-wait hand-off red 6/6 in the harness; one
+hop and the timer hops stayed indistinguishable there, and only live polling
+separated them (a new-tab send lost the dot with one hop; a warm send lost it
+with the hops until the tabs were relabelled before the row mounted).
+
+**Why it slipped through.** The first test's hold guaranteed "a frame precedes
+admission" for every implementation. The second test modelled production's
+yields with the harness's yields, which are longer. A green ordering test is
+evidence only if a plausible wrong implementation turns it red.
+
+**What to do.** For "X is on screen before blocking work", read the frame at
+the earliest point the blocking work could begin (here: the send starting),
+with no hold in front of it, and run the candidate implementations against the
+test. Where the harness cannot separate two candidates, poll the live terminal
+for the deciding case instead of keeping or deleting code on the test alone.
+
 ## A prompt that tells the model where things are must be tested by doing what it says
 
 **TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative
