@@ -624,6 +624,42 @@ def project_library_activity(
     )
 
 
+def count_library_activity_by_turn(
+    rows: Sequence[Any],
+    active_turn_ids: Sequence[str],
+) -> dict[str, int]:
+    """Count the actions ``project_library_activity`` shows for each active turn.
+
+    The same answer as projecting every active turn in turn, with each row
+    read once. Projecting all 1,500 turns of a 3,000-message chat rebuilt the
+    active set and re-read every row per turn: quadratic work on the event
+    loop each time the selection or the active path moved (TASK-33628.5.2).
+    A turn with no activity row projects no action, so it is skipped.
+
+    Args:
+        rows: Durable and pending trajectory-shaped activity rows.
+        active_turn_ids: Durable user-turn IDs on the active branch.
+
+    Returns:
+        Positive action counts keyed by turn ID; a missing turn counts 0.
+    """
+    active = frozenset(active_turn_ids)
+    rows_by_turn: dict[str, list[Any]] = {}
+    for row in rows:
+        if str(_field(row, "event_kind") or "") != LIBRARY_ACTIVITY_EVENT_KIND:
+            continue
+        turn_id = _field(row, "turn_id")
+        if isinstance(turn_id, str) and turn_id in active:
+            rows_by_turn.setdefault(turn_id, []).append(row)
+    counts: dict[str, int] = {}
+    for turn_id, turn_rows in rows_by_turn.items():
+        # Only this turn's rows can match it, so the projection is unchanged.
+        count = len(project_library_activity(turn_rows, active, turn_id).actions)
+        if count:
+            counts[turn_id] = count
+    return counts
+
+
 def _validate_event(event: LibraryActivityEvent) -> None:
     if type(event.version) is not int or event.version != 1:
         raise ValueError("Invalid Library activity event.")
@@ -713,6 +749,7 @@ __all__ = [
     "LibraryActivitySink",
     "LibraryActivitySourceRef",
     "LibraryActivityView",
+    "count_library_activity_by_turn",
     "decode_library_activity_event",
     "encode_library_activity_event",
     "minimize_library_activity",

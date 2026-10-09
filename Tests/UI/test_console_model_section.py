@@ -68,8 +68,9 @@ async def test_model_values_update_hidden_rows_without_screen_wide_scans(
             ]
             assert all(not row.display for row in rows)
             assert host.focused is focused
-            # The existing recovery query remains; Model values add no scans.
-            assert len(screen_scans) == 1
+            # The rail writes the values and the readiness word from its own
+            # rows, so no lookup walks the whole screen (TASK-33628.5.2).
+            assert len(screen_scans) == 0
 
 
 @pytest.mark.asyncio
@@ -229,15 +230,18 @@ def test_the_updater_reads_structured_values_and_no_deleted_ids() -> None:
     import ast
     from pathlib import Path
 
+    # TASK-33628.5.2 moved the updater from ChatScreen into the rail that
+    # composes the rows, so it stops walking the whole screen per sync.
     source = (
-        Path(__file__).resolve().parents[2] / "tldw_chatbook/UI/Screens/chat_screen.py"
+        Path(__file__).resolve().parents[2]
+        / "tldw_chatbook/UI/Console_Modules/left_rail.py"
     ).read_text()
     tree = ast.parse(source)
     body = None
     for node in ast.walk(tree):
         if (
             isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and node.name == "_apply_console_settings_summary_state"
+            and node.name == "sync_model_section_values"
         ):
             body = ast.get_source_segment(source, node) or ""
             break

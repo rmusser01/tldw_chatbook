@@ -548,6 +548,14 @@ slot, that action.
 While a reply is still generating, every action is disabled with the
 tooltip "Wait for response to finish before using message actions."
 
+In a long chat Console draws only the part of the transcript around what you
+are reading, and loads more as you scroll. When a message is selected for
+you that is far outside that part, or has more than a few screens of
+messages coming back below it — the first message an **Undo** restores,
+say — the transcript jumps to it: the message is drawn at the top, with
+the messages after it below, and the rest load as you scroll (**End** goes
+to the newest).
+
 The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
 text-response **< / >** controls when applicable, **Fork**,
 **Regenerate/Retry/Resend** when applicable, **Continue** when applicable, and
@@ -661,8 +669,8 @@ itself, and offers Undo afterwards.
    you saw.
 3. A receipt opens straight away. While the delete is being saved it reads
    **Deleting N messages…**; with thousands of messages that can take a
-   moment, and the rest of Chatbook keeps responding while it saves (in a
-   very long chat, redrawing the transcript afterwards can still pause it).
+   moment, and the rest of Chatbook keeps responding while it saves
+   (redrawing the transcript afterwards can still pause it briefly).
    A save can't be stopped once it starts, so until it finishes **Esc**
    doesn't close the receipt and **Ctrl+Q** says the delete is still being
    saved (press it again to be asked whether to quit anyway). **Quit
@@ -673,7 +681,8 @@ itself, and offers Undo afterwards.
    puts exactly those messages back where they were and returns the
    conversation to the branch you were on; while it works the receipt reads
    **Restoring N messages…** (**Esc** and **Ctrl+Q** wait for it as they do
-   for the delete), and it closes when they are back. They stay
+   for the delete), and it closes when they are back, with the first
+   restored message selected. They stay
    restored after you close and reopen the chat. **Done** or **Esc** keeps
    the delete, and from then on it can't be undone in the app. If Undo can't
    finish (the database is busy, say), the messages stay deleted and the

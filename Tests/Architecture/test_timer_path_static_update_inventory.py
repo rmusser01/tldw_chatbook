@@ -209,40 +209,21 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NOT-PER-TICK: equality-gated on _console_rail_system_line_last "
         "(TASK-251), so the 0.2 s tick does not repaint it."
     ),
+    # -- tldw_chatbook/UI/Console_Modules/left_rail.py
+    # TASK-33628.5.2 moved the Model section's writes here from ChatScreen
+    # (whose rows for them had gone stale when the writer was renamed).
     (
-        "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_settings_summary",
+        "tldw_chatbook/UI/Console_Modules/left_rail.py",
+        "ConsoleLeftRail.sync_model_section_values",
         "recovery",
     ): ("NEEDS-LAYOUT: the readiness row is display-toggled on the same path."),
     (
-        "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_settings_summary",
-        "self.query_one('#console-model-section-max-tokens .console-model-section-value', Static)",
-    ): (
-        "NEEDS-LAYOUT: as above -- shares the wrapped .console-model- "
-        "section-value rule."
-    ),
-    (
-        "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_settings_summary",
-        "self.query_one('#console-model-section-model .console-model-section-value', Static)",
-    ): "NEEDS-LAYOUT: as above -- wrapped value, auto height capped at 3.",
-    (
-        "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_settings_summary",
-        "self.query_one('#console-model-section-provider .console-model-section-value', Static)",
+        "tldw_chatbook/UI/Console_Modules/left_rail.py",
+        "ConsoleLeftRail.sync_model_section_values",
+        "row",
     ): (
         "NEEDS-LAYOUT: .console-model-section-value is text-wrap:wrap with "
-        "max-height:3, so the painted row count changes with the model "
-        "name."
-    ),
-    (
-        "tldw_chatbook/UI/Screens/chat_screen.py",
-        "ChatScreen._sync_console_settings_summary",
-        "self.query_one('#console-model-section-temperature .console-model-section-value', Static)",
-    ): (
-        "NEEDS-LAYOUT: as above -- shares the wrapped .console-model- "
-        "section-value rule."
+        "max-height:3, so the painted row count changes with the value."
     ),
     # -- tldw_chatbook/UI/Screens/trajectory_screen.py
     (

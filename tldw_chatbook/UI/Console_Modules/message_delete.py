@@ -225,7 +225,12 @@ async def _delete(host: Any, store: Any, scope: ConsoleDeleteScope) -> None:
         if choice is None and "delete" in done:
             await _finalize(host, store, *done["delete"])
 
-    await host.push_screen(
+    push_screen = host.push_screen
+    # Its first push would restyle every mounted transcript row (TASK-33628.5.1);
+    # the running app owns the stylesheet, so take it off the bound push.
+    running_app = getattr(push_screen, "__self__", None)
+    ConsoleMessageDeleteReceiptModal.preload_sheet(running_app)
+    await push_screen(
         ConsoleMessageDeleteReceiptModal(
             count=scope.removed_count, delete=delete, undo=undo
         ),

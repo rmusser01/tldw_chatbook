@@ -219,6 +219,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemorySelectionFence,
     MemorySelectionKind,
     PersistedLineageFenceRow,
+    may_hold_branch_memory,
     persisted_attachment_digest,
 )
 from tldw_chatbook.Chat.assistant_generation_state import (
@@ -24132,10 +24133,8 @@ class ConsoleChatController:
         except Exception:
             global_overrides = None
         effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
-        if (
-            self._context_repository is not None
-            and owner.persisted_conversation_id is not None
-        ):
+        # TASK-33628.5.2: no memory to prove means no lineage to capture.
+        if may_hold_branch_memory(self, session_id, owner.persisted_conversation_id):
             snapshots = self._durable_context_snapshots(session_id)
             # Truthiness on purpose: None (unvalidatable lineage) and ()
             # (no durable rows yet) both select no memory — an empty prefix

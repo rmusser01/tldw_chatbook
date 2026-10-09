@@ -680,6 +680,44 @@ class ConsoleLeftRail(Vertical):
             f"{intent.literal_model_id} · fields: {scope}{endpoint_copy}"
         )
 
+    def sync_model_section_values(
+        self, summary_state: ConsoleSettingsSummaryState
+    ) -> None:
+        """Write the Model section's sampling values and readiness word.
+
+        Moved from ``ChatScreen._apply_console_settings_summary_state``
+        (TASK-33628.5.2). There, four screen-wide queries per post-action
+        sync walked every mounted transcript row; looked up from the rail by
+        id they walk none.
+
+        Args:
+            summary_state: The derived settings summary to show.
+        """
+        # TASK-32811.7: read the structured values (TASK-32338; `streaming`
+        # since TASK-33004.7) rather than regex-parse `sampling_row`, and query
+        # only composed ids: the Provider/Model rows TASK-23196 removed raised
+        # NoMatches on the FIRST lookup and froze the rest. Each row is guarded.
+        for section_id, value in (
+            ("console-model-section-temperature", summary_state.temperature),
+            ("console-model-section-max-tokens", summary_state.max_tokens),
+            ("console-model-section-streaming", summary_state.streaming),
+        ):
+            line = self.query_one_optional(f"#{section_id}")
+            if line is None:
+                continue
+            for row in line.query(".console-model-section-value"):
+                row.update(value or "—")
+                break
+        # TASK-33005.3: the rail line shows the one word; red only when blocked.
+        word = summary_state.readiness_label
+        blocked = getattr(summary_state.readiness, "operability", "") == "not_ready"
+        recovery = self.query_one_optional("#console-model-section-recovery")
+        if isinstance(recovery, Static):
+            if recovery.content != word:  # Unchanged copy costs no layout pass.
+                recovery.update(word)
+            recovery.styles.display = "block" if word else "none"
+            recovery.set_class(blocked, "conversation-attention-error")
+
     def sync_model_recovery(
         self,
         *,

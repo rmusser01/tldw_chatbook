@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Iterable, Literal, Mapping
 from uuid import uuid4
@@ -1306,6 +1306,41 @@ class ConsoleChatMessage:
     #: while the primary's tool call has run long enough to offer it. Same
     #: ownership and lifetime rules as ``live_activity``.
     live_activity_action: str = ""
+
+
+#: Field names per message class, for ``copy_console_message``.
+_MESSAGE_FIELD_NAMES: dict[type, tuple[str, ...]] = {}
+
+
+def copy_console_message(message: ConsoleChatMessage) -> ConsoleChatMessage:
+    """Return what ``dataclasses.replace(message)`` returns, without ``__init__``.
+
+    ``replace`` rebuilds the message through its generated ``__init__``: about
+    16 us for this ~50-field class. The store snapshots every active-path
+    message several times per post-action Console sync, so at 3,000 messages
+    that alone held the event loop for ~0.24 s per sync (TASK-33628.5.2).
+    For a class whose fields are all ``init`` fields and that has no
+    ``__post_init__`` -- ``ConsoleChatMessage``, pinned by
+    ``Tests/Chat/test_console_message_copy.py`` -- ``replace`` amounts to a
+    new instance holding the same field values and nothing else, which is
+    what this builds directly. Any other class goes through ``replace``.
+
+    Args:
+        message: The message to copy.
+
+    Returns:
+        A shallow copy that shares field values with ``message``.
+    """
+    cls = type(message)
+    names = _MESSAGE_FIELD_NAMES.get(cls)
+    if names is None:
+        if hasattr(cls, "__post_init__") or not all(f.init for f in fields(cls)):
+            return replace(message)
+        names = _MESSAGE_FIELD_NAMES[cls] = tuple(f.name for f in fields(cls))
+    values = message.__dict__
+    copied = object.__new__(cls)
+    copied.__dict__.update({name: values[name] for name in names})
+    return copied
 
 
 @dataclass(frozen=True)
