@@ -864,7 +864,16 @@ and that focus is what reveals it. An unseen target is sometimes the whole point
 the walk. The rule that holds both: prefer the first preferred target that is on
 screen; only when none is, fall back to the first focusable one (focusing it may
 reveal its pane). "Empty region" is never disqualifying on its own -- a collapsed
-pane's child has one too.
+pane's child has one too. And "outside the screen" is not disqualifying either
+(review I-1 of the same task): a control a scrollable pane has merely SCROLLED out
+of view (`region.y < 0`, `allow_vertical_scroll` True on the pane) must stay the
+landing, because `focus()` scrolls it in -- F6 into a scrolled Settings form landed
+mid-form before that was pinned. The pass-over applies only to a control that no
+scrolling ancestor could reveal: clipped by a non-scrollable ancestor on an axis it
+cannot scroll (`_scrolling_could_reveal` in `Widgets/workbench_focus.py`). Measure
+visibility against the compositor's clip (`screen.find_widget(w).clip`), not
+`screen.region`: a control past its own pane's edge is inside the screen and still
+unseeable.
 
 Two measurements from the same task worth keeping: (1) a content-sized compact
 `Button` is `len(label) + 4` cells on the wide stage -- `padding: 0 1` plus

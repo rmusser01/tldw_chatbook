@@ -192,6 +192,33 @@ async def test_the_delete_prompt_hides_the_stacked_header_actions() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("size", "expected_label"),
+    [((120, 36), "Discard"), ((160, 45), "Discard new note")],
+    ids=["120x36-short", "160x45-full"],
+)
+async def test_discard_wording_follows_the_task_rows_width(size, expected_label) -> None:
+    """Review M-2 (fix round 1): the stacked task row keeps the full
+    "Discard new note" wherever its own width holds it (160x45: 82+ cells
+    against the 53 the row needs) and shortens to "Discard" only where it
+    cannot (120x36: 48 cells). RED on 8b935e56e6 at 160x45, where the
+    wording followed the shape and read "Discard"."""
+    host = _host()
+    async with host.run_test(size=size) as pilot:
+        screen = await _new_blank_note(host, pilot)
+        discard = screen.query_one(DISCARD, Button)
+        await _wait_for_condition(
+            pilot,
+            lambda: discard.display and discard.visible,
+            message="An untouched new note never offered Discard new note.",
+        )
+        assert _layout_name(screen.query_one(SECOND_ROW)) == "vertical"
+        assert str(discard.label) == expected_label
+        _assert_whole_inside_pane(size, host, screen, DISCARD, expected_label)
+        _assert_whole_inside_pane(size, host, screen, USE_IN_CONSOLE, "Use in Console")
+
+
+@pytest.mark.asyncio
 async def test_new_note_discard_keeps_the_task_row_width_on_a_wide_stage() -> None:
     """The one-row shape at 235x52: Discard new note (wide wording) is whole,
     and hiding it keeps the task row's width and the mode row's x."""

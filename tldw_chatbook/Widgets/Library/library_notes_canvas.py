@@ -198,9 +198,25 @@ _HEADER_ACTION_CHROME = 5
 #: gaps).
 _HEADER_DANGER_ACTION_GAP = 3
 
-#: ``padding: 0 1`` on each of the three ``.ds-toolbar`` boxes the header
-#: nests: ``#library-note-primary-actions`` and its two rows.
-_HEADER_TOOLBAR_GUTTER = 3 * 2
+#: ``padding: 0 1`` on each ``.ds-toolbar`` box the header nests -- three on
+#: the one-row strip: ``#library-note-primary-actions`` and its two rows.
+_HEADER_TOOLBAR_BOX_GUTTER = 2
+_HEADER_TOOLBAR_GUTTER = 3 * _HEADER_TOOLBAR_BOX_GUTTER
+
+#: Columns the editor pane needs for a STACKED task row to hold the full
+#: "Discard new note": the primary box's gutter and the row's own, Save and
+#: Use in Console with their chrome, Discard without a trailing margin, and
+#: its danger gap -- 4 + 9 + 19 + 20 + 3 = 55 for the labels above (the row
+#: measured 53 inside a 2-cell primary gutter). Below it the row takes the
+#: compact wording "Discard" (review M-2: wording follows the row's width,
+#: not the shape).
+_HEADER_STACKED_TASK_ROW_MIN_WIDTH = (
+    2 * _HEADER_TOOLBAR_BOX_GUTTER
+    + sum(len(label) + _HEADER_ACTION_CHROME for label in _HEADER_TASK_LABELS[:2])
+    + len(_HEADER_TASK_LABELS[2])
+    + (_HEADER_ACTION_CHROME - 1)
+    + _HEADER_DANGER_ACTION_GAP
+)
 
 #: The save state's floor on a shared row (TASK-34000.8 AC#4): "Saved" plus
 #: its separator is readable, a one-column "S" is not. TASK-32513/32514 own
@@ -3079,8 +3095,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         classes="library-canvas-action",
                         compact=True,
                     )
+                    work_width = self._effective_work_width()
                     discard_new = Button(
-                        self._discard_new_label(self.compact),
+                        self._discard_new_label(
+                            self.compact,
+                            _header_shape(work_width, self.compact),
+                            work_width,
+                        ),
                         id="library-note-discard-new",
                         classes="library-canvas-action library-media-action-danger",
                         compact=True,
@@ -3391,18 +3412,25 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.apply_session_state(self.presentation_state)
 
     @staticmethod
-    def _discard_new_label(one_line: bool) -> str:
-        """Discard new note's wording for a one-line (compact or stacked) task row.
+    def _discard_new_label(compact: bool, stacked: bool, work_width: int) -> str:
+        """Discard new note's wording: the full label wherever its row holds it.
 
-        Measured at 120x36 (TASK-34000.8): the stacked task row has the
-        48-cell pane, and "Save · Use in Console · Discard new note" needs
-        53 cells there (2 of gutter, 8 + 18 + 20 of buttons, 4 of gaps) --
-        the wide wording cannot fit the very pane the stacked shape exists
-        for, so a one-line row takes the compact wording the AC allows
-        ("Discard"), which needs 44. The three-row strip keeps the full
-        wording.
+        The compact sheet keeps its own short "Discard" (its 60-column
+        shapes are pinned). A STACKED task row has the pane's width less the
+        toolbar gutters, and takes the full wording when that holds
+        ``_HEADER_STACKED_TASK_ROW_MIN_WIDTH`` (55 for the labels above):
+        measured at 120x36 the row is the 48-cell pane and "Save · Use in
+        Console · Discard new note" needs 53 cells inside a 2-cell gutter
+        (8 + 18 + 20 of buttons, 2 of gutter, 4 of gaps), so there it takes
+        the compact wording the AC allows; at 160x45 the row has 82+ cells
+        and keeps "Discard new note" (review M-2). The three-row strip
+        always keeps the full wording -- its width is in the one-row rule.
         """
-        return _HEADER_DISCARD_SHORT_LABEL if one_line else _HEADER_TASK_LABELS[2]
+        if compact:
+            return _HEADER_DISCARD_SHORT_LABEL
+        if stacked and 0 < work_width < _HEADER_STACKED_TASK_ROW_MIN_WIDTH:
+            return _HEADER_DISCARD_SHORT_LABEL
+        return _HEADER_TASK_LABELS[2]
 
     def apply_compact_presentation(self, compact: bool) -> None:
         """Update responsive copy without remounting the canvas."""
@@ -3526,7 +3554,9 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 button.styles.max_height = 1 if rows else 3
         try:
             self.query_one("#library-note-discard-new", Button).label = (
-                self._discard_new_label(rows)
+                self._discard_new_label(
+                    compact, stacked, self._effective_work_width()
+                )
             )
         except NoMatches:
             pass

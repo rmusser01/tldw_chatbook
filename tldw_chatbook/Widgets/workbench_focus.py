@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
+from textual._compositor import MapGeometry
 from textual.css.query import NoMatches, QueryError
+from textual.dom import NoScreen
+from textual.errors import NoWidget
 from textual.widget import Widget
 
 
@@ -71,15 +74,20 @@ def _available_targets(
 def _resolve_focus_target(
     pane: Widget, preferred_focus_ids: tuple[str, ...]
 ) -> Widget | None:
-    # TASK-34000.8 AC#3: prefer the first control that is ON SCREEN over
-    # one painted past the terminal's edge -- F6 used to focus the note
-    # editor's Save while its region sat beyond the right edge of a
-    # 120-column terminal, with the title field in plain view under it.
-    # The off-screen control is only PASSED OVER, never ruled out: when no
-    # preferred control is on screen the first focusable one is still the
-    # landing, because focusing it may be what reveals its pane (the narrow
-    # Artifacts stage keeps its reader collapsed until F6 focuses its body:
+    # TASK-34000.8 AC#3: prefer the first control the user can see over one
+    # clipped beyond reach -- F6 used to focus the note editor's Save while
+    # its region sat beyond the right edge of a 120-column terminal, with
+    # the title field in plain view under it. The clipped control is only
+    # PASSED OVER, never ruled out: when no preferred control is visible
+    # the first focusable one is still the landing, because focusing it
+    # may be what reveals its pane (the narrow Artifacts stage keeps its
+    # reader collapsed until F6 focuses its body:
     # ``test_narrow_f6_reveals_reader_and_returns_through_items_grip``).
+    # Fix round 1 (review I-1): a control that is merely SCROLLED out of
+    # view inside a scrollable pane is NOT passed over -- focusing it lets
+    # Textual scroll it into view, which is what F6 into a scrolled pane
+    # always did (``test_workbench_focus_lands_on_a_scrolled_out_preferred_
+    # target_and_reveals_it``).
     fallback: Widget | None = None
     for focus_id in preferred_focus_ids:
         if pane.id == focus_id and _is_focusable(pane):
@@ -87,7 +95,7 @@ def _resolve_focus_target(
         widget = _query_by_id(pane, focus_id)
         if widget is None or not _is_focusable(widget):
             continue
-        if widget_is_painted_off_screen(widget):
+        if widget_is_clipped_beyond_reach(widget):
             if fallback is None:
                 fallback = widget
             continue
@@ -104,46 +112,91 @@ def _has_region(widget: Widget) -> bool:
     return region is not None and region.width > 0 and region.height > 0
 
 
-def widget_is_painted_off_screen(widget: Widget) -> bool:
-    """Whether ``widget`` has a region that does not fit inside its screen.
-
-    The laid-out-but-unseeable case: a displayed, visible, focusable
-    control whose region lies partly or wholly past the terminal's edge
-    (the Library note editor's Save at 120x36 before TASK-34000.8). A
-    widget with no region at all answers False -- it is not laid out (or
-    its pane is collapsed), which focus may legitimately reveal.
-
-    Args:
-        widget: A mounted widget.
-
-    Returns:
-        True only when the region is non-empty and the screen's region does
-        not contain it.
-    """
-    if not _has_region(widget):
-        return False
+def _map_geometry(widget: Widget) -> MapGeometry | None:
+    """The compositor's geometry for ``widget`` (region + clip), or None."""
     try:
-        screen = widget.screen
-    except Exception:  # NoScreen -- not attached to any screen
-        return False
-    return not screen.region.contains_region(widget.region)
+        return widget.screen.find_widget(widget)
+    except (NoScreen, NoWidget):
+        return None
 
 
 def widget_has_visible_region(widget: Widget) -> bool:
-    """Whether ``widget`` occupies a non-empty region inside its screen.
+    """Whether every cell of ``widget`` is painted on its screen.
 
     The geometry half of "can the user see this control" for a caller that
-    ADVERTISES it (the footer's Enter chip): no region, an off-screen
-    region and no screen all answer False.
+    ADVERTISES it (the footer's Enter chip). Checked against the
+    compositor's CLIP for the widget -- the intersection of its ancestors'
+    content regions and the screen -- not the screen's region alone, so a
+    control laid out past the edge of its own pane (the note editor's Use
+    in Console at 160x45 before TASK-34000.8, inside a 160-column screen
+    but clipped at the pane's edge) answers False (review M-1). No region,
+    a partly or wholly clipped region and no screen all answer False.
 
     Args:
         widget: A mounted widget.
 
     Returns:
-        True when the widget's region is non-empty and lies inside its
-        screen's region.
+        True when the widget's region is non-empty and its clip contains it
+        whole.
     """
-    return _has_region(widget) and not widget_is_painted_off_screen(widget)
+    if not _has_region(widget):
+        return False
+    geometry = _map_geometry(widget)
+    if geometry is None:
+        return False
+    return bool(geometry.clip.contains_region(geometry.region))
+
+
+def _scrolling_could_reveal(widget: Widget) -> bool:
+    """Whether the nearest ancestor that clips ``widget`` can scroll it in.
+
+    Walks up from the widget to the first ancestor whose content region
+    does not contain the widget's region; the widget is revealable when
+    that ancestor may scroll on every axis the widget overflows it on. A
+    scrollable pane scrolled past a control answers True; a fixed-width
+    row whose control is laid out past its right edge answers False.
+    """
+    region = widget.region
+    for ancestor in widget.ancestors:
+        if not isinstance(ancestor, Widget):
+            continue
+        container = ancestor.content_region
+        if container.contains_region(region):
+            continue
+        outside_x = region.x < container.x or region.right > container.right
+        outside_y = region.y < container.y or region.bottom > container.bottom
+        if outside_x and not ancestor.allow_horizontal_scroll:
+            return False
+        if outside_y and not ancestor.allow_vertical_scroll:
+            return False
+        return True
+    return False
+
+
+def widget_is_clipped_beyond_reach(widget: Widget) -> bool:
+    """Whether ``widget`` is laid out but cannot be seen, scrolling or not.
+
+    The laid-out-but-unseeable case the walker passes over: a displayed,
+    visible, focusable control whose region is not painted whole (clipped
+    by a non-scrollable ancestor, or past the terminal's edge -- the note
+    editor's Save at 120x36 before TASK-34000.8) and which no scrolling
+    ancestor could reveal. A widget with no region at all answers False --
+    it is not laid out (or its pane is collapsed), which focus may
+    legitimately reveal -- and so does one a scrollable pane has merely
+    scrolled out of view.
+
+    Args:
+        widget: A mounted widget.
+
+    Returns:
+        True only when the region is non-empty, not painted whole, and not
+        revealable by scrolling.
+    """
+    if not _has_region(widget):
+        return False
+    if widget_has_visible_region(widget):
+        return False
+    return not _scrolling_could_reveal(widget)
 
 
 def _focused_pane_index(
