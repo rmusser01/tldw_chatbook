@@ -354,7 +354,6 @@ ConsoleRunLogModal {
 #console-title,
 #library-title,
 #artifacts-title,
-#personas-title,
 #watchlists-collections-title,
 #schedules-title,
 #workflows-title,
@@ -405,8 +404,6 @@ ConsoleRunLogModal {
 #artifacts-list-pane,
 #artifacts-detail-pane,
 #artifacts-inspector-pane,
-#personas-list-pane,
-#personas-detail-pane,
 #personas-inspector-pane,
 #watchlists-detail-pane,
 #watchlists-inspector-pane,
@@ -661,8 +658,6 @@ ChatScreen.-focus MainNavigationBar {
 #artifacts-list-pane,
 #artifacts-detail-pane,
 #artifacts-inspector-pane,
-#personas-list-pane,
-#personas-detail-pane,
 #personas-inspector-pane,
 #watchlists-detail-pane,
 #watchlists-inspector-pane,
@@ -686,8 +681,6 @@ ChatScreen.-focus MainNavigationBar {
   margin: $ds-space-0;
 }
 
-#personas-list-pane,
-#personas-detail-pane,
 #personas-inspector-pane,
 #watchlists-detail-pane,
 #watchlists-inspector-pane,
@@ -801,8 +794,6 @@ ChatScreen.-focus MainNavigationBar {
   text-style: bold;
 }
 
-#personas-list-detail-divider,
-#personas-detail-inspector-divider,
 #watchlists-list-detail-divider,
 #watchlists-detail-inspector-divider,
 #schedules-list-detail-divider,

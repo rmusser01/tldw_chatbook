@@ -330,6 +330,9 @@ CSS_MODULES = [
     "features/_logs.tcss",
     "features/_writing.tcss",
     "features/_workflows.tcss",
+    # Roleplay frame B1: Roleplay's own vocabulary, split whole into
+    # screen_feature_roleplay.tcss (see SCREEN_OWNED_SPLITS).
+    "features/_roleplay.tcss",
     "features/config_search.tcss",
     "features/feature_alerts.tcss",
     # ADR-161 task 5: the pattern gallery's layout glue (dialog/nav preview
@@ -519,6 +522,42 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
         sheets={"workflows": "screen_feature_workflows.tcss"},
         prefixes={"workflows": ("workflow", "workflows")},
         pinned=frozenset(),
+    ),
+    # Roleplay frame B1 (spec R18, G18): Roleplay's rules load on the first
+    # visit to Roleplay. Narrow prefixes, never bare `personas`. Exact-token
+    # compose-site audit (2026-10-03, repo-relative paths, control-checked):
+    # `personas-header*`, `personas-library*` and `personas-work*` are composed
+    # only in UI/Screens/personas_screen.py and Widgets/Persona_Widgets/; the
+    # `roleplay-*` and `personas-more*`/`personas-try*` prefixes have no compose
+    # site yet. `personas-library-rows` stays pinned in boot (its `:focus` rule,
+    # Tests/UI/test_personas_library_rail_focus_outline.py). The last four
+    # entries claim SHARED tokens exactly (DestinationHeader's fixed child
+    # classes and Textual's `-active`), so Roleplay's copies of the inline
+    # header and grip rules leave boot; legal only because every Roleplay
+    # selector also carries a Roleplay token, which
+    # Tests/UI/test_roleplay_stylesheet.py enforces (a bare `.-active` rule
+    # here would restyle every app button after the first Ctrl+4).
+    ScreenOwnedSplit(
+        modules=("features/_roleplay.tcss",),
+        sheets={"roleplay": "screen_feature_roleplay.tcss"},
+        prefixes={
+            "roleplay": (
+                "roleplay-shell",
+                "roleplay-rail",
+                "roleplay-nav",
+                "roleplay-items",
+                "personas-header",
+                "personas-library",
+                "personas-work",
+                "personas-more",
+                "personas-try",
+                "workbench-header-title",
+                "workbench-header-subtitle",
+                "workbench-header-status",
+                "-active",
+            )
+        },
+        pinned=frozenset({"personas-library-rows"}),
     ),
     # TASK-32187: the largest un-split bundle module (57,721 B). Its token
     # vocabulary is NOT a single `watchlists-*` prefix -- the screen's panes

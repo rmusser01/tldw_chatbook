@@ -23,8 +23,11 @@ from Tests.UI.roleplay_frame_harness import (
     StyledRoleplayMockApp,
     assert_painted_inside,
     drop_rule_from_loaded_sheet,
+    open_styled_roleplay,
     roleplay_full_app,
     seed_mock_characters,
+    settle,
+    styled_tiers,
 )
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
@@ -63,6 +66,45 @@ async def test_the_full_app_tier_reaches_roleplay_by_both_real_routes(
     async with roleplay_full_app(size=(120, 36), entry=entry) as pilot:
         assert type(pilot.app.screen).__name__ == "PersonasScreen"
         assert pilot.app.screen.query("#personas-library-rows > ListItem")
+
+
+def test_app_stylesheets_carry_the_roleplay_sheet():
+    """APP_STYLESHEETS derives from the build's splits, so it gains the sheet."""
+    assert ROLEPLAY_SHEET in APP_STYLESHEETS
+    assert ROLEPLAY_SHEET.is_file()
+
+
+@styled_tiers
+async def test_only_the_styled_tiers_carry_the_roleplay_sheet(
+    styled_tier, mock_app_instance, one_character
+):
+    async with open_styled_roleplay(
+        styled_tier, mock_app_instance, size=(120, 36)
+    ) as pilot:
+        assert pilot.app.stylesheet.has_source(str(ROLEPLAY_SHEET), "")
+    unstyled = RoleplayMockApp(mock_app_instance)
+    async with unstyled.run_test(size=(120, 36)) as pilot:
+        await settle(pilot)
+        assert not unstyled.stylesheet.has_source(str(ROLEPLAY_SHEET), "")
+
+
+@pytest.mark.parametrize("entry", ["initial_tab", "ctrl+4"])
+async def test_the_full_app_loads_the_sheet_on_the_first_visit_only(
+    entry, one_character
+):
+    """AC#8: never parsed at boot (Home), parsed by either real route: the
+    initial tab (``_push_initial_screen``) and Ctrl+4 (in-app navigation)."""
+    at_home = []
+    async with roleplay_full_app(
+        size=(120, 36),
+        entry=entry,
+        on_home=lambda app: at_home.append(
+            app.stylesheet.has_source(str(ROLEPLAY_SHEET), "")
+        ),
+    ) as pilot:
+        assert type(pilot.app.screen).__name__ == "PersonasScreen"
+        assert pilot.app.stylesheet.has_source(str(ROLEPLAY_SHEET), "")
+    assert at_home == ([False] if entry == "ctrl+4" else [])
 
 
 def test_dropping_a_rule_that_is_not_there_is_a_loud_error():

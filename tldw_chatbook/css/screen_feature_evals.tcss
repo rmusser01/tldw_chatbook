@@ -31,6 +31,7 @@ $ds-status-approval-required: $warning;
 $ds-status-blocked: $error;
 $ds-status-error: $error;
 $ds-status-error-readable: $text-error;
+$ds-status-warning-readable: $text-warning;
 $ds-text-placeholder: $text-muted;
 $ds-text-disabled-readable: $text-muted;
 $ds-status-paused: $warning;

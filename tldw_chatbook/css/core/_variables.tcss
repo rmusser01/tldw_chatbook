@@ -61,6 +61,13 @@ $ds-status-error: $error;
    theme polarity (agentic_terminal resolves to #FF929C, within a hair of
    the old hand-tuned value). */
 $ds-status-error-readable: $text-error;
+/* Roleplay frame B1: the readable warning foreground, the sibling of
+   $ds-status-error-readable for warning words that must be READ (the
+   Roleplay header's Unsaved chip). $warning, the decorative status hue,
+   measured below AA on the panel surface in 29 of the 70 registered themes
+   (and $error in 40); Textual's generated $text-warning clears AA on all 70
+   (Tests/UI/test_theme_contrast.py; Tests/UI/test_roleplay_stylesheet.py). */
+$ds-status-warning-readable: $text-warning;
 /* task-14824 (3): Textual's stock placeholder colour ($text-disabled)
    measured 3.52:1 on an enabled ingest field and 3.49:1 on a disabled one
    -- below AA for normal text, and a 0.03 delta means a placeholder is
