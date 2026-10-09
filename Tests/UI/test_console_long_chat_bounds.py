@@ -63,9 +63,6 @@ pytestmark = pytest.mark.bootstrap_profile
 
 _CHAIN = 3_000
 _SIZE = (160, 48)
-#: The most rows a bounded window may hold. A load at 160x48 mounts ~64 of
-#: these short messages; dev mounted all 3,000.
-_WINDOW_ROWS = 300
 #: The most nodes one focus change may restyle. Dev restyled ~1,700 with
 #: the 64 rows a 3,000-message chain opens with (4,965 at 200 rows); what
 #: remains is the composer's own ``:focus-within`` subtree (~60 nodes).
@@ -189,6 +186,23 @@ async def _open(
         "the opened conversation's newest row to mount",
     )
     return console, store, native, transcript
+
+
+def _window_rows(transcript: ConsoleTranscript) -> int:
+    """The most rows a bounded window may hold: twice one load-shaped window.
+
+    One load-shaped window is the transcript's initial line budget over the
+    smallest per-message estimate in this chain: 64 of these short messages
+    at 160x48. The margin covers one near extension (at most one more window)
+    on top. A fixed 300 let a partial regression mounting 250 rows pass.
+    Dev mounted all 3,000.
+    """
+    budget = transcript._initial_window_line_budget()
+    smallest = min(map(transcript._estimated_message_lines, transcript._messages))
+    rows = 2 * -(-budget // smallest)
+    # The bound must stay far below the chain, or it proves nothing.
+    assert 0 < rows <= _CHAIN // 20, rows
+    return rows
 
 
 def _planned(transcript: ConsoleTranscript) -> list[str]:
@@ -335,18 +349,19 @@ async def test_selecting_the_first_message_of_a_3000_message_chat_mounts_a_windo
         console, _store, native, transcript = await _open(
             host, pilot, db, conversation_id, rows[-1][0]
         )
+        window_rows = _window_rows(transcript)
         heartbeat = _Heartbeat()
         heartbeat.start()
         try:
             opened = await _settled_rows(transcript, heartbeat)
-            assert 0 < len(opened) <= _WINDOW_ROWS
+            assert 0 < len(opened) <= window_rows
             first, last = native[rows[0][0]], native[rows[-1][0]]
 
             transcript.select_message(first)
 
             planned = _planned(transcript)
             assert first in planned
-            assert len(planned) <= _WINDOW_ROWS, (
+            assert len(planned) <= window_rows, (
                 f"selecting the first of {_CHAIN} messages planned {len(planned)} rows"
             )
             await _until(
@@ -356,9 +371,9 @@ async def test_selecting_the_first_message_of_a_3000_message_chat_mounts_a_windo
             mounted = await _settled_rows(transcript, heartbeat)
             assert first in mounted
             assert last not in mounted
-            assert len(mounted) <= _WINDOW_ROWS
+            assert len(mounted) <= window_rows
             region = console.query_one("#console-transcript-region")
-            assert sum(1 for _ in region.walk_children()) <= 10 * _WINDOW_ROWS
+            assert sum(1 for _ in region.walk_children()) <= 10 * window_rows
             assert transcript.selected_message_id == first
             # The jump put the selected row on screen, not just in the DOM.
             await _until_painted(host, "m0000 text")
@@ -387,6 +402,7 @@ async def test_delete_and_undo_from_the_first_of_3000_messages_stay_bounded(tmp_
             host, pilot, db, conversation_id, rows[-1][0]
         )
         first, last = native[rows[0][0]], native[rows[-1][0]]
+        window_rows = _window_rows(transcript)
         heartbeat = _Heartbeat()
         heartbeat.start()
         try:
@@ -419,7 +435,7 @@ async def test_delete_and_undo_from_the_first_of_3000_messages_stay_bounded(tmp_
             )
             planned = _planned(transcript)
             assert first in planned
-            assert len(planned) <= _WINDOW_ROWS, (
+            assert len(planned) <= window_rows, (
                 f"Undo planned {len(planned)} of {_CHAIN} restored rows"
             )
             await _until(
@@ -429,7 +445,7 @@ async def test_delete_and_undo_from_the_first_of_3000_messages_stay_bounded(tmp_
             mounted = await _settled_rows(transcript, heartbeat)
             assert first in mounted
             assert last not in mounted
-            assert len(mounted) <= _WINDOW_ROWS
+            assert len(mounted) <= window_rows
             assert len(store.messages_for_session(store.active_session_id)) == _CHAIN
             await _until_painted(host, "m0000 text")
             assert any(f"Restored {_CHAIN} messages" in n for n in notices), notices
@@ -458,6 +474,7 @@ async def test_undo_of_a_delete_from_inside_the_window_mounts_a_window(tmp_path)
             host, pilot, db, conversation_id, rows[-1][0]
         )
         first, early, last = (native[rows[i][0]] for i in (0, 30, -1))
+        window_rows = _window_rows(transcript)
         heartbeat = _Heartbeat()
         heartbeat.start()
         try:
@@ -465,7 +482,7 @@ async def test_undo_of_a_delete_from_inside_the_window_mounts_a_window(tmp_path)
             await _settled_rows(transcript, heartbeat)
             transcript.select_message(early)
             mounted = await _settled_rows(transcript, heartbeat)
-            assert early in mounted and len(mounted) <= _WINDOW_ROWS
+            assert early in mounted and len(mounted) <= window_rows
 
             await handle_console_delete_action(console._message, "delete", early)
             confirm = f"#console-message-action-delete-confirm-{early}"
@@ -483,7 +500,7 @@ async def test_undo_of_a_delete_from_inside_the_window_mounts_a_window(tmp_path)
             )
             planned = _planned(transcript)
             assert early in planned
-            assert len(planned) <= _WINDOW_ROWS, (
+            assert len(planned) <= window_rows, (
                 f"Undo planned {len(planned)} of {_CHAIN} rows"
             )
             await _until(
@@ -493,7 +510,7 @@ async def test_undo_of_a_delete_from_inside_the_window_mounts_a_window(tmp_path)
             mounted = await _settled_rows(transcript, heartbeat)
             assert early in mounted
             assert last not in mounted
-            assert len(mounted) <= _WINDOW_ROWS
+            assert len(mounted) <= window_rows
             assert len(store.messages_for_session(store.active_session_id)) == _CHAIN
             await _until_painted(host, "m0030 text")
         finally:
@@ -783,14 +800,30 @@ async def test_an_idle_post_action_sync_restyles_nothing_and_walks_no_row(tmp_pa
             for _attempt in range(2):
                 with _restyles(host) as restyled, _walked() as walked:
                     await console._sync_native_console_chat_ui()
-                assert not restyled, f"an idle sync restyled {len(restyled)} nodes"
+                assert not restyled, (
+                    f"an idle sync restyled {len(restyled)} nodes: "
+                    f"{[node.id or type(node).__name__ for node in restyled]}"
+                )
                 rows_walked = [node for node in walked if _inside(node, transcript)]
                 assert not rows_walked, (
                     f"an idle sync walked {len(rows_walked)} transcript nodes "
                     f"({len(walked)} in all)"
                 )
-            # The four rail values the scoped lookups write still arrive.
-            assert console.query_one("#console-model-section-temperature")
+            # The four rail values the scoped lookups write still arrive:
+            # overwrite them, and the next sync writes every one back.
+            rail = console.query_one("#console-left-rail")
+            written = [
+                rail.query_one(
+                    f"#console-model-section-{row} .console-model-section-value"
+                )
+                for row in ("temperature", "max-tokens", "streaming")
+            ] + [rail.query_one("#console-model-section-recovery")]
+            values = [str(widget.content) for widget in written]
+            assert all(values[:3]), values
+            for widget in written:
+                widget.update("stale")
+            await console._sync_native_console_chat_ui()
+            assert [str(widget.content) for widget in written] == values
         finally:
             await heartbeat.stop()
 
@@ -867,7 +900,6 @@ async def test_an_idle_sync_reads_no_lineage_for_a_chat_without_memory(tmp_path)
             await heartbeat.stop()
 
 
-
 @pytest.mark.asyncio
 async def test_a_selection_projects_library_activity_per_active_turn_once(tmp_path):
     """5.2: moving the selection does not project every turn of the chat.
@@ -908,8 +940,9 @@ async def test_a_selection_projects_library_activity_per_active_turn_once(tmp_pa
             transcript.select_message(first)
             # The real selection path re-projects for the new selection.
             await _until(
-                lambda: (console._library_activity._projection_token or ())[3:4]
-                == (first,),
+                lambda: (
+                    (console._library_activity._projection_token or ())[3:4] == (first,)
+                ),
                 "the selection's Library activity projection",
             )
         finally:
@@ -919,6 +952,7 @@ async def test_a_selection_projects_library_activity_per_active_turn_once(tmp_pa
         assert len(projected) <= 2, (
             f"one selection projected {len(projected)} turns of a 200-turn chat"
         )
+
 
 @pytest.mark.asyncio
 async def test_an_armed_delete_with_3000_off_path_messages_syncs_like_none(tmp_path):
