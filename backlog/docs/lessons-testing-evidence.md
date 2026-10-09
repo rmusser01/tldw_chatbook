@@ -14,12 +14,23 @@ Enter queued the same prompt twice (there the second Enter landed after the
 first send settled and simply sent the text the commit had left). Every
 mounted test of the dedupe passed: none of them reloaded the draft.
 
+The first fix made the opposite mistake with the same counter: it read "the
+generation moved" as "another send took this capture". A clear (Ctrl+U)
+moves it too, so Enter on "y", Ctrl+U, "z" during a running send dropped the
+held "y" silently (dev sent it), and a draft the user had cleared drew
+"Your message was sent, but the composer still shows it". All 10 new tests
+passed; none of them cleared the composer after a press. The checkpoint
+review found both by probing the real ChatScreen path.
+
 **What to do.** When a fence keys on a revision counter, list every
 operation that bumps it (here: load, commit, clear, stashed-draft restore,
 snapshot restore, the improve rewrite) and mark the ones that leave the
-content unchanged. Test the fence across each of those, not only across
-typing. `Tests/UI/test_console_send_resend_guard.py` (the round-trip cases)
-is the worked example.
+content unchanged, and the ones that are not the event the fence means. A
+counter says something changed, not who changed it: when the fence means
+"a send took this", have the send record it (here, spent generations) instead
+of inferring it from the counter. Test the fence across each of those
+operations, not only across typing. `Tests/UI/test_console_send_resend_guard.py`
+(the round-trip and clear-after-press cases) is the worked example.
 
 ## Moving blocking work to a thread frees nothing if a pump awaits the caller (TASK-33620.15, 2026-10-05)
 
