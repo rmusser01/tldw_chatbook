@@ -151,6 +151,12 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
     "idx_chat_dictionaries_deleted": IndexPin("chat_dictionaries", False, ("deleted",)),
     "idx_chat_dictionaries_enabled": IndexPin("chat_dictionaries", False, ("enabled",)),
     "idx_chat_dictionaries_name": IndexPin("chat_dictionaries", False, ("name",)),
+    # ADR-224: partial expression index serving the character browse
+    # visibility predicate + NOCASE name order (key tuple pinned; the
+    # partial-index WHERE is deliberately not, per the module header).
+    "idx_character_cards_visible_name": IndexPin(
+        "character_cards", False, ("name",)
+    ),
     "idx_collkw_kw": IndexPin("collection_keywords", False, ("keyword_id",)),
     "idx_console_aux_attempts_conversation_started": IndexPin(
         "console_auxiliary_attempts", False, ("conversation_id", "started_at")
@@ -270,6 +276,11 @@ EXPECTED_CHACHANOTES_INDEXES: dict[str, IndexPin] = {
         ("segment_id", "predecessor_head_id"),
     ),
     "idx_conv_char": IndexPin("conversations", False, ("character_id",)),
+    # ADR-224: keyset order (character_id equality prefix, then
+    # last_modified DESC, id DESC) for get_conversations_for_character.
+    "idx_conv_char_lm": IndexPin(
+        "conversations", False, ("character_id", "last_modified", "id")
+    ),
     "idx_conversation_dictionaries_conv": IndexPin(
         "conversation_dictionaries", False, ("conversation_id",)
     ),

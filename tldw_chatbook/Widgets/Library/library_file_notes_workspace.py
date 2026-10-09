@@ -331,6 +331,16 @@ FILE_TREE_BATCH_SIZE = 100
 _PATH_FIT_ATTEMPT_LIMIT = 4
 
 
+#: task-11: poll backoff for the reconcile timer. The vault signature gate
+#: makes quiet ticks nearly free (walk stats only), but the cadence itself
+#: still costs wakeups; after four consecutive signature-unchanged ticks
+#: the interval decays to the backoff ceiling and snaps back to the active
+#: cadence on the first real change. The ceiling never overrides a slower
+#: configured ``poll_interval``.
+_POLL_BACKOFF_SECONDS = 6.0
+_POLL_BACKOFF_AFTER_TICKS = 4
+
+
 class _ServiceLockBusy(Exception):
     """An earlier File Notes operation still owns the service lock."""
 
@@ -1546,6 +1556,12 @@ class LibraryFileNotesWorkspace(Vertical):
         self._root_status_summary = "Choose a notes folder."
 
         self._poll_interval = max(0.02, poll_interval)
+        self._poll_base_interval = self._poll_interval
+        self._poll_backoff_interval = max(
+            self._poll_base_interval,
+            _POLL_BACKOFF_SECONDS,
+        )
+        self._poll_quiet_ticks = 0
         self._autosave_delay = max(0.01, autosave_delay)
         self._poll_timer: Timer | None = None
         self._autosave_timer: Timer | None = None
@@ -1637,6 +1653,9 @@ class LibraryFileNotesWorkspace(Vertical):
         self._path_task_opener_id = ""
         self._path_task_editor_lease: _EditorReadOnlyLease | None = None
         self._git_observed_changes: tuple[SequencedSessionChange, ...] | None = None
+        # task-11: the owner's session revision as of the last session
+        # refresh. None forces the first refresh after every binding reset.
+        self._git_observed_change_version: tuple[int, int] | None = None
         self._git_refresh_timer: Timer | None = None
         self._git_refresh_after_mutation = False
         self._git_last_action: _GitLastAction | None = None
@@ -2979,6 +2998,9 @@ class LibraryFileNotesWorkspace(Vertical):
                         "Selected notes root changed; the commit draft was cleared."
                     )
                     self._git_observed_changes = None
+                    # task-11: the new binding's log is a different fact
+                    # stream; force its first refresh to run.
+                    self._git_observed_change_version = None
                     self._git_status_task = None
                     self._git_status_task_binding = None
                     self._git_status_failure = ""
@@ -3865,6 +3887,18 @@ class LibraryFileNotesWorkspace(Vertical):
         binding = self._session_binding
         changes: tuple[SequencedSessionChange, ...] = ()
         if binding is not None:
+            # task-11: one tuple compare decides whether anything was
+            # appended, merged, retired, cleared, or re-trusted since the
+            # last refresh. Equal means the snapshot below would be
+            # bit-identical for everything this method reads, so the
+            # coalesce, the tuple compare, the label validation, and the
+            # push-state rehydrate are all provably no-ops -- skip them.
+            # (Push operations have their own observer tasks; they do not
+            # ride this refresh.)
+            revision = self._session_owner.session_revision()
+            if revision == self._git_observed_change_version:
+                return
+            self._git_observed_change_version = revision
             snapshot = self._session_owner.snapshot(binding)
             changes = snapshot.changes
             service = self._session_git_service()
@@ -6538,17 +6572,30 @@ class LibraryFileNotesWorkspace(Vertical):
                 return False
             try:
                 result = await asyncio.to_thread(service.reconcile)
-                deleted = await self._load_deleted_paths(
-                    replica=self._replica,
-                    service=service,
+                # task-11: the tombstone list cannot move while the vault
+                # signature is unchanged (only a full reconcile or a user
+                # restore/delete changes it, and both refresh it
+                # themselves), so the quiet tick reuses the retained
+                # tuple instead of re-reading the replica.
+                deleted = (
+                    self._deleted_paths
+                    if result.vault_unchanged
+                    else await self._load_deleted_paths(
+                        replica=self._replica,
+                        service=service,
+                    )
                 )
             except Exception as error:
                 self._set_action_status(f"Refresh failed: {error}")
+                # A failed reconcile never earns backoff: stay active so
+                # the first healthy pass is picked up immediately.
+                self._record_poll_activity(vault_unchanged=False)
                 return False
             if self._path_result_is_stale(service, generation) or (
                 not self.children or self._path_transitioning
             ):
                 return False
+            self._record_poll_activity(vault_unchanged=result.vault_unchanged)
             if not self._apply_reconcile(result, deleted):
                 return False
             await self._handle_open_external_change(result)
@@ -6605,6 +6652,40 @@ class LibraryFileNotesWorkspace(Vertical):
             self._set_action_status(reloaded.replica_warning or "")
             return
         self._apply_opened_document(reloaded)
+
+    def _set_poll_interval(self, seconds: float) -> None:
+        """Re-arm the poll timer only when the cadence changes (task-11).
+
+        Stopping and recreating is safe even from inside a tick callback:
+        Textual delivers the cancellation to the timer task after the
+        callback returns. Re-arming on every call would reset the phase, so
+        unchanged cadences are a no-op. Before mount (``_poll_timer`` is
+        None) only the interval value moves; ``on_mount`` arms the timer
+        with whatever the value is then.
+        """
+        if self._poll_timer is not None and seconds == self._poll_interval:
+            return
+        self._poll_interval = seconds
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer = self.set_interval(seconds, self._start_poll)
+
+    def _record_poll_activity(self, *, vault_unchanged: bool) -> None:
+        """Advance the poll backoff from one reconcile outcome (task-11).
+
+        A vault whose discovery signature moved keeps the active cadence;
+        four consecutive quiet ticks decay the timer to the backoff
+        ceiling. Errors and offline results arrive as ``vault_unchanged``
+        False, so a struggling root never backs off.
+        """
+        if not vault_unchanged:
+            if self._poll_quiet_ticks:
+                self._poll_quiet_ticks = 0
+                self._set_poll_interval(self._poll_base_interval)
+            return
+        self._poll_quiet_ticks += 1
+        if self._poll_quiet_ticks == _POLL_BACKOFF_AFTER_TICKS:
+            self._set_poll_interval(self._poll_backoff_interval)
 
     def _start_poll(self) -> None:
         # TASK-22219: skip the filesystem walk while this widget's screen is

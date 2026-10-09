@@ -7,6 +7,8 @@ independently of characters, allowing shared lorebooks across conversations.
 
 import json
 import sqlite3
+import threading
+import weakref
 from typing import List, Dict, Any, Optional, Set
 
 from loguru import logger
@@ -17,11 +19,108 @@ from tldw_chatbook.DB.ChaChaNotes_DB import (
     ConflictError,
     CharactersRAGDBError,
 )
+from tldw_chatbook.DB.transaction_observer import (
+    current_managed_transaction,
+    register_transaction_completion,
+)
 
 # Shared key for the embedded-snapshot list under a character's
 # ``extensions`` dict. Centralized so the write side (attach/detach) and the
 # read side (resolver, editor sync) can never drift into a typo mismatch.
 CHARACTER_WORLD_BOOKS_KEY = "character_world_books"
+
+# Attribute name for the per-db store-generation cell (ADR-221). The cell
+# lives on the CharactersRAGDB instance — not on this manager — because the
+# send path constructs a ``WorldBookManager`` per call; a per-instance counter
+# would be invisible across calls and could never invalidate anything.
+_WORLD_BOOK_GENERATION_ATTR = "_world_book_store_generation_cell"
+_WORLD_BOOK_PENDING_NATIVE_ATTR = "_world_book_pending_native_generations"
+_generation_lock = threading.RLock()
+
+
+def _generation_cell(db: Any, attribute: str = _WORLD_BOOK_GENERATION_ATTR) -> List[int]:
+    """Return the db's mutable generation counter cell, creating it at 0.
+
+    A one-element list keeps reads and bumps single attribute lookups; the
+    cell is per-db-object so every ``WorldBookManager`` over the same
+    connection observes the same monotonic counter.
+    """
+    with _generation_lock:
+        cell = getattr(db, attribute, None)
+        if cell is None:
+            cell = [0]
+            setattr(db, attribute, cell)
+        return cell
+
+
+def _settle_native_generations(
+    db: Any, generation_attribute: str, pending_attribute: str
+) -> bool:
+    """Under the generation lock, retire completed borrowed transactions.
+
+    The DB observer owns managed transactions only. Native borrowers keep
+    their own commit/rollback authority, so their weak handles suppress cache
+    reuse while active. Either completion conservatively ages the cache.
+    """
+    pending = getattr(db, pending_attribute, None)
+    if not pending:
+        return True
+    for connection_ref, writes in tuple(pending.items()):
+        connection = connection_ref()
+        try:
+            active = connection is not None and connection.in_transaction
+        except sqlite3.ProgrammingError:  # closed; no transaction survives
+            active = False
+        if not active:
+            _generation_cell(db, generation_attribute)[0] += writes
+            del pending[connection_ref]
+    return not pending
+
+
+def _store_generation(db: Any, generation_attribute: str, pending_attribute: str) -> int:
+    """Read a store revision, retiring native transactions that have ended."""
+    with _generation_lock:
+        _settle_native_generations(db, generation_attribute, pending_attribute)
+        return _generation_cell(db, generation_attribute)[0]
+
+
+def _cache_store_generation(
+    db: Any, generation_attribute: str, pending_attribute: str
+) -> int | None:
+    """Only committed views are eligible for caching."""
+    connection = db.get_connection()
+    with _generation_lock:
+        ready = _settle_native_generations(db, generation_attribute, pending_attribute)
+        if not ready or connection.in_transaction:
+            return None
+        return _generation_cell(db, generation_attribute)[0]
+
+
+def _bump_store_generation(
+    db: Any, generation_attribute: str, pending_attribute: str
+) -> None:
+    """Share the DB's managed commit observer and retain native completion authority."""
+    connection = db.get_connection()
+    transaction = current_managed_transaction(connection)
+    cell = _generation_cell(db, generation_attribute)
+
+    def complete(committed: bool | None) -> None:
+        if committed is not False:
+            with _generation_lock:
+                cell[0] += 1
+
+    if transaction is not None:
+        register_transaction_completion(connection, transaction, complete)
+    elif connection.in_transaction:
+        with _generation_lock:
+            pending = getattr(db, pending_attribute, None)
+            if pending is None:
+                pending = {}
+                setattr(db, pending_attribute, pending)
+            connection_ref = weakref.ref(connection)
+            pending[connection_ref] = pending.get(connection_ref, 0) + 1
+    else:
+        complete(True)
 
 
 def _coerce_int(value: Any, default: int = 0) -> int:
@@ -145,6 +244,37 @@ class WorldBookManager:
         """
         self.db = db
 
+    # --- Store generation (ADR-221) ---
+
+    @property
+    def generation(self) -> int:
+        """Monotonic store generation; 0 until the first committed write.
+
+        Every mutating method of this manager (book/entry CRUD, conversation
+        and character associations, imports through their underlying creates)
+        bumps the shared per-db counter after its outer transaction commits.
+        Borrowed native writes age it conservatively when their transaction
+        ends, since the caller owns completion. The send path keys its
+        prompt-injection processor cache on this value, so any bump
+        invalidates every cached processor for this store.
+        """
+        return _store_generation(
+            self.db, _WORLD_BOOK_GENERATION_ATTR, _WORLD_BOOK_PENDING_NATIVE_ATTR
+        )
+
+    @property
+    def cache_generation(self) -> int | None:
+        """Return a reusable committed generation, or None during native work."""
+        return _cache_store_generation(
+            self.db, _WORLD_BOOK_GENERATION_ATTR, _WORLD_BOOK_PENDING_NATIVE_ATTR
+        )
+
+    def _bump_generation(self) -> None:
+        """Publish invalidation only after the write's transaction completes."""
+        _bump_store_generation(
+            self.db, _WORLD_BOOK_GENERATION_ATTR, _WORLD_BOOK_PENDING_NATIVE_ATTR
+        )
+
     # --- World Book CRUD Operations ---
 
     def create_world_book(
@@ -198,6 +328,7 @@ class WorldBookManager:
                     ),
                 )
                 world_book_id = cursor.lastrowid
+                self._bump_generation()
                 logger.info(f"Created world book '{name}' with ID {world_book_id}")
                 return world_book_id
         except sqlite3.IntegrityError as e:
@@ -411,6 +542,7 @@ class WorldBookManager:
                             f"Version mismatch updating world book {world_book_id}"
                         )
                     return False
+                self._bump_generation()
                 return True
         except sqlite3.IntegrityError as e:
             if "UNIQUE constraint failed" in str(e):
@@ -453,6 +585,7 @@ class WorldBookManager:
                         f"Version mismatch deleting world book {world_book_id}"
                     )
                 return False
+            self._bump_generation()
             return True
 
     # --- World Book Entry CRUD Operations ---
@@ -532,6 +665,7 @@ class WorldBookManager:
                 ),
             )
             entry_id = cursor.lastrowid
+            self._bump_generation()
             logger.info(f"Created world book entry {entry_id} for book {world_book_id}")
             return entry_id
 
@@ -588,6 +722,39 @@ class WorldBookManager:
 
             return entries
 
+    def count_entries_for_books(self, book_ids: List[int]) -> Dict[str, int]:
+        """
+        Count entries per world book in ONE grouped query.
+
+        Answers exactly what ``len(get_world_book_entries(book_id))``
+        answered per book -- same filter (every entry row of the book,
+        enabled or not; entries carry no soft-delete flag) -- so callers
+        like the personas lore render can replace their per-book entry
+        reads (task 19c).
+
+        Args:
+            book_ids: Book ids to count. Duplicates are ignored; ids with
+                no entries answer 0.
+
+        Returns:
+            Dict mapping ``str(book_id)`` to that book's entry count; every
+            requested id is present in the result.
+        """
+        unique_ids = list(dict.fromkeys(int(book_id) for book_id in book_ids))
+        if not unique_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in unique_ids)
+        query = (
+            "SELECT world_book_id, COUNT(*) FROM world_book_entries "
+            f"WHERE world_book_id IN ({placeholders}) GROUP BY world_book_id"
+        )
+        counts: Dict[str, int] = {str(book_id): 0 for book_id in unique_ids}
+        with self.db.transaction() as cursor:
+            cursor.execute(query, unique_ids)
+            for book_id, count in cursor.fetchall():
+                counts[str(book_id)] = count
+        return counts
+
     def update_world_book_entry(self, entry_id: int, **kwargs) -> bool:
         """
         Update a world book entry.
@@ -639,6 +806,8 @@ class WorldBookManager:
 
         with self.db.transaction() as cursor:
             cursor.execute(query, params)
+            if cursor.rowcount > 0:
+                self._bump_generation()
             return cursor.rowcount > 0
 
     def delete_world_book_entry(self, entry_id: int) -> bool:
@@ -655,6 +824,8 @@ class WorldBookManager:
 
         with self.db.transaction() as cursor:
             cursor.execute(query, (entry_id,))
+            if cursor.rowcount > 0:
+                self._bump_generation()
             return cursor.rowcount > 0
 
     # --- Conversation Association Functions ---
@@ -680,6 +851,7 @@ class WorldBookManager:
 
         with self.db.transaction() as cursor:
             cursor.execute(query, (conversation_id, world_book_id, priority))
+            self._bump_generation()
             return True
 
     def disassociate_world_book_from_conversation(
@@ -702,6 +874,8 @@ class WorldBookManager:
 
         with self.db.transaction() as cursor:
             cursor.execute(query, (conversation_id, world_book_id))
+            if cursor.rowcount > 0:
+                self._bump_generation()
             return cursor.rowcount > 0
 
     def get_world_books_for_conversation(
@@ -817,6 +991,10 @@ class WorldBookManager:
             {"extensions": ext},
             expected_version=record["version"],
         )
+        # Embedded-snapshot writes change what the send path injects for the
+        # character, so they age the store like any other book mutation
+        # (single seam for attach + detach).
+        self._bump_generation()
 
     def attach_world_book_to_character(
         self, world_book_id: int, character_id: int

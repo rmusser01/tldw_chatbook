@@ -20,16 +20,29 @@ The module uses a simple schema that tracks:
 
 import sqlite3
 import json
+import sys
 import threading
 import time
+from array import array
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Iterator, List, Dict, Optional, Any, Tuple, Union
+from typing import (
+    Iterable,
+    Iterator,
+    List,
+    Dict,
+    Optional,
+    Any,
+    Sequence,
+    Tuple,
+    Union,
+)
 from loguru import logger
 from ..Metrics.metrics_logger import log_counter, log_histogram
 from .private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import lexical_path
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 from tldw_chatbook.Backup_Recovery.participants import (
     _core_access,
     _core_cached_connection,
@@ -47,6 +60,59 @@ INSERT OR REPLACE INTO indexed_items
 (item_id, item_type, last_indexed, last_modified, chunk_count, metadata)
 VALUES (?, ?, ?, ?, ?, ?)
 """
+
+#: ADR-223 / TASK-34420: hard ceiling on persisted embedding-cache rows.
+#: 200k rows of a 384-dim float32 vector (~1.5 KB blob + ~140 B of
+#: key/timestamp) is ~340 MB in the user data dir -- a defensible ceiling
+#: for a rebuildable cache; 768-dim models double it, which is when the
+#: cap is doing its job. Eviction is FIFO by ``(created_at, rowid)`` inside
+#: the insert transaction; see backlog/decisions/223-*.md for the math and
+#: why FIFO over LRU (no write amplification on the read path).
+EMBEDDING_CACHE_MAX_ROWS = 200_000
+
+#: IN-clause chunk for cache lookups: SQLite's default host-parameter
+#: ceiling is 999, so 500 placeholders stays under it with headroom.
+EMBEDDING_CACHE_LOOKUP_CHUNK = 500
+
+# Tracking reads are bounded to the current ingestion batch, with one extra
+# parameter for item_type inside SQLite's conservative 999-parameter limit.
+INDEXED_ITEMS_LOOKUP_CHUNK = 500
+
+#: Shared by the cache write path (one executemany, one transaction).
+_STORE_EMBEDDINGS_SQL = """
+INSERT OR REPLACE INTO embedding_cache
+(model_id, content_hash, vector, created_at)
+VALUES (?, ?, ?, ?)
+"""
+
+
+def _encode_embedding_vector(vector: Sequence[float]) -> bytes:
+    """Serialize an embedding as little-endian raw float32 bytes (ADR-223).
+
+    stdlib ``array`` (not numpy) keeps the DB layer dependency-free; the
+    explicit byteswap makes big-endian hosts still write little-endian,
+    which is the on-disk format this table commits to.
+    """
+    packed = array("f", vector)
+    if sys.byteorder != "little":
+        packed.byteswap()
+    return packed.tobytes()
+
+
+def _decode_embedding_vector(blob: bytes) -> Optional[List[float]]:
+    """Decode a cached vector blob; ``None`` when the blob is corrupt.
+
+    A row whose blob length is not a multiple of 4 cannot be float32 data;
+    the caller treats it as absent (a corrupt cache row must never crash
+    indexing).
+    """
+    if len(blob) % 4:
+        return None
+    packed = array("f")
+    packed.frombytes(blob)
+    if sys.byteorder != "little":
+        packed.byteswap()
+    return packed.tolist()
 
 
 class RAGIndexingDB:
@@ -77,13 +143,21 @@ class RAGIndexingDB:
     #: connection is known-good without a ping.
     _LIVENESS_PING_IDLE_SECONDS = 30.0
 
-    def __init__(self, db_path: Union[str, Path], client_id: str = "default"):
+    def __init__(
+        self,
+        db_path: Union[str, Path],
+        client_id: str = "default",
+        embedding_cache_max_rows: int = EMBEDDING_CACHE_MAX_ROWS,
+    ):
         """
         Initialize the RAG indexing database.
 
         Args:
             db_path: Path to the SQLite database file or ':memory:'
             client_id: Client identifier (for future multi-client support)
+            embedding_cache_max_rows: Row-count cap for the embedding
+                cache table (ADR-223); tests shrink it to exercise
+                eviction.
         """
         # Handle path types consistently
         if isinstance(db_path, Path):
@@ -97,6 +171,7 @@ class RAGIndexingDB:
 
         self.db_path_str = str(self.db_path) if not self.is_memory_db else ":memory:"
         self.client_id = client_id
+        self.embedding_cache_max_rows = int(embedding_cache_max_rows)
 
         # Must precede _initialize_schema(): it already uses the held
         # connection.
@@ -298,6 +373,26 @@ class RAGIndexingDB:
             indexed_items INTEGER DEFAULT 0,
             metadata TEXT
         );
+
+        -- ADR-223 / TASK-34420: persistent content-hash embedding cache.
+        -- Keyed by (model_id, sha256(text)) so an unchanged re-embed after
+        -- a restart is a table read instead of a provider/model embed call.
+        -- This DB has no schema-version chain (no PRAGMA user_version, no
+        -- DB/migrations entry); idempotent CREATE IF NOT EXISTS on open is
+        -- its migration convention, and the table is purely additive -- old
+        -- readers ignore it, new readers create it on open, and it is never
+        -- authoritative (rebuildable from source content).
+        CREATE TABLE IF NOT EXISTS embedding_cache (
+            model_id TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            vector BLOB NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (model_id, content_hash)
+        );
+
+        -- Supports the eviction prune (oldest-first by created_at).
+        CREATE INDEX IF NOT EXISTS idx_embedding_cache_created
+        ON embedding_cache(created_at);
         """
 
         with self.connection() as conn:
@@ -571,6 +666,186 @@ class RAGIndexingDB:
             logger.error(f"Error getting indexed item info: {e}")
             raise
 
+    def get_cached_embeddings(
+        self, model_id: str, content_hashes: Sequence[str]
+    ) -> Dict[str, List[float]]:
+        """Look up cached embedding vectors by content hash (ADR-223).
+
+        Reads are chunked into ``IN (...)`` queries of at most
+        ``EMBEDDING_CACHE_LOOKUP_CHUNK`` placeholders (SQLite's default
+        host-parameter ceiling is 999). Duplicate hashes are collapsed
+        before querying. A row whose vector blob fails to decode is
+        skipped (logged): a corrupt cache row must be treated as a miss,
+        never crash the caller.
+
+        Args:
+            model_id: Embedding model identity the vectors belong to.
+            content_hashes: sha256 hex digests of the texts being embedded.
+
+        Returns:
+            Mapping of ``content_hash -> vector`` for every requested hash
+            that has a cached, decodable vector.
+        """
+        if not content_hashes:
+            return {}
+
+        unique_hashes = list(dict.fromkeys(content_hashes))
+        found: Dict[str, List[float]] = {}
+        start_time = time.time()
+        try:
+            with self.connection() as conn:
+                for start in range(0, len(unique_hashes), EMBEDDING_CACHE_LOOKUP_CHUNK):
+                    chunk = unique_hashes[
+                        start : start + EMBEDDING_CACHE_LOOKUP_CHUNK
+                    ]
+                    placeholders = ",".join("?" * len(chunk))
+                    cursor = conn.execute(
+                        "SELECT content_hash, vector FROM embedding_cache "
+                        f"WHERE model_id = ? AND content_hash IN ({placeholders})",
+                        (model_id, *chunk),
+                    )
+                    for row in cursor:
+                        vector = _decode_embedding_vector(row["vector"])
+                        if vector is None:
+                            logger.warning(
+                                "embedding_cache: corrupt vector blob; treating as a miss"
+                            )
+                            continue
+                        found[row["content_hash"]] = vector
+        except Exception as e:
+            log_counter(
+                "rag_indexing_db_operation_count",
+                labels={
+                    "operation": "embedding_cache_lookup",
+                    "status": "error",
+                    "error_type": type(e).__name__,
+                },
+            )
+            logger.error(
+                f"Error looking up cached embeddings (error_type={type(e).__name__})"
+            )
+            raise
+
+        log_histogram(
+            "rag_indexing_db_operation_duration",
+            time.time() - start_time,
+            labels={"operation": "embedding_cache_lookup"},
+        )
+        log_counter(
+            "rag_indexing_db_operation_count",
+            labels={
+                "operation": "embedding_cache_lookup",
+                "status": "success",
+                "requested": str(len(unique_hashes)),
+                "hits": str(len(found)),
+            },
+        )
+        return found
+
+    def store_cached_embeddings(
+        self, model_id: str, rows: Sequence[Tuple[str, Sequence[float]]]
+    ) -> None:
+        """Persist embedding vectors keyed by content hash (ADR-223).
+
+        One ``executemany`` of ``INSERT OR REPLACE`` inside one
+        transaction, so a batch lands atomically; if the table is over
+        ``embedding_cache_max_rows`` after the insert, the overflow is
+        pruned oldest-first (``created_at`` then ``rowid`` for
+        deterministic FIFO within a same-timestamp batch) **in the same
+        transaction**. Duplicate hashes within one call collapse (last
+        write wins). Vectors are stored as little-endian float32 bytes.
+
+        Args:
+            model_id: Embedding model identity the vectors belong to.
+            rows: ``(content_hash, vector)`` pairs to persist.
+
+        Raises:
+            Exception: Re-raised after the transaction rolls back.
+        """
+        by_hash: Dict[str, Sequence[float]] = {}
+        for content_hash, vector in rows:
+            by_hash[content_hash] = vector
+        if not by_hash:
+            return
+
+        now = utc_now_iso()
+        payload = [
+            (model_id, content_hash, _encode_embedding_vector(vector), now)
+            for content_hash, vector in by_hash.items()
+        ]
+        start_time = time.time()
+        try:
+            with self.transaction() as conn:
+                conn.executemany(_STORE_EMBEDDINGS_SQL, payload)
+                overflow = conn.execute(
+                    "SELECT COUNT(*) - ? FROM embedding_cache",
+                    (self.embedding_cache_max_rows,),
+                ).fetchone()[0]
+                if overflow > 0:
+                    conn.execute(
+                        "DELETE FROM embedding_cache WHERE rowid IN ("
+                        "SELECT rowid FROM embedding_cache "
+                        "ORDER BY created_at ASC, rowid ASC LIMIT ?)",
+                        (overflow,),
+                    )
+        except Exception as e:
+            log_counter(
+                "rag_indexing_db_operation_count",
+                labels={
+                    "operation": "embedding_cache_store",
+                    "status": "error",
+                    "error_type": type(e).__name__,
+                },
+            )
+            logger.error(
+                f"Error storing {len(payload)} cached embedding(s) "
+                f"(error_type={type(e).__name__})"
+            )
+            raise
+
+        log_histogram(
+            "rag_indexing_db_operation_duration",
+            time.time() - start_time,
+            labels={"operation": "embedding_cache_store"},
+        )
+        log_counter(
+            "rag_indexing_db_operation_count",
+            labels={
+                "operation": "embedding_cache_store",
+                "status": "success",
+                "batch_size": str(len(payload)),
+            },
+        )
+
+    def get_indexed_items_by_ids(
+        self, item_type: str, item_ids: Sequence[str]
+    ) -> Dict[str, datetime]:
+        """Read modification timestamps for only the requested tracking IDs.
+
+        Args:
+            item_type: Type of the requested items.
+            item_ids: Incoming batch IDs; duplicate IDs are read once.
+
+        Returns:
+            Existing IDs mapped to their stored timestamps, retaining offsets.
+        """
+        unique_ids = list(dict.fromkeys(item_ids))
+        if not unique_ids:
+            return {}
+        found: Dict[str, datetime] = {}
+        with self.connection() as conn:
+            for start in range(0, len(unique_ids), INDEXED_ITEMS_LOOKUP_CHUNK):
+                chunk = unique_ids[start : start + INDEXED_ITEMS_LOOKUP_CHUNK]
+                placeholders = ",".join("?" * len(chunk))
+                cursor = conn.execute(
+                    "SELECT item_id, last_modified FROM indexed_items "
+                    f"WHERE item_type = ? AND item_id IN ({placeholders})",
+                    (item_type, *chunk),
+                )
+                for row in cursor:
+                    found[row["item_id"]] = datetime.fromisoformat(row["last_modified"])
+        return found
+
     def get_indexed_items_by_type(self, item_type: str) -> Dict[str, datetime]:
         """
         Get all indexed items of a specific type with their last modified times.
@@ -801,11 +1076,14 @@ class RAGIndexingDB:
 
     def clear_all(self):
         """Clear all indexing tracking data."""
-        # Two statements: under autocommit they would commit
+        # Multiple statements: under autocommit they would commit
         # independently, so an explicit transaction keeps the wipe atomic.
+        # The embedding cache (ADR-223) is rebuildable tracking state too --
+        # a cache reset that left half the cache behind would defeat itself.
         with self.transaction() as conn:
             conn.execute("DELETE FROM indexed_items")
             conn.execute("DELETE FROM collection_state")
+            conn.execute("DELETE FROM embedding_cache")
         logger.warning("Cleared all RAG indexing tracking data")
 
     def is_item_indexed(self, item_id: str, item_type: str) -> bool:

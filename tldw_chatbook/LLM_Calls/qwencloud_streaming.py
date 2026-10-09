@@ -905,13 +905,20 @@ class _ChatCompletionsStreamTranslator:
 
 
 class QwenCloudStream(Iterator[dict[str, Any]]):
-    """Own and normalize one live QwenCloud streaming response."""
+    """Own and normalize one live QwenCloud streaming response.
+
+    ADR-222 (TASK-34418): ``session`` is optional. Provider calls draw
+    their session from the per-thread registry, which owns its lifecycle;
+    those callers pass ``session=None`` and the stream closes only its
+    response. Passing a session keeps the pre-ADR-222 behaviour of closing
+    both (used by tests and any dedicated-session caller).
+    """
 
     def __init__(
         self,
         *,
         response: requests.Response,
-        session: requests.Session,
+        session: requests.Session | None = None,
         api_mode: QwenCloudAPIMode,
     ) -> None:
         self._response = response
@@ -1008,12 +1015,13 @@ class QwenCloudStream(Iterator[dict[str, Any]]):
             return _STREAM_READ_FAILED
 
     def close(self) -> None:
-        """Close the response and its dedicated session exactly once."""
+        """Close the response (and its dedicated session, if any) exactly once."""
         if self._closed:
             return
         self._closed = True
         _best_effort_close(self._response)
-        _best_effort_close(self._session)
+        if self._session is not None:
+            _best_effort_close(self._session)
 
     @staticmethod
     def _decode_event(record: str) -> Mapping[str, Any]:

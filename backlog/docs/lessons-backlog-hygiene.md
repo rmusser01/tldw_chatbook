@@ -1251,3 +1251,9 @@ showed it (`2 insertions(+), 12 deletions(-)`); the CLI printed nothing unusual.
 **What to do.** Use `--notes` only on a task with no notes yet. To add to a task that
 has history, use `--append-notes`. After any task edit, check `git diff --stat` on the
 file: deletions you did not intend mean the edit replaced something.
+
+## Never `git stash` inside a linked worktree
+
+Incident: during the non-console efficiency remediation branch (2026-10-06/07, 21 tasks via dispatched implementers), two separate implementers ran `git stash` inside the `/tmp/tldw-dev-review` worktree — the first popped the user's `stash@{0}` (restored correctly, verified against the 45-entry stack), the second pushed-and-popped `--keep-index` (verified intact). Both near-misses were caught only because the controller independently re-counted the stash stack afterward. `git stash` operates on the REPO-GLOBAL stash stack, shared across every worktree and the main checkout — a pop in a worktree can silently consume (or reorder) the user's own stashes from an unrelated branch.
+
+Rule: in any linked worktree, never `git stash`. To set work aside, commit to a scratch branch or leave files dirty. Controllers dispatching implementers into worktrees should carry this rule as a hard constraint in every dispatch prompt.

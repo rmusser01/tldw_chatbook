@@ -14,6 +14,8 @@ from types import MappingProxyType
 from typing import Literal, Protocol
 from weakref import WeakSet
 
+from loguru import logger
+
 from tldw_chatbook.Notes.file_notes_git_commit import (
     CommitRecoveryProjection,
     CommitReviewChangeType,
@@ -104,6 +106,13 @@ _PUSH_CHANGE_TYPE_ORDER: tuple[CommitReviewChangeType, ...] = (
     "Deleted",
     "Moved",
 )
+
+#: task-11: bound on retained session-change records per root binding.
+#: The list previously grew for the whole life of the binding (cleared only
+#: on root change) and was re-coalesced by the workspace poll every tick.
+#: See ``_append_session_change_locked`` for why keeping the newest window
+#: is safe for ``coalesce_session_changes`` consumers.
+SESSION_CHANGE_RECORD_LIMIT = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -878,6 +887,8 @@ class FileNotesSessionOwner:
 
     __slots__ = (
         "_binding",
+        "_change_limit_logged",
+        "_change_log_version",
         "_changes",
         "_commit_publication_closed",
         "_commit_quarantine",
@@ -970,6 +981,13 @@ class FileNotesSessionOwner:
         self._issued_commit_recovery = False
         self._changes: list[SequencedSessionChange] = []
         self._next_sequence = 1
+        # task-11: monotonic count of session-change log mutations (append,
+        # compaction, commit retirement, root clear). Pollers compare it
+        # to skip re-coalescing an unchanged log; it is deliberately global
+        # to the owner, not per binding, so any owner-side movement --
+        # including another workspace sharing this owner -- wakes them.
+        self._change_log_version = 0
+        self._change_limit_logged = False
         self._trusted_repository: RepositoryIdentity | None = None
         self._git_status: SessionGitStatus | None = None
         self._staging_ownership: dict[int, StagingOwnership] = {}
@@ -1124,16 +1142,112 @@ class FileNotesSessionOwner:
         with self._lock:
             if self._shutdown or binding != self._binding:
                 return False
-            self._changes.append(
-                SequencedSessionChange(
-                    sequence=self._next_sequence,
-                    change=change,
-                )
-            )
-            self._next_sequence += 1
+            self._append_session_change_locked(change)
             self._clear_git_status_locked(invalidate_authority=False)
             self._invalidate_git_authority_locked()
             return True
+
+    def _append_session_change_locked(self, change: SessionChange) -> None:
+        """Append one change and keep the log bounded (task-11).
+
+        Below ``SESSION_CHANGE_RECORD_LIMIT`` the log is strictly
+        append-only: commit-authority captures detect drift by comparing
+        lineage ``sequence_ids`` (see ``_request_commit_authority`` and
+        ``_captured_sequences_are_present_locked``), so every recorded
+        mutation must keep its own sequence until retirement -- merging
+        same-path records unconditionally would blind that machinery.
+
+        Once the bound is exceeded, compaction runs BEFORE oldest-drop:
+        per-(action, path) non-moved duplicates collapse to their NEWEST
+        record. That merge provably preserves ``coalesce_session_changes``
+        output for the collapsed records -- they were in the SAME lineage
+        group anyway (same path, no move edge between them), so endpoints,
+        move edges, current path, and latest action are unchanged; only the
+        group's earliest sequence -- its ``group_id`` -- moves to the
+        retained record. Records with move edges never collapse. If the
+        log is still over the bound afterwards, oldest records drop.
+
+        Oldest-drop safety: unlike compaction, oldest-drop can remove a
+        lineage ENTIRELY -- a burst of more than the limit of distinct
+        paths drops single-record lineages whole (their only record is old
+        enough to fall outside the window). That is safe because the log
+        is a session-scoped PROJECTION of Chatbook-initiated mutations:
+        disk bytes and the recovery replica stay authoritative, so what is
+        lost is the change's entry in the session's commit-review listing,
+        never file content. The machinery that could double-apply --
+        ``_staging_ownership`` keys and commit captures referencing
+        group_id, a lineage's EARLIEST sequence -- fails closed when a
+        referenced group is gone: ``_current_ownership_sequences_locked``
+        returns ``None`` and the commit publication is refused into the
+        recovery flow. That needs a Stage capture outstanding across a
+        burst of 500+ change records; bounded memory wins that trade.
+        """
+        self._changes.append(
+            SequencedSessionChange(
+                sequence=self._next_sequence,
+                change=change,
+            )
+        )
+        self._next_sequence += 1
+        if len(self._changes) > SESSION_CHANGE_RECORD_LIMIT:
+            self._compact_session_changes_locked()
+            if len(self._changes) > SESSION_CHANGE_RECORD_LIMIT:
+                del self._changes[: len(self._changes) - SESSION_CHANGE_RECORD_LIMIT]
+                if not self._change_limit_logged:
+                    self._change_limit_logged = True
+                    logger.warning(
+                        "File Notes session change log bounded at {} newest "
+                        "records; records outside the window leave the "
+                        "session listing (disk and the replica stay "
+                        "authoritative)",
+                        SESSION_CHANGE_RECORD_LIMIT,
+                    )
+        self._change_log_version += 1
+
+    def _compact_session_changes_locked(self) -> None:
+        """Collapse same-(action, path) duplicates to their newest record.
+
+        Only non-moved records are eligible: a moved record is its
+        lineage's topology fact, and collapsing onto or across one would
+        lose move edges the per-tick coalescer depends on.
+        """
+        newest: dict[tuple[str, str], int] = {}
+        for index, record in enumerate(self._changes):
+            change = record.change
+            if change.destination_path is None:
+                newest[(change.action, change.relative_path)] = index
+        self._changes[:] = [
+            record
+            for index, record in enumerate(self._changes)
+            if record.change.destination_path is not None
+            or newest.get(
+                (record.change.action, record.change.relative_path),
+                index,
+            )
+            == index
+        ]
+
+    def change_log_version(self) -> int:
+        """Return the monotonic session-change log mutation count (task-11).
+
+        Lets a poller decide "nothing was appended, merged, retired, or
+        cleared since I last looked" with one integer compare under the
+        lock, instead of snapshotting and re-coalescing the whole log.
+        """
+        with self._lock:
+            return self._change_log_version
+
+    def session_revision(self) -> tuple[int, int]:
+        """Return the poller-relevant owner revision (task-11).
+
+        ``(change-log version, git authority generation)`` read under one
+        lock. Trust publication and status-authority moves bump the
+        authority generation without touching the change log, so a poller
+        that skips refresh work while BOTH hold still also skips work that
+        could not have observed anything new.
+        """
+        with self._lock:
+            return self._change_log_version, self._git_authority_generation
 
     def snapshot(self, binding: SessionBinding) -> FileNotesSessionSnapshot:
         """Return an immutable snapshot without exposing another generation."""
@@ -2080,6 +2194,8 @@ class FileNotesSessionOwner:
                 self._changes = [
                     change for change in self._changes if change.sequence not in retired
                 ]
+                # task-11: retirement changed the log pollers compare against.
+                self._change_log_version += 1
                 self._staging_ownership.clear()
                 self._commit_quarantine = None
                 self._publish_commit_status_locked(publication.refreshed_status)
@@ -2888,6 +3004,9 @@ class FileNotesSessionOwner:
         self._binding = SessionBinding(root_key, self._generation)
         self._changes.clear()
         self._next_sequence = 1
+        # task-11: the cleared log is a new fact for version-gated pollers.
+        self._change_log_version += 1
+        self._change_limit_logged = False
         self._revoke_push_candidate_locked()
         self._trusted_repository = None
         self._repository_trust_generation += 1

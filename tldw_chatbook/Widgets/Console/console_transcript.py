@@ -2251,8 +2251,8 @@ class ConsoleToolDiffRow(Vertical):
     """Inline diff row under an expanded file-write TOOL marker (TASK-1366).
 
     Mounts empty and fills in asynchronously: the diff is computed off the
-    UI thread (``DiffView.prepare``) BEFORE the DiffView mounts, mirroring
-    ``tool_message_widgets.ToolExecutionWidget``'s integration. The row is
+    UI thread (``DiffView.prepare``) BEFORE the DiffView mounts (the same
+    integration the removed CCP ``tool_message_widgets`` module used). The row is
     render-derived view state -- it exists only while its marker message is
     expanded via the full-output toggle, and disappears with it (or when
     the message leaves the view window).

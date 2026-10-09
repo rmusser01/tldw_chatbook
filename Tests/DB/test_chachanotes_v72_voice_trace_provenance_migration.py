@@ -194,15 +194,19 @@ def test_genuine_v71_preserves_archived_rows_columns_indexes_and_triggers(
             )
             == columns_before
         )
-        assert (
-            tuple(
-                tuple(row)
-                for row in connection.execute(
-                    "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'conversations' ORDER BY type, name"
-                )
+        schema_after = tuple(
+            tuple(row)
+            for row in connection.execute(
+                "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'conversations' ORDER BY type, name"
             )
-            == schema_before
         )
+        # ADR-224 (v78->v79) is the ONE intentional conversations-schema
+        # change after v72: the sargable keyset index. Strip exactly that
+        # row and the v72 preservation guarantee still pins everything else.
+        assert tuple(
+            row for row in schema_after if row[1] != "idx_conv_char_lm"
+        ) == schema_before
+        assert any(row[1] == "idx_conv_char_lm" for row in schema_after)
     finally:
         current.close_connection()
 

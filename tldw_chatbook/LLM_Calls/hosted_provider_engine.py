@@ -1173,7 +1173,12 @@ def _normalize_messages(
             if call_id != pending_ids[0] or not isinstance(content, str):
                 raise bad_request(f"{display} tool result ordering is invalid.")
             pending_ids.pop(0)
-            result.append(deepcopy(dict(raw_message)))
+            # Tool-result messages carry exactly {role, tool_call_id,
+            # content}, and every leaf was validated immutable (role and
+            # tool_call_id equal validated strings, content a string), so
+            # a fresh shallow dict fully isolates the payload from the
+            # caller-owned message (perf remediation, wave 3).
+            result.append(dict(raw_message))
             continue
         if pending_ids:
             raise bad_request(f"{display} tool call batch is incomplete.")
@@ -1236,7 +1241,21 @@ def _normalize_tools(
         ):
             raise bad_request(f"{display} function tool is malformed.")
         names.add(name)
-        result.append(deepcopy(dict(raw_tool)))
+        # Fresh dicts at the type/function levels (name/description are
+        # validated strings); ``parameters`` is a caller-owned JSON schema
+        # whose leaves may nest arbitrarily, so exactly that key path
+        # keeps its deepcopy (perf remediation, wave 3 -- pinned by
+        # Tests/LLM_Calls/test_hosted_streaming_copy_tax.py).
+        result.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": function["description"],
+                    "parameters": deepcopy(parameters),
+                },
+            }
+        )
     return result
 
 
@@ -1732,11 +1751,18 @@ class HostedProviderStream(Iterator[dict[str, Any]]):
     def __next__(self) -> dict[str, Any]:
         """Return the next visible chunk.
 
-        The underlying validated event is deep-copied and projected for
-        visibility: ``reasoning_content`` is stripped from deltas unless
-        the record's disposition is ``"displayable"``, and reasoning/
-        control frames carry an explicit empty ``content`` so generic
-        consumers do not render fallback diagnostics.
+        The underlying validated event is projected for visibility:
+        ``reasoning_content`` is stripped from deltas unless the record's
+        disposition is ``"displayable"``, and reasoning/control frames
+        carry an explicit empty ``content`` so generic consumers do not
+        render fallback diagnostics.
+
+        No copy is taken here: the boundary stream parses each SSE record
+        fresh and its ``_filtered_event`` chain already returns newly
+        allocated dicts at every level (validated immutable leaves), so
+        mutating the deltas below only touches this wrapper's own frame.
+        The isolation contract is pinned by
+        ``Tests/LLM_Calls/test_hosted_streaming_copy_tax.py``.
 
         Returns:
             One caller-visible stream event.
@@ -1746,7 +1772,7 @@ class HostedProviderStream(Iterator[dict[str, Any]]):
                 or state violation, propagated from the shared boundary.
             StopIteration: After the clean terminal frame.
         """
-        event = deepcopy(next(self._stream))
+        event = next(self._stream)
         for choice in event.get("choices", ()):
             if isinstance(choice, dict) and isinstance(choice.get("delta"), dict):
                 delta = choice["delta"]

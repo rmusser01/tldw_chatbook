@@ -1072,6 +1072,23 @@ def normalize_qwencloud_response(
     raise _provider_error("QwenCloud response used an unknown API mode.")
 
 
+def _new_transport_session() -> requests.Session:
+    """Build one zero-retry transport session for the per-thread registry.
+
+    ADR-222 (TASK-34418): identical to the session ``chat_with_qwencloud``
+    built per call -- ``create_default_session()`` plus the
+    ``_transport_without_hidden_retries()`` mount that keeps every retry
+    decision in this module's own bounded loop. Resolved through this
+    module's ``create_default_session`` global at call time so the
+    existing test seam keeps working.
+    """
+    session = create_default_session()
+    adapter = _transport_without_hidden_retries()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
 @_provider_recovery.unqualified
 def chat_with_qwencloud(
     input_data: list[dict[str, Any]],
@@ -1164,7 +1181,6 @@ def chat_with_qwencloud(
         raise _configuration_error("QwenCloud timeout must be positive and finite.")
     retries, retry_delay = _retry_configuration(provider_settings)
     retry_policy = _build_retry_policy(retries=retries, retry_delay=retry_delay)
-    adapter = _transport_without_hidden_retries()
 
     suffix = "/responses" if final_mode == "responses" else "/chat/completions"
     api_url = f"{final_base}{suffix}"
@@ -1173,128 +1189,137 @@ def chat_with_qwencloud(
         "Content-Type": "application/json",
     }
 
-    session = create_default_session()
-    stream_owns_session = False
-    try:
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        for attempt_index in range(retries + 1):
-            response: requests.Response | None = None
-            retry_sleep: float | None = None
-            try:
-                response = session.post(
-                    api_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=timeout,
-                    stream=True,
-                )
-                status_code = int(response.status_code)
-                if status_code in _RETRYABLE_STATUS_CODES and attempt_index < retries:
-                    retry_policy, retry_sleep = _advance_retry_policy(
-                        retry_policy,
-                        api_url=api_url,
-                        response=response,
-                    )
-                else:
-                    response.raise_for_status()
-                    if final_streaming:
-                        from tldw_chatbook.LLM_Calls.qwencloud_streaming import (
-                            QwenCloudStream,
-                        )
+    from tldw_chatbook.LLM_Calls.provider_sessions import (
+        get_session,
+        trust_setting_fragment,
+    )
 
-                        stream = QwenCloudStream(
-                            response=response,
-                            session=session,
-                            api_mode=final_mode,
-                        )
-                        response = None
-                        stream_owns_session = True
-                        return stream
-                    result = response.json()
-                    if not isinstance(result, Mapping):
-                        raise _provider_error(
-                            "QwenCloud response envelope must be an object."
-                        )
-                    return normalize_qwencloud_response(result, api_mode=final_mode)
-            except HTTPError as exc:
-                failed_response = exc.response if exc.response is not None else response
-                if failed_response is None:
-                    logger.error(
-                        "QwenCloud request failed; "
-                        "status=unknown; error_type=http_error"
+    # ADR-222 (TASK-34418): one registry session per (base_url, thread);
+    # the TLS-trust value is part of the key because this call relies on
+    # the session's factory-baked `verify`. The zero-retry transport
+    # mount lives in the factory so a cached session keeps its adapter
+    # (and its warm pool) across calls.
+    session = get_session(
+        f"qwencloud:{final_base}:{trust_setting_fragment()}",
+        _new_transport_session,
+    )
+    for attempt_index in range(retries + 1):
+        response: requests.Response | None = None
+        retry_sleep: float | None = None
+        try:
+            response = session.post(
+                api_url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+                stream=True,
+            )
+            status_code = int(response.status_code)
+            if status_code in _RETRYABLE_STATUS_CODES and attempt_index < retries:
+                retry_policy, retry_sleep = _advance_retry_policy(
+                    retry_policy,
+                    api_url=api_url,
+                    response=response,
+                )
+            else:
+                response.raise_for_status()
+                if final_streaming:
+                    from tldw_chatbook.LLM_Calls.qwencloud_streaming import (
+                        QwenCloudStream,
                     )
+
+                    stream = QwenCloudStream(
+                        response=response,
+                        # ADR-222: the stream owns (and closes) its response;
+                        # the session belongs to the per-thread registry.
+                        session=None,
+                        api_mode=final_mode,
+                    )
+                    response = None
+                    return stream
+                result = response.json()
+                if not isinstance(result, Mapping):
                     raise _provider_error(
-                        "QwenCloud returned an HTTP failure without a response."
-                    ) from None
-                _raise_qwencloud_http_error(failed_response)
-            except (
-                RequestsJSONDecodeError,
-                InvalidJSONError,
-                ContentDecodingError,
-            ):
+                        "QwenCloud response envelope must be an object."
+                    )
+                return normalize_qwencloud_response(result, api_mode=final_mode)
+        except HTTPError as exc:
+            failed_response = exc.response if exc.response is not None else response
+            if failed_response is None:
                 logger.error(
-                    "QwenCloud request failed; status={}; "
-                    "error_type=malformed_response",
-                    getattr(response, "status_code", "unknown"),
+                    "QwenCloud request failed; "
+                    "status=unknown; error_type=http_error"
                 )
                 raise _provider_error(
-                    "QwenCloud returned malformed provider JSON or content."
+                    "QwenCloud returned an HTTP failure without a response."
                 ) from None
-            except ChunkedEncodingError as exc:
-                if attempt_index < retries:
-                    retry_policy, retry_sleep = _advance_retry_policy(
-                        retry_policy,
-                        api_url=api_url,
-                        error=exc,
-                    )
-                else:
-                    logger.error(
-                        "QwenCloud request failed; "
-                        "status=none; error_type=incomplete_body"
-                    )
-                    raise _provider_error(
-                        "QwenCloud network response was incomplete."
-                    ) from None
-            except (RequestsConnectionError, RequestsTimeout) as exc:
-                if attempt_index < retries:
-                    retry_policy, retry_sleep = _advance_retry_policy(
-                        retry_policy,
-                        api_url=api_url,
-                        error=exc,
-                    )
-                else:
-                    logger.error(
-                        "QwenCloud request failed; status=none; error_type={}",
-                        type(exc).__name__,
-                    )
-                    raise _provider_error(
-                        "QwenCloud network request failed.",
-                        status_code=504 if isinstance(exc, RequestsTimeout) else 502,
-                    ) from None
-            except RequestException as exc:
+            _raise_qwencloud_http_error(failed_response)
+        except (
+            RequestsJSONDecodeError,
+            InvalidJSONError,
+            ContentDecodingError,
+        ):
+            logger.error(
+                "QwenCloud request failed; status={}; "
+                "error_type=malformed_response",
+                getattr(response, "status_code", "unknown"),
+            )
+            raise _provider_error(
+                "QwenCloud returned malformed provider JSON or content."
+            ) from None
+        except ChunkedEncodingError as exc:
+            if attempt_index < retries:
+                retry_policy, retry_sleep = _advance_retry_policy(
+                    retry_policy,
+                    api_url=api_url,
+                    error=exc,
+                )
+            else:
+                logger.error(
+                    "QwenCloud request failed; "
+                    "status=none; error_type=incomplete_body"
+                )
+                raise _provider_error(
+                    "QwenCloud network response was incomplete."
+                ) from None
+        except (RequestsConnectionError, RequestsTimeout) as exc:
+            if attempt_index < retries:
+                retry_policy, retry_sleep = _advance_retry_policy(
+                    retry_policy,
+                    api_url=api_url,
+                    error=exc,
+                )
+            else:
                 logger.error(
                     "QwenCloud request failed; status=none; error_type={}",
                     type(exc).__name__,
                 )
-                raise _provider_error("QwenCloud network request failed.") from None
-            except (TypeError, ValueError) as exc:
-                logger.error(
-                    "QwenCloud request failed; status={}; error_type={}",
-                    getattr(response, "status_code", "unknown"),
-                    type(exc).__name__,
-                )
-                raise _provider_error("QwenCloud returned malformed JSON.") from None
-            finally:
-                if response is not None:
-                    _best_effort_close(response)
+                raise _provider_error(
+                    "QwenCloud network request failed.",
+                    status_code=504 if isinstance(exc, RequestsTimeout) else 502,
+                ) from None
+        except RequestException as exc:
+            logger.error(
+                "QwenCloud request failed; status=none; error_type={}",
+                type(exc).__name__,
+            )
+            raise _provider_error("QwenCloud network request failed.") from None
+        except (TypeError, ValueError) as exc:
+            logger.error(
+                "QwenCloud request failed; status={}; error_type={}",
+                getattr(response, "status_code", "unknown"),
+                type(exc).__name__,
+            )
+            raise _provider_error("QwenCloud returned malformed JSON.") from None
+        finally:
+            if response is not None:
+                _best_effort_close(response)
 
-            if retry_sleep is None:
-                raise _provider_error("QwenCloud retry state was incomplete.")
-            if retry_sleep > 0:
-                time.sleep(retry_sleep)
-    finally:
-        if not stream_owns_session:
-            _best_effort_close(session)
-
+        if retry_sleep is None:
+            raise _provider_error("QwenCloud retry state was incomplete.")
+        if retry_sleep > 0:
+            time.sleep(retry_sleep)
+    # ADR-222 (TASK-34418): the session is registry-owned for this
+    # thread's lifetime and must NOT be closed here; each attempt's
+    # response is closed inside the loop above.
     raise _provider_error("QwenCloud request attempts were exhausted.")

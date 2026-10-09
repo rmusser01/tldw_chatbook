@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 
-from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.chat_conversation_service import (
+    FORK_READ_MAX_MESSAGES,
+    ChatConversationService,
+)
 from tldw_chatbook.Chat.citation_legacy_migration import LegacyCitationReadState
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
@@ -240,6 +243,58 @@ class FakeDB:
             )
         )
         return self.tree_rows.get((conversation_id, order_by_timestamp), [])
+
+    def get_message_tree_rows_for_conversation_page(
+        self,
+        conversation_id,
+        *,
+        root_offset=0,
+        root_limit=50,
+        order_desc=False,
+        include_deleted_conversation=False,
+    ):
+        """Fake of the paged tree read: slice the root window, keep subtree.
+
+        Mirrors the real DB's bounded read for the fake's flat fixtures:
+        partition the unbounded rows, slice the requested root page, and
+        return the page's roots plus every descendant reachable through
+        ``parent_message_id`` links, with the live root count.
+        """
+        self.calls.append(
+            (
+                "get_message_tree_rows_for_conversation_page",
+                (conversation_id,),
+                {
+                    "root_offset": root_offset,
+                    "root_limit": root_limit,
+                    "order_desc": order_desc,
+                    "include_deleted_conversation": include_deleted_conversation,
+                },
+            )
+        )
+        rows = self.tree_rows.get(
+            (conversation_id, "DESC" if order_desc else "ASC"), []
+        )
+        root_rows = [r for r in rows if r.get("parent_message_id") is None]
+        children_by_parent = {}
+        for row in rows:
+            parent_id = row.get("parent_message_id")
+            if parent_id is not None:
+                children_by_parent.setdefault(parent_id, []).append(row)
+        effective_offset = max(0, root_offset)
+        page = (
+            root_rows[effective_offset:]
+            if root_limit < 0
+            else root_rows[effective_offset : effective_offset + root_limit]
+        )
+        subtree = list(page)
+        stack = list(page)
+        while stack:
+            node = stack.pop()
+            for child in children_by_parent.get(node["id"], ()):
+                subtree.append(child)
+                stack.append(child)
+        return subtree, len(root_rows)
 
     def get_message_images_by_ids(self, message_ids):
         self.calls.append(("get_message_images_by_ids", (tuple(message_ids),), {}))
@@ -2162,3 +2217,79 @@ def test_copy_active_path_preserves_image_payload(service_with_db):
     copied = db.get_messages_for_conversation(dst)[0]
     assert copied["image_data"] == png
     assert copied["image_mime_type"] == "image/png"
+
+
+def test_copy_active_path_reads_source_conversation_once(service_with_db):
+    """Task 19a (perf): a fork must run ONE full-conversation read.
+
+    ``copy_conversation_active_path`` already fetches the FORK_READ page;
+    ``effective_active_leaf`` must reuse those rows instead of re-running the
+    identical ``get_messages_for_conversation`` query (up to 10k rows fetched
+    twice per fork).
+    """
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    _seed_chain(
+        db, service, src, [("user", "hello"), ("assistant", "hi"), ("user", "go")]
+    )
+    dst = service.create_conversation(title="Dst")
+
+    calls: list[tuple[str, int | None]] = []
+    original = db.get_messages_for_conversation
+
+    def counting(conversation_id, **kwargs):
+        calls.append((str(conversation_id), kwargs.get("limit")))
+        return original(conversation_id, **kwargs)
+
+    db.get_messages_for_conversation = counting  # type: ignore[method-assign]
+    try:
+        outcome = service.copy_conversation_active_path(src, dst)
+    finally:
+        del db.get_messages_for_conversation  # type: ignore[method-assign]
+
+    assert outcome["copied"] == 3
+    source_reads = [call for call in calls if call[0] == src]
+    assert len(source_reads) == 1, (
+        f"fork must read the source conversation exactly once, got {source_reads}"
+    )
+
+
+def test_effective_active_leaf_with_rows_matches_fetch_semantics(service_with_db):
+    """Task 19a: the rows-reuse path resolves identically to the fetch path.
+
+    Pins both resolution modes (durable pointer live; dangling pointer falls
+    back to latest timestamp) so the optional ``rows=`` parameter can never
+    drift from ``effective_active_leaf``'s no-rows behavior.
+    """
+    db, service = service_with_db
+    src = service.create_conversation(title="Src")
+    root = db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "user",
+            "content": "a",
+            "timestamp": "2026-01-01T00:00:00.001Z",
+        }
+    )
+    db.add_message(
+        {
+            "conversation_id": src,
+            "sender": "assistant",
+            "content": "b",
+            "parent_message_id": root,
+            "timestamp": "2026-01-01T00:00:00.002Z",
+        }
+    )
+    rows = db.get_messages_for_conversation(src, limit=FORK_READ_MAX_MESSAGES)
+
+    # Durable pointer references a live row: both paths return it verbatim.
+    db.set_conversation_active_leaf(src, str(root))
+    assert service.effective_active_leaf(src) == str(root)
+    assert service.effective_active_leaf(src, rows=rows) == str(root)
+
+    # Dangling pointer: both paths fall back to the latest-timestamp row.
+    db.set_conversation_active_leaf(src, "not-a-real-message-id")
+    assert service.effective_active_leaf(src, rows=rows) == service.effective_active_leaf(src)
+
+    # Empty rows short-circuit identically to an empty fetch.
+    assert service.effective_active_leaf(src, rows=[]) is None

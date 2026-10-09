@@ -1549,6 +1549,58 @@ def test_more_toggle_chains_the_restore_already_queued_on_the_viewer():
     ]
 
 
+def test_media_filter_debounce_is_dedicated_from_selection_settling():
+    """F14: the filter input settles at its own 0.25 s, not the 0.12 s settle.
+
+    The filter handler previously reused ``SELECTION_SETTLE_SECONDS`` (0.12),
+    a value tuned for row-selection paint settling, as its search debounce.
+    A dedicated ``MEDIA_FILTER_DEBOUNCE_SECONDS`` keeps selection settling
+    untouched while giving typing a real debounce window.
+    """
+    from tldw_chatbook.Library.library_media_reader_state import (
+        MEDIA_FILTER_DEBOUNCE_SECONDS,
+        SELECTION_SETTLE_SECONDS,
+    )
+
+    armed: list[float] = []
+    stopped: list[object] = []
+
+    class _FilterHandlerFake:
+        """The seams the filter debounce handler touches, nothing else."""
+
+        def __init__(self) -> None:
+            self._library_media_filter_timer = ("stale",)
+
+        def _stop_library_media_filter_timer(self) -> None:
+            stopped.append(self._library_media_filter_timer)
+            self._library_media_filter_timer = None
+
+        def set_timer(self, delay: float, callback) -> object:
+            armed.append(delay)
+            return ("timer", delay)
+
+        def _request_library_media_filter(self, query: str) -> None:
+            raise AssertionError("dispatch must wait for the debounce, not fire now")
+
+    fake = _FilterHandlerFake()
+    LibraryMediaController.handle_library_media_filter_changed(
+        fake, SimpleNamespace(value="needle")
+    )
+
+    assert MEDIA_FILTER_DEBOUNCE_SECONDS == 0.25
+    # Selection settling keeps its own (unchanged) delay.
+    assert SELECTION_SETTLE_SECONDS == 0.12
+    settling = begin_selection(
+        LibraryMediaReaderSessionState(), "local:media:1", 1, "Title"
+    )
+    assert settling.pending_request.delay_seconds == SELECTION_SETTLE_SECONDS
+    # The filter timer was re-armed at the dedicated delay, stopping the
+    # previous pending timer first.
+    assert armed == [MEDIA_FILTER_DEBOUNCE_SECONDS]
+    assert stopped == [("stale",)]
+    assert fake._library_media_filter_timer == ("timer", MEDIA_FILTER_DEBOUNCE_SECONDS)
+
+
 def test_more_toggle_without_a_viewer_falls_back_to_the_screen_seam():
     """The whole-screen recompose leaves no viewer to hang the hook on."""
     calls: list = []

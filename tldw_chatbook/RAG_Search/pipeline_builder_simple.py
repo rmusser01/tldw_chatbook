@@ -104,7 +104,7 @@ async def execute_pipeline(
                 context["results"] = results
 
             elif step_type == "process":
-                results = _execute_process_step(step_config, context)
+                results = await _execute_process_step(step_config, context)
                 context["results"] = results
 
             elif step_type == "format":
@@ -435,10 +435,17 @@ def _rrf_merge_parallel_results(
     return fused_results
 
 
-def _execute_process_step(
+async def _execute_process_step(
     step_config: Dict[str, Any], context: PipelineContext
 ) -> List[SearchResult]:
-    """Execute a processing step."""
+    """Execute a processing step.
+
+    Async so CPU-heavy process bodies can run off the event loop:
+    ``rerank_results`` (FlashRank model load + inference, the
+    default-enabled step on every RAG chat send) is dispatched via
+    ``asyncio.to_thread``. Called through the ``PROCESSING_FUNCTIONS``
+    registry entry so monkeypatched fakes keep working.
+    """
     func_name = step_config.get("function")
     if not func_name or func_name not in PROCESSING_FUNCTIONS:
         raise ValueError(f"Unknown processing function: {func_name}")
@@ -448,7 +455,8 @@ def _execute_process_step(
 
     # Special handling for different processing functions
     if func_name == "rerank_results":
-        return func(
+        return await asyncio.to_thread(
+            func,
             context["results"],
             context["query"],
             config.get("model", "flashrank"),

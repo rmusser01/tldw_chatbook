@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from ..activation import async_guarded as activation_async_guarded
 from ..activation import guarded as activation_guarded
 from ..activation import source_paths
-from typing import List, Optional, Dict, Any, Union
+from typing import Any, Dict, List, Optional, Union
 from loguru import logger
 import asyncio
 import os
@@ -169,6 +169,7 @@ class EmbeddingsServiceWrapper:
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         cache_dir: Optional[str] = None,
+        embedding_cache_db: Optional[Any] = None,
     ):
         """
         Initialize embeddings service using existing EmbeddingFactory.
@@ -176,13 +177,20 @@ class EmbeddingsServiceWrapper:
         Args:
             model_name: Model identifier - can be:
                 - HuggingFace model: "sentence-transformers/model-name" or just "model-name"
-                - OpenAI model: "openai/text-embedding-3-small"
+                - OpenAI model: "openai/model-name"
                 - Local OpenAI-compatible: "openai/model-name" with base_url
             cache_size: Number of models to keep in memory
             device: Device to use (cpu, cuda, mps) - defaults to auto-detection
             api_key: Optional API key for OpenAI (overrides environment)
             base_url: Optional base URL for OpenAI-compatible APIs
             cache_dir: Optional cache directory for HuggingFace model downloads
+            embedding_cache_db: Optional persistent content-hash embedding
+                cache store (ADR-223): any object exposing
+                ``get_cached_embeddings(model_id, content_hashes)`` and
+                ``store_cached_embeddings(model_id, rows)`` -- in practice
+                a ``RAGIndexingDB``. Deliberately opt-in: the wrapper never
+                default-opens the user-data-dir DB itself (see
+                ``set_embedding_cache_store``).
         """
         self.model_name = model_name
         self.device = device
@@ -190,6 +198,7 @@ class EmbeddingsServiceWrapper:
         self._api_key = api_key
         self._base_url = base_url
         self._cache_dir = cache_dir
+        self._embedding_cache_db = embedding_cache_db
         self._rag_activation_sources = source_paths(self)
         self._use_mock_backend = str(model_name).lower() in {
             "mock",
@@ -234,6 +243,8 @@ class EmbeddingsServiceWrapper:
         self._embeddings_created = 0
         self._total_texts_processed = 0
         self._errors_count = 0
+        # ADR-223: per-TEXT persistent-cache outcomes (real hits/misses from
+        # actual store lookups; both stay 0 when no store is attached).
         self._cache_hits = 0
         self._cache_misses = 0
         self._embedding_dimension = None  # Cache the dimension after first use
@@ -397,6 +408,135 @@ class EmbeddingsServiceWrapper:
 
         return memory_mb
 
+    def set_embedding_cache_store(self, store: Optional[Any]) -> None:
+        """Attach (or replace/detach) the persistent embedding cache store.
+
+        ADR-223 / TASK-34420. The ingestion seam (``index_entries``) calls
+        this with the ``RAGIndexingDB`` handle its caller already owns;
+        the wrapper deliberately does NOT default-open the user-data-dir
+        DB itself, because the wrapper (and RAGService) are constructed in
+        many test contexts without a DB and an implicit open would break
+        test hermeticity.
+
+        Re-attaching with a different store replaces the previous one
+        (attribute assignment is atomic, so a concurrent embed either sees
+        the old store or the new one -- both are valid caches). Passing
+        ``None`` detaches and restores no-cache behavior.
+        """
+        self._embedding_cache_db = store
+
+    def _embedding_cache_model_id(self) -> str:
+        """Keep local model keys stable and isolate effective hosted endpoints."""
+        if not self.model_name.startswith("openai/"):
+            return self.model_name
+        config = self.factory.config
+        model = config.models[config.default_model_id]
+        base_url = str(model.base_url) if model.base_url else "https://api.openai.com/v1"
+        endpoint = base_url.rstrip("/") + "/embeddings"
+        # The validated factory config supplies the exact effective endpoint.
+        # Persist only its digest: URLs can contain credentials or query secrets.
+        digest = hashlib.sha256(endpoint.encode("utf-8")).hexdigest()
+        return f"{self.model_name}@endpoint:{digest}"
+
+    async def _async_cache_call(self, operation, store, *args):
+        """Retain finite SQLite work and retire only its new worker connection."""
+        if store is None:
+            return operation(*args, store)
+        from tldw_chatbook.DB.RAG_Indexing_DB import RAGIndexingDB
+
+        # Each thread gets a separate :memory: database, so these explicitly
+        # single-threaded test owners must stay on their constructing thread.
+        if isinstance(store, RAGIndexingDB) and store.is_memory_db:
+            return operation(*args, store)
+
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+        from tldw_chatbook.TTS._async_lifecycle import join_retained_task
+
+        from ..activation import native_worker
+
+        def invoke():
+            with operation_owned_connection(store):
+                return operation(*args, store)
+
+        completion = asyncio.create_task(asyncio.to_thread(native_worker(self, invoke)))
+        await join_retained_task(completion)
+        return completion.result()
+
+    def _lookup_cached_embeddings(
+        self, content_hashes: List[str], store: Optional[Any]
+    ) -> Dict[str, List[float]]:
+        """Batch-lookup cached vectors; never raises (a cache cannot fail an embed)."""
+        if store is None:
+            return {}
+        try:
+            return store.get_cached_embeddings(
+                self._embedding_cache_model_id(), content_hashes
+            ) or {}
+        except Exception as e:
+            log_counter(
+                "embeddings_persistent_cache_error",
+                labels={"operation": "lookup", "error_type": type(e).__name__},
+            )
+            logger.warning(
+                "Persistent embedding-cache lookup failed; embedding without cache "
+                f"(error_type={type(e).__name__})"
+            )
+            return {}
+
+    def _store_cached_embeddings(
+        self,
+        content_hashes: List[str],
+        miss_indices: List[int],
+        fresh_rows: List[List[float]],
+        store: Optional[Any],
+    ) -> None:
+        """Persist freshly embedded vectors; never raises (best-effort cache fill)."""
+        if store is None:
+            return
+        try:
+            store.store_cached_embeddings(
+                self._embedding_cache_model_id(),
+                [
+                    (content_hashes[index], row)
+                    for index, row in zip(miss_indices, fresh_rows)
+                ],
+            )
+        except Exception as e:
+            log_counter(
+                "embeddings_persistent_cache_error",
+                labels={"operation": "store", "error_type": type(e).__name__},
+            )
+            logger.warning(
+                "Persistent embedding-cache store failed; cache not updated "
+                f"(error_type={type(e).__name__})"
+            )
+
+    @staticmethod
+    def _content_hashes(texts: List[str]) -> List[str]:
+        """sha256 of the FULL text of each item (computed once per call).
+
+        The pre-ADR dead check hashed only the first 100 characters of each
+        text, which would have conflated distinct chunks sharing a prefix.
+        """
+        return [hashlib.sha256(text.encode("utf-8")).hexdigest() for text in texts]
+
+    def _record_cache_counters(self, total: int, misses: int) -> None:
+        """Count real per-text cache hits/misses (ADR-223 metric semantics).
+
+        Only counted when a store is attached: with no store there are no
+        cache requests, and emitting synthetic 0/0-miss counters would
+        recreate the bogus metric this replaced.
+        """
+        if self._embedding_cache_db is None:
+            return
+        hits = total - misses
+        self._cache_hits += hits
+        self._cache_misses += misses
+        if hits:
+            log_counter("embeddings_cache_hit", value=hits)
+        if misses:
+            log_counter("embeddings_cache_miss", value=misses)
+
     def _build_config(
         self,
         model_name: str,
@@ -511,70 +651,72 @@ class EmbeddingsServiceWrapper:
         memory_before = self._get_cached_memory_info()
 
         try:
-            # Check if embeddings are cached (simplified check)
-            # In reality, the factory handles caching internally
-            # This is a simplified representation for metrics
-            # Create efficient cache key without joining all texts
-            # Use hash of individual text hashes to avoid memory explosion
-            text_hashes = []
-            for text in texts:
-                # Take first 100 chars of each text for hash to avoid huge strings
-                text_preview = text[:100] if len(text) > 100 else text
-                text_hash = hashlib.md5(text_preview.encode("utf-8")).hexdigest()[:8]
-                text_hashes.append(text_hash)
-
-            # Combine metadata for cache key
-            cache_components = [
-                str(len(texts)),  # Number of texts
-                str(sum(len(t) for t in texts)),  # Total character count
-                hashlib.sha256("".join(text_hashes).encode("utf-8")).hexdigest()[
-                    :16
-                ],  # Combined hash
-            ]
-            cache_key = hashlib.sha256(
-                ":".join(cache_components).encode("utf-8")
-            ).hexdigest()[:32]
-            is_cached = hasattr(self.factory, "_cache") and cache_key in getattr(
-                self.factory, "_cache", {}
+            # ADR-223 / TASK-34420: persistent content-hash cache. sha256 per
+            # text (computed once), one batched lookup, embed ONLY the misses
+            # through the circuit breaker, merge back in caller order, store
+            # the misses. This replaces a "cache check" that compared a batch
+            # key against EmbeddingFactory._cache -- a dict keyed by MODEL id
+            # -- so it could never hit and fed a permanently-0% hit-rate
+            # metric.
+            content_hashes = self._content_hashes(texts)
+            cached_rows = self._lookup_cached_embeddings(
+                content_hashes, self._embedding_cache_db
             )
+            miss_indices = [
+                index
+                for index, digest in enumerate(content_hashes)
+                if digest not in cached_rows
+            ]
 
-            if is_cached:
-                self._cache_hits += 1
-                log_counter("embeddings_cache_hit")
-                logger.debug("Cache hit for embedding batch")
-            else:
-                self._cache_misses += 1
-                log_counter("embeddings_cache_miss")
-                logger.debug("Cache miss for embedding batch")
-
-            # Use the factory's embed method with circuit breaker protection
-            logger.debug(f"Calling factory.embed with {len(texts)} texts")
-
-            # Define the embedding function for circuit breaker
-            def embed_with_factory():
-                return self.factory.embed(texts, as_list=False)
-
-            try:
-                embeddings = self._circuit_breaker.call_sync(embed_with_factory)
+            fresh_embeddings: Optional[np.ndarray] = None
+            if miss_indices:
+                miss_texts = [texts[index] for index in miss_indices]
                 logger.debug(
-                    f"Factory returned embeddings of type {type(embeddings)}, shape: {embeddings.shape if hasattr(embeddings, 'shape') else 'N/A'}"
+                    f"Calling factory.embed with {len(miss_texts)} of {len(texts)} texts "
+                    f"({len(texts) - len(miss_texts)} served from the persistent cache)"
                 )
-            except CircuitBreakerOpenError as e:
-                # Circuit is open, fail fast
-                self._errors_count += 1
-                log_counter("embeddings_circuit_breaker_open")
-                logger.error(f"Embeddings service unavailable: {e}")
-                raise RuntimeError(
-                    f"Embeddings service temporarily unavailable: {e}"
-                ) from e
 
-            # Ensure embeddings is a numpy array
-            if not isinstance(embeddings, np.ndarray):
-                logger.debug(
-                    f"Converting embeddings from {type(embeddings)} to numpy array"
+                # Define the embedding function for circuit breaker
+                def embed_with_factory():
+                    return self.factory.embed(miss_texts, as_list=False)
+
+                try:
+                    fresh_embeddings = self._circuit_breaker.call_sync(
+                        embed_with_factory
+                    )
+                    logger.debug(
+                        f"Factory returned embeddings of type {type(fresh_embeddings)}, shape: {fresh_embeddings.shape if hasattr(fresh_embeddings, 'shape') else 'N/A'}"
+                    )
+                except CircuitBreakerOpenError as e:
+                    # Circuit is open, fail fast
+                    self._errors_count += 1
+                    log_counter("embeddings_circuit_breaker_open")
+                    logger.error(f"Embeddings service unavailable: {e}")
+                    raise RuntimeError(
+                        f"Embeddings service temporarily unavailable: {e}"
+                    ) from e
+
+                # Ensure embeddings is a numpy array
+                if not isinstance(fresh_embeddings, np.ndarray):
+                    logger.debug(
+                        f"Converting embeddings from {type(fresh_embeddings)} to numpy array"
+                    )
+                    fresh_embeddings = np.array(fresh_embeddings)
+                    logger.debug(f"After conversion: shape={fresh_embeddings.shape}")
+
+            rows: List[Optional[List[float]]] = [
+                cached_rows.get(digest) for digest in content_hashes
+            ]
+            if fresh_embeddings is not None:
+                fresh_rows: List[List[float]] = fresh_embeddings.tolist()
+                for position, index in enumerate(miss_indices):
+                    rows[index] = fresh_rows[position]
+                self._store_cached_embeddings(
+                    content_hashes, miss_indices, fresh_rows, self._embedding_cache_db
                 )
-                embeddings = np.array(embeddings)
-                logger.debug(f"After conversion: shape={embeddings.shape}")
+
+            embeddings = np.asarray(rows, dtype=np.float32)
+            self._record_cache_counters(len(texts), len(miss_indices))
 
             # Cache the embedding dimension if not already cached
             if (
@@ -670,23 +812,56 @@ class EmbeddingsServiceWrapper:
         )
 
         try:
-            # Use the factory's async embed method with circuit breaker protection
-            try:
-                embeddings = await self._circuit_breaker.call_async(
-                    self._async_factory_embed, texts
-                )
-            except CircuitBreakerOpenError as e:
-                # Circuit is open, fail fast
-                self._errors_count += 1
-                log_counter("embeddings_circuit_breaker_open")
-                logger.error(f"Embeddings service unavailable: {e}")
-                raise RuntimeError(
-                    f"Embeddings service temporarily unavailable: {e}"
-                ) from e
+            # ADR-223: the same persistent-cache flow as the sync path --
+            # these are the two choke points every chunk and query
+            # embedding already flows through.
+            content_hashes = self._content_hashes(texts)
+            cache_store = self._embedding_cache_db
+            cached_rows = await self._async_cache_call(
+                self._lookup_cached_embeddings, cache_store, content_hashes
+            )
+            miss_indices = [
+                index
+                for index, digest in enumerate(content_hashes)
+                if digest not in cached_rows
+            ]
 
-            # Ensure embeddings is a numpy array
-            if not isinstance(embeddings, np.ndarray):
-                embeddings = np.array(embeddings)
+            fresh_embeddings: Optional[np.ndarray] = None
+            if miss_indices:
+                miss_texts = [texts[index] for index in miss_indices]
+                # Use the factory's async embed method with circuit breaker protection
+                try:
+                    fresh_embeddings = await self._circuit_breaker.call_async(
+                        self._async_factory_embed, miss_texts
+                    )
+                except CircuitBreakerOpenError as e:
+                    # Circuit is open, fail fast
+                    self._errors_count += 1
+                    log_counter("embeddings_circuit_breaker_open")
+                    logger.error(f"Embeddings service unavailable: {e}")
+                    raise RuntimeError(
+                        f"Embeddings service temporarily unavailable: {e}"
+                    ) from e
+
+            rows: List[Optional[List[float]]] = [
+                cached_rows.get(digest) for digest in content_hashes
+            ]
+            if fresh_embeddings is not None:
+                if not isinstance(fresh_embeddings, np.ndarray):
+                    fresh_embeddings = np.array(fresh_embeddings)
+                fresh_rows: List[List[float]] = fresh_embeddings.tolist()
+                for position, index in enumerate(miss_indices):
+                    rows[index] = fresh_rows[position]
+                await self._async_cache_call(
+                    self._store_cached_embeddings,
+                    cache_store,
+                    content_hashes,
+                    miss_indices,
+                    fresh_rows,
+                )
+
+            embeddings = np.asarray(rows, dtype=np.float32)
+            self._record_cache_counters(len(texts), len(miss_indices))
 
             # Update metrics
             self._embeddings_created += 1

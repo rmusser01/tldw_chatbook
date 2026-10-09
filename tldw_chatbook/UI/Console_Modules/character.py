@@ -671,6 +671,9 @@ class ConsoleCharacterController:
                 ):
                     return
                 spec["animation_bytes"] = resolution.image_bytes
+                # task-16/F13: playback reuses the resolver's decode via this
+                # content identity instead of seek/loading every frame again.
+                spec["decode_identity"] = resolution.decode_identity
                 spec["image_size"] = size
                 if resolution_state != "idle" or manual_key is not None:
                     neutral = await asyncio.to_thread(
@@ -680,6 +683,7 @@ class ConsoleCharacterController:
                         return
                     if neutral is not None and neutral.cache_identity != identity:
                         spec["animation_fallback_bytes"] = neutral.image_bytes
+                        spec["animation_fallback_identity"] = neutral.decode_identity
                 await self._paint(request, spec, name=name, manual_label=manual_label)
                 return
             if resolution.image_bytes:

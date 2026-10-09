@@ -482,6 +482,10 @@ _CHARACTERS_EMPTY_PICKER_GUIDANCE = "Pick a character from the list to see it he
 #: export/delete) while browsing server-owned characters.
 _SERVER_READ_ONLY_TOOLTIP = "Server characters are read-only here."
 PERSONAS_SEARCH_DEBOUNCE_SECONDS = 0.2
+#: Debounce for the inspector's conversations search (F14): the same 0.2 s
+#: window as the library search above, so a typing burst runs one Keyword
+#: generation (via the conversations controller) instead of one per keystroke.
+PERSONAS_CONVERSATION_SEARCH_DEBOUNCE_SECONDS = 0.2
 #: Rows per library page. ``page_offset`` is always kept a multiple of this so
 #: the pane's "start-end of N" label math stays exact.
 PERSONAS_LIBRARY_PAGE_SIZE = 50
@@ -1453,6 +1457,7 @@ class PersonasScreen(BaseAppScreen):
         self._selected_lore_book_version: int | None = None
         self._profile_lookup_recovery_state: DestinationRecoveryState | None = None
         self._search_debounce_timer: Timer | None = None
+        self._conversation_search_debounce_timer: Timer | None = None
         self._console_readiness_poll_timer: Timer | None = None
         self._console_readiness_block_reason: str | None = None
         self._console_header_block_reason: str | None = None
@@ -2322,6 +2327,7 @@ class PersonasScreen(BaseAppScreen):
         # No super().on_unmount(): the dispatcher already invokes
         # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
         self._cancel_search_debounce()
+        self._cancel_conversation_search_debounce()
         await self.preview.close_gateway()
 
     def on_resize(self, event: Any) -> None:
@@ -4371,10 +4377,16 @@ class PersonasScreen(BaseAppScreen):
 
     @staticmethod
     def _list_world_books_with_counts(manager: Any) -> list[dict]:
-        """Sync helper run off-thread: list_world_books() plus a per-book entry count."""
+        """Sync helper run off-thread: list_world_books() plus batched entry counts.
+
+        Task 19c: one ``count_entries_for_books`` GROUP BY replaces the
+        per-book ``get_world_book_entries`` reads (full entry rows fetched
+        per book just to take ``len()``) the lore render used to issue.
+        """
         books = manager.list_world_books(True)
+        counts = manager.count_entries_for_books([book["id"] for book in books])
         for book in books:
-            book["entry_count"] = len(manager.get_world_book_entries(book["id"]))
+            book["entry_count"] = counts.get(str(book["id"]), 0)
         return books
 
     async def _render_lore_rows(self, query: str = "") -> None:
@@ -7085,16 +7097,43 @@ class PersonasScreen(BaseAppScreen):
         self._return_to_conversations()
 
     @on(ConversationSearchChanged)
-    async def _handle_conversation_search_changed(
+    def _handle_conversation_search_changed(
         self, message: ConversationSearchChanged
     ) -> None:
         message.stop()
-        if (
+        # F14: debounce the conversation search like the library search --
+        # every Input.Changed re-arms the timer, so only the final query of a
+        # typing burst starts a Keyword generation (the controller's search
+        # cycle was previously run once per keystroke).
+        self._cancel_conversation_search_debounce()
+        query = message.query
+        self._conversation_search_debounce_timer = self.set_timer(
+            PERSONAS_CONVERSATION_SEARCH_DEBOUNCE_SECONDS,
+            lambda: self._start_debounced_conversation_search(query),
+        )
+
+    def _cancel_conversation_search_debounce(self) -> None:
+        """Cancel a pending conversation search when newer input supersedes it."""
+
+        if self._conversation_search_debounce_timer is not None:
+            self._conversation_search_debounce_timer.stop()
+            self._conversation_search_debounce_timer = None
+
+    def _start_debounced_conversation_search(self, query: str) -> None:
+        """Dispatch the debounced conversation search after the timer fires."""
+
+        self._conversation_search_debounce_timer = None
+        if not (
             self.state.active_mode == "characters"
             and self.state.runtime_source == "local"
             and self.state.selected_entity_kind == "character"
         ):
-            await self.conversations.search_conversations(message.query)
+            return
+        self.run_worker(
+            self.conversations.search_conversations(query),
+            exclusive=True,
+            group="personas-conversations-search",
+        )
 
     @on(Button.Pressed, "#personas-conversation-back")
     def _handle_conversation_back(self, event: Button.Pressed) -> None:

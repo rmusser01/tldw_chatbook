@@ -15,6 +15,11 @@
 # ADR-138: existing workflow history index, bounded history read.
 workflow_revisions_history	plan-pinned	Tests/DB/test_workflows_authoring_storage.py::test_history_page_uses_workflow_revisions_history_without_statistics
 
+# ADR-223/224: embedding eviction and timestamp/keyset browse paths without ANALYZE.
+idx_embedding_cache_created	plan-pinned	Tests/RAG/test_embedding_content_hash_cache.py::TestRAGIndexingDBEmbeddingCache::test_eviction_query_uses_created_index_with_canonical_timestamps
+idx_conv_char_lm	plan-pinned	Tests/ChaChaNotesDB/test_sargable_timestamps.py::TestExplainQueryPlans::test_conversation_first_page_all_scope_uses_char_composite
+idx_character_cards_visible_name	plan-pinned	Tests/ChaChaNotesDB/test_sargable_timestamps.py::TestExplainQueryPlans::test_character_browse_page_uses_visibility_name_index
+
 # ADR-098 completed-pair reconciliation locators (schema 72).
 idx_console_dispatch_checkpoints_user_message	plan-pinned	Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py
 idx_console_trace_events_semantic_revision_exact	plan-pinned	Tests/DB/test_chachanotes_v72_voice_trace_provenance_migration.py

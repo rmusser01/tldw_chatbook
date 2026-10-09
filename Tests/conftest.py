@@ -372,6 +372,24 @@ def install_css_parse_cache() -> "Iterator[None]":
 
 
 @pytest.fixture(autouse=True)
+def reset_provider_session_registry() -> "Iterator[None]":
+    """Drop the calling thread's provider HTTP sessions between tests.
+
+    ADR-222 (TASK-34418): provider calls cache one ``requests.Session`` per
+    ``(key, thread)``. Tests monkeypatch ``create_default_session`` per
+    test, so without this reset a session built under test N's patched
+    factory could be handed to test N+1 under the same registry key.
+    """
+    from tldw_chatbook.LLM_Calls.provider_sessions import (
+        close_all_for_current_thread,
+    )
+
+    close_all_for_current_thread()
+    yield
+    close_all_for_current_thread()
+
+
+@pytest.fixture(autouse=True)
 def drain_test_app_user_data_dirs() -> "Iterator[None]":
     """Remove the user-data dirs and stop the service patches the shared app
     factory created during a test.
@@ -1186,6 +1204,18 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
         # unit tests but contain real-app mounts (the runtime-ownership
         # suite): mark only the mounting tests.
         or request.node.get_closest_marker("bootstrap_profile") is not None
+        # PR3045 qualification: these mounted harnesses import the real guarded
+        # config readers (Personas' AppFooterStatus and Library's app_factory).
+        # Three exact representative nodes fail on dev and the PR when the
+        # per-test redirect changes their collection-bound config selection.
+        # Retain that private bootstrap source, as traversal_t22207 does below.
+        # The legacy-human cases explicitly reselect config in their fixture;
+        # keep their distinct per-case isolation rather than sharing its writes.
+        or (
+            request.node.path.name
+            in {"test_personas_workbench.py", "test_library_media_reader_flow.py"}
+            and "legacy_human_config" not in request.fixturenames
+        )
         or request.node.path.name
         in {
             "test_mcp_workbench.py",
@@ -1787,3 +1817,39 @@ def _fleet_chat_scripts_fully_consumed():
         problems.extend(chat.harness_errors)
         problems.extend(chat.unconsumed())
     assert not problems, "FleetChat scripting fault(s): " + "; ".join(problems)
+
+
+@pytest.fixture(autouse=True)
+def reset_visual_identity_decode_memos():
+    """Clear the process-global visual-identity decode memos around each test.
+
+    task-16/F13 memoizes image-inspection facts, retained shared decodes, and
+    linked-portrait version tokens at module scope (they exist precisely to
+    survive across production calls). Tests that monkeypatch decode limits or
+    count decode passes must not observe -- or seed -- state from an earlier
+    test in the same process, so the memos are cleared before and after every
+    test. Looked up through sys.modules rather than imported so the thousands
+    of tests that never touch these modules pay nothing and gain no import
+    side effects.
+    """
+    resets = []
+    for module_name, reset_name in (
+        ("tldw_chatbook.Character_Chat.visual_identity", "_reset_inspection_memo"),
+        (
+            "tldw_chatbook.Chat.character_expression_playback",
+            "_reset_shared_decode_state",
+        ),
+        (
+            "tldw_chatbook.Character_Chat.persona_visual_identity",
+            "_reset_portrait_memo",
+        ),
+    ):
+        module = sys.modules.get(module_name)
+        reset = getattr(module, reset_name, None) if module is not None else None
+        if callable(reset):
+            resets.append(reset)
+    for reset in resets:
+        reset()
+    yield
+    for reset in resets:
+        reset()

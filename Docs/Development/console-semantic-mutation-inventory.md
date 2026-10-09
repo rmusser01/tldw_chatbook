@@ -24,9 +24,9 @@ that coordinator.
   generation provenance, legacy exchange capture, or trajectory diagnostics.
   These values do not change the provider-neutral message envelope.
 
-The structural test records 41 live SQL sink identities and 66 boundary call
-identities: 67 model-visible, 14 visibility/ownership-only, and 26
-presentation-only identities in total. These are route-layer identities, not 107
+The structural test records 41 live SQL sink identities and 62 boundary call
+identities: 64 model-visible, 13 visibility/ownership-only, and 26
+presentation-only identities in total. These are route-layer identities, not 103
 distinct user actions; a public action appears once at its boundary and again at
 the SQL sink it reaches.
 
@@ -46,7 +46,6 @@ user-facing ownership chain and must be reviewed when a route changes.
 | Attachment mutation and selected image variant | model-visible | `ConsoleChatStore.append_generation_variant`, `keep_generation_variant`; `ChatPersistenceService.append_message_attachment`, `keep_message_attachment` | attachment append or scalar/attachment swap; generation metadata re-key is presentation-only |
 | Console fork and temporary promotion | model-visible | `ConsoleSessionController._commit_durable_console_chat_fork`; `ConsoleChatStore.promote_ephemeral_session`; `ChatPersistenceService.fork_console_conversation_bundle`, `promote_console_conversation_bundle` | creates each canonical message and its attachments in the destination conversation |
 | Canvas conversation hard purge | visibility/ownership-only | `CanvasRepository.hard_purge_conversation` | materializes semantic revisions children-before-parents through `SemanticRevisionCoordinator`, then deletes the conversation owner and cascading message/Canvas rows in the same transaction |
-| Classic chat bulk save | model-visible plus visibility | `ChatPersistenceService.save_history` | create/update retained rows and soft-delete omitted rows |
 | Classic character create/post/edit | model-visible | `Character_Chat_Lib.create_conversation`, `start_new_chat_session`, `add_message_to_conversation`, `post_message_to_conversation`, `edit_message_content` | `add_message` or semantic `update_message` |
 | Character API create/update | model-visible | `LocalCharacterPersonaService.create_character_chat_message`, `update_character_chat_message` | `add_message` or semantic `update_message` |
 | Console character-greeting projection and repair | model-visible | `ConsoleChatStore.persist_roleplay_projection_plan`; producer `_snapshot_roleplay_message_projection_write` | frozen `_RoleplayMessageProjectionWrite.writer` invokes `ChatPersistenceService.update_message_content` |
@@ -62,8 +61,9 @@ user-facing ownership chain and must be reviewed when a route changes.
 | Legacy exchange capture and purge | presentation-only | `ConsoleChatStore.attach_message_exchanges`, terminal exchange-flush paths, `ConsoleChatStore.commit_full_capture_purge`; `ChatPersistenceService.append_message_exchanges`, `delete_full_exchanges_for_conversation` | `message_exchanges` only |
 | Image-generation provenance | presentation-only | `ChatPersistenceService.create_message` generation metadata and attachment helpers | `message_generation_metadata`; the attachment bytes/selection remain separately model-visible |
 
-`Chat_Functions.py` has no direct SQL message writer. Its one durable public
-mutation route is the bulk-save wrapper above. `console_chat_store.py` likewise
+`Chat_Functions.py` has no direct SQL message writer and no durable public
+mutation route of its own (the dead `save_history` bulk-save wrapper was
+removed after the perf review found zero callers). `console_chat_store.py` likewise
 does not open SQLite or issue message SQL; it owns in-memory state and delegates
 durability to `ChatPersistenceService` or `ConsoleDispatchRepository`.
 
@@ -290,9 +290,6 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.promote_console_conversation_bundle::call:persistence:create_message` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.replace_assistant_generation_projection::call:db:replace_assistant_generation_projection` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.replace_assistant_generation_projection_with_contributions::call:db:replace_assistant_generation_projection` — model-visible
-- `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:db:soft_delete_message` — visibility/ownership-only
-- `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:persistence:create_message` — model-visible
-- `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:persistence:update_message_content` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.update_message_content.coordinated_update::call:db:update_message` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.update_message_content.coordinated_update::call:db:update_message_with_attachments` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.update_message_metadata::call:db:update_message_metadata_local` — presentation-only

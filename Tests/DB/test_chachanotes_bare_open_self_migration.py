@@ -49,11 +49,24 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCHEMA_NAME = CharactersRAGDB._SCHEMA_NAME
 CURRENT = CharactersRAGDB._CURRENT_SCHEMA_VERSION
 
-#: The only value the v47->v48 step generates that two identical runs cannot
+#: The values migration-chain steps generate that two identical runs cannot
 #: agree on: `console_conversation_library_policy.updated_at` defaults to
-#: CURRENT_TIMESTAMP. Masked in the content hash, and separately asserted to be
-#: a real timestamp so masking cannot hide an empty column.
-_VOLATILE = {("console_conversation_library_policy", "updated_at")}
+#: CURRENT_TIMESTAMP (v47->v48), and every console-trace / character-search
+#: singleton state table stamps `updated_at` with CURRENT_TIMESTAMP during
+#: its own chain step. Masked in the content hash, and separately asserted
+#: to be a real timestamp so masking cannot hide an empty column.
+#: (ADR-224 note: the v79 step was the first change slow enough to push two
+#: consecutive opens across a second boundary reliably, exposing these
+#: singletons as a content-hash flap.)
+_VOLATILE = {
+    ("console_conversation_library_policy", "updated_at"),
+    ("console_trace_compaction_state", "updated_at"),
+    ("console_trace_migration_state", "updated_at"),
+    ("console_trace_maintenance_state", "updated_at"),
+    ("console_trace_graph_epoch", "updated_at"),
+    ("character_conversation_search_revision", "updated_at"),
+    ("character_conversation_search_state", "updated_at"),
+}
 
 
 def _raw_version(db_path: Path) -> int:

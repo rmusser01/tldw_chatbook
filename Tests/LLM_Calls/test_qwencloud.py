@@ -24,6 +24,9 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 import tldw_chatbook.LLM_Calls.qwencloud as qwencloud
+from tldw_chatbook.LLM_Calls.provider_sessions import (
+    close_all_for_current_thread,
+)
 from tldw_chatbook.LLM_Calls.qwencloud import (
     build_qwencloud_payload,
     chat_with_qwencloud,
@@ -1973,7 +1976,9 @@ def test_nonstream_transport_uses_exact_mode_url_headers_and_timeout(
     assert request["timeout"] == 37.0
     assert request["json"]["model"] == "qwen3.8-max"
     assert request["json"]["stream"] is False
-    assert session.closed is True
+    # ADR-222 (TASK-34418): the session is registry-owned and outlives the
+    # call; only the response is closed.
+    assert session.closed is False
     assert response.closed is True
 
 
@@ -2045,7 +2050,9 @@ def test_nonstream_cleanup_failures_never_mask_result_or_provider_error(
     assert "RAW-RESPONSE-CLOSE-CANARY" not in disclosure
     assert "RAW-SESSION-CLOSE-CANARY" not in disclosure
     assert response.close_calls == 1
-    assert session.close_calls == 1
+    # ADR-222: the registry owns the session; a call never closes it, so a
+    # failing session close can no longer occur on this path.
+    assert session.close_calls == 0
 
 
 def test_streaming_transport_transfers_response_and_session_ownership(
@@ -2091,7 +2098,9 @@ def test_streaming_transport_transfers_response_and_session_ownership(
     assert response.closed is False
     assert next(stream)["choices"][0]["delta"]["content"] == "owned"
     assert list(stream) == []
-    assert session.closed is True
+    # ADR-222: the stream closes its response only; the registry owns the
+    # session, so exhausting/closing the stream leaves it open.
+    assert session.closed is False
     assert response.close_calls == 1
 
 
@@ -2769,7 +2778,9 @@ def test_invalid_retry_after_uses_exponential_fallback_without_disclosure(
     assert len(post_urls) == 3
     assert len(returned_responses) == 3
     assert all(id(response) in closed_response_ids for response in returned_responses)
-    assert len(closed_session_ids) == 1
+    # ADR-222: the registry owns the session; retries reuse one session and
+    # it is never closed by the call.
+    assert len(closed_session_ids) == 0
     assert sleeps == [pytest.approx(0.5)]
     rendered = "\n".join(logs)
     assert retry_after_canary not in rendered
@@ -2819,7 +2830,9 @@ def test_truncated_body_retries_once_and_closes_each_attempt(
     assert len(post_urls) == 2
     assert len(returned_responses) == 2
     assert all(id(response) in closed_response_ids for response in returned_responses)
-    assert len(closed_session_ids) == 1
+    # ADR-222 (TASK-34418): both attempts reuse one registry session that
+    # the call never closes; each attempt's response is closed.
+    assert len(closed_session_ids) == 0
     assert _TRUNCATED_BODY_CANARY.decode() not in "\n".join(logs)
 
 
@@ -2853,7 +2866,8 @@ def test_malformed_success_body_is_typed_redacted_and_not_retried(
     assert len(post_urls) == 1
     assert len(returned_responses) == 1
     assert id(returned_responses[0]) in closed_response_ids
-    assert len(closed_session_ids) == 1
+    # ADR-222: registry-owned session is never closed by the call.
+    assert len(closed_session_ids) == 0
     assert exc_info.value.provider == "qwencloud"
     rendered = "\n".join(logs) + "\n" + str(exc_info.value)
     assert "malformed" in rendered.lower()
@@ -2887,6 +2901,9 @@ def test_nontransient_4xx_and_mode_model_mismatch_are_not_retried(
         ),
     )
     for index, response in enumerate(responses):
+        # ADR-222: same base_url across iterations would keep the previous
+        # iteration's registry session; drop it so the patched factory runs.
+        close_all_for_current_thread()
         session = _RecordingSession(response)
         monkeypatch.setattr(
             qwencloud,
@@ -2948,7 +2965,8 @@ def test_stalled_nonretryable_400_is_typed_redacted_and_not_retried(
     assert len(post_urls) == 1
     assert len(returned_responses) == 1
     assert id(returned_responses[0]) in closed_response_ids
-    assert len(closed_session_ids) == 1
+    # ADR-222: registry-owned session is never closed by the call.
+    assert len(closed_session_ids) == 0
     assert exc_info.value.provider == "qwencloud"
 
     rendered = "\n".join(logs) + "\n" + str(exc_info.value)
@@ -3055,7 +3073,8 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         assert canary not in captured
     assert "qwencloud" in captured.lower()
     assert "status=500" in captured
-    assert session.closed is True
+    # ADR-222: registry-owned session is never closed by the call.
+    assert session.closed is False
     assert response.closed is True
 
     for status_code, expected_type in (
@@ -3068,6 +3087,9 @@ def test_qwencloud_errors_and_logs_redact_private_values(
             status_code=status_code,
             text="RAW-BODY-CANARY",
         )
+        # ADR-222: same base_url across loop iterations would keep the
+        # previous iteration's registry session; drop it per iteration.
+        close_all_for_current_thread()
         status_session = _RecordingSession(status_response)
         monkeypatch.setattr(
             qwencloud,
@@ -3090,13 +3112,16 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         for canary in canaries:
             assert canary not in status_capture
         assert f"status={status_code}" in status_capture
-        assert status_session.closed is True
+        # ADR-222: registry-owned session is never closed by the call.
+        assert status_session.closed is False
         assert status_response.closed is True
 
     for network_error in (
         requests.exceptions.ConnectionError("RAW-BODY-CANARY"),
         requests.exceptions.Timeout("RAW-BODY-CANARY"),
     ):
+        # ADR-222: same-key registry reset per iteration (see above).
+        close_all_for_current_thread()
         network_session = _RecordingSession(_TransportResponse({}), error=network_error)
         monkeypatch.setattr(
             qwencloud,
@@ -3118,4 +3143,5 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         network_capture = "\n".join(network_logs) + "\n" + str(network_exc.value)
         for canary in canaries:
             assert canary not in network_capture
-        assert network_session.closed is True
+        # ADR-222: registry-owned session is never closed by the call.
+        assert network_session.closed is False

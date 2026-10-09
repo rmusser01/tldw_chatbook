@@ -49,9 +49,11 @@ def test_fleet_upgrade_preserves_native_receipts_and_predecessor_rows(
     assert all(index in actual_indexes for index in indexes)
     assert validate_candidate(_owner(), path, Event(), migrate=False) == ()
     with closing(sqlite3.connect(path)) as connection:
+        # ADR-224 moved the head to v79; the chain (constructor and recovery
+        # routes alike) now lands these candidates there.
         assert connection.execute(
             "SELECT version FROM db_schema_version"
-        ).fetchone() == (78,)
+        ).fetchone() == (79,)
         assert connection.execute(
             "SELECT count(*) FROM fleet_progress_messages"
         ).fetchone() == (0,)
@@ -82,7 +84,7 @@ def test_installed_fleet_migration_refuses_foreign_ddl_and_rolls_back(
 
 
 @pytest.mark.parametrize("shared", [False, True])
-@pytest.mark.parametrize("stamp", [76, 77, 78])
+@pytest.mark.parametrize("stamp", [77, 78, 79])
 def test_current_fleet_catalog_accepts_only_its_complete_matching_stamp(
     tmp_path, shared, stamp
 ):
@@ -102,6 +104,8 @@ def test_current_fleet_catalog_accepts_only_its_complete_matching_stamp(
         if shared
         else _owner()
     )
+    # ADR-224: the current catalog is the v79 sargable one; only its own
+    # complete stamp validates read-only.
     assert validate_candidate(owner, path, Event(), migrate=False) == (
-        () if stamp == 78 else ("unsupported_schema_version",)
+        () if stamp == 79 else ("unsupported_schema_version",)
     )

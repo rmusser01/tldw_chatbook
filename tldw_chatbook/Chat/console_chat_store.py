@@ -11968,6 +11968,49 @@ class ConsoleChatStore:
         """Return whether the active transcript contains any messages."""
         return self.message_count(session_id) > 0
 
+    def session_fingerprint(self, session_id: str) -> tuple[int, int]:
+        """Return a cheap change fingerprint for a session's active transcript.
+
+        Companion read seam for change-gated pollers (the Buddy conversation
+        modal's tick): returns ``(message_count, last_message_content_length)``
+        WITHOUT folding stream buffers, deferring persistence, or building
+        ``_snapshot`` copies for the whole session, so an idle poll can prove
+        "nothing changed" in O(1)-ish time instead of materializing every
+        message via :meth:`messages_for_session`.
+
+        The length is the VISIBLE streamed length: while the last message has
+        a live chunk buffer, the sum of the chunk lengths is returned, because
+        ``"".join(buffer)`` is the full streamed content by the TASK-259 fold
+        invariant -- buffered-but-unfolded growth is therefore detected
+        without the read path's fold/persist side effects.
+
+        Limitations (callers must keep an equality gate on the rendered
+        projection as the second line of defense): mutations that preserve
+        BOTH the count and the last message's content length are invisible --
+        equal-length edits, same-shape branch overwrites, quarantine
+        placeholder swaps, edits to non-final messages, and streaming growth
+        on a non-final buffered message (single-session generations stream
+        into the final message, so this last case is theoretical today).
+
+        Args:
+            session_id: Session whose active transcript should be fingerprinted.
+
+        Returns:
+            ``(transcript length, last message's visible content length)``.
+
+        Raises:
+            KeyError: If ``session_id`` does not identify a stored session.
+        """
+        self._session_or_raise(session_id)
+        messages = self._messages_by_session[session_id]
+        if not messages:
+            return (0, 0)
+        last = messages[-1]
+        buffer = self._stream_chunks_by_message.get(last.id)
+        if buffer:
+            return (len(messages), sum(len(chunk) for chunk in buffer))
+        return (len(messages), len(last.content))
+
     def iter_messages_newest_first(
         self, session_id: str
     ) -> Iterator[ConsoleChatMessage]:

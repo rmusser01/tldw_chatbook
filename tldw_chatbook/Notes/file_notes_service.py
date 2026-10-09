@@ -187,6 +187,11 @@ class ReconcileResult:
     deleted: tuple[str, ...] = ()
     offline: bool = False
     replica_warning: str | None = None
+    # task-11: True when the discovery signature matched the previous
+    # reconcile and this result is the cached projection with empty change
+    # sets. Pollers use it to back off; one-off callers keep the historical
+    # default (False) and treat every result as fresh activity.
+    vault_unchanged: bool = False
 
 
 @dataclass(frozen=True)
@@ -202,6 +207,8 @@ class _ObservedFile:
     relative_path: str
     size: int
     mtime_ns: int
+    device: int = 0
+    inode: int = 0
 
 
 class ScanCancelled(Exception):
@@ -218,6 +225,22 @@ class ScanCancelled(Exception):
 
 #: How many walked entries pass before ``scan`` reports progress again.
 SCAN_PROGRESS_INTERVAL = 200
+
+#: task-11: bounded-walk limits, mirroring the sync watcher's discovery
+#: bounds (``notes_sync_runtime``'s ``ImportBounds`` max_files/max_entries/
+#: max_depth). Truncation semantics: once ``WALK_MAX_FILES`` supported
+#: files (or ``WALK_MAX_ENTRIES`` total directory entries) have been
+#: observed, the walk stops early, the overflow is logged, and the run
+#: proceeds with the observed prefix -- sorted lexicographic DFS makes
+#: that prefix deterministic, so the discovery signature stays stable
+#: across ticks. A truncated walk folds into ``had_walk_error`` so the
+#: deletion diff never mistakes the invisible tail for deletions, and
+#: directories nested deeper than ``WALK_MAX_DEPTH`` are not descended
+#: into at all. Changes entirely beyond the caps are invisible to this
+#: service, exactly as they are invisible to the sync watcher.
+WALK_MAX_FILES = 1_000
+WALK_MAX_ENTRIES = 10_000
+WALK_MAX_DEPTH = 32
 
 
 class FileNotesService:
@@ -265,6 +288,20 @@ class FileNotesService:
         self._pending_replica_moves: dict[str, str] = {}
         self._hidden_tombstones_swept = False
         self._inspection_refresh_allowed = False
+        # task-11: the signature gate's private state. The signature is the
+        # previous finished walk's (path, device, inode, size, mtime_ns)
+        # inventory; ``_last_reconcile_result`` is that walk's successful
+        # CLEAN projection (a warning-carrying pass is never cached -- see
+        # ``reconcile``), replayed with emptied change sets while the vault
+        # stays still. Only ``reconcile`` writes either field -- ``scan``
+        # deliberately does not seed them, because the first reconcile
+        # after a scan must still run the full replica diff (external
+        # deletions while the surface was closed are caught there).
+        self._last_walk_signature: tuple[object, ...] | None = None
+        self._last_reconcile_result: ReconcileResult | None = None
+        # task-11 (review M4): one-shot-per-episode truncation logging --
+        # the poll would otherwise re-log a bounded vault every pass.
+        self._walk_truncation_logged = False
         with session_owner._lock:
             session_owner._maintenance_file_sources.add(self)
 
@@ -1616,11 +1653,44 @@ class FileNotesService:
     def reconcile(self) -> ReconcileResult:
         """Project external create/modify/delete changes into the replica.
 
+        task-11: the walk runs first so its (path, device, inode, size,
+        mtime_ns) signature can gate everything after it. When the
+        signature matches the previous CLEAN reconcile and no replica
+        move is still pending, the second lstat/read pass, the
+        ``list_active_files`` read, the diff, and the sort are all skipped
+        and the cached projection is replayed with empty change sets. A
+        pass with a warning, uncertain file read, or incomplete walk is a
+        degraded projection -- rows it should have written may be missing --
+        so it never arms the gate: the next tick re-runs the full pass and self-heals the
+        moment the replica recovers, exactly as the pre-gate code's
+        every-tick re-diff did. Pending replica moves always force the
+        full pass -- their retry can make progress without any disk
+        movement.
+
         Returns:
             Reconciled entries, external change sets, and any replica warning.
         """
         if not self._root_is_online():
             return ReconcileResult(status="offline", offline=True)
+
+        observed, uncertain_paths, had_walk_error = self._walk_candidates()
+        signature = self._walk_signature(observed, had_walk_error)
+        if (
+            signature == self._last_walk_signature
+            and self._last_reconcile_result is not None
+            and not self._pending_replica_moves
+            and not uncertain_paths
+            and not had_walk_error
+        ):
+            previous = self._last_reconcile_result
+            return replace(
+                previous,
+                created=(),
+                modified=(),
+                deleted=(),
+                vault_unchanged=True,
+            )
+        self._last_walk_signature = signature
 
         old_files: dict[str, ReplicaFileInfo] | None = None
         warning: str | None = self._forget_hidden_tombstones()
@@ -1635,7 +1705,6 @@ class FileNotesService:
         else:
             warning = _merge_warnings(warning, "Replica unavailable")
 
-        observed, uncertain_paths, had_walk_error = self._walk_candidates()
         pending_move_entries: dict[str, OpenedFileNote] = {}
         pending_move_sources: set[str] = set()
         if old_files is not None and self._replica is not None:
@@ -1779,7 +1848,7 @@ class FileNotesService:
                 deleted.append(relative_path)
         entries.sort(key=lambda entry: entry.relative_path)
         self._entry_cache = {entry.relative_path: entry for entry in entries}
-        return ReconcileResult(
+        result = ReconcileResult(
             status="ok",
             entries=tuple(entries),
             created=tuple(sorted(created)),
@@ -1787,6 +1856,24 @@ class FileNotesService:
             deleted=tuple(deleted),
             replica_warning=warning,
         )
+        # task-11: cache the full pass's projection next to the signature
+        # it was computed from, so an unchanged next tick can replay it.
+        # Only a complete, certain result may arm the gate. A failed replica
+        # read, unreadable file, or truncated walk is degraded. Freezing it
+        # would keep the replica missing rows until the next real vault change.
+        # Dropping the cache forces the full pass again, which self-heals
+        # on the first healthy tick just as the pre-gate every-tick
+        # re-diff did.
+        self._last_reconcile_result = (
+            result
+            if (
+                result.replica_warning is None
+                and not uncertain_paths
+                and not had_walk_error
+            )
+            else None
+        )
+        return result
 
     @_serialized
     def protect_path(
@@ -1869,6 +1956,7 @@ class FileNotesService:
         observed: dict[str, _ObservedFile] = {}
         uncertain_paths: set[str] = set()
         had_walk_error = False
+        truncated = False
         # Every entry the walk reports, not just the supported files kept:
         # a folder picked by accident is mostly things this service ignores,
         # and a progress count that barely moves is worse than none.
@@ -1892,6 +1980,22 @@ class FileNotesService:
             if on_progress is not None and seen - reported >= SCAN_PROGRESS_INTERVAL:
                 reported = seen
                 on_progress(reported)
+            # task-11: entry-count bound. Breaking out of os.walk is safe --
+            # it is a lazy generator over scandir iterators -- and it leaves
+            # ``observed`` holding the deterministic sorted prefix. The
+            # warning is one-shot per truncation episode (review M4): the
+            # poll would otherwise re-log it every pass.
+            if seen > WALK_MAX_ENTRIES:
+                had_walk_error = True
+                truncated = True
+                if not self._walk_truncation_logged:
+                    self._walk_truncation_logged = True
+                    logger.warning(
+                        "File Notes walk bounded at {} entries; "
+                        "the vault is truncated for this pass",
+                        WALK_MAX_ENTRIES,
+                    )
+                break
             current_path = Path(current)
             # task-32552 AC#2: one rule, every dot-directory is hidden --
             # ``.git`` as before, and ``.obsidian``/``.trash``, which used
@@ -1902,6 +2006,23 @@ class FileNotesService:
                 for name in directory_names
                 if not name.startswith(".") and not _is_symlink(current_path / name)
             )
+            # task-11: depth bound -- children of a directory already at
+            # WALK_MAX_DEPTH relative parts would exceed the watcher's
+            # discovery depth, so they are not descended into.
+            if (
+                directory_names
+                and len(current_path.relative_to(self.root).parts) >= WALK_MAX_DEPTH
+            ):
+                had_walk_error = True
+                truncated = True
+                if not self._walk_truncation_logged:
+                    self._walk_truncation_logged = True
+                    logger.warning(
+                        "File Notes walk bounded at depth {}; "
+                        "the vault is truncated for this pass",
+                        WALK_MAX_DEPTH,
+                    )
+                directory_names[:] = []
             for name in sorted(file_names):
                 # A flat folder is ONE walk yield, so the check above never
                 # comes round again: two stats per file is the slow half,
@@ -1923,10 +2044,71 @@ class FileNotesService:
                     relative_path=relative_path,
                     size=file_stat.st_size,
                     mtime_ns=file_stat.st_mtime_ns,
+                    device=file_stat.st_dev,
+                    inode=file_stat.st_ino,
                 )
+                # task-11: file-count bound, same truncation contract as
+                # the entry bound above -- the flag exits BOTH loops, and
+                # the warning is one-shot per truncation episode (M4).
+                if len(observed) >= WALK_MAX_FILES:
+                    had_walk_error = True
+                    truncated = True
+                    if not self._walk_truncation_logged:
+                        self._walk_truncation_logged = True
+                        logger.warning(
+                            "File Notes walk bounded at {} files; "
+                            "the vault is truncated for this pass",
+                            WALK_MAX_FILES,
+                        )
+                    break
+            else:
+                continue
+            break  # file-count bound reached: leave os.walk as well
+        if not truncated:
+            # A complete walk closes the truncation episode, so a later
+            # regression over the bound logs once again.
+            self._walk_truncation_logged = False
         if on_progress is not None:
             on_progress(seen)
         return dict(sorted(observed.items())), uncertain_paths, had_walk_error
+
+    @staticmethod
+    def _walk_signature(
+        observed: dict[str, _ObservedFile],
+        had_walk_error: bool,
+    ) -> tuple[object, ...]:
+        """Build the per-root discovery signature from one finished walk.
+
+        task-11: one ``(path, device, inode, size, mtime_ns)`` tuple per
+        observed file. DELIBERATE NARROWING, not a mirror: the sync
+        watcher's ``_discovery_signature`` (``notes_sync_runtime.py``)
+        carries ``modified_ns`` AND ``changed_ns`` (ctime), but this
+        signature feeds a projection whose own freshness checks --
+        ``replica_matches``/``cache_matches`` below -- compare only size
+        and mtime, and the replica schema (``files`` table) stores no
+        ctime to compare against either. Carrying ctime here would burn
+        full passes that still conclude "unchanged" (a metadata-only
+        ctime bump with no size/mtime movement), so the signature is
+        narrowed to the same blindness class the pre-task comparison
+        already had; device/inode still make vault-internal renames
+        visible even when size and mtime survive the move. Computed from
+        the walk that had to run anyway, so the gate costs no extra
+        stats. A walk that errored or truncated appends a marker so
+        recovering from that state always re-runs the full reconcile.
+        """
+        signature: tuple[object, ...] = tuple(
+            (
+                relative_path,
+                item.device,
+                item.inode,
+                item.size,
+                item.mtime_ns,
+            )
+            for relative_path, item in observed.items()
+        )
+        if had_walk_error:
+            signature += (("walk-incomplete",),)
+        return signature
 
     def _load_file(self, relative_path: str) -> OpenedFileNote:
         path = self._safe_path(relative_path)

@@ -60,7 +60,8 @@ async def _wait_until(
     while time.monotonic() < deadline:
         if predicate():
             await pilot.pause()
-            return
+            if predicate():
+                return
         await pilot.pause(0.05)
     assert predicate(), debug() if debug is not None else "condition not reached"
 
@@ -179,8 +180,23 @@ async def _delete_from_third_message(app: Any, pilot: Any, console: Any) -> None
     from tldw_chatbook.Widgets.Console import ConsoleTranscript
 
     store = console._ensure_console_chat_store()
-    target = store.messages_for_session(store.active_session_id)[2].id
+    messages = store.messages_for_session(store.active_session_id)
+    target = messages[2].id
     transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+    # Store hydration precedes transcript ingest; selecting an absent message
+    # is a no-op. Wait for the initial render before opening its action menu.
+    message_ids = frozenset(message.id for message in messages)
+    await _wait_until(
+        pilot,
+        lambda: (
+            message_ids <= transcript.mounted_message_content_ids()
+            and not console._console_sync_in_progress
+        ),
+        lambda: (
+            transcript.mounted_message_content_ids(),
+            console._console_sync_in_progress,
+        ),
+    )
     transcript.select_message(target)
     await console._sync_native_console_chat_ui()
     opener = f"#console-message-action-more-{target}"

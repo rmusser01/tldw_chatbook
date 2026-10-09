@@ -286,11 +286,6 @@ class TestChatMessageEnhancedInteractions:
             actions_bar = widget.query_one(".message-actions", Horizontal)
             assert actions_bar.has_class("-generating")
 
-            # Stream some text
-            widget.update_message_chunk(" chunk 1")
-            widget.update_message_chunk(" chunk 2")
-            assert widget.message_text == "Initial chunk 1 chunk 2"
-
             # Mark generation complete
             widget.mark_generation_complete()
             await pilot.pause()
@@ -473,28 +468,23 @@ class TestChatMessageEnhancedImageHandling:
 class TestChatMessageEnhancedStreaming:
     """Test message streaming functionality."""
 
-    async def test_message_chunk_updates(self, widget_pilot):
-        """Test streaming message updates."""
+    async def test_legacy_chunk_entry_point_removed(self, widget_pilot):
+        """The watcher-less streaming mutation entry is gone (perf review F18).
+
+        ``update_message_chunk`` appended to ``message_text`` -- a reactive
+        with no watcher, so the appended text never reached the composed
+        Markdown body. It had zero production callers and was removed; the
+        live Chat window streams by updating its Markdown widgets directly.
+        """
         async with await widget_pilot(
             ChatMessageEnhanced, message="", role="Assistant", generation_complete=False
         ) as pilot:
             widget = pilot.app.test_widget
             await pilot.pause()
 
-            # Stream chunks
-            chunks = ["Hello", ", ", "how ", "can ", "I ", "help ", "you", "?"]
-            expected = ""
-
-            for chunk in chunks:
-                widget.update_message_chunk(chunk)
-                expected += chunk
-                assert widget.message_text == expected
-
-            # Verify final message
-            assert widget.message_text == "Hello, how can I help you?"
-
-            # Generation still not complete
-            assert not widget.generation_complete
+            assert not hasattr(widget, "update_message_chunk")
+            # The reactive still carries the message composed at mount time.
+            assert widget.message_text == ""
 
     async def test_generation_completion(self, widget_pilot, wait_for_condition):
         """Test marking generation as complete."""

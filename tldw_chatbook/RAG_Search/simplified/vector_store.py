@@ -24,7 +24,7 @@ import time
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Collection, Dict, List, Mapping, Optional, Protocol, Union
+from typing import Any, Collection, Dict, List, Mapping, Optional, Protocol, Sequence, Union
 
 import psutil
 from loguru import logger
@@ -50,6 +50,13 @@ from .config import validate_chroma_persist_directory
 # Import constants from rag_service
 MIN_SYSTEM_MEMORY_MB = 500  # Minimum system memory to avoid pressure
 MEMORY_PRESSURE_REDUCTION = 0.2  # Fraction to reduce on memory pressure
+
+#: Maximum document ids per ``$in`` where-delete in
+#: ``ChromaVectorStore.delete_documents``. Chroma's where-delete is a linear
+#: metadata scan over the collection, so N changed documents cost N scans
+#: when deleted one by one; batching them into ``$in`` lists of this size
+#: drops a re-index sweep to ceil(N / 500) scans.
+_DOC_ID_DELETE_CHUNK_SIZE = 500
 
 
 @dataclass
@@ -244,6 +251,11 @@ class ChromaVectorStore:
         self._search_count = 0
         self._last_operation_time = None
         self._embedding_dim = None
+
+        # ``$in``-on-delete capability, feature-detected on the first
+        # ``delete_documents`` call (None = not probed yet). Per store, not
+        # per process: different stores may sit on different Chroma builds.
+        self._batch_delete_supported: Optional[bool] = None
 
         # Memory usage cache
         self._memory_cache = {
@@ -712,6 +724,13 @@ class ChromaVectorStore:
         silently keeps existing IDs, so without this stale chunks from the
         previous version would survive a re-index.
 
+        Note:
+            Deliberately NOT a thin wrapper over :meth:`delete_documents`:
+            callers like ``remove_entries`` rely on delete failures raising
+            so they can retain tracking state for orphan reconciliation.
+            :meth:`delete_documents` is best-effort (never raises delete
+            failures); this method keeps the raise-through contract.
+
         Args:
             doc_id: The document id stored in each chunk's ``doc_id`` metadata.
         """
@@ -719,6 +738,86 @@ class ChromaVectorStore:
         logger.debug(
             f"Deleted chunks for document {doc_id} from collection {self.collection_name}"
         )
+
+    @store_operation
+    @activation_guarded
+    def delete_documents(self, doc_ids: Sequence[str]) -> None:
+        """Delete all chunks belonging to many documents (no-op when absent).
+
+        The batched form of :meth:`delete_document` for re-index sweeps:
+        ids are chunked into ``{"doc_id": {"$in": [...]}}`` where-deletes of
+        at most ``_DOC_ID_DELETE_CHUNK_SIZE`` ids each, turning N changed
+        documents from N linear metadata scans into ceil(N/500).
+
+        ``$in``-on-delete support is feature-detected once per store (the
+        first call doubles as the probe). When the installed Chroma rejects
+        it, one warning is logged at detection time and every delete goes
+        through the per-document loop from then on. A batch call that fails
+        after the probe succeeded (e.g. one poison id in the chunk) falls
+        back to per-document deletes for that chunk only, so a single bad
+        id cannot block the rest.
+
+        Best-effort like the re-index caller that feeds it: delete failures
+        are logged (never raised) because re-indexing is idempotent and
+        ``index_batch_optimized`` rewrites the chunks either way.
+
+        Args:
+            doc_ids: The document ids stored in each chunk's ``doc_id``
+                metadata. Iterated once; duplicates are harmless (a repeat
+                delete of an absent document is a no-op).
+        """
+        ids = list(doc_ids)
+        if not ids:
+            return
+        for start in range(0, len(ids), _DOC_ID_DELETE_CHUNK_SIZE):
+            chunk = ids[start : start + _DOC_ID_DELETE_CHUNK_SIZE]
+            if self._batch_delete_supported is False:
+                # Feature detection already rejected $in: per-doc loop, no
+                # repeated probing and no repeated warning.
+                self._delete_documents_one_by_one(chunk)
+                continue
+            try:
+                self.collection.delete(where={"doc_id": {"$in": chunk}})
+            except Exception as e:
+                if self._batch_delete_supported is None:
+                    # First call ever: treat the rejection as "this Chroma
+                    # build does not accept $in on delete"; probe no further.
+                    self._batch_delete_supported = False
+                    logger.warning(
+                        "Chroma rejected $in on delete; stale-chunk removal "
+                        "falls back to per-document deletes "
+                        f"(error_type={type(e).__name__})"
+                    )
+                else:
+                    logger.warning(
+                        f"Batched stale-chunk delete failed for {len(chunk)} "
+                        "documents; retrying them one by one "
+                        f"(error_type={type(e).__name__})"
+                    )
+                self._delete_documents_one_by_one(chunk)
+                continue
+            self._batch_delete_supported = True
+            logger.debug(
+                f"Deleted chunks for {len(chunk)} documents from collection "
+                f"{self.collection_name}"
+            )
+
+    def _delete_documents_one_by_one(self, doc_ids: Sequence[str]) -> None:
+        """Best-effort per-document fallback for :meth:`delete_documents`.
+
+        Always called under ``delete_documents``' ``store_operation`` lock
+        (reentrant), so no decoration of its own. Each failure is logged and
+        skipped so one poison id never blocks the remaining ids.
+        """
+        for doc_id in doc_ids:
+            try:
+                self.collection.delete(where={"doc_id": doc_id})
+            except Exception as e:
+                logger.debug(
+                    f"Stale-chunk delete failed for document {doc_id} "
+                    f"in collection {self.collection_name} "
+                    f"(error_type={type(e).__name__})"
+                )
 
     @store_operation
     @activation_guarded

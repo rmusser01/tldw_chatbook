@@ -416,9 +416,20 @@ class HostedChatStream(Iterator[dict[str, Any]]):
         ORIGINAL validated values, so filtering never affects the turn.
         Records without allowances or tolerance can never carry unknown
         keys past validation, so their visible frames are unchanged.
+
+        Copy strategy (perf remediation, wave 3): the raw event is parsed
+        fresh for every SSE record and discarded after this call, and every
+        leaf at the rebuilt levels is an immutable scalar validated by
+        ``_consume_event`` (strings, ints, bools, None) -- so constructing
+        each level as a fresh dict isolates the consumer without deepcopy.
+        The one exception is ``usage`` at either level: provider usage
+        payloads may nest arbitrary mappings (OpenRouter
+        ``prompt_tokens_details``/``cost``), so that key path keeps its
+        deepcopy. The mutable-leaf enumeration this relies on is pinned by
+        ``Tests/LLM_Calls/test_hosted_streaming_copy_tax.py``.
         """
         safe: dict[str, Any] = {
-            key: deepcopy(event[key])
+            key: deepcopy(event[key]) if key == "usage" else event[key]
             for key in _KNOWN_TOP_LEVEL_KEYS
             if key in event
         }
@@ -433,17 +444,17 @@ class HostedChatStream(Iterator[dict[str, Any]]):
 
     @staticmethod
     def _filtered_choice(choice: Mapping[str, Any]) -> dict[str, Any]:
+        # Same copy strategy as ``_filtered_event``: fresh dict per level,
+        # validated immutable leaves by reference, ``usage`` deep-copied.
         safe_choice: dict[str, Any] = {
-            key: deepcopy(choice[key])
+            key: deepcopy(choice[key]) if key == "usage" else choice[key]
             for key in _KNOWN_STREAM_CHOICE_KEYS
             if key in choice
         }
         delta = safe_choice.get("delta")
         if isinstance(delta, Mapping):
             safe_delta: dict[str, Any] = {
-                key: deepcopy(delta[key])
-                for key in _KNOWN_MESSAGE_KEYS
-                if key in delta
+                key: delta[key] for key in _KNOWN_MESSAGE_KEYS if key in delta
             }
             tool_calls = safe_delta.get("tool_calls")
             if isinstance(tool_calls, list):
@@ -457,17 +468,16 @@ class HostedChatStream(Iterator[dict[str, Any]]):
 
     @staticmethod
     def _filtered_tool_call(call: Mapping[str, Any]) -> dict[str, Any]:
+        # ``_consume_tool_deltas`` validated every leaf here (index int,
+        # id/type strings, function name/arguments strings) before the
+        # event reaches the filter, so fresh dicts isolate the consumer.
         safe_call: dict[str, Any] = {
-            key: deepcopy(call[key])
-            for key in _KNOWN_STREAM_TOOL_KEYS
-            if key in call
+            key: call[key] for key in _KNOWN_STREAM_TOOL_KEYS if key in call
         }
         function = safe_call.get("function")
         if isinstance(function, Mapping):
             safe_call["function"] = {
-                key: deepcopy(function[key])
-                for key in ("name", "arguments")
-                if key in function
+                key: function[key] for key in ("name", "arguments") if key in function
             }
         return safe_call
 
@@ -684,6 +694,33 @@ def hosted_chat_request(
     )
 
 
+def _new_zero_retry_session() -> requests.Session:
+    """Build one zero-transport-retry session for the per-thread registry.
+
+    ADR-222 (TASK-34418): identical to the session ``owned_json_post``
+    used to build per call -- ``create_default_session()`` plus the
+    transport-level Retry(total=0) mount that keeps every retry decision
+    in the engine's own bounded loop. Resolved through this module's
+    ``create_default_session`` global at call time so the existing test
+    seam (monkeypatching it) keeps working.
+    """
+    session = create_default_session()
+    retry_policy = Retry(
+        total=0,
+        connect=0,
+        read=0,
+        redirect=0,
+        status=0,
+        other=0,
+        allowed_methods=frozenset({"POST"}),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry_policy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
 @_provider_recovery.unqualified
 def owned_json_post(
     *,
@@ -778,107 +815,109 @@ def owned_json_post(
             "Content-Type": "application/json",
             **config.extra_headers,
         }
-    session = create_default_session()
+    from tldw_chatbook.LLM_Calls.provider_sessions import (
+        get_session,
+        trust_setting_fragment,
+    )
+
+    # ADR-222 (TASK-34418): one registry session per (provider, base_url)
+    # per thread; the TLS-trust value is part of the key because this call
+    # relies on the session's `verify` set at factory time. The zero-retry
+    # adapter mount lives in the factory -- mounting per call on a cached
+    # session would swap the adapter (and its warm pool) every call.
+    session = get_session(
+        f"{config.provider}:{base_url}:{trust_setting_fragment()}",
+        _new_zero_retry_session,
+    )
     response: requests.Response | None = None
-    stream_owns_session = False
-    try:
-        retry_policy = Retry(
-            total=0,
-            connect=0,
-            read=0,
-            redirect=0,
-            status=0,
-            other=0,
-            allowed_methods=frozenset({"POST"}),
-            raise_on_status=False,
-        )
-        adapter = HTTPAdapter(max_retries=retry_policy)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        for attempt in range(retries + 1):
-            response = None
-            try:
-                response = session.post(
-                    url,
-                    headers=headers,
-                    json=deepcopy(dict(payload)),
-                    timeout=float(config.timeout),
-                    stream=True,
+    for attempt in range(retries + 1):
+        response = None
+        try:
+            # ADR-222: `requests` never mutates the json= argument (it
+            # json.dumps's it per attempt); passing the payload by
+            # reference drops a full-history deepcopy per attempt.
+            response = session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=float(config.timeout),
+                stream=True,
+            )
+            status = int(response.status_code)
+            if status in _RETRYABLE_STATUS_CODES and attempt < retries:
+                delay = _retry_delay(
+                    response,
+                    attempt=attempt,
+                    retry_delay=float(config.retry_delay),
                 )
-                status = int(response.status_code)
-                if status in _RETRYABLE_STATUS_CODES and attempt < retries:
-                    delay = _retry_delay(
-                        response,
-                        attempt=attempt,
-                        retry_delay=float(config.retry_delay),
-                    )
-                    _best_effort_close(response)
-                    response = None
-                    if delay > 0:
-                        time.sleep(delay)
-                    continue
-                if status >= 400:
-                    if status in {400, 404}:
-                        try:
-                            error_payload = response.json()
-                        except ValueError:
-                            error_payload = None
-                        unavailable = model_unavailable_error(config.provider, status, error_payload)
-                        if unavailable is not None:
-                            raise unavailable
-                    _raise_http_error(
-                        config.provider,
-                        status,
-                        label=label,
-                        response=response,
-                        known_credentials=(config.api_key,),
-                    )
-                if streaming:
-                    stream = OwnedSSEStream(response=response, session=session)
-                    response = None
-                    stream_owns_session = True
-                    return stream
-                try:
-                    result = response.json()
-                except Exception:
-                    raise _transport_error(
-                        config.provider, "returned malformed provider JSON", label=label
-                    ) from None
-                if not isinstance(result, Mapping):
-                    raise _transport_error(
-                        config.provider, "response envelope must be an object", label=label
-                    )
-                return deepcopy(dict(result))
-            except (ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError):
-                raise
-            except ChatProviderError:
-                raise
-            except (requests.ConnectionError, RequestsTimeout) as exc:
-                if attempt < retries:
-                    if response is not None:
-                        _best_effort_close(response)
-                        response = None
-                    delay = float(config.retry_delay) * (2**attempt)
-                    if delay > 0:
-                        time.sleep(delay)
-                    continue
-                raise _transport_error(
+                _best_effort_close(response)
+                response = None
+                if delay > 0:
+                    time.sleep(delay)
+                continue
+            if status >= 400:
+                if status in {400, 404}:
+                    try:
+                        error_payload = response.json()
+                    except ValueError:
+                        error_payload = None
+                    unavailable = model_unavailable_error(config.provider, status, error_payload)
+                    if unavailable is not None:
+                        raise unavailable
+                _raise_http_error(
                     config.provider,
-                    "network request failed",
-                    status_code=504 if isinstance(exc, RequestsTimeout) else 502,
+                    status,
                     label=label,
-                ) from None
-            except RequestException:
+                    response=response,
+                    known_credentials=(config.api_key,),
+                )
+            if streaming:
+                # ADR-222: the stream owns (and closes) its response; the
+                # session belongs to the per-thread registry.
+                stream = OwnedSSEStream(response=response, session=None)
+                response = None
+                return stream
+            try:
+                result = response.json()
+            except Exception:
                 raise _transport_error(
-                    config.provider, "network request failed", label=label
+                    config.provider, "returned malformed provider JSON", label=label
                 ) from None
-            finally:
+            if not isinstance(result, Mapping):
+                raise _transport_error(
+                    config.provider, "response envelope must be an object", label=label
+                )
+            return deepcopy(dict(result))
+        except (ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError):
+            raise
+        except ChatProviderError:
+            raise
+        except (requests.ConnectionError, RequestsTimeout) as exc:
+            if attempt < retries:
                 if response is not None:
                     _best_effort_close(response)
                     response = None
-    finally:
-        if not stream_owns_session:
-            _best_effort_close(session)
+                delay = float(config.retry_delay) * (2**attempt)
+                if delay > 0:
+                    time.sleep(delay)
+                continue
+            raise _transport_error(
+                config.provider,
+                "network request failed",
+                status_code=504 if isinstance(exc, RequestsTimeout) else 502,
+                label=label,
+            ) from None
+        except RequestException:
+            raise _transport_error(
+                config.provider, "network request failed", label=label
+            ) from None
+        finally:
+            if response is not None:
+                _best_effort_close(response)
+                response = None
+    # ADR-222 (TASK-34418): the session is registry-owned for this
+    # thread's lifetime and must NOT be closed here; each attempt's
+    # response is closed inside the loop above.
     raise _transport_error(config.provider, "request attempts were exhausted", label=label)
 
 

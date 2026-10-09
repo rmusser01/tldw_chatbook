@@ -108,10 +108,6 @@ try:
    assert len(review.references)==1 and review.references[0][0]=='historical',review
    assert media.resolve(other)[1].read_bytes()==source.read_bytes()
   assert not service.recovered_media_cleanup_pending
- elif mode=='save_history':
-  assert service.save_history(conversation_id=conversation,chatbot_history=[{'id':keep,'role':'User','content':'keep'}])==1
-  assert gone() and len(refs())==2
-  assert not service.recovered_media_cleanup_pending
  elif mode in ('root_drift','catalog_drift'):
   import shutil
   if mode=='root_drift':
@@ -257,7 +253,6 @@ finally:db.close()
         "tombstone",
         "config_drift",
         "foreign_db",
-        "save_history",
         "root_drift",
         "catalog_drift",
         "native_pause",

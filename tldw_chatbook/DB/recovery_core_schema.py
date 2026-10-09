@@ -865,3 +865,45 @@ CORE_SCHEMAS = tuple(
 CHACHANOTES_FLEET_V77_TO_V78_SQL = (
     "UPDATE db_schema_version SET version=78 WHERE schema_name='rag_char_chat_schema' AND version=77",
 )
+
+# ADR-224: sargable timestamp normalization follows fleet v78; old catalogs
+# stay frozen. The migration's DDL change is exactly these two indexes (the
+# conversations sync trigger is dropped and recreated with identical text,
+# so its catalog entry is unchanged); the data normalization UPDATEs do not
+# appear in sqlite_schema.
+CHACHANOTES_SARGABLE_V79_SQL = (
+    "CREATE INDEX idx_character_cards_visible_name\n    ON character_cards(name COLLATE NOCASE)\n    WHERE deleted = 0\n      AND json_extract(CASE WHEN json_valid(extensions) THEN extensions ELSE '{}' END,\n                       '$.actor_pack_persona_portrait_owner') IS NULL",
+    "CREATE INDEX idx_conv_char_lm\n    ON conversations(character_id, last_modified DESC, id DESC)",
+)
+
+
+def _sargable_catalog(schema):
+    """Append the two frozen ADR-224 indexes in sqlite_schema type/name order."""
+
+    def catalog_key(sql):
+        import re
+
+        match = re.match(
+            r"""CREATE (?:UNIQUE |VIRTUAL )?(INDEX|TABLE|TRIGGER|VIEW) (?:IF NOT EXISTS )?["`']?([^"`' (]+)""",
+            sql,
+        )
+        assert match is not None
+        return match[1].lower(), match[2]
+
+    return tuple(sorted(schema + CHACHANOTES_SARGABLE_V79_SQL, key=catalog_key))
+
+
+CHACHANOTES_V79_SCHEMAS = tuple(
+    _sargable_catalog(schema) for schema in CHACHANOTES_V78_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V79_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 79, CHACHANOTES_V79_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, schema)
+    for owner, version, schema in CORE_SCHEMAS
+)
+# The installed .sql file owns DDL; this fixed step owns only its stamp.
+CHACHANOTES_SARGABLE_V78_TO_V79_SQL = (
+    "UPDATE db_schema_version SET version=79 WHERE schema_name='rag_char_chat_schema' AND version=78",
+)

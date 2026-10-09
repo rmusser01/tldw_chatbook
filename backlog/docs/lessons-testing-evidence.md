@@ -19076,3 +19076,74 @@ assumed to receive; nothing pinned what shape the shared seam accepts.
 with a contract test (full body records nothing; extracted dict records
 once) — and make the plan's live end-to-end run part of the evidence
 before shipping a user-visible surface.**
+
+## A monkeypatched session factory plus a per-thread cache needs a reset per re-patch
+
+**TASK-34418, 2026-10-06.** Swapping provider calls to the per-thread session
+registry (ADR-222) turned two green suites red in ways that looked like logic
+bugs: `test_hosted_provider_engine_auth` failed with `IndexError` on
+`keyed.posts[0]` and qwencloud's looped tests asserted on sessions that never
+saw a request. Cause: those tests re-patch `create_default_session` per phase
+inside ONE test while every phase shares the same registry key
+`(provider, base_url)` — the first phase's session stayed cached and the new
+patch was never consulted. A cold-sandbox variant of the same trap hit the
+key's `requests_verify()` read directly: the guarded config bootstrap refused
+(`raw_source_selection_changed`) only when the factory was patched out, which
+is why single-file runs failed while full-suite runs passed.
+
+Reset the registry (`provider_sessions.close_all_for_current_thread()`)
+every time a test re-patches the factory — the root `Tests/conftest.py`
+autouse fixture covers test boundaries, not phases inside a test — and read
+config through guarded fragments that degrade instead of raising when the
+bootstrap is unreconciled.
+
+## A piped pytest run reports the pipe's exit code, not the suite's
+
+**TASK-34427, 2026-10-07.** Characterizing the pre-change baseline for a
+risky migration, the "before" runs were launched as
+`pytest Tests/ChaChaNotesDB/ -q | grep -E "passed|failed" | tail -3` in a
+background shell. Both notifications reported `exit code 0`, which read as
+a green baseline — but the code was `tail`'s: the suite itself had 10
+failures (cascade/parity/census drift), invisible because grep only passed
+through the warning lines it matched. The false green was only caught
+halfway through the task, when a "new" census failure turned out to list
+16 indexes that predated the change; a temporary `git worktree` at the
+base commit (never `git stash` in a shared checkout) proved the suite was
+already red there, and the real baseline had to be re-captured.
+
+**What to do.** When a background/baseline pytest run is filtered through
+a pipe, capture the summary from the stream (`-rf` failure names to a
+file, or read the output file) instead of trusting the pipeline's exit
+code — `set -o pipefail` exists but the background runner reports the last
+command's status regardless. For before/after characterization, save the
+sorted `^FAILED` lists from both runs and `diff` them; identical failure
+LISTS are the evidence, not identical exit codes, and the first suspicion
+of a "new" failure should be tested against the base commit in a throwaway
+worktree before it gets chased as a regression.
+
+## A fix that lands on one seam while the identical pattern survives on a sibling
+
+**Wave 7 / TASK-34433, 2026-10-07.** The perf review flagged
+`ChatMessageEnhanced.update_message_chunk` as a silent no-op (it appends to
+`message_text`, a reactive with no watcher and no repaint, so the composed
+Markdown body never sees the text). Task 21 removed it — and the fresh caller
+grep then showed the IDENTICAL method surviving on the sibling class
+`ChatMessage` (`Widgets/Chat_Widgets/chat_message.py:312-321`): same
+watcher-less append, same zero callers, and a docstring still claiming "This
+method is called by handle_streaming_chunk", a caller that no longer exists.
+Removing the enhanced widget's copy fixed nothing user-visible because
+`ChatMessageEnhanced` itself has zero production importers — both seams were
+dead, and the task's scope (one named file) would have left the other half of
+the pattern in place. The same shape ran through this review's flagship: the
+Console search fix landed while the Library search path kept the identical
+unfixed logic (F-number findings), and the debounce/N+1 fixes had the same
+one-seam risk.
+
+**What to do.** When a removal/fix targets a method on one class, grep the
+method NAME repo-wide before finishing and explicitly check sibling classes
+with the same base or the same docstring provenance; if the identical
+dead/broken pattern survives on a sibling, either widen scope with the
+controller's sign-off or record the survivor (file:line) in the task notes
+and the matching lessons file so the next task starts from the full list —
+a half-removed pattern reads as "handled" to every future grep that only
+checks the seam the task named.

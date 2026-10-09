@@ -94,6 +94,10 @@ class LocalChatbookService:
         # read-modify-writes from concurrent OS threads (e.g. two overlapping
         # `asyncio.run(...)` exports on separate `@work(thread=True)` workers).
         self._registry_lock = _registry_lock(self.registry_path)
+        # Keep the parsed payload and its stat signature under the same lock
+        # as writers so a concurrent reader cannot publish an outdated pair.
+        self._registry_cache_key: tuple[Path, int, int] | None = None
+        self._registry_cache: dict[str, Any] | None = None
         self._citation_ownership_coordinator: (
             CitationArtifactOwnershipCoordinator | None
         ) = None
@@ -159,7 +163,47 @@ class LocalChatbookService:
             return dict(value)
         return dict(value)
 
+    def _registry_stat_key(self) -> tuple[Path, int, int] | None:
+        """Return the (path, size, mtime_ns) signature, or None when missing."""
+
+        try:
+            stat = self.registry_path.stat()
+        except FileNotFoundError:
+            return None
+        return (self.registry_path, stat.st_size, stat.st_mtime_ns)
+
+    @staticmethod
+    def _copy_registry_payload(registry: dict[str, Any]) -> dict[str, Any]:
+        """Hand each caller a private registry payload (task-20a).
+
+        Callers mutate what ``_load_registry`` returns (append/reassign records,
+        rewrite outbox entries, reassign scalars), so the cached parsed payload
+        must never be shared. Per-item dict copies cover every mutation in this
+        class: nested values (tags/categories/metadata lists, provenance_owner
+        dicts) are only ever reassigned, never mutated in place, and external
+        callers only ever see ``_record_copy`` output.
+        """
+
+        return {
+            "next_id": registry["next_id"],
+            "records": [dict(record) for record in registry["records"]],
+            "provenance_outbox": [dict(item) for item in registry["provenance_outbox"]],
+            "provenance_reconcile_cursor": registry["provenance_reconcile_cursor"],
+        }
+
     def _load_registry(self) -> dict[str, Any]:
+        with self._registry_lock:
+            key = self._registry_stat_key()
+            if self._registry_cache is not None and self._registry_cache_key == key:
+                return self._copy_registry_payload(self._registry_cache)
+            registry = self._parse_registry()
+            self._registry_cache = registry
+            self._registry_cache_key = key
+            return self._copy_registry_payload(registry)
+
+    def _parse_registry(self) -> dict[str, Any]:
+        """Read, json-parse, and validate the registry file (uncached)."""
+
         if not self.registry_path.exists():
             return {
                 "next_id": 1,
@@ -239,6 +283,11 @@ class LocalChatbookService:
 
     def _save_registry(self, payload: dict[str, Any]) -> None:
         atomic_write_json(self.registry_path, payload)
+        # Refresh the parse cache from what was just persisted so the next
+        # read is served without re-reading the file and without depending on
+        # mtime_ns granularity of the just-completed atomic write.
+        self._registry_cache = self._copy_registry_payload(payload)
+        self._registry_cache_key = self._registry_stat_key()
 
     def _find_record(
         self, registry: dict[str, Any], chatbook_id: int | str

@@ -741,6 +741,11 @@ async def test_citation_semantic_result_keeps_shape_and_governed_source():
 
 
 def _install_flashrank(monkeypatch, *, ranked=None, init_error=None, run_error=None):
+    # Each test installs a DIFFERENT fake flashrank backend; the ranker is
+    # a process-wide singleton now, so drop the cached instance or later
+    # tests would keep reusing the previous test's ranker.
+    pfs._reset_flashrank_ranker_for_tests()
+
     class _Ranker:
         def __init__(self, **_kwargs):
             if init_error is not None:
@@ -881,6 +886,9 @@ def test_flashrank_fallback_never_claims_reranker_and_keeps_prior_semantics(
 ):
     if failure_stage == "import":
         monkeypatch.setitem(sys.modules, "flashrank", None)
+        # Singleton must be empty for the ImportError path to be exercised
+        # rather than a previously-cached ranker silently reused.
+        pfs._reset_flashrank_ranker_for_tests()
     elif failure_stage == "initialization":
         _install_flashrank(monkeypatch, init_error=RuntimeError("init failed"))
     else:

@@ -189,6 +189,57 @@ def test_explicit_card_insert_invalidates_missing_card_chats(
     }
 
 
+def test_ensure_keyword_index_ready_requires_no_write_transaction(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A READY corpus must be confirmable read-only; only misses take the write path.
+
+    Before this, every ``ensure_keyword_index`` call opened a write
+    transaction (``BEGIN IMMEDIATE`` + singleton UPDATE) even in the steady
+    state where the index was already READY for the current revision.
+    """
+    db = CharactersRAGDB(tmp_path / "ready-probe.sqlite", client_id="probe")
+    try:
+        card_id = _card(db, "Searcher")
+        _chat(
+            db,
+            conversation_id="probe-chat",
+            character_id=card_id,
+            title="Needle",
+            content="probe evidence",
+            modified="2026-09-03T10:00:00Z",
+        )
+        service = CharacterConversationNavigationService(db)
+
+        write_transactions: list[bool] = []
+        real_transaction = db.transaction
+
+        def counting_transaction(*, immediate: bool = False):
+            if immediate:
+                write_transactions.append(immediate)
+            return real_transaction(immediate=immediate)
+
+        monkeypatch.setattr(db, "transaction", counting_transaction)
+
+        # Build once: the write path legitimately runs here.
+        assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+
+        # Steady state: READY invocations open zero write transactions.
+        write_transactions.clear()
+        for _ in range(3):
+            assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+        assert write_transactions == []
+        assert service.keyword_search("probe").total == 1
+
+        # Non-READY (source revision moved): the write path still runs.
+        _card(db, "Revision mover")
+        write_transactions.clear()
+        assert service.ensure_keyword_index() is CharacterKeywordIndexStatus.READY
+        assert write_transactions, "a stale index must still take the write path"
+    finally:
+        db.close_connection()
+
+
 def _chat(
     db: CharactersRAGDB,
     *,
@@ -1298,6 +1349,83 @@ def test_repair_candidates_stay_in_authority_and_repair_uses_expected_version(
     assert repaired["version"] == 2
 
 
+def test_repair_keeps_character_conversation_seek_pages_chronological(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db = CharactersRAGDB(tmp_path / "repair-pagination.sqlite", client_id="repair")
+    try:
+        replacement_id = _card(db, "Replacement")
+        _chat(
+            db,
+            conversation_id="repair-me",
+            character_id=1,
+            title="Repair me",
+            content="repair",
+            modified="2026-10-08T12:00:00.000Z",
+        )
+        _chat(
+            db,
+            conversation_id="earlier",
+            character_id=replacement_id,
+            title="Earlier today",
+            content="earlier",
+            modified="2026-10-09T12:00:00.000Z",
+        )
+        with db.transaction() as connection:
+            connection.execute(
+                "UPDATE conversations SET assistant_authority_id = NULL, "
+                "assistant_id = 'unknown' WHERE id = 'repair-me'"
+            )
+        db.get_connection().create_function(
+            "current_timestamp", 0, lambda: "2026-10-09 12:00:10"
+        )
+        monkeypatch.setattr(
+            db, "_get_current_utc_timestamp_iso", lambda: "2026-10-09T12:00:10.000Z"
+        )
+        authority = db.get_local_authority_id()
+        assert (
+            CharacterConversationNavigationService(db).repair(
+                CharacterRepairRequest(
+                    unresolved=UnresolvedConversationKey(authority, "repair-me"),
+                    replacement=ResolvedLocalCharacterKey(authority, replacement_id),
+                    expected_conversation_version=1,
+                )
+            )
+            is CharacterRepairResult.APPLIED
+        )
+
+        first = db.get_conversations_for_character(replacement_id, limit=1)
+        assert [row["id"] for row in first] == ["repair-me"]
+        second = db.get_conversations_for_character(
+            replacement_id,
+            limit=1,
+            before_last_modified=first[-1]["last_modified"],
+            before_id=first[-1]["id"],
+        )
+        assert [row["id"] for row in second] == ["earlier"]
+        assert (
+            db.get_conversations_for_character(
+                replacement_id,
+                limit=1,
+                before_last_modified=second[-1]["last_modified"],
+                before_id=second[-1]["id"],
+            )
+            == []
+        )
+        stored = (
+            db.get_connection()
+            .execute(
+                "SELECT CAST(last_modified AS TEXT) FROM conversations WHERE id = ?",
+                ("repair-me",),
+            )
+            .fetchone()[0]
+        )
+        assert stored == "2026-10-09T12:00:10.000Z"
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.bootstrap_profile
 def test_app_import_and_startup_leave_keyword_index_dormant(monkeypatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(
@@ -1553,6 +1681,15 @@ def test_keyword_competing_builders_claim_one_sqlite_owner(
 
     @contextmanager
     def interleaved_transaction(*args, **kwargs):
+        if not kwargs.get("immediate"):
+            # Read-only transactions (the READY probe ahead of the write
+            # path, backfill batches) do not participate in this write-race
+            # choreography: the barriers below coordinate the two builders'
+            # WRITE transactions by call number, and counting reads shifted
+            # that numbering. Only writes fence.
+            with transaction(*args, **kwargs) as connection:
+                yield connection
+            return
         counters.count = getattr(counters, "count", 0) + 1
         count = counters.count
         statements = []

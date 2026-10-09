@@ -107,8 +107,6 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.promote_console_conversation_bundle::call:persistence:create_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.replace_assistant_generation_projection::call:db:replace_assistant_generation_projection",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.replace_assistant_generation_projection_with_contributions::call:db:replace_assistant_generation_projection",
-            "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:persistence:create_message",
-            "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:persistence:update_message_content",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.update_message_content.coordinated_update::call:db:update_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.update_message_content.coordinated_update::call:db:update_message_with_attachments",
             "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._create_terminal_message::call:persistence:create_message",
@@ -145,7 +143,6 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Character_Chat/local_character_persona_service.py::LocalCharacterPersonaService.delete_character_chat_message::call:db:soft_delete_message",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_message_subtree::call:db:soft_delete_message_subtree",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.restore_message_subtree::call:db:restore_message_subtree",
-            "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:db:soft_delete_message",
             "tldw_chatbook/Chat/console_subtree_delete.py::write_subtree_delete::call:persistence:delete_message_subtree",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.delete_chat_message::call:db:soft_delete_message",
         },
@@ -230,7 +227,6 @@ _PERSISTENCE_MUTATORS = {
     "keep_message_attachment",
     "promote_console_conversation_bundle",
     "replace_assistant_generation_projection",
-    "save_history",
     "update_message_content",
     "update_message_metadata",
     "update_message_usage",
@@ -2809,7 +2805,7 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
     assert "ADR-097" in inventory
     assert "Hard deletion" in inventory
     assert "Generated and dynamic SQL" in inventory
-    assert "41 live SQL sink identities and 66 boundary call" in inventory
+    assert "41 live SQL sink identities and 62 boundary call" in inventory
     all_classifications = (
         *DIRECT_SQL_ROUTE_CLASSIFICATION.values(),
         *BOUNDARY_CALL_ROUTE_CLASSIFICATION.values(),
@@ -2818,11 +2814,11 @@ def test_inventory_document_exists_and_names_the_contract() -> None:
         classification: all_classifications.count(classification)
         for classification in CLASSIFICATIONS
     } == {
-        "model-visible": 66,
-        "visibility/ownership-only": 14,
+        "model-visible": 64,
+        "visibility/ownership-only": 13,
         "presentation-only": 26,
     }
-    assert "67 model-visible, 14 visibility/ownership-only, and 26" in inventory
+    assert "64 model-visible, 13 visibility/ownership-only, and 26" in inventory
     for phrase in (
         "generation settlement",
         "Edit and regeneration replacement",
