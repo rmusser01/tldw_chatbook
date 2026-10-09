@@ -462,6 +462,8 @@ class _Request:
     session_id: str
     stash: ConsoleDraftStash | None
     guard: Callable[[], bool] | None
+    #: Repeats the running send's capture (a second Enter, nothing new typed).
+    repeat: bool = False
 
 
 @dataclass
@@ -516,12 +518,13 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
     captured at the press now and replayed with that capture once the
     running send settles, only in the chat it was made in (``_replay``).
 
-    A capture leaves the composer only when its send commits it. While the
-    composer still shows one -- the running send's, or a deferred press's
-    -- this press's own text cannot be told apart from it: a repeat press
-    (nothing new typed) is dropped, and a press with new text is refused
-    with a notice and its text stays in the composer. Only one press is
-    held at a time, so it is never overwritten.
+    A capture leaves the composer only when its send commits it. A repeat
+    press (nothing new typed since the running send's capture) is held, and
+    sent only if that send did not commit the draft: an unknown command's
+    "Press Enter again to send as text" leaves it in the composer. While the
+    composer still shows a capture, a press with new text cannot be told
+    apart from it, so it is refused with a notice and its text stays. Only
+    one press is held at a time, so it is never overwritten.
     """
     stash = request.stash
     if stash is None:  # Nothing typed: only a staged image is worth sending.
@@ -529,17 +532,47 @@ def _defer(screen: Any, flight: _SendFlight, request: _Request) -> None:
         if image and flight.deferred is None:
             flight.deferred = request
         return
-    deferred = flight.deferred.stash if flight.deferred is not None else None
-    held = [c for c in (flight.running, deferred) if c is not None]
-    if any((c.text, c.generation) == (stash.text, stash.generation) for c in held):
+    held = flight.deferred
+    if held is not None and held.repeat and not _still_shown(screen, held.stash):
+        held = flight.deferred = None  # Its draft was sent: nothing to repeat.
+    if held is not None and _same(held.stash, stash):
         return
-    if flight.deferred is not None or any(
-        c.generation == stash.generation for c in held
-    ):
+    running = flight.running
+    if held is None and _same(running, stash):
+        flight.deferred = replace(request, repeat=True)
+        return
+    still_shows_running = running is not None and running.generation == stash.generation
+    if held is not None or still_shows_running:
         screen.app_instance.notify(DEFERRED_PRESS_REFUSED, severity="warning")
         return
     if _record_draft(screen, request):
         flight.deferred = request
+
+
+def _same(held: ConsoleDraftStash | None, stash: ConsoleDraftStash) -> bool:
+    """Whether ``held`` captured ``stash``'s draft: same text and generation."""
+    if held is None:
+        return False
+    return (held.text, held.generation) == (stash.text, stash.generation)
+
+
+def _still_shown(screen: Any, stash: ConsoleDraftStash | None) -> bool:
+    """Whether the composer still shows ``stash``, uncommitted.
+
+    The test ``commit_captured_draft`` makes before it commits: the same
+    draft generation (no commit, reload or clear since), text that still
+    starts with the capture, and an unchanged text not retyped.
+    """
+    composer = screen._console_composer_or_none()
+    if stash is None or composer is None:
+        return False
+    live = composer.capture_draft_snapshot()
+    text = composer.draft_text()
+    return (
+        live.generation == stash.generation
+        and text.startswith(stash.text)
+        and (text != stash.text or live.edit_serial == stash.edit_serial)
+    )
 
 
 def _replay(screen: Any, flight: _SendFlight) -> None:
@@ -550,9 +583,13 @@ def _replay(screen: Any, flight: _SendFlight) -> None:
     if _torn_down(screen):
         return
     if screen._console_visible_send_session_id() != request.session_id:
-        # Never send in the chat now on screen; the press's chat keeps its draft.
-        screen.app_instance.notify(CHAT_CHANGED_COPY, severity="warning")
+        # Never send in the chat now on screen; the press's chat keeps its
+        # draft. A repeat press only re-sends what its chat's send left.
+        if not request.repeat:
+            screen.app_instance.notify(CHAT_CHANGED_COPY, severity="warning")
         return
+    if request.repeat and not _still_shown(screen, request.stash):
+        return  # The send it repeats committed (sent) that draft.
     _schedule(screen, flight, request)
 
 

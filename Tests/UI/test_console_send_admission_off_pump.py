@@ -508,6 +508,89 @@ async def test_an_enter_deferred_behind_a_send_sends_its_own_capture_only():
             assert composer.draft_text() == "z"
 
 
+UNKNOWN = "/nope x"
+
+
+@pytest.mark.asyncio
+async def test_a_second_enter_after_an_unknown_command_hint_sends_it_as_text():
+    """The unknown-command "Press Enter again" works while its send settles.
+
+    The first Enter shows the unknown-command hint and leaves the draft in
+    the composer, but its send can still be settling when the second Enter
+    lands (a loaded host widens that window). A press repeating the running
+    send's capture was dropped, on the assumption that the running send
+    would commit it: nothing was sent and the draft stayed. The press is
+    held now, and sent because its draft never left the composer.
+    """
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            composer.load_draft(UNKNOWN)
+            await pilot.pause()
+            tail = _hold_first_send_tail(console)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(lambda: console._console_unknown_send_armed == UNKNOWN)
+                press(host, "enter", "\r")
+                await pilot.pause(0.2)
+            finally:
+                tail.set()
+            await _settled(console, pilot)
+            session_id = console._console_chat_store.active_session_id
+            assert _sent_or_queued(console, session_id) == [UNKNOWN]
+            assert composer.draft_text() == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("then_y", [False, True], ids=["alone", "then_y"])
+async def test_a_bare_second_enter_never_sends_a_committed_draft_again(then_y):
+    """A held repeat press is dropped once its draft has left the composer.
+
+    The second Enter lands while the first send's draft is still in the
+    composer, so it is held; the first send commits that draft and is
+    answered before the held press is looked at. Sent then, it would be a
+    second turn carrying the same text. Nor does it keep the next press out:
+    "y" and Enter typed once the draft has left are sent, as they were when
+    a repeat press was dropped at once, and "z" typed after them stays.
+    """
+    host, gateway, _timeline = build()
+    _allow_second_turns(host)
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, composer = await ready_console(host, pilot, gateway)
+            notices = _record_notices(host)
+            tail = _hold_first_send_tail(console)
+            hold = HeldMcpRead(host.app_instance.unified_mcp_service)
+            gateway.validation_release.set()
+            try:
+                press(host, "enter", "\r")
+                await until(hold.entered.is_set, timeout=ENTRY_SECONDS)
+                press(host, "enter", "\r")
+                await pilot.pause(0.2)
+            finally:
+                hold.release.set()
+            try:
+                if then_y:
+                    await until(lambda: composer.draft_text() == "", timeout=10)
+                    press(host, "y", "y")
+                    press(host, "enter", "\r")
+                    press(host, "z", "z")
+                    await until(lambda: composer.draft_text() == "yz", timeout=10)
+                await until(lambda: _first_turn_done(host, console))
+            finally:
+                tail.set()
+            await _settled(console, pilot)
+            session_id = console._console_chat_store.active_session_id
+            if then_y:
+                await until(lambda: len(_sent_or_queued(console, session_id)) >= 2)
+            sent = [DRAFT, "y"] if then_y else [DRAFT]
+            assert _sent_or_queued(console, session_id) == sent
+            assert composer.draft_text() == ("z" if then_y else "")
+            assert not [n for n in notices if "still being sent" in n], notices
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("typed", ["hi", "! pwd"], ids=["chat", "raw"])
 async def test_enter_on_an_empty_composer_never_sends_text_typed_after_it(typed):
