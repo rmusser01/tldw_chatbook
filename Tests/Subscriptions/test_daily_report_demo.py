@@ -18,9 +18,11 @@ from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
 from tldw_chatbook.Subscriptions import daily_report_demo
 from tldw_chatbook.Subscriptions.daily_report_demo import (
     DEMO_CADENCE_SECONDS,
+    DEMO_SOURCE_CHECK_SECONDS,
     DEMO_SOURCES,
     DEMO_WATCHLIST_NAME,
     DailyReportDemoService,
+    daily_report_demo_consequences,
 )
 from tldw_chatbook.Subscriptions.local_watchlists_service import LocalWatchlistsService
 from tldw_chatbook.TTS.profile_types import (
@@ -149,6 +151,43 @@ async def test_run_demo_seeds_watchlist_preset_schedule_and_briefs(
     assert "Fetching today's stories" in _titles(spy)
     assert "Writing your brief" in _titles(spy)
     assert spy.calls[-1]["category"] == "briefing"
+    # TASK-34000.23: the completion toast names the removal path the
+    # consent copy disclosed, not just that it recurs.
+    assert "remove the Daily Brief watchlist in Watchlists" in spy.calls[-1]["message"]
+
+
+def test_consequences_name_every_feed_the_cadence_and_the_pair():
+    """TASK-34000.23 (AC#4): the one shared consequence copy names every
+    seeded feed, the hourly source check, the 24 h brief cadence, the
+    provider · model pair that will be billed, and where to remove it."""
+    lines = daily_report_demo_consequences(provider="openai", model="gpt-4.1-mini")
+    text = " ".join(lines)
+    for source in DEMO_SOURCES:
+        assert source["name"] in text
+    assert DEMO_SOURCE_CHECK_SECONDS == 3600 and "hourly" in text
+    assert DEMO_CADENCE_SECONDS == 86_400 and "every 24 h" in text
+    assert "openai · gpt-4.1-mini" in text
+    assert "API quota" in text
+    assert "Watchlists" in text
+    assert lines[0].startswith("This sets up a recurring Daily Brief")
+
+    existing = daily_report_demo_consequences(
+        provider="openai", model="gpt-4.1-mini", existing=True
+    )
+    assert existing[0].startswith("You already have a Daily Brief.")
+    assert "openai · gpt-4.1-mini" in existing[0] and "one call" in existing[0]
+
+
+@pytest.mark.asyncio
+async def test_source_check_default_matches_the_constant(tmp_path):
+    """The seed passes no cadence, so every demo source inherits the
+    `subscriptions.check_frequency` column default; the disclosure's
+    "hourly" is pinned to what a real `create_source` row stores."""
+    db = _db(tmp_path)
+    local = LocalWatchlistsService(db_factory=lambda: db)
+    row = await local.create_source(dict(DEMO_SOURCES[0]))
+    stored = db.get_subscription(int(row["source_id"]))
+    assert stored["check_frequency"] == DEMO_SOURCE_CHECK_SECONDS
 
 
 @pytest.mark.asyncio

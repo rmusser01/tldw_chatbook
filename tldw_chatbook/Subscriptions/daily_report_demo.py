@@ -34,6 +34,13 @@ from ..DB.Subscriptions_DB import SubscriptionsDB
 DEMO_WATCHLIST_NAME = "Daily Brief"
 DEMO_PRESET_NAME = "Daily Brief"
 DEMO_CADENCE_SECONDS = 86_400
+#: How often each seeded source is checked. `_seed` passes no cadence to
+#: `create_source`, so every demo source inherits the
+#: `subscriptions.check_frequency` column default (`DB/Subscriptions_DB.py`,
+#: `DEFAULT 3600`); pinned against a real row by
+#: `test_source_check_default_matches_the_constant` so the disclosure's
+#: "hourly" cannot drift from what is stored (TASK-34000.23).
+DEMO_SOURCE_CHECK_SECONDS = 3600
 DEMO_STYLE_NOTES = (
     "A crisp daily news brief: top stories first, one short paragraph each, "
     "plain language, no filler."
@@ -68,6 +75,87 @@ _EMPTY_WINDOW_AUDIO_HINT = "Audio skipped — nothing new to read today."
 _PROVIDER_GUIDANCE = (
     " Check your provider in Settings (F4) → API Keys, then run the demo again."
 )
+#: Consent copy when no persisted provider/model resolves: the run cannot
+#: happen (`_run` refuses with `no-provider`), so the consequence copy says
+#: what to set up instead of what would be billed (TASK-34000.23).
+NO_PROVIDER_CONSEQUENCE = (
+    "No LLM provider is set up, so a brief can't be written. Set one in "
+    "Settings (F4) → API Keys, then come back."
+)
+#: Provider placeholder for the Artifacts tooltip when no pair resolves;
+#: the Artifacts CTA stays enabled (the service refuses with `no-provider`).
+_UNRESOLVED_PROVIDER_COPY = "your configured provider"
+
+
+def _every(seconds: int) -> str:
+    """Spell a cadence in hours: 3600 -> "hourly", 86400 -> "every 24 h"."""
+    hours = max(1, round(seconds / 3600))
+    return "hourly" if hours == 1 else f"every {hours} h"
+
+
+def daily_report_demo_consequences(
+    *, provider: str, model: str, existing: bool = False
+) -> tuple[str, ...]:
+    """The consequence copy both demo entry points show (ADR-079: "CTA copy
+    says so"; TASK-34000.23 review finding L-10).
+
+    Pure: built from `DEMO_SOURCES`, `DEMO_CADENCE_SECONDS` and
+    `DEMO_SOURCE_CHECK_SECONDS`, so the Library confirm and the Artifacts
+    tooltip cannot drift from each other or from what `_seed` creates.
+
+    Args:
+        provider: The canonical provider key the brief will be billed to.
+        model: Its resolved model; an empty string names the provider alone.
+        existing: A Daily Brief schedule already exists, so a run reuses it
+            (one call now) and seeds nothing.
+
+    Returns:
+        One sentence per line; the first line is the headline.
+    """
+    pair = f"{provider} · {model}" if model else provider
+    stop = (
+        "• Keeps running until you remove the Daily Brief watchlist in "
+        "Watchlists (⌃5)."
+    )
+    if existing:
+        return (
+            "You already have a Daily Brief. This checks its sources now and "
+            f"writes today's brief with {pair} (one call).",
+            stop,
+        )
+    feeds = ", ".join(str(source["name"]) for source in DEMO_SOURCES)
+    return (
+        "This sets up a recurring Daily Brief -- not a one-off demo:",
+        f"• Watches {len(DEMO_SOURCES)} live RSS feeds -- {feeds} -- and checks "
+        f"each {_every(DEMO_SOURCE_CHECK_SECONDS)}.",
+        f"• Writes a brief {_every(DEMO_CADENCE_SECONDS)} with {pair}, using your "
+        "API quota. The first one is written now.",
+        stop,
+    )
+
+
+def daily_report_demo_tooltip() -> str:
+    """One-line form of `daily_report_demo_consequences` for a button tooltip.
+
+    Resolves the billed pair through `resolve_persisted_briefing_defaults`
+    (the briefing's own rule) at call time; when nothing resolves -- or the
+    persisted config cannot be read at all -- it names "your configured
+    provider" instead of raising, because this runs inside a screen's
+    `compose` and a compose that raises never reaches the user.
+    """
+    from tldw_chatbook.Subscriptions.briefing_service import (
+        resolve_persisted_briefing_defaults,
+    )
+
+    try:
+        provider, model = resolve_persisted_briefing_defaults()
+    except Exception as exc:  # noqa: BLE001 - tooltip copy must never fail a compose
+        logger.debug(f"Daily report demo tooltip: no pair ({type(exc).__name__})")
+        provider, model = _UNRESOLVED_PROVIDER_COPY, ""
+    return " ".join(
+        line.removeprefix("• ")
+        for line in daily_report_demo_consequences(provider=provider, model=model)
+    )
 
 #: Terminal run statuses `LocalWatchlistsService` records as a failure --
 #: mirrors that module's own `_FAILED_RUN_STATUSES` (kept private there, so
@@ -322,7 +410,8 @@ class DailyReportDemoService:
         await self._notify(
             "Daily brief ready",
             "Your first daily report is ready -- see Artifacts → Reports. It "
-            "refreshes daily from now on.",
+            "refreshes daily from now on; remove the Daily Brief watchlist in "
+            "Watchlists to stop it.",
         )
 
     # -- seeding ---------------------------------------------------------

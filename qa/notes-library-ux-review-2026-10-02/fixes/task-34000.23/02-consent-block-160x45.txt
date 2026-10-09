@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────────────────┐  I    ‹ Items   Preview   Details                │
+│ │ Navigation                     │  a  │ Reports · Local                                                  │  t   Select an artifact                          │
+│ │     Import…                    │  v  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  e                                               │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ ▊  Find reports by Watchlist…                                  ▎ │  m   Choose an item to read it here.             │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  s                                               │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │  ✓ All reports   Kept   Newest                                   │                                                  │
+│ │                                │     │ No reports yet. Open Watchlists, or set up a daily brief below.  │                                                  │
+│ │ ─────────────────────────────  │     │  Watchlists   Set up a daily brief…                              │                                                  │
+│ │ Browse                    ▾    │     │ ╭──────────────────────────────────────────────────────────────╮ │                                                  │
+│ │    Media (0) — your files      │     │ │ This sets up a recurring Daily Brief -- not a one-off demo:  │ │                                                  │
+│ │    Conversations (0)           │     │ │ • Watches 3 live RSS feeds -- Hacker News (front page), BBC  │ │                                                  │
+│ │    Notes (0)                   │     │ │ World News, Ars Technica -- and checks each hourly.          │ │                                                  │
+│ │    Prompts (0) — reuse         │     │ │ • Writes a brief every 24 h with openai · gpt-4.1-mini,      │ │                                                  │
+│ │    Skills (1) — AI add-ons     │<--- │ │ using your API quota. The first one is written now.          │ │                                                  │
+│ │    Collections (0)             │     │ │ • Keeps running until you remove the Daily Brief watchlist   │ │                                                  │
+│ │    Search / RAG — find all     │     │ │ in Watchlists (⌃5).                                          │ │                                                  │
+│ │ ─────────────────────────────  │     │ │                                                              │ │                                                  │
+│ │ Artifacts                 ▾    │     │ │  Set up and write today's brief   Cancel                     │ │                                                  │
+│ │    All artifacts               │     │ ╰──────────────────────────────────────────────────────────────╯ │<---                                              │
+│ │    Chatbooks                   │     │                                                                  │                                                  │
+│ │  ▸ Reports                     │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                  │
+│ │ ─────────────────────────────  │     │ ▊                                                              ▎ │                                                  │
+│ │ Create                    ▾    │     │ ▊                                                              ▎ │                                                  │
+│ │    New note                    │     │ ▊                                                              ▎ │                                                  │
+│ │    New prompt                  │<--- │ ▊                                                              ▎ │                                                  │
+│ │    New skill                   │     │ ▊                                                              ▎ │                                                  │
+│ │ ─────────────────────────────  │     │ ▊                                                              ▎ │                                                  │
+│ │ Study                     ▾    │     │ ▊                                                              ▎ │                                                  │
+│ │    Study decks (0)             │     │ ▊                                                              ▎ │                                                  │
+│ │    Flashcards due: 0           │     │ ▊                                                              ▎ │                                                  │
+│ │    Quizzes (0)                 │     │ ▊                                                              ▎ │                                                  │
+│ │ ─────────────────────────────  │     │ ▊                                                              ▎ │                                                  │
+│ │ Import / Export           ▾    │     │ ▊                                                              ▎ │                                                  │
+│ │    Import…                     │     │ ▊                                                              ▎ │                                                  │
+│ │    Export                      │     │ ▊                                                              ▎ │                                                  │
+│ │ ─────────────────────────────▇ │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                  │
+│ │  ▾ scroll for more             │     │  First   Prev   Next   Last                                      │                                                  │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────────────────┘       Watchlists                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc items | / find | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
