@@ -17,15 +17,16 @@ touches an ``MCPClient`` session) is submitted to the main loop via
 ``approve_for_session``, ``set_tool_state``, ``get_kill_switch``,
 ``effective_tool_states``) do small, atomic file I/O with no event-loop
 affinity, so this provider calls them *directly* from whichever thread it is
-currently running on (worker thread for ``invoke()``/``pending_gate_for()``,
-main loop for ``compose_catalog()``) rather than paying a second
+currently running on (worker thread for ``invoke()``/``pending_gate_for()``
+and for the Console's run-start composition) rather than paying a second
 cross-thread round trip for each one.
 
-``compose_catalog()`` is the one method that itself performs async I/O
-(:meth:`UnifiedMCPControlPlaneService.local_external_catalog`) — it is
-documented to run ON the main loop at registration time (T6 awaits it
-directly, before spawning the worker thread), so it is declared ``async def``
-and does not need any cross-thread submission of its own.
+``compose_catalog()`` is declared ``async def`` because it awaits
+:meth:`UnifiedMCPControlPlaneService.local_external_catalog`, whose body is
+synchronous store reads behind the producer-lifetime fence. TASK-33620.15.1:
+the Console composes at run start in one worker hop, driving this coroutine
+on that thread's own short-lived event loop, so the UI loop keeps taking
+input; the provider stays bound to ``main_loop`` for execution.
 
 PR2a Task 8: with the fleet, this ONE provider instance's ``invoke()`` can
 now be called from several worker threads at once (a parent run and its
@@ -599,8 +600,8 @@ class MCPToolProvider:
 
     # -- composition (main loop, once per registration) -------------------
 
-    async def compose_catalog(self) -> None:
-        """Build the eligible tool catalog. MAIN LOOP, called once at registration.
+    async def compose_catalog(self, *, kill_switch_engaged: bool | None = None) -> None:
+        """Build the eligible tool catalog, once at registration.
 
         Kill switch on -> empty catalog (the provider is effectively inert;
         T6 is expected not to even register it in that case, but this stays
@@ -613,6 +614,11 @@ class MCPToolProvider:
         binding T1 handoff note: incremental dedupe breaks global
         uniqueness), and cache both the `ToolCatalogEntry` list and the
         `{llm_name: (HubTool, EffectiveToolState)}` lookup table.
+
+        Args:
+            kill_switch_engaged: The kill switch as the caller read it at this
+                same point (TASK-33620.15.1: the Console's run-start hop reads
+                it once for the run). ``None`` reads it here.
         """
         # Clear stale stamped decisions from prior catalogs to prevent
         # auto-approval of tools not in the new catalog (Finding 3). Every
@@ -621,7 +627,11 @@ class MCPToolProvider:
         with self._decisions_lock:
             self._stamped_decisions.clear()
 
-        if self._service.get_kill_switch():
+        if (
+            self._service.get_kill_switch()
+            if kill_switch_engaged is None
+            else kill_switch_engaged
+        ):
             self._catalog = []
             self._entry_by_llm_name = {}
             self._not_connected_count = 0

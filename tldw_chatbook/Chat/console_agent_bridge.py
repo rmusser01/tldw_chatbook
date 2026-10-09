@@ -6104,10 +6104,10 @@ class ConsoleAgentBridge:
         # tool approved/edited/revoked since the last run always takes
         # effect on the very next one. `mcp_provider` is built and
         # composed by the CALLER (ConsoleChatController._compose_mcp_
-        # provider, on the running Textual main loop, BEFORE this method
-        # is dispatched onto asyncio.to_thread) -- see MCPToolProvider's
-        # own module docstring for why `compose_catalog()`'s async I/O can
-        # never run from inside this worker-thread method. `builtin_gate`
+        # provider, bound to the running Textual main loop, BEFORE this
+        # method is dispatched onto asyncio.to_thread; TASK-33620.15.1 runs
+        # its reads in one worker hop there) -- see MCPToolProvider's own
+        # module docstring. `builtin_gate`
         # MUST route through this fresh-build branch rather than the
         # shared fast path below: the shared path's own `BuiltinToolProvider`
         # is built once at bridge-construction time with `gate=None` (its

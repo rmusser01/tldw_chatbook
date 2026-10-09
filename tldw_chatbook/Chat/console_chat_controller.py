@@ -26997,10 +26997,10 @@ class ConsoleChatController:
         # left a slow discovery rendering a blank row (Qodo #6 on PR #2586).
         async with self._pre_provider_setup_phase(work_conversation_id):
             # P5-T6: compose this run's MCP tool provider (if eligible) HERE,
-            # on the running main loop, BEFORE the bridge is dispatched onto
-            # asyncio.to_thread below -- see `_compose_mcp_provider`'s own
-            # docstring for why `compose_catalog()`'s async I/O can never run
-            # from the worker thread. `(None, None)` (no service, kill switch
+            # bound to the running main loop, BEFORE the bridge is dispatched
+            # onto asyncio.to_thread below (TASK-33620.15.1: its reads run in
+            # one worker hop at this point -- `_compose_mcp_provider`).
+            # `(None, None)` (no service, kill switch
             # on, or nothing composed) leaves the bridge's MCP-free path
             # byte-identical to before this task.
             #

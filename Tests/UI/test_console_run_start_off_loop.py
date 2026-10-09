@@ -127,9 +127,9 @@ async def test_a_key_typed_while_run_start_reads_mcp_is_handled_before_the_read_
 async def test_run_start_reads_the_kill_switch_fresh_where_it_always_did():
     """AC#4: a kill switch turned on before run start still drops MCP tools.
 
-    The switch is read at run start, not taken from admission or a cache:
-    composition with the switch off offers MCP; once it is on, the next
-    composition offers none and publishes the empty inspector counts.
+    The switch is read at run start, once, not taken from admission or a
+    cache: composition with the switch off offers MCP; once it is on, the
+    next composition offers none and publishes the empty inspector counts.
     """
     host, gateway, _timeline = build()
     async with host.run_test(size=(160, 45)) as pilot:
@@ -147,14 +147,16 @@ async def test_run_start_reads_the_kill_switch_fresh_where_it_always_did():
 
             service.get_kill_switch = get_kill_switch
             first, _gate, _local, _hook = await _compose_run_start(console)
-            assert reads, "run start did not read the kill switch"
+            # One read decides MCP and local tools (the base build made three
+            # within the same step, each a full store scope).
+            assert len(reads) == 1, reads
             if first is None:
                 pytest.skip("this profile offers no MCP tools to compare")
             assert app.console_mcp_tool_count == len(first.list_catalog())
             switch["on"] = True
             reads.clear()
             second, _gate, local, _hook = await _compose_run_start(console)
-            assert reads, "run start reused an earlier kill-switch read"
+            assert len(reads) == 1, "run start reused an earlier kill-switch read"
             assert second is None and local is None
             assert app.console_mcp_tool_count is None
             assert app.console_mcp_not_connected_count is None

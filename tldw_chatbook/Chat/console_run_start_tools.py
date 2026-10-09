@@ -11,7 +11,10 @@ stretches there, and hover waits over them reached 104-297 ms.
 Every read stays where and when it was: at run start, after the durable
 commit, read fresh (nothing is cached from admission or an earlier run).
 They now run in ONE worker hop, so the UI loop keeps handling input while
-they run. ``MCPToolProvider.compose_catalog`` is a coroutine whose only
+they run, and the kill switch is read once there for the whole run start
+(MCP and local tools) instead of three times within the same step: off the
+loop each store read waits on the GIL, and the hop is on the way to the
+provider call. ``MCPToolProvider.compose_catalog`` is a coroutine whose only
 await (``local_external_catalog``) does synchronous store reads, so the hop
 drives it on its own short-lived event loop. Tool calls still run on the UI
 loop: the provider keeps the ``main_loop`` it was built with.
@@ -28,7 +31,7 @@ from loguru import logger
 
 @dataclass
 class LocalKillSwitchRead:
-    """The local tools' compose-time kill-switch read, made in the hop.
+    """The run-start kill-switch read the local tools use, made in the hop.
 
     ``read`` stays False when no hop ran (no MCP service, or a caller that
     composes differently); the local provider then reads the switch itself.
@@ -49,36 +52,35 @@ def compose_run_mcp_provider(
     Args:
         service: The app's unified MCP service.
         provider: The uncomposed provider (built with the UI loop).
-        local_read: Filled with the local tools' own kill-switch read, made
-            right after the MCP composition, as run start always made it.
+        local_read: Filled with this run-start kill-switch read, for the local
+            tools (TASK-33620.15.1: one read decides MCP and local tools).
 
     Returns:
         The composed provider, or None when MCP is not offered this run:
         the kill switch is on, or a read failed (fail closed).
     """
+    error: Exception | None = None
     try:
-        engaged = service.get_kill_switch()
-    except Exception:  # noqa: BLE001 -- fail closed to "no MCP this run"
-        logger.opt(exception=True).warning(
+        engaged = bool(service.get_kill_switch())
+    except Exception as caught:  # noqa: BLE001 -- fail closed to "no MCP this run"
+        logger.opt(exception=caught).warning(
             "ConsoleChatController: get_kill_switch failed; skipping MCP this run"
         )
-        engaged = True
+        engaged, error = True, caught
     if engaged:
         provider = None
     else:
         try:
-            asyncio.run(provider.compose_catalog())
+            asyncio.run(provider.compose_catalog(kill_switch_engaged=False))
         except Exception:  # noqa: BLE001 -- a composition failure must not abort the send
             logger.opt(exception=True).warning(
                 "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run"
             )
             provider = None
     if local_read is not None:
-        try:
-            local_read.value = bool(service.get_kill_switch())
-        except Exception as error:  # noqa: BLE001 -- reported where it is used
-            local_read.error = error
-        local_read.read = True
+        # The same run-start read decides the local tools (it was a second
+        # read a moment later; under GIL contention each costs tens of ms).
+        local_read.value, local_read.error, local_read.read = engaged, error, True
     return provider
 
 
