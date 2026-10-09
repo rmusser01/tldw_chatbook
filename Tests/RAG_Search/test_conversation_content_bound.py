@@ -20,6 +20,7 @@ triggers); the engine reads it through its own read-only connection.
 """
 
 import asyncio
+import sqlite3
 
 import pytest
 
@@ -229,3 +230,32 @@ async def test_conversation_citations_scan_preview_only(
             assert citation.end_char <= 1000, (
                 f"citation span past the preview: {citation.end_char}"
             )
+
+
+def test_content_fetch_respects_total_cap_and_ranked_conversation_order(
+    many_conversations_db,
+):
+    service = _make_service(many_conversations_db)
+    connection = service._connect_chacha_readonly(many_conversations_db)
+    fetched_message_rows = 0
+
+    def count_message_rows(cursor, values):
+        nonlocal fetched_message_rows
+        row = sqlite3.Row(cursor, values)
+        if "line" in row.keys():
+            fetched_message_rows += 1
+        return row
+
+    connection.row_factory = count_message_rows
+    try:
+        docs = service._chacha_conversations_fts(connection, '"alpha"', limit=10)
+    finally:
+        connection.close()
+
+    assert fetched_message_rows == 400
+    assert [len(doc["content"].splitlines()) for doc in docs] == (
+        [60] * 6 + [40] + [0] * 3
+    )
+    for doc in docs:
+        markers = [_marker_of(line) for line in doc["content"].splitlines()]
+        assert markers == sorted(markers)

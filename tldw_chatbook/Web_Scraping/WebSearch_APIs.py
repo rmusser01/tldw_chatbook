@@ -1242,9 +1242,9 @@ async def search_result_relevance(
         original_question (str): The original question posed by the user.
         sub_questions (List[str]): List of sub-questions generated from the original question.
         api_endpoint (str): The LLM or API endpoint to use for relevance analysis.
-        cancel_event: Optional cooperative-cancellation flag; checked at the
-            top of each iteration so a caller-side deadline watchdog can stop
-            the loop between results.
+        cancel_event: Optional cooperative-cancellation flag; checked before
+            relevance calls and each queued scrape/summarization phase so a
+            caller-side deadline watchdog can stop further work.
         llm_timeout_s: Wall-clock timeout for each relevance/summarization LLM call.
         scrape_timeout_s: Wall-clock timeout for the per-result scrape.
         respect_robots_txt: When True, consult the target host's robots.txt
@@ -1324,6 +1324,8 @@ async def search_result_relevance(
             # Add delay to avoid rate limiting
             sleep_time = random.uniform(0.2, 0.6)
             await asyncio.sleep(sleep_time)
+            if cancel_event and cancel_event.is_set():
+                break
 
             # Evaluate relevance (chat_api_call is sync; run off-thread so the
             # wait_for timeout can actually bound it).
@@ -1432,6 +1434,8 @@ async def search_result_relevance(
         source_content = slot.content
 
         async with _gate_semaphore:
+            if cancel_event and cancel_event.is_set():
+                return None
             try:
                 try:
                     # Pre-scrape SSRF guard (task-1356): scrape_article's
@@ -1487,6 +1491,8 @@ async def search_result_relevance(
                         ),
                         timeout=scrape_timeout_s,
                     )
+                    if cancel_event and cancel_event.is_set():
+                        return None
                     if not is_public:
                         logger.warning(
                             f"Refusing to scrape non-public URL for result "
@@ -1535,6 +1541,8 @@ async def search_result_relevance(
                                 )
                                 robots_ok = True
 
+                        if cancel_event and cancel_event.is_set():
+                            return None
                         if not robots_ok:
                             # Disallowed -> same path as an SSRF
                             # refusal: skip the scrape, keep the
@@ -1586,6 +1594,8 @@ async def search_result_relevance(
                 # per-result jitter drawn before the relevance call -- kept,
                 # per-slot, unchanged).
                 await asyncio.sleep(slot.sleep_time)
+                if cancel_event and cancel_event.is_set():
+                    return None
 
                 # `analyze` (LLM_Calls.Summarization_General_Lib) is imported
                 # lazily here (chatbook precedent, see module docstring)

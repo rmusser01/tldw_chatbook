@@ -20,7 +20,7 @@ import threading
 import pytest
 from textual.app import App, ComposeResult
 from textual.containers import Container
-from textual.widgets import Input
+from textual.widgets import Button, Input
 
 # The autouse Tests/UI catalog-refresh fixture lazily imports
 # `tldw_chatbook.app`; under the per-test config redirect that first import
@@ -238,3 +238,44 @@ async def test_filter_semantics_preserved_with_precomputed_text():
         tree.category_filters[ContentType.NOTE] = False
         tree._apply_filters()
         assert tree.filtered_count == 0
+
+
+@pytest.mark.asyncio
+async def test_load_completion_reapplies_settled_search_and_preserves_selection():
+    started = threading.Event()
+    release = threading.Event()
+
+    def load_content():
+        started.set()
+        assert release.wait(10), "test did not release the content loader"
+        return {
+            ContentType.NOTE: [
+                ContentNodeData(type=ContentType.NOTE, id="alpha", title="Alpha"),
+                ContentNodeData(type=ContentType.NOTE, id="beta", title="Beta"),
+            ]
+        }
+
+    tree = SmartContentTree(load_content=load_content)
+    tree.selected_content[ContentType.NOTE].add("beta")
+    app = _TreeHostApp(tree)
+    try:
+        async with app.run_test() as pilot:
+            while not started.is_set():
+                await pilot.pause(0.01)
+            tree.query_one("#content-search", Input).value = "alpha"
+            await pilot.pause(SEARCH_DEBOUNCE_SECONDS + 0.2)
+            assert tree.search_query == "alpha"
+
+            release.set()
+            await _wait_for_loaded(pilot, tree)
+
+            assert tree.filtered_count == 1
+            assert [node.data.id for node in tree.all_nodes if node.display] == [
+                "alpha"
+            ]
+            assert tree.get_selections() == {ContentType.NOTE: ["beta"]}
+            tree.query_one("#select-all", Button).press()
+            await pilot.pause()
+            assert set(tree.get_selections()[ContentType.NOTE]) == {"alpha", "beta"}
+    finally:
+        release.set()

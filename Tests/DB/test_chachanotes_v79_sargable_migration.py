@@ -1,11 +1,11 @@
 """ADR-224: sargable v78->v79 upgrade keeps recovery validation's authority.
 
 Mirrors ``test_chachanotes_v78_fleet_progress_migration.py``: the restore
-path must be able to migrate a genuinely-v78 candidate to v79 under the
+path must be able to migrate a genuinely-v78 candidate through v79 under the
 restricted connection (the authorizer admits exactly the installed .sql
 file's actions -- normalization UPDATEs, the two indexes, the recreated
 sync trigger), refuse foreign DDL, and the resulting catalog must validate
-cleanly at the v79 head, for both the primary and the shared-file hybrid
+cleanly at the v80 head, for both the primary and the shared-file hybrid
 (Subscriptions + ChaChaNotes) shapes.
 """
 
@@ -40,14 +40,14 @@ def _v78_with_mixed_data(path: Path, *, seed: bool) -> None:
 
 
 @pytest.mark.parametrize("seed", [False, True])
-def test_recovery_migration_to_v79_normalizes_and_validates(tmp_path, seed):
+def test_recovery_migration_through_v79_normalizes_and_validates(tmp_path, seed):
     path = tmp_path / "installed.sqlite"
     _v78_with_mixed_data(path, seed=seed)
     assert validate_candidate(_owner(), path, Event(), migrate=True) == ()
     with closing(_connect(path)) as connection:
         assert connection.execute(
             "SELECT version FROM db_schema_version"
-        ).fetchone() == (79,)
+        ).fetchone() == (80,)
         assert not connection.execute("PRAGMA foreign_key_check").fetchall()
         if seed:
             values = [
@@ -107,7 +107,7 @@ def test_installed_sargable_migration_refuses_foreign_ddl_and_rolls_back(
 
 
 @pytest.mark.parametrize("shared", [False, True])
-@pytest.mark.parametrize("stamp", [77, 78, 79])
+@pytest.mark.parametrize("stamp", [77, 78, 79, 80])
 def test_current_sargable_catalog_accepts_only_its_stamp(tmp_path, shared, stamp):
     from tldw_chatbook.DB.recovery_operations import recovery_adapters
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -126,7 +126,7 @@ def test_current_sargable_catalog_accepts_only_its_stamp(tmp_path, shared, stamp
         else _owner()
     )
     assert validate_candidate(owner, path, Event(), migrate=False) == (
-        () if stamp == 79 else ("unsupported_schema_version",)
+        () if stamp == 80 else ("unsupported_schema_version",)
     )
 
 

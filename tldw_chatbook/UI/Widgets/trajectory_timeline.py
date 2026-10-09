@@ -856,6 +856,7 @@ class TrajectoryTimeline(Widget):
             pending, self._brush_emit_pending = self._brush_emit_pending, False
             settled = self._brush
             self.brush_columns(start_x, event.x)
+            self.refresh()
             if pending and self._brush == settled:
                 self.post_message(self.TrajectoryBrushChanged(self._brush))
 

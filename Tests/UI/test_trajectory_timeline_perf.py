@@ -13,10 +13,9 @@ style spans) captured before the change and compared after.
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 from textual import events
+from textual.app import ComposeResult
 
 import tldw_chatbook.app  # noqa: F401,E402
 from tldw_chatbook.Chat.trajectory import (
@@ -38,6 +37,15 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 _T0 = 1_755_165_600.0
 
 pytestmark = pytest.mark.bootstrap_profile
+
+
+class _TimelineHost(ConsolidatedCSSApp):
+    def __init__(self, timeline: TrajectoryTimeline) -> None:
+        super().__init__()
+        self._timeline = timeline
+
+    def compose(self) -> ComposeResult:
+        yield self._timeline
 
 
 def rec(seq, kind, *, start, end=None, turn_id="t1", **extra) -> TrajectoryRecord:
@@ -127,7 +135,7 @@ def _move_event(x: int, y: int = 5) -> events.MouseMove:
 @pytest.mark.asyncio
 async def test_render_consumes_only_precomputed_lane_structures(monkeypatch):
     widget = TrajectoryTimeline()
-    async with ConsolidatedCSSApp(widget).run_test(size=(100, 40)) as pilot:
+    async with _TimelineHost(widget).run_test(size=(100, 40)) as pilot:
         await pilot.pause()
         widget.set_snapshot(_fixture_snapshot())
         await pilot.pause()
@@ -190,15 +198,12 @@ async def test_render_consumes_only_precomputed_lane_structures(monkeypatch):
 @pytest.mark.asyncio
 async def test_drag_burst_coalesces_repaints():
     widget = TrajectoryTimeline()
-    async with ConsolidatedCSSApp(widget).run_test(size=(100, 40)) as pilot:
+    async with _TimelineHost(widget).run_test(size=(100, 40)) as pilot:
         await pilot.pause()
         widget.set_snapshot(_fixture_snapshot())
         await pilot.pause()
 
-        # Pin the plot width: the bare harness widget gets no real layout
-        # size, which would collapse every column onto one cell and make
-        # every move map to the same brush range.
-        widget._plot_width = lambda: 80  # type: ignore[method-assign]
+        assert widget.is_mounted and widget.size.width > 0
 
         refreshes: list[int] = []
         real_refresh = widget.refresh
@@ -226,3 +231,33 @@ async def test_drag_burst_coalesces_repaints():
         assert len(refreshes) <= 3, (
             f"60-event drag burst triggered {len(refreshes)} repaints"
         )
+
+
+@pytest.mark.asyncio
+async def test_short_drag_paints_final_brush_after_mouse_up():
+    widget = TrajectoryTimeline()
+    app = _TimelineHost(widget)
+    async with app.run_test(size=(100, 40)) as pilot:
+        widget.set_snapshot(_fixture_snapshot())
+        await pilot.pause()
+        assert widget.is_mounted and widget.size.width > 0
+        # Settle the first hover/selection initialization before the gesture.
+        widget._forward_event(_move_event(20))
+        widget._forward_event(events.MouseDown.from_event(widget, _move_event(20)))
+        widget._forward_event(events.MouseUp.from_event(widget, _move_event(20)))
+        await pilot.pause()
+        assert "no brush" in "\n".join(
+            strip.text for strip in app.screen._compositor.render_strips()
+        )
+
+        widget._forward_event(events.MouseDown.from_event(widget, _move_event(20)))
+        widget._forward_event(_move_event(40))
+        widget._forward_event(events.MouseUp.from_event(widget, _move_event(40)))
+        await pilot.pause(0.12)
+
+        assert widget.brush is not None
+        painted = "\n".join(
+            strip.text for strip in app.screen._compositor.render_strips()
+        )
+        assert "active" in painted
+        assert "no brush" not in painted

@@ -273,3 +273,44 @@ def test_bulk_import_preserves_error_semantics_for_duplicate_ids(
             db.add_message(dict(message))
     assert type(loop_excinfo.value).__name__ == "ConflictError"
     db.close_connection()
+
+
+@pytest.mark.parametrize("duplicate_in_batch", [False, True])
+def test_bulk_import_identifies_the_message_with_a_global_id_collision(
+    fresh_db, duplicate_in_batch
+):
+    from tldw_chatbook.DB.ChaChaNotes_DB import ConflictError
+
+    db = fresh_db("collision-id")
+    conversation_id = db.add_conversation({"title": "Imported"})
+    other_id = db.add_conversation({"title": "Other"})
+    first = {
+        "id": "fresh",
+        "conversation_id": conversation_id,
+        "sender": "user",
+        "content": "first",
+    }
+    collision = {
+        "id": "taken",
+        "conversation_id": other_id,
+        "sender": "assistant",
+        "content": "second",
+    }
+    staged = [first]
+    if duplicate_in_batch:
+        staged.append(dict(collision, conversation_id=conversation_id))
+    else:
+        db.add_message(dict(collision, conversation_id=conversation_id))
+    staged.append(collision)
+    before = db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+    try:
+        with pytest.raises(ConflictError) as error:
+            db.add_message_import_batch(staged)
+        assert error.value.entity_id == "taken"
+        assert "taken" in str(error.value)
+        assert (
+            db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+            == before
+        )
+    finally:
+        db.close_connection()

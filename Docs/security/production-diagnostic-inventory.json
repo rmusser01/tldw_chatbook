@@ -1527,8 +1527,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 12,
-      "diagnostic_digest": "0c44d0dfc990b05abda2",
+      "call_count": 11,
+      "diagnostic_digest": "1ffadfa65c98ed3e4c21",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Local_Ingestion/local_file_ingestion.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -2011,7 +2011,7 @@
     },
     {
       "call_count": 39,
-      "diagnostic_digest": "f80c9995ce216f7c49a7",
+      "diagnostic_digest": "6abff4e1f1524cf81260",
       "owner": "TASK-494",
       "path": "tldw_chatbook/RAG_Search/simplified/vector_store.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -7797,16 +7797,7 @@
     {
       "candidates": [
         {
-          "call_digest": "19200d749029f4ab",
-          "method": "error",
-          "path_expressions": [
-            "file_path"
-          ],
-          "scope": "batch_ingest_files",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "731fe946dff80bd7",
+          "call_digest": "4bdc5d306a5187d4",
           "method": "error",
           "path_expressions": [
             "file_path"

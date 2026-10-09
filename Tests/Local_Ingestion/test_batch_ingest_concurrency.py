@@ -33,6 +33,7 @@ bound, and the single-writer contract.
 
 import threading
 import time
+from concurrent.futures import Future
 
 import pytest
 
@@ -202,3 +203,108 @@ def test_explicit_chunk_options_dict_shared_not_mutated_across_files(
     # time -- the concurrent path copies it per file.
     assert all(opts is not explicit for opts in seen)
     assert explicit == {"method": "words", "max_size": 10}
+
+
+
+def test_batch_bounds_retained_full_parse_payloads(tmp_path, monkeypatch):
+    lock = threading.Lock()
+    live = 0
+    peak = 0
+    persist_live_counts = []
+
+    class Payload(dict):
+        def __init__(self, values):
+            nonlocal live, peak
+            super().__init__(values)
+            with lock:
+                live += 1
+                peak = max(peak, live)
+
+        def __del__(self):
+            nonlocal live
+            with lock:
+                live -= 1
+
+    def parse(file_path, options):
+        return Payload(ParseSpy()(file_path, options))
+
+    def persist(payload, media_db):
+        with lock:
+            persist_live_counts.append(live)
+        return len(persist_live_counts), None, "ok"
+
+    monkeypatch.setattr(lfi, "parse_local_file_for_ingest", parse)
+    monkeypatch.setattr(lfi, "persist_parsed_media", persist)
+    files = _files(tmp_path, 100)
+    result = lfi.batch_ingest_files(files, media_db=object())
+
+    assert [row["file_path"] for row in result] == [str(path) for path in files]
+    assert peak <= 4, f"retained {peak} full documents for a four-worker batch"
+    assert max(persist_live_counts) <= 4
+    assert live == 0, "completed futures still retain parsed full documents"
+
+
+
+def test_finished_worker_cannot_retain_payload_outside_pending_window(
+    tmp_path, monkeypatch
+):
+    lock = threading.Lock()
+    live = 0
+    peak = 0
+    worker = threading.local()
+    parsed_indices = set()
+    release_first_worker = threading.Event()
+    first_published = threading.Event()
+    replacement_and_initial_slots_parsed = threading.Event()
+    real_set_result = Future.set_result
+
+    class Payload(dict):
+        def __init__(self, file_path):
+            nonlocal live, peak
+            super().__init__(
+                content="large document", chunks=[], title="title", author=None,
+                keywords=[], analysis_content=None, file_type="text", file_path=file_path,
+            )
+            with lock:
+                live += 1
+                peak = max(peak, live)
+                parsed_indices.add(int(file_path.rsplit("/", 1)[1].split(".")[0]))
+                if {1, 2, 3, 4} <= parsed_indices:
+                    replacement_and_initial_slots_parsed.set()
+
+        def __del__(self):
+            nonlocal live
+            with lock:
+                live -= 1
+
+    def held_set_result(future, result):
+        real_set_result(future, result)
+        if getattr(worker, "file_path", "").endswith("/0.txt"):
+            # Publication wakes the caller while _WorkItem.run and this
+            # function still hold the result and completed Future.
+            first_published.set()
+            assert release_first_worker.wait(5), "first worker was never released"
+
+    def parse(file_path, options):
+        worker.file_path = file_path
+        return Payload(file_path)
+
+    def persist(payload, db):
+        if payload["file_path"].endswith("/1.txt"):
+            assert first_published.wait(5)
+            assert replacement_and_initial_slots_parsed.wait(5)
+            release_first_worker.set()
+        return 1, None, "ok"
+
+    monkeypatch.setattr(Future, "set_result", held_set_result)
+    monkeypatch.setattr(lfi, "parse_local_file_for_ingest", parse)
+    monkeypatch.setattr(lfi, "persist_parsed_media", persist)
+    files = [tmp_path / f"{i}.txt" for i in range(6)]
+    try:
+        result = lfi.batch_ingest_files(files, object())
+    finally:
+        release_first_worker.set()
+
+    assert [row["file_path"] for row in result] == [str(path) for path in files]
+    assert peak <= 4, f"peak full parsed payloads: {peak}"
+    assert live == 0

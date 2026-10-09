@@ -589,6 +589,7 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
             self.query_one("#section-title", Static).update(
                 "No chatbooks found" if self.search_query else "Recent Chatbooks"
             )
+            self._mount_load_more_control(total=0, shown=0)
             return
 
         self.query_one("#section-title", Static).update(

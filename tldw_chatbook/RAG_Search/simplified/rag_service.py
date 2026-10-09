@@ -1537,6 +1537,8 @@ class RAGService:
                 metadata_allowlist=entries[0] if entries else None,
             )
 
+        query_embedding = await self.embeddings.create_embeddings_async([query])
+        query_embedding = query_embedding[0]
         merged: List[Any] = []
         for entry in entries:
             merged.extend(
@@ -1547,6 +1549,7 @@ class RAGService:
                     include_citations,
                     score_threshold,
                     metadata_allowlist=entry,
+                    query_embedding=query_embedding,
                 )
             )
         # No cross-entry dedup, deliberately: `build_semantic_allowlists`
@@ -1566,6 +1569,7 @@ class RAGService:
         score_threshold: float = 0.0,
         *,
         metadata_allowlist: Optional[Mapping[str, Collection[str]]] = None,
+        query_embedding: Any = None,
     ) -> Union[List[SearchResult], List[SearchResultWithCitations]]:
         """Perform semantic similarity search.
 
@@ -1586,14 +1590,17 @@ class RAGService:
                 ``search_with_citations`` so out-of-scope candidates are
                 excluded before the store ranks and truncates to
                 ``top_k * SEARCH_RESULT_MULTIPLIER`` results.
+            query_embedding: Optional precomputed query vector shared by a
+                union allowlist's per-entry store searches.
 
         Returns:
             Up to ``top_k`` search results, most similar first.
         """
         # Create query embedding
-        logger.debug("Creating query embedding")
-        query_embedding = await self.embeddings.create_embeddings_async([query])
-        query_embedding = query_embedding[0]
+        if query_embedding is None:
+            logger.debug("Creating query embedding")
+            query_embedding = await self.embeddings.create_embeddings_async([query])
+            query_embedding = query_embedding[0]
 
         # Search vector store
         # TASK-32804.9: run the synchronous ChromaDB query off the event
@@ -2430,10 +2437,10 @@ class RAGService:
         ``_MAX_CONV_MESSAGES_PER_CONVERSATION`` oldest messages per
         conversation inside SQLite itself -- previously every matching
         message of every matching conversation crossed into Python, so one
-        long conversation dominated the leg's cost -- and the assembled
-        per-conversation line lists are then truncated to
-        ``_MAX_CONV_MESSAGES_TOTAL`` overall, filling conversations in this
-        sub-leg's existing top-k order. Both are presentation bounds for
+        long conversation dominated the leg's cost -- and a SQL ``LIMIT``
+        keeps at most ``_MAX_CONV_MESSAGES_TOTAL`` rows overall, filling
+        conversations in this sub-leg's existing top-k order before fetching
+        their lines into Python. Both are presentation bounds for
         prompt assembly, not a recall change: the FTS matching set is
         unchanged, and within the bound the messages are still the OLDEST
         matches in the ORM's own ``timestamp ASC`` (rowid tie-break) order,
@@ -2487,15 +2494,14 @@ class RAGService:
             if not conversations:
                 return []
 
-            # Only "?" characters are interpolated; every value is bound.
-            placeholders = ",".join("?" * len(conversations))
-            messages_sql = f"""
+            messages_sql = """
             SELECT
                 conversation_id,
                 line
             FROM (
                 SELECT
                     m.conversation_id AS conversation_id,
+                    selected.key AS conversation_order,
                     COALESCE(m.sender, 'unknown') || ': '
                         || COALESCE(m.content, '') AS line,
                     ROW_NUMBER() OVER (
@@ -2504,41 +2510,30 @@ class RAGService:
                     ) AS rn
                 FROM messages_fts fts
                 JOIN messages m ON fts.rowid = m.rowid
+                JOIN json_each(?) selected ON m.conversation_id = selected.value
                 WHERE fts.messages_fts MATCH ?
                   AND m.deleted = 0
-                  AND m.conversation_id IN ({placeholders})
             )
             WHERE rn <= ?
-            ORDER BY conversation_id, rn
+            ORDER BY conversation_order, rn
+            LIMIT ?
             """
             lines: Dict[Any, List[str]] = {}
             params = [
+                json.dumps([row["id"] for row in conversations]),
                 escaped_query,
-                *(row["id"] for row in conversations),
                 _MAX_CONV_MESSAGES_PER_CONVERSATION,
+                _MAX_CONV_MESSAGES_TOTAL,
             ]
             with closing(conn.execute(messages_sql, params)) as cursor:
                 for row in cursor:
                     lines.setdefault(row["conversation_id"], []).append(row["line"])
 
-            # Second bound layer: at most _MAX_CONV_MESSAGES_TOTAL lines
-            # overall, filling conversations in their existing top-k
-            # (best_rank) order so the best conversations keep their window.
-            # Presentation bound for prompt assembly; FTS recall unchanged.
-            bounded: Dict[Any, List[str]] = {}
-            remaining = _MAX_CONV_MESSAGES_TOTAL
-            for row in conversations:
-                if remaining <= 0:
-                    break
-                taken = lines.get(row["id"], ())[:remaining]
-                bounded[row["id"]] = taken
-                remaining -= len(taken)
-
             return [
                 {
                     "id": row["id"],
                     "title": row["title"],
-                    "content": "\n".join(bounded.get(row["id"], ())),
+                    "content": "\n".join(lines.get(row["id"], ())),
                 }
                 for row in conversations
             ]

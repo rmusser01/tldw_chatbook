@@ -135,9 +135,11 @@ def world(tmp_path: Path) -> _World:
     )
     built = _World(db=db, store=store, adapter=owner._adapter, owner=owner)
     yield built
-    # The tests shut the owner down (which also closes the adapter); the
-    # fixture only owns the database handle.
-    db.close_connection()
+    # The owner has settled; retire every fixture-owned worker handle too.
+    store.close()
+    with db.quiesce_connections(timeout_seconds=5):
+        pass
+    assert db.registered_connection_count() == 0
 
 
 async def test_one_plan_and_one_token_per_pass_off_the_event_loop(
@@ -201,4 +203,95 @@ async def test_pass_token_is_byte_identical_to_the_observation_derivation(
         assert plan.observation_token == reference
         assert plan.observation_token == _observation_token(request)
     finally:
+        await world.owner.shutdown()
+
+
+@pytest.mark.parametrize(
+    "operation,stage",
+    [
+        ("check_root", "plan"),
+        ("review_candidate", "plan"),
+        ("conflict_labels", "token"),
+        ("conflict_labels", "plan"),
+        ("binding_labels", "token"),
+        ("binding_labels", "plan"),
+        ("compare_conflict", "token"),
+        ("compare_conflict", "plan"),
+        ("apply_reviewed", "token"),
+        ("apply_reviewed", "plan"),
+    ],
+)
+@pytest.mark.parametrize("failure", ["cancel", "raise"])
+async def test_offloop_failure_releases_only_its_observation(
+    world: _World,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    stage: str,
+    failure: str,
+) -> None:
+    import asyncio
+
+    await world.owner.start()
+    reviewed = await world.owner.check_root("root-1")
+    root = world.store.get_root("root-1")
+    loop_thread = threading.current_thread()
+    started = threading.Event()
+    finish = threading.Event()
+    settled = threading.Event()
+    target_name = "plan_reconciliation" if stage == "plan" else "_observation_token"
+    original = getattr(runtime_module, target_name)
+
+    def held(observations):
+        # The adapter hashes before registering; hold only the owner's worker.
+        if threading.current_thread() is loop_thread:
+            return original(observations)
+        started.set()
+        try:
+            assert finish.wait(5)
+            if failure == "raise":
+                raise RuntimeError("worker_failed")
+            return original(observations)
+        finally:
+            settled.set()
+
+    monkeypatch.setattr(runtime_module, target_name, held)
+    calls = {
+        "check_root": lambda: world.owner.check_root("root-1"),
+        "review_candidate": lambda: world.owner._review_candidate(root),
+        "conflict_labels": lambda: world.owner.conflict_labels(
+            "root-1", reviewed.observation_token
+        ),
+        "binding_labels": lambda: world.owner.binding_labels("root-1", ("binding-1",)),
+        "compare_conflict": lambda: world.owner.compare_conflict(
+            "root-1", reviewed.observation_token, "binding-1"
+        ),
+        "apply_reviewed": lambda: world.owner.apply_reviewed(
+            "root-1", reviewed.observation_token, ()
+        ),
+    }
+    world.adapter._bundles["other-owner"] = {}
+    task = asyncio.create_task(calls[operation]())
+    try:
+        assert await asyncio.to_thread(started.wait, 5)
+        assert len(world.adapter._bundles) == 2
+        if failure == "cancel":
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            finish.set()
+            with pytest.raises(RuntimeError, match="worker_failed"):
+                await task
+        finish.set()
+        assert await asyncio.to_thread(settled.wait, 5)
+        assert set(world.adapter._bundles) == {"other-owner"}
+        monkeypatch.setattr(runtime_module, target_name, original)
+        await world.owner.check_root("root-1")
+        assert set(world.adapter._bundles) == {"other-owner"}
+    finally:
+        finish.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        world.adapter._bundles.pop("other-owner", None)
         await world.owner.shutdown()

@@ -2340,8 +2340,9 @@ def batch_ingest_files(
 
     Concurrency (B15): by default the EXPENSIVE, DB-free parse/analyze stage
     (``parse_local_file_for_ingest``) fans out under a bounded
-    ``ThreadPoolExecutor`` (``_BATCH_PARSE_MAX_WORKERS``), and the results are
-    then persisted strictly serially, in input order, on the calling thread.
+    ``ThreadPoolExecutor`` (``_BATCH_PARSE_MAX_WORKERS``). A window of that
+    many pending slots bounds parsed payload retention while results are
+    consumed and persisted serially, in input order, on the calling thread.
     The DB stage is deliberately NOT parallelized: ``ingest_local_file``
     writes through the caller's shared ``MediaDatabase`` (thread-local
     connections; per-thread private databases for ``:memory:``, and
@@ -2415,6 +2416,7 @@ def batch_ingest_files(
         # Results are assembled strictly in input order below, so the return
         # value is identical to the historical serial loop's (including per-
         # file error entries); only wall time changes.
+        from collections import deque
         from concurrent.futures import ThreadPoolExecutor
 
         file_paths_list = list(file_paths)
@@ -2446,60 +2448,69 @@ def batch_ingest_files(
                 "metadata": None,
             }
 
-        payloads: List[Optional[Dict[str, Any]]] = [None] * len(file_paths_list)
-        parse_errors: Dict[int, Exception] = {}
         if file_paths_list:
-            with ThreadPoolExecutor(
-                max_workers=max(1, min(_BATCH_PARSE_MAX_WORKERS, len(file_paths_list)))
-            ) as pool:
-                futures = [
-                    pool.submit(
-                        parse_local_file_for_ingest,
-                        str(file_path),
-                        _build_options(chunk_options),
-                    )
-                    for file_path in file_paths_list
-                ]
-                for index, future in enumerate(futures):
-                    try:
-                        payloads[index] = future.result()
-                    except Exception as parse_err:  # noqa: BLE001 - per-file isolation below
-                        parse_errors[index] = parse_err
+            workers = min(_BATCH_PARSE_MAX_WORKERS, len(file_paths_list))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                remaining_paths = iter(file_paths_list)
+                pending = deque()
 
-        for index, file_path in enumerate(file_paths_list):
-            payload = payloads[index]
-            if payload is None:
-                parse_err = parse_errors[index]
-                error_count += 1
-                results.append(
-                    {
-                        "file_path": str(file_path),
-                        "error": str(parse_err),
-                        "success": False,
-                    }
-                )
-                logger.error(
-                    f"Error ingesting {file_path}, continuing with next file: {parse_err}"
-                )
-                continue
-            try:
-                media_id, _media_uuid, _message = persist_parsed_media(
-                    payload, media_db
-                )
-                results.append(_ingest_result_dict(payload, media_id))
-                success_count += 1
-            except Exception as persist_err:  # noqa: BLE001 - historical per-file isolation
-                error_count += 1
-                results.append(
-                    {
-                        "file_path": str(file_path),
-                        "error": str(persist_err),
-                        "success": False,
-                    }
-                )
-                logger.error(
-                    f"Error ingesting {file_path}, continuing with next file: {persist_err}"
-                )
+                def _parse_to_holder(
+                    file_path: str,
+                    options: dict[str, Any],
+                    payload_holder: list[dict[str, Any]],
+                ) -> None:
+                    # Futures and late-retiring workers must not own payloads.
+                    payload_holder.append(
+                        parse_local_file_for_ingest(file_path, options)
+                    )
+
+                def _submit_next() -> None:
+                    try:
+                        file_path = next(remaining_paths)
+                    except StopIteration:
+                        return
+                    payload_holder = []
+                    pending.append(
+                        (
+                            file_path,
+                            pool.submit(
+                                _parse_to_holder,
+                                str(file_path),
+                                _build_options(chunk_options),
+                                payload_holder,
+                            ),
+                            payload_holder,
+                        )
+                    )
+
+                for _ in range(workers):
+                    _submit_next()
+                while pending:
+                    file_path, future, payload_holder = pending.popleft()
+                    payload = None
+                    try:
+                        future.result()
+                        payload = payload_holder.pop()
+                        media_id, _media_uuid, _message = persist_parsed_media(
+                            payload, media_db
+                        )
+                        results.append(_ingest_result_dict(payload, media_id))
+                        success_count += 1
+                    except Exception as ingest_err:  # noqa: BLE001 - historical per-file isolation
+                        error_count += 1
+                        results.append(
+                            {
+                                "file_path": str(file_path),
+                                "error": str(ingest_err),
+                                "success": False,
+                            }
+                        )
+                        logger.error(
+                            f"Error ingesting {file_path}, continuing with next file: {ingest_err}"
+                        )
+                    finally:
+                        del future, payload, payload_holder
+                    _submit_next()
 
     # Log batch completion metrics
     duration = time.time() - start_time

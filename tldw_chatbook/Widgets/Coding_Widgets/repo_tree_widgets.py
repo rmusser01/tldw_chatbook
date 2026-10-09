@@ -477,7 +477,10 @@ class TreeView(VerticalScroll):
             node.selected = selected
             # Update checkbox via the stored handle (B20: no DOM query)
             if node.checkbox is not None:
-                node.checkbox.value = selected
+                with node.checkbox.prevent(Checkbox.Changed):
+                    node.checkbox.value = selected
+                if node.checkbox.parent is not None:
+                    node.checkbox.parent.set_class(selected, "tree-node-selected")
 
         # If it's a directory, cascade to children via the child index (B20)
         if node and node.is_directory:
@@ -490,7 +493,12 @@ class TreeView(VerticalScroll):
                     self.selection.discard(child_path)
                 # Update child checkbox via its stored handle
                 if child_node.checkbox is not None:
-                    child_node.checkbox.value = selected
+                    with child_node.checkbox.prevent(Checkbox.Changed):
+                        child_node.checkbox.value = selected
+                    if child_node.checkbox.parent is not None:
+                        child_node.checkbox.parent.set_class(
+                            selected, "tree-node-selected"
+                        )
 
         # Update parent selection state if needed
         self._update_parent_selection_state(path)
@@ -602,7 +610,12 @@ class TreeView(VerticalScroll):
 
         # Update parent checkbox via the stored handle (B20: no DOM query)
         if parent_node.checkbox is not None:
-            parent_node.checkbox.value = parent_node.selected
+            with parent_node.checkbox.prevent(Checkbox.Changed):
+                parent_node.checkbox.value = parent_node.selected
+            if parent_node.checkbox.parent is not None:
+                parent_node.checkbox.parent.set_class(
+                    parent_node.selected, "tree-node-selected"
+                )
 
         # Recursively update grandparent
         self._update_parent_selection_state(parent_path)

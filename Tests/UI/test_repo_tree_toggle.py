@@ -124,6 +124,7 @@ async def test_toggle_cascades_to_all_descendants():
             assert node.selected is True, path
             checkbox = node.query_one(".tree-checkbox", Checkbox)
             assert checkbox.value is True, path
+            assert checkbox.parent.has_class("tree-node-selected"), path
         root_checkbox = tree.nodes["root"].query_one(".tree-checkbox", Checkbox)
         assert root_checkbox.value is True
 
@@ -144,6 +145,7 @@ async def test_toggle_cascades_to_all_descendants():
             assert node.selected is False, path
             checkbox = node.query_one(".tree-checkbox", Checkbox)
             assert checkbox.value is False, path
+            assert not checkbox.parent.has_class("tree-node-selected"), path
         assert tree.get_selected_files() == []
 
 
@@ -189,3 +191,24 @@ async def test_partial_child_selection_updates_parent_state():
         # All children selected -> parent marked selected.
         assert "root" in tree.selection
         assert tree.nodes["root"].selected is True
+
+
+@pytest.mark.asyncio
+async def test_deselecting_one_child_preserves_selected_siblings():
+    tree = TreeView()
+    app = _TreeHostApp(tree)
+    async with app.run_test() as pilot:
+        await _mounted_tree(pilot, tree, deep_files=2)
+
+        for path in ("root/mod0.py", "root/mod1.py"):
+            tree.nodes[path].query_one(".tree-checkbox", Checkbox).value = True
+            await pilot.pause()
+        assert tree.selection == {"root", "root/mod0.py", "root/mod1.py"}
+        assert tree.nodes["root"].checkbox.parent.has_class("tree-node-selected")
+
+        tree.nodes["root/mod0.py"].query_one(".tree-checkbox", Checkbox).value = False
+        await pilot.pause()
+
+        assert tree.selection == {"root/mod1.py"}
+        assert tree.nodes["root/mod1.py"].checkbox.value is True
+        assert tree.nodes["root"].checkbox.value is False

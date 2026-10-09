@@ -281,10 +281,8 @@ class SmartContentTree(Container):
                 if item.id in self.selected_content.get(item.type, set()):
                     self._mark_node_selected(node, True)
 
-        # Update counts
-        total_items = sum(len(items) for items in content_data.values())
-        self.filtered_count = total_items
-        self._update_stats()
+        # Filters may have changed while the content worker was loading.
+        self._apply_filters()
 
     async def on_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         """Handle tree node selection."""

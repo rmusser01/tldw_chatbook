@@ -14,7 +14,10 @@ The naive-cosine oracle below is the golden baseline: it was captured
 against the pre-rewrite implementation and must keep passing afterwards.
 """
 
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import List
 
 import numpy as np
@@ -168,3 +171,123 @@ def test_scaling_benchmark_100_queries_over_5000_vectors():
     elapsed = time.perf_counter() - start
     print(f"\nB3 scaling: 100 queries over 5000x16 vectors in {elapsed:.3f}s")
     assert elapsed < 30.0
+
+
+
+def test_concurrent_replace_cannot_publish_stale_similarity_cache(monkeypatch):
+    store = InMemoryVectorStore()
+    store.add(["one"], [[1.0, 0.0]], ["old"], [{}])
+    rows_captured = threading.Event()
+    resume_cache = threading.Event()
+    writer_started = threading.Event()
+    real_vstack = np.vstack
+
+    def held_vstack(rows):
+        rows_captured.set()
+        assert resume_cache.wait(5), "cache builder was never released"
+        return real_vstack(rows)
+
+    def replace():
+        writer_started.set()
+        store.add(["one"], [[0.0, 1.0]], ["new"], [{}])
+
+    monkeypatch.setattr(np, "vstack", held_vstack)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        search = pool.submit(store.search, [1.0, 0.0], top_k=1)
+        try:
+            assert rows_captured.wait(5)
+            writer = pool.submit(replace)
+            assert writer_started.wait(5)
+            try:
+                # A synchronized writer may wait for cache construction;
+                # an unsynchronized writer completes inside the held build.
+                writer.result(timeout=0.2)
+            except FutureTimeoutError:
+                pass
+        finally:
+            resume_cache.set()
+        search.result(timeout=5)
+        writer.result(timeout=5)
+
+    result = store.search([1.0, 0.0], top_k=1)[0]
+    assert result.document == "new"
+    assert result.score == pytest.approx(0.5)
+
+
+
+def test_stats_and_clear_observe_one_consistent_row_snapshot():
+    store = InMemoryVectorStore()
+    store.add(["one"], [[1.0, 0.0]], ["document"], [{}])
+    rows_checked = threading.Event()
+    resume_stats = threading.Event()
+    clear_started = threading.Event()
+
+    class HeldEmbeddings(list):
+        def __bool__(self):
+            present = len(self) > 0
+            rows_checked.set()
+            assert resume_stats.wait(5), "stats reader was never released"
+            return present
+
+    store.embeddings = HeldEmbeddings(store.embeddings)
+
+    def clear():
+        clear_started.set()
+        store.clear()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reader = pool.submit(store.get_collection_stats)
+        try:
+            assert rows_checked.wait(5)
+            writer = pool.submit(clear)
+            assert clear_started.wait(5)
+            try:
+                writer.result(timeout=0.2)
+            except FutureTimeoutError:
+                pass
+        finally:
+            resume_stats.set()
+        stats = reader.result(timeout=5)
+        writer.result(timeout=5)
+
+    assert stats["count"] == 1
+    assert stats["embedding_dimension"] == 2
+    assert store.get_collection_stats()["count"] == 0
+
+
+def test_add_documents_and_delete_collection_are_atomic(monkeypatch):
+    store = InMemoryVectorStore()
+    rows_added = threading.Event()
+    resume_add = threading.Event()
+    delete_started = threading.Event()
+    real_add = store.add
+
+    def held_add(*args, **kwargs):
+        real_add(*args, **kwargs)
+        rows_added.set()
+        assert resume_add.wait(5), "collection add was never released"
+
+    def delete():
+        delete_started.set()
+        return store.delete_collection("named")
+
+    monkeypatch.setattr(store, "add", held_add)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(
+            store.add_documents, "named", ["document"], [[1.0, 0.0]], [{}], ["one"]
+        )
+        try:
+            assert rows_added.wait(5)
+            remover = pool.submit(delete)
+            assert delete_started.wait(5)
+            try:
+                remover.result(timeout=0.2)
+            except FutureTimeoutError:
+                pass
+        finally:
+            resume_add.set()
+        assert writer.result(timeout=5) is True
+        assert remover.result(timeout=5) is True
+
+    assert store.list_collections() == []
+    assert store.get_collection_stats()["count"] == 0

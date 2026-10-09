@@ -2486,6 +2486,23 @@ class NotesSyncRuntimeOwner:
             reason_code=self._admission_reasons.pop(root_id, None),
         )
 
+    def _release_observation(
+        self,
+        observations: ReconciliationInput | None,
+        observation_token: str | None,
+    ) -> None:
+        """Retire this pass's bundle even if off-loop token or planning failed."""
+        release = getattr(self._adapter, "release_observation", None)
+        if observations is not None and callable(release):
+            # A cancelled to_thread call may finish without delivering its
+            # token. Cleanup cannot await again: derive just this bundle's
+            # token synchronously on that exceptional path.
+            release(
+                observation_token
+                if observation_token is not None
+                else _observation_token(observations)
+            )
+
     async def _fresh_authority(self, root: NotesSyncRootRecord) -> _FreshAuthority:
         self._require_authority(root.root_id, "plan")
         observations = await self._adapter.observe_root(root)
@@ -2512,9 +2529,9 @@ class NotesSyncRuntimeOwner:
                         self._require_authority(root.root_id, "write")
             return _FreshAuthority(observations, plan, MappingProxyType(requests))
         finally:
-            release = getattr(self._adapter, "release_observation", None)
-            if plan is not None and callable(release):
-                release(plan.observation_token)
+            self._release_observation(
+                observations, plan.observation_token if plan is not None else None
+            )
 
     async def _reconcile(
         self,
@@ -2643,9 +2660,9 @@ class NotesSyncRuntimeOwner:
                 raise RuntimeError("root_direction_changed")
             return plan
         finally:
-            release = getattr(self._adapter, "release_observation", None)
-            if plan is not None and callable(release):
-                release(plan.observation_token)
+            self._release_observation(
+                observations, plan.observation_token if plan is not None else None
+            )
 
     @producer_call
     async def review_setup(self, setup: NotesSyncRootSetup) -> ReconciliationPlan:
@@ -2829,6 +2846,7 @@ class NotesSyncRuntimeOwner:
         validate_notes_sync_opaque_id(root_id, field_name="root_id")
         task = self._admit_task(root_id)
         observed_token: str | None = None
+        observations: ReconciliationInput | None = None
         try:
             setup_review = self._setup_reviews.get(root_id)
             reviewed = (
@@ -2880,10 +2898,7 @@ class NotesSyncRuntimeOwner:
                 raise RuntimeError("invalid_conflict_label_projection")
             return labels
         finally:
-            if observed_token is not None:
-                release = getattr(self._adapter, "release_observation", None)
-                if callable(release):
-                    release(observed_token)
+            self._release_observation(observations, observed_token)
             self._finish_task(root_id, task)
 
     @producer_call
@@ -2906,6 +2921,7 @@ class NotesSyncRuntimeOwner:
             validate_notes_sync_opaque_id(binding_id, field_name="binding_id")
         task = self._admit_task(root_id)
         observed_token: str | None = None
+        observations: ReconciliationInput | None = None
         try:
             setup_review = self._setup_reviews.get(root_id)
             reviewed = (
@@ -2962,10 +2978,7 @@ class NotesSyncRuntimeOwner:
                 raise RuntimeError("invalid_binding_label_projection")
             return labels
         finally:
-            if observed_token is not None:
-                release = getattr(self._adapter, "release_observation", None)
-                if callable(release):
-                    release(observed_token)
+            self._release_observation(observations, observed_token)
             self._finish_task(root_id, task)
 
     async def _read_receipt_labels(
@@ -3038,6 +3051,7 @@ class NotesSyncRuntimeOwner:
         task = self._admit_task(root_id)
         plan: ReconciliationPlan | None = None
         observed_token: str | None = None
+        observations: ReconciliationInput | None = None
         try:
             reviewed = self._reviews.get(root_id)
             if reviewed is None or reviewed.observation_token != observation_token:
@@ -3083,10 +3097,7 @@ class NotesSyncRuntimeOwner:
                 binding_id,
             )
         finally:
-            if observed_token is not None:
-                release = getattr(self._adapter, "release_observation", None)
-                if callable(release):
-                    release(observed_token)
+            self._release_observation(observations, observed_token)
             self._finish_task(root_id, task)
 
     @producer_call
@@ -3138,11 +3149,12 @@ class NotesSyncRuntimeOwner:
                 observations = await self._adapter.observe_root(root)
                 # B11: release token straight from the observations (never
                 # from a plan that could lie about it), planning off-loop.
-                observed_token = await asyncio.to_thread(
-                    _observation_token, observations
-                )
+                observed_token: str | None = None
                 plan: ReconciliationPlan | None = None
                 try:
+                    observed_token = await asyncio.to_thread(
+                        _observation_token, observations
+                    )
                     plan = await asyncio.to_thread(
                         plan_reconciliation, observations
                     )
@@ -3218,9 +3230,7 @@ class NotesSyncRuntimeOwner:
                         MappingProxyType(requests),
                     )
                 finally:
-                    release = getattr(self._adapter, "release_observation", None)
-                    if callable(release):
-                        release(observed_token)
+                    self._release_observation(observations, observed_token)
 
                 actions = (*safe_actions, *conflict_actions)
                 # A reviewed apply never settles a fence on its own (no

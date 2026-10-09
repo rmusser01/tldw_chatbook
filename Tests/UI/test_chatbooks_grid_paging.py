@@ -170,3 +170,18 @@ async def test_list_mode_is_capped_the_same_way():
         await _advance_page(pilot, window)
         list_view = window.query_one(".chatbooks-list", ListView)
         assert len(list_view.children) == 2 * CHATBOOK_RENDER_PAGE_SIZE
+
+
+@pytest.mark.asyncio
+async def test_zero_match_search_hides_previous_load_more_control():
+    app = ChatbooksHostApp()
+    async with app.run_test() as pilot:
+        window = await _mounted_window(app, pilot, 150)
+        assert _load_more_visible(window)
+
+        window.search_query = "no-chatbook-matches-this"
+        await pilot.pause()
+
+        assert window._filter_chatbooks() == []
+        assert _card_count(window) == 0
+        assert not _load_more_visible(window)

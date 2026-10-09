@@ -192,6 +192,10 @@ class StartAnchoredThinkSplitter:
         for text, start, end in ranges:
             if end <= start:
                 continue
+            # Every code point needs at least one UTF-8 byte; bound the copy.
+            if end - start > MAX_THINKING_TEXT_BYTES - total:
+                self._terminal_capture_failure()
+                return None
             segment = text[start:end]
             # review-B B27: one encode per slice instead of a per-codepoint
             # Python loop; UTF-8 length and lone-surrogate rejection are

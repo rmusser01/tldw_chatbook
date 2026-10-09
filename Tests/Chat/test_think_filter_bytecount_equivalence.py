@@ -128,3 +128,22 @@ def test_bounded_thinking_does_not_visit_characters(
         f"_bounded_thinking visited {ord_calls['count']} codepoints in "
         "Python; byte counting must happen at slice level"
     )
+
+
+@pytest.mark.parametrize("used_bytes", [0, MAX_THINKING_TEXT_BYTES - 1])
+def test_oversized_thinking_rejects_before_full_utf8_allocation(used_bytes):
+    import tracemalloc
+
+    text = "x" * (MAX_THINKING_TEXT_BYTES * 4)
+    splitter = StartAnchoredThinkSplitter()
+    splitter._thinking_bytes = used_bytes
+    tracemalloc.start()
+    try:
+        result = splitter._bounded_thinking((text, 0, len(text)))
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert result is None
+    assert splitter._thinking_bytes == 0
+    assert peak < MAX_THINKING_TEXT_BYTES * 2

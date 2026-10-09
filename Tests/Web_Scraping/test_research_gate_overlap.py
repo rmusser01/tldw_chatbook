@@ -103,6 +103,8 @@ def research_gate_factory(monkeypatch):
         monkeypatch.setattr(ws, "chat_api_call", fake_chat_api_call)
         monkeypatch.setattr(ws, "chat_reply_text", lambda raw: raw)
         monkeypatch.setattr(ws, "scrape_article", fake_scrape_article)
+        # Overlap tests use synthetic URLs; DNS policy has its own tests.
+        monkeypatch.setattr(ws, "is_public_http_url", lambda url: True)
         monkeypatch.setattr(summ_module(), "analyze", fake_analyze)
         # Hermetic prompt rendering: the real resolver reads the guarded
         # config loader (raw-participant admission), which this loop-structure
@@ -123,12 +125,13 @@ def research_gate_factory(monkeypatch):
 
         class Gate:
             @staticmethod
-            async def run(question: str):
+            async def run(question: str, *, cancel_event=None):
                 return await ws.search_result_relevance(
                     results,
                     question,
                     ["sub-q"],
                     "openai",
+                    cancel_event=cancel_event,
                 )
 
             @staticmethod
@@ -242,3 +245,84 @@ async def test_scrape_failure_keeps_snippet_fallback(research_gate_factory):
         assert entry["content"] == f"summary {i}"  # summarize ran on the snippet
         # original_content is the fallback block built from the search result.
         assert f"snippet body {i}" in entry["original_content"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_stops_queued_scrape_summarize_slots(
+    research_gate_factory, monkeypatch
+):
+    gate, _recorder = research_gate_factory(n_results=6, n_relevant=6)
+    cancel_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    scraped = []
+    summarized = []
+    lock = threading.Lock()
+
+    async def cancel():
+        cancel_event.set()
+
+    async def scrape(url):
+        idx = int(url.rsplit("/", 1)[1])
+        scraped.append(idx)
+        return {"content": f"scraped {idx}"}
+
+    def summarize(**kwargs):
+        idx = _idx_from_content(kwargs["input_data"])
+        with lock:
+            summarized.append(idx)
+            first = len(summarized) == 1
+        if first:
+            asyncio.run_coroutine_threadsafe(cancel(), loop).result(timeout=2)
+        return f"summary {idx}"
+
+    monkeypatch.setattr(ws, "is_public_http_url", lambda url: True)
+    monkeypatch.setattr(ws, "scrape_article", scrape)
+    monkeypatch.setattr(summ_module(), "analyze", summarize)
+    result = await gate.run("q", cancel_event=cancel_event)
+
+    assert cancel_event.is_set()
+    assert summarized
+    assert all(idx < 3 for idx in scraped), scraped
+    assert all(idx < 3 for idx in summarized), summarized
+    assert all(int(key) < 3 for key in result), result
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_gate_skips_deferred_scrape_and_summary(
+    research_gate_factory, monkeypatch
+):
+    gate, _recorder = research_gate_factory(n_results=3, n_relevant=3)
+    cancel_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    calls = []
+    scrapes = []
+    summaries = []
+
+    async def cancel():
+        cancel_event.set()
+
+    def judge(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 2:
+            asyncio.run_coroutine_threadsafe(cancel(), loop).result(timeout=2)
+            return "Selected Answer: False\nReasoning: cancelled"
+        return "Selected Answer: True\nReasoning: relevant"
+
+    async def scrape(url):
+        scrapes.append(url)
+        return {"content": "scraped"}
+
+    def summarize(**kwargs):
+        summaries.append(kwargs)
+        return "summary"
+
+    monkeypatch.setattr(ws, "chat_api_call", judge)
+    monkeypatch.setattr(ws, "is_public_http_url", lambda url: True)
+    monkeypatch.setattr(ws, "scrape_article", scrape)
+    monkeypatch.setattr(summ_module(), "analyze", summarize)
+    result = await gate.run("q", cancel_event=cancel_event)
+
+    assert len(calls) == 2
+    assert not scrapes
+    assert not summaries
+    assert result == {}

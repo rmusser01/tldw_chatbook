@@ -12,23 +12,30 @@ accepts the multi-entry union (that is what ``_search_hybrid`` passes it), so
 both callers now pass the whole union list in ONE call and let the engine run
 the per-entry store queries and the score merge.
 
-The fake runtime below mirrors the engine's union contract (one store query
-per entry inside the single call, merged by score, trimmed to top_k) so each
-test can also verify the results are equivalent to the old loop's merged
-output.
+The caller tests below verify union forwarding and result equivalence. The
+real-engine tests use the actual in-memory store and count embedding calls
+at the external model seam for both basic and citation-bearing searches.
 """
 
 from collections.abc import Mapping as AbcMapping
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
+import numpy as np
+
 import pytest
 
-from tldw_chatbook.Chat.rag_scope import EffectiveScope, SOURCE_TYPE_MEDIA, SOURCE_TYPE_NOTE
+from tldw_chatbook.Chat.rag_scope import (
+    EffectiveScope,
+    SOURCE_TYPE_MEDIA,
+    SOURCE_TYPE_NOTE,
+)
 from tldw_chatbook.Library.library_local_rag_search_service import (
     LibraryLocalRagSearchService,
 )
 from tldw_chatbook.RAG_Search import pipeline_functions_simple as pfs
+from tldw_chatbook.RAG_Search.simplified.rag_service import RAGService
+from tldw_chatbook.RAG_Search.simplified.vector_store import InMemoryVectorStore
 
 
 def _scoped(**allowlist: set) -> EffectiveScope:
@@ -52,18 +59,13 @@ class _RagResult:
 class _UnionAwareRagService:
     """Fake runtime mirroring ``RAGService.search``'s union contract.
 
-    Caller-visible accounting: ONE ``search()`` call is ONE query-embedding
-    round (the engine embeds once per search call it receives from a caller).
-    Inside one call, a multi-entry allowlist is served per entry -- one store
-    query each, merged by score descending, trimmed to top_k -- exactly what
-    ``_semantic_search_scoped`` does, so assertions can compare the single
-    call's output against the old loop's merged output.
+    Models only the caller-visible result union; embedding accounting is
+    covered separately against the real engine.
     """
 
     def __init__(self, results_by_source_type: Dict[str, List[_RagResult]]):
         self.results_by_source_type = results_by_source_type
         self.search_calls = 0
-        self.embed_calls = 0
         self.last_metadata_allowlist: Any = None
         self.calls: List[Dict[str, Any]] = []
 
@@ -80,7 +82,6 @@ class _UnionAwareRagService:
         **kwargs,
     ):
         self.search_calls += 1
-        self.embed_calls += 1
         if metadata_allowlist is None:
             entries = None
         elif isinstance(metadata_allowlist, AbcMapping):
@@ -113,9 +114,7 @@ class _UnionAwareRagService:
 def _expected_union(scope: EffectiveScope):
     return tuple(
         {"source_type": {source_type}, "source_id": set(ids)}
-        for source_type, ids in sorted(
-            (k, set(v)) for k, v in scope.allowlist.items()
-        )
+        for source_type, ids in sorted((k, set(v)) for k, v in scope.allowlist.items())
     )
 
 
@@ -131,7 +130,7 @@ def _reference_loop_merge(fake: _UnionAwareRagService, union, top_k):
 
 
 @pytest.mark.asyncio
-async def test_library_scoped_semantic_single_embed_union_allowlist():
+async def test_library_scoped_semantic_single_search_union_allowlist():
     fake = _UnionAwareRagService(
         {
             SOURCE_TYPE_MEDIA: [_RagResult("m1", 0.5, SOURCE_TYPE_MEDIA)],
@@ -145,21 +144,19 @@ async def test_library_scoped_semantic_single_embed_union_allowlist():
         "test query", ("notes", "media"), "rag", top_k=5, scope=scope
     )
 
-    assert fake.embed_calls == 1, (
-        f"k allowlist entries must not re-embed the query k times "
-        f"(embed rounds: {fake.embed_calls})"
-    )
     assert fake.search_calls == 1
     assert fake.last_metadata_allowlist == _expected_union(scope)
 
     # Result equivalence with the old per-entry loop's merged output.
     ids = [row["source_id"] for row in result["results"]]
-    expected_ids = [row.id for row in _reference_loop_merge(fake, _expected_union(scope), 5)]
+    expected_ids = [
+        row.id for row in _reference_loop_merge(fake, _expected_union(scope), 5)
+    ]
     assert ids == expected_ids
 
 
 @pytest.mark.asyncio
-async def test_pipeline_scoped_semantic_single_embed_union_allowlist():
+async def test_pipeline_scoped_semantic_single_search_union_allowlist():
     fake = _UnionAwareRagService(
         {
             SOURCE_TYPE_MEDIA: [_RagResult("m1", 0.5, SOURCE_TYPE_MEDIA)],
@@ -173,10 +170,6 @@ async def test_pipeline_scoped_semantic_single_embed_union_allowlist():
         app, "test query", {"media": True, "notes": True}, limit=10, scope=scope
     )
 
-    assert fake.embed_calls == 1, (
-        f"k allowlist entries must not re-embed the query k times "
-        f"(embed rounds: {fake.embed_calls})"
-    )
     assert fake.search_calls == 1
     assert fake.last_metadata_allowlist == _expected_union(scope)
 
@@ -185,3 +178,47 @@ async def test_pipeline_scoped_semantic_single_embed_union_allowlist():
         row.id for row in _reference_loop_merge(fake, _expected_union(scope), 10)
     ]
     assert ids == expected_ids
+
+
+@pytest.mark.parametrize("include_citations", [False, True])
+@pytest.mark.parametrize("source_types", [("media",), ("media", "note")])
+async def test_real_engine_embeds_once_and_preserves_scoped_results(
+    monkeypatch, include_citations, source_types
+):
+    service = RAGService.__new__(RAGService)
+    service.vector_store = InMemoryVectorStore()
+    service.embeddings = SimpleNamespace()
+    embedding_calls = []
+
+    async def embed(texts):
+        embedding_calls.append(texts)
+        return np.asarray([[1.0, 0.0]], dtype=np.float32)
+
+    monkeypatch.setattr(
+        service.embeddings, "create_embeddings_async", embed, raising=False
+    )
+    service.vector_store.add(
+        ids=["m1", "n1", "outside"],
+        embeddings=[[0.8, 0.6], [1.0, 0.0], [1.0, 0.0]],
+        documents=["media query", "note query", "outside query"],
+        metadata=[
+            {"source_type": "media", "source_id": "m1"},
+            {"source_type": "note", "source_id": "n1"},
+            {"source_type": "note", "source_id": "outside"},
+        ],
+    )
+    allowlists = [
+        {"source_type": {source_type}, "source_id": {"m1", "n1"}}
+        for source_type in source_types
+    ]
+    results = await service._semantic_search_scoped(
+        "query",
+        top_k=3,
+        include_citations=include_citations,
+        metadata_allowlist=allowlists,
+    )
+
+    assert [result.id for result in results] == (
+        ["m1"] if len(source_types) == 1 else ["n1", "m1"]
+    )
+    assert embedding_calls == [["query"]]

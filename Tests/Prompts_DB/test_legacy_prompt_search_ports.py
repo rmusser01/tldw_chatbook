@@ -243,3 +243,24 @@ class TestPortedBehavior:
             f"expected ONE batched keywords query, got {len(calls)} attach rounds"
         )
         assert len(calls[0]) == len(rows)
+
+
+@pytest.mark.parametrize(
+    "method", ["search_prompts", "search_prompts_by_text", "search_prompts_by_keyword"]
+)
+def test_keyword_batch_respects_the_live_variable_limit(seeded_db, method):
+    import sqlite3
+
+    seeded_db.get_connection().setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 3)
+    if method == "search_prompts":
+        rows, total = seeded_db.search_prompts("review")
+        assert total == 22
+        assert len(rows) == 20
+    elif method == "search_prompts_by_text":
+        rows = seeded_db.search_prompts_by_text("review")
+        assert len(rows) == 20
+    else:
+        rows = seeded_db.search_prompts_by_keyword("special", limit=20)
+        assert len(rows) == 6
+    for row in rows:
+        assert row["keywords"] == seeded_db.fetch_keywords_for_prompt(row["id"])

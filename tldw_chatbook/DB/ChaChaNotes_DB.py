@@ -13460,6 +13460,15 @@ DELETE FROM keywords
             staged["parent_message_id"] = previous_id
             prepared.append(self._validated_message_insert(staged))
             previous_id = prepared[-1].msg_id
+        inserting = prepared[0]
+
+        def insert_params() -> Iterator[tuple[Any, ...]]:
+            nonlocal inserting
+            # SQLite consumes one tuple at a time; retain the failing row's
+            # identity without adding per-message queries to the batch.
+            for inserting in prepared:
+                yield inserting.params
+
         try:
             with self.transaction(immediate=True) as conn:
                 # One existence check per distinct conversation replaces the
@@ -13483,22 +13492,20 @@ DELETE FROM keywords
                     )
                 query = next(iter(queries))
                 try:
-                    conn.executemany(query, [item.params for item in prepared])
+                    conn.executemany(query, insert_params())
                 except sqlite3.IntegrityError as exc:
                     self._translate_message_insert_integrity_error(
-                        prepared[0].msg_id, exc
+                        inserting.msg_id, exc
                     )
                 self._verify_import_batch_rows(conn, prepared)
-                for item in prepared:
+                for inserting in prepared:
                     self._ensure_initial_semantic_revision(
                         conn,
-                        message_id=item.msg_id,
+                        message_id=inserting.msg_id,
                         creation_reason="message_create",
                     )
         except sqlite3.IntegrityError as exc:
-            self._translate_message_insert_integrity_error(
-                prepared[0].msg_id, exc
-            )
+            self._translate_message_insert_integrity_error(inserting.msg_id, exc)
         logger.debug(
             f"Added {len(prepared)} imported messages in one batch "
             f"(conversation {prepared[0].conversation_id})."

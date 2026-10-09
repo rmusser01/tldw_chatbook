@@ -32,6 +32,7 @@ from textual import work
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll, Horizontal
 from textual.css.query import QueryError
+from textual.widget import Widget
 from textual.widgets import (
     Static,
     Button,

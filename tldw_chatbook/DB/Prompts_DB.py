@@ -3439,15 +3439,15 @@ class PromptsDatabase:
         """Fetch active keywords for a page of prompt ids, grouped by prompt id."""
         if not prompt_ids:
             return {}
-        placeholders = ",".join("?" * len(prompt_ids))
-        query = f"""
+        query = """
             SELECT pkl.prompt_id, k.keyword
             FROM PromptKeywordLinks pkl
             JOIN PromptKeywordsTable k ON pkl.keyword_id = k.id
-            WHERE pkl.prompt_id IN ({placeholders}) AND k.deleted = 0
+            WHERE pkl.prompt_id IN (SELECT value FROM json_each(?))
+              AND k.deleted = 0
             ORDER BY k.keyword COLLATE NOCASE
         """
-        cursor = conn.execute(query, tuple(prompt_ids))
+        cursor = conn.execute(query, (json.dumps(prompt_ids),))
         keywords_by_prompt: Dict[int, List[str]] = {}
         for row in cursor.fetchall():
             keywords_by_prompt.setdefault(row["prompt_id"], []).append(row["keyword"])
