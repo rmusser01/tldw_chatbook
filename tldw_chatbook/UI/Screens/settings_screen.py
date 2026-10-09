@@ -3380,6 +3380,9 @@ class SettingsScreen(BaseAppScreen):
         self._provider_endpoint_suppress_queue: list[str] = []
         self._provider_credential_env_var_suppress_queue: list[str] = []
         self._provider_api_key_suppress_queue: list[str] = []
+        # The draft and provider Clear staged a removal for: an emptied field
+        # then keeps that removal instead of dropping the edit.
+        self._provider_api_key_cleared: tuple[SettingsDraft | None, str] | None = None
         self._provider_context_window_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
@@ -29896,7 +29899,16 @@ class SettingsScreen(BaseAppScreen):
             return
         self._stage_provider_value("api_key", event.value.strip())
         draft = self._provider_draft()
-        if draft is not None and not event.value.strip():
+        provider = str(
+            self._provider_setting_values_mapping().get("provider") or ""
+        ).strip()
+        cleared = self._provider_api_key_cleared
+        if (
+            draft is not None
+            and not event.value.strip()
+            # Identity, not ==: two drafts with the same values are equal.
+            and not (cleared and cleared[0] is draft and cleared[1] == provider)
+        ):
             # An emptied field keeps the saved key; only Clear stages removal.
             draft.values.pop("api_key", None)
             draft.originals.pop("api_key", None)
@@ -29966,6 +29978,10 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             api_key_input = None
         self._stage_provider_value("api_key", "")
+        self._provider_api_key_cleared = (
+            self._provider_draft(),
+            str(self._provider_setting_values_mapping().get("provider") or "").strip(),
+        )
         if api_key_input is not None:
             self._set_provider_api_key_input_value(api_key_input, "")
         self._reset_provider_model_discovery_state()
