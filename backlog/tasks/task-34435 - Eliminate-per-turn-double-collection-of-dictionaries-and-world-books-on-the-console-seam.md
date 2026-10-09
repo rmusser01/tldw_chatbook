@@ -2,8 +2,9 @@
 id: TASK-34435
 title: Eliminate per-turn double collection of dictionaries and world books on the
   console seam
-status: To Do
+status: In Progress
 created_date: 2026-10-08 00:35
+updated_date: 2026-10-09 05:48
 ---
 
 ## Description
