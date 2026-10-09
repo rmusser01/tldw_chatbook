@@ -24001,7 +24001,7 @@ class ConsoleChatController:
 
     def _global_context_policy_overrides(self):
         # TASK-33620.15.1: one checked config operation per installed config.
-        from .console_global_policy import read_global_context_policy_overrides
+        from .console_context_policy import read_global_context_policy_overrides
 
         keys = (
             "conversation_budget_mode",
