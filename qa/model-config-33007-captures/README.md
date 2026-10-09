@@ -114,25 +114,33 @@ both real-profile fingerprints were unchanged.
   - Catalog refresh;
   - Custom endpoints;
   - Prompt-cache snapshots.
-- `05b-advanced-context-window-open`, after a click on the Context window title.
-  - The warning line, then "Context window │ tokens (required when unknown)" and
-    **Reset to detected**.
-  - The capacity note follows. The other four titles stay closed below it.
-- `06a-console-behavior-replay-selects`. A click on the rail's Console Behavior, then a
-  click on the "Reasoning replay override" title.
-  - Local reasoning history's **Replay** Select ("Automatic (recommended)") is one row.
-  - So is the override's **Replay** Select ("Use default"), now open.
-- `06b-console-behavior-rail-layout-scope`. Twelve wheel steps down. **Rail layout
-  scope** ("Global") is a one-row Select, and so is **Trace viewer** ("Safe").
-- `06c-console-behavior-global-fallbacks`. Wheel steps down to Global fallback defaults.
-  The 235x52 frame was scrolled again after the resize, because the reflow moved it.
-  - The one-row rows: Temperature 0.6 (**Console Behavior**); Max tokens (**provider**,
-    "blank = provider default"); Streaming On (**built-in**, "not set here · a
-    provider's own setting comes first").
+- `05b-advanced-context-window-open`, after a click on the Context window title
+  (re-taken, see "Re-taken captures" below).
+  - One row: "Context window │ tokens", the Source word **not set** in Model defaults'
+    Source-word column, and "required for Automatic conversation budgets".
+  - No **Reset to detected**: nothing was detected. The other four titles stay closed
+    below it.
+- `06a-console-behavior-replay-selects` (re-taken). A click on the rail's Console
+  Behavior, then a click on the "Reasoning replay override" title.
+  - No frame inside the detail pane, and the override disclosure has no box: its title
+    is one row, "▼ Reasoning replay override".
+  - **Default replay** ("Automatic (recommended)") and the override's **This model's
+    replay** ("Use default") are one-row Selects in the card's one control column.
+- `06b-console-behavior-rail-layout-scope` (re-taken). Wheel steps down until **Rail
+  presentation** sits in the top half. **Trace viewer** ("Safe") and **Rail layout
+  scope** ("Global") are one-row Selects in the same column.
+- `06c-console-behavior-global-fallbacks` (re-taken). Wheel steps down until **Global
+  fallback defaults** sits in the top half; the 235x52 frame was scrolled again after
+  the resize, because the reflow moved it.
+  - **Chat display name** reads whole. The fallback rows: Temperature 0.6 (**Console
+    Behavior**); Max tokens (**provider**, "blank = provider default"); Streaming On
+    (**built-in**, "not set · a provider's setting comes first", whole at 211).
   - Reasoning effort, Reasoning summary, Verbosity and Thinking read "default".
     Thinking budget reads ">= 1024".
   - The closed row reads "▶ Sampling · Top P 0.95 · Min P 0.05 · Top K 50".
-  - The Background effects Selects are one row each.
+  - The Background effects Selects are one row each, in the same column as the
+    fallback Selects. Nothing follows the card's own status line: no "Composer
+    behavior" or "Fallback source" / "Save targets" block.
 
 ### Anthropic and Azure sessions
 
@@ -204,18 +212,54 @@ both real-profile fingerprints were unchanged.
    list says "N found · Enter picks · Esc cancels".
    **Fixed** (`02`, `03b`): "4 found · Enter picks · Esc cancels", the first match
    highlighted, and Enter picks it.
-9. **Console Behavior still uses the old layout** (`06a`-`06c`). It keeps its two nested
+9. **Fixed (p7cf-b).** **Console Behavior still uses the old layout** (`06a`-`06c`). It keeps its two nested
    frames and a rounded box around the override disclosure. The Providers & Models card
    dropped both. Its Selects also differ in width: the fallback Selects are narrow,
    while Replay, Trace viewer, Rail layout scope and the Background effects Selects
    span the card. Two different rows are both labelled "Replay".
-10. **Console Behavior still shows config-key prose** (`06c` at 235, below the frame).
+10. **Fixed (p7cf-b).** **Console Behavior still shows config-key prose** (`06c` at
+    235, below the frame).
     "Fallback source: [chat_defaults].streaming, temperature, top_p, max_tokens" and
     "Save targets: …" stay in the card. Phase 7 moved this kind of prose out of
     Providers & Models. The list is also incomplete: it leaves out the reasoning,
     thinking, top_k and min_p fallbacks the rows above now show. Also, "Default chat
     display name" is cut to "Default chat display".
-11. **Context window's open body** (`05b`) keeps the old layout. It has no Source word
+11. **Fixed (p7cf-b).** **Context window's open body** (`05b`) keeps the old layout. It has no Source word
     column, and its prose wraps to two lines. **Reset to detected** is disabled (it is
     dimmed in the `.ansi.txt`), but it still takes a row and still offers "detected"
     when the title says the window is unknown.
+
+## Re-taken captures (p7cf-b, items 9-11)
+
+`05b`, `06a`, `06b` and `06c` were re-taken at both sizes, `.txt` and `.ansi.txt`, from
+branch `p7cf-b` at `18ef163ca6`, after the fixes for items 9-11. The procedure above
+held, with these differences:
+
+- The tmux server was `-L capB33007`, and `users_name` was
+  `verify_capB33007_18ef163ca6`. Only the OpenAI profile was used.
+- `06b` and `06c` scroll until their section header sits in the top half of the pane,
+  instead of a fixed count of wheel steps: the card is shorter now.
+- Real profile unchanged: before and after, `shasum -a 256 ~/.config/tldw_cli/config.toml`
+  began `15c6cb224a6a51c7` (mtime Sep 26), and `ls ~/.local/share/tldw_cli | shasum -a 256`
+  began `db7e7faf5bff92d2`. The tmux server was killed and the scratch directory
+  deleted.
+
+What changed, by item:
+
+- **9.** The detail pane's border is the only frame: the wrapper, the card, the
+  replay-override disclosure and the Permission summaries group draw none. Every
+  one-row Input and Select sits in one 32-cell control column, wide enough for the
+  longest option ("Memory with latest exchange"). The two replay rows read **Default
+  replay** and **This model's replay**. Every prose line starts in the section
+  headers' column (the unclassed help lines sat one cell left of them).
+- **10.** The read-only "Composer behavior" and "Global fallback defaults" summary that
+  followed the card is gone; it restated the card's own rows and the Inspector's
+  Override rules. The Inspector's closed **config key** disclosure has a **Fallbacks**
+  row naming every `[chat_defaults]` key the group saves: `user_display_name` and all
+  14 generation fallbacks. "Default chat display name" is now **Chat display name**,
+  which fits its 24-cell label.
+- **11.** Context window opens to one row: field (16 cells, Model defaults' column),
+  **Reset to detected** in the row while a window is known, a Source word
+  (**detected**, **saved in config**, **edited \***, **not set**) and a one-line help.
+  The wrapped warning and capacity paragraphs are gone; the focused field guide keeps
+  the explanation.
