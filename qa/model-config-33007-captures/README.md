@@ -1,15 +1,16 @@
-# Phase 7 (TASK-33007) full-screen captures (final set, 2026-10-09)
+# Phase 7 (TASK-33007) full-screen captures (final set, rebased, 2026-10-09)
 
 The surfaces Phase 7 changed in Settings ▸ Providers & Models and Console Behavior,
 plus the Console's Chat settings context fields. **Every capture in this directory was
-re-taken together on the final integrated branch head `47c3999481`**: all review
-notes 1-12 and the checkpoint review's fixes are in. Every moment was captured at
+re-taken together after the rebase onto dev, at `0cd360a642`**: all review notes 1-12,
+the checkpoint review's fixes, and dev's "Session summary on quit" (ported into
+Advanced as its sixth one-row disclosure) are in. Every moment was captured at
 211x44. The tmux window was then resized to 235x52, captured again, and resized back.
 `.txt` is `tmux capture-pane -p`; `.ansi.txt` is the same moment with `-e` colour
 escapes.
 
-**Final re-take (2026-10-09, `47c3999481`).** One run per profile, under the procedure
-below with tmux server `-L capM33007` and `users_name = "verify_capI33007_explore"`.
+**Final re-take (2026-10-09, `0cd360a642`, rebased onto dev).** One run per profile, under the procedure
+below with tmux server `-L capM33007` and `users_name = "verify_capM33007"`.
 It shows two checkpoint-review fixes made after the earlier re-takes:
 - A card's result line ("Provider settings reverted…") takes no row until a save or
   revert has something to report. At rest the cards no longer open with "… have not

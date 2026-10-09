@@ -45,7 +45,7 @@
                                          ││  Reset overrides  Reset all conversation memory…                                                                                                   │                                │
                                          ││                                                                                                                                                    │                                │
 ──────────────────────────────────────────│                                                                                                                                                    │───────────────────────────────────────────
- Status ▾   Library · Auto off · Agent blo│                                                                                                                                                    │% · Current $0.00 · On next send —
+ Status ▾   Library · Auto off · Agent acc│                                                                                                                                                    │t 0% · Current $0.00 · On next send —
                                           │                                                                                             Esc close   Cancel    Apply to this chat (Ctrl+Enter)  │
 █  Composer ▾  Menu  ▌Ask, command, or pas╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    Send         Dictate
 
