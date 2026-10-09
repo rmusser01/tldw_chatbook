@@ -1514,3 +1514,25 @@ async def test_the_card_result_line_takes_no_row_until_there_is_a_result(
         await pilot.pause()
         assert result.display is True
         assert "reverted" in _text(screen, "#settings-provider-save-result")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_typed_name_prefix_highlights_the_provider_it_starts(request):
+    """Checkpoint review (rebased captures): typing "llama" listed Ollama Cloud
+    first (Cloud groups lead) and Enter chose it, though the user was typing
+    llama.cpp's name. A provider whose name or id starts with the typed text
+    now outranks one that only contains it; the held provider still wins when
+    it matches that way (the legacy-alias case above)."""
+    host = _anthropic_host("openai")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        await _type_filter(pilot, screen, "llama")
+        highlighted = picker.get_option_at_index(picker.highlighted)
+        assert getattr(highlighted, "provider_id", None) == "llama_cpp"
+        await pilot.press("enter")
+        await _until(pilot, lambda: not picker.display)
+        assert _held(screen) == "llama_cpp"
