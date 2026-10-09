@@ -484,6 +484,9 @@ class ConsoleCharacterContextController:
             True when a reload ran.
         """
         if not force and self._settled_recently():
+            # Keep the yield the skipped worker read gave the sync tick: the
+            # tick's synchronous stretch must not grow by the read's absence.
+            await asyncio.sleep(0)
             return False
         self._settled_scope = None
         try:
