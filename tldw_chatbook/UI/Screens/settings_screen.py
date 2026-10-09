@@ -1192,7 +1192,7 @@ def _session_summary_section_values(
 ) -> dict[str, dict[str, object]]:
     """Normalize the [session_summary] settings group for persistence."""
     try:
-        duration = int(float(str(duration_text).strip()))
+        duration = int(round(float(str(duration_text).strip())))
     except (TypeError, ValueError, OverflowError):
         duration = 3
     duration = max(1, min(30, duration))
@@ -16108,6 +16108,14 @@ class SettingsScreen(BaseAppScreen):
             save_settings_to_cli_config(section_values)
         except Exception:  # noqa: BLE001 - recover without exposing config details
             logger.warning("Failed to persist session_summary settings.")
+            try:
+                self.app.call_from_thread(
+                    self.notify,
+                    "Could not save session summary settings",
+                    severity="warning",
+                )
+            except Exception:  # noqa: BLE001 - never crash a worker over a toast
+                pass
 
     def _provider_readiness_test_report(
         self,

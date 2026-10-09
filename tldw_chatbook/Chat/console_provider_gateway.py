@@ -5007,7 +5007,11 @@ class ConsoleProviderGateway:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
                         _check_automatic_dispatch()
-                        if call_signals is not None and line.startswith("data:"):
+                        if line.startswith("data:"):
+                            # Parse independent of call_signals: the console
+                            # signal is UI bookkeeping, but the session
+                            # ledger must record even when signals are
+                            # absent (the native tap's precondition).
                             try:
                                 usage_payload = json.loads(line[5:].strip())
                             except (ValueError, TypeError):
@@ -7679,7 +7683,22 @@ def _record_gateway_native_usage(payload: Mapping[str, Any]) -> None:
     """
     from tldw_chatbook.Chat.session_usage import session_usage
 
-    session_usage().record_provider_payload(payload.get("usage"))
+    usage = payload.get("usage")
+    if usage is None:
+        # Anthropic's message_start nests usage under "message" while
+        # message_delta carries output at the top level; the ledger sums
+        # both records, so input tokens no longer undercount on
+        # gateway-native Anthropic streams.
+        message = payload.get("message")
+        if isinstance(message, Mapping):
+            usage = message.get("usage")
+    elif isinstance(payload.get("delta"), Mapping) and isinstance(usage, Mapping):
+        # Anthropic message_delta: output-only usage. The normalizer needs
+        # an input anchor to recognize the shape, so provide a zero one --
+        # input arrived with message_start and was recorded there; only the
+        # output side of THIS record is real.
+        usage = {**usage, "input_tokens": usage.get("input_tokens", 0)}
+    session_usage().record_provider_payload(usage)
 
 
 def _content_from_provider_item(

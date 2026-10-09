@@ -1059,7 +1059,21 @@ class LifecycleMixin:
         # would skip all of it. Diagnostics must never break the thing they
         # observe.
         try:
-            persist_event(_DIAGNOSTICS_COMPONENT_APP, "app_stopping")
+            # Session totals ride the app_stopping event (issue #365
+            # deferred idea): post-hoc visibility even when the summary is
+            # disabled. Aggregate counters only -- no user content. The
+            # import is quit-time only (boot census, ADR-097).
+            from tldw_chatbook.Chat.session_usage import session_usage
+
+            snap = session_usage().snapshot()
+            persist_event(
+                _DIAGNOSTICS_COMPONENT_APP,
+                "app_stopping",
+                session_exact_tokens=snap.exact_tokens,
+                session_estimated_tokens=snap.estimated_tokens,
+                session_embedding_tokens=snap.embeddings_tokens,
+                session_llm_calls=snap.calls,
+            )
         except Exception:
             pass
         try:
@@ -2096,7 +2110,7 @@ class LifecycleMixin:
         """Configured quit-summary duration, clamped to 1..30 (default 3)."""
         raw = get_cli_setting("session_summary", "duration_seconds", 3)
         try:
-            value = int(raw)
+            value = int(round(float(raw)))
         except (TypeError, ValueError, OverflowError):
             return 3
         return max(1, min(30, value))

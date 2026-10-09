@@ -125,3 +125,22 @@ def test_reset_for_tests_gives_fresh_singleton():
     reset_for_tests()
     assert session_usage() is not old
     assert session_usage().snapshot() == SessionUsageSnapshot(0, 0, 0)
+
+
+def test_record_estimate_with_both_none_is_noop():
+    session_usage().record_estimate(None, None)
+    assert session_usage().snapshot() == SessionUsageSnapshot(0, 0, 0)
+
+
+def test_record_embeddings_accumulates_separately():
+    ledger = session_usage()
+    ledger.record_embeddings(
+        {"prompt_tokens": 4, "total_tokens": 4}
+    )
+    ledger.record_embeddings({"prompt_tokens": 6, "total_tokens": 6})
+    ledger.record_embeddings(None)  # malformed -> no-op
+    ledger.record_embeddings({"usage": "junk"})  # non-usage shape -> no-op
+    snap = ledger.snapshot()
+    assert snap.embeddings_tokens == 10
+    assert snap.exact_tokens == 0  # embeddings never enter the LLM total
+    assert snap.calls == 0  # and never count as LLM calls

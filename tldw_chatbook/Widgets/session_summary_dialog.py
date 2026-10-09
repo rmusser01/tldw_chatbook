@@ -13,6 +13,7 @@ from textual.app import ComposeResult
 from textual.containers import Container
 from textual.events import Key
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import Static
 
 from ..Chat.session_usage import SessionUsageSnapshot
@@ -21,8 +22,11 @@ __all__ = ["SessionSummaryDialog"]
 
 
 def _format_elapsed(seconds: float) -> str:
-    total_minutes = int(seconds // 60)
-    hours, minutes = divmod(total_minutes, 60)
+    total_hours = int(seconds // 3600)
+    days, hours = divmod(total_hours, 24)
+    if days:
+        return f"{days}d {hours}h session"
+    minutes = int(seconds // 60) % 60
     if hours:
         return f"{hours}h {minutes:02d}m session"
     return f"{minutes}m session"
@@ -74,7 +78,7 @@ class SessionSummaryDialog(ModalScreen[None]):
         self._started_at = started_at  # time.perf_counter() stamp
         self._duration = max(0.05, float(duration_seconds))
         self._closed = False
-        self._auto_close_timer = None
+        self._auto_close_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="session-summary-dialog"):
@@ -91,6 +95,11 @@ class SessionSummaryDialog(ModalScreen[None]):
                 )
             elapsed = max(0.0, time.perf_counter() - self._started_at)
             yield Static(_format_elapsed(elapsed), classes="session-summary-line")
+            if self.snapshot.embeddings_tokens > 0:
+                yield Static(
+                    f"{self.snapshot.embeddings_tokens:,} embedding tokens",
+                    classes="session-summary-line",
+                )
             yield Static("press any key to exit", classes="session-summary-hint")
 
     def on_mount(self) -> None:

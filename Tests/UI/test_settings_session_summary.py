@@ -26,3 +26,12 @@ def test_invalid_duration_falls_back_to_default():
 
 def test_empty_duration_falls_back():
     assert _session_summary_section_values(True, "")["session_summary"]["duration_seconds"] == 3
+
+
+def test_duration_float_rounds_instead_of_truncating():
+    assert (
+        _session_summary_section_values(True, "2.9")["session_summary"][
+            "duration_seconds"
+        ]
+        == 3
+    )

@@ -509,3 +509,60 @@ def test_zai_nonstreaming_records_exact_usage():
     assert snap.exact_tokens == 15
     assert snap.estimated_tokens == 0
     assert snap.calls == 1
+
+
+def test_gateway_native_helper_reads_anthropic_message_start_usage():
+    """message_start nests usage under "message"; message_delta carries
+    output at the top level. Both record, and the ledger sums them."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _record_gateway_native_usage,
+    )
+
+    _record_gateway_native_usage(
+        {"type": "message_start", "message": {"usage": {"input_tokens": 9}}}
+    )
+    _record_gateway_native_usage(
+        {"type": "message_delta", "delta": {}, "usage": {"output_tokens": 4}}
+    )
+    snap = session_usage().snapshot()
+    assert snap.exact_tokens == 13
+    assert snap.calls == 2
+
+
+def test_estimate_prompt_text_strips_image_parts():
+    from tldw_chatbook.LLM_Calls.LLM_API_Calls import _estimate_prompt_text
+    from tldw_chatbook.Chat.usage_recorder import estimate_tokens
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "describe this"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 10000}},
+            ],
+        }
+    ]
+    text = _estimate_prompt_text(messages)
+    assert "AAAA" not in text  # base64 gone
+    assert estimate_tokens(text) < 100  # anchored to the text, not the image
+
+
+def test_openai_embeddings_records_to_embeddings_bucket(monkeypatch):
+    import tldw_chatbook.LLM_Calls.LLM_API_Calls as llm_calls
+
+    monkeypatch.setattr(
+        llm_calls, "load_settings", lambda: {"openai_api": {"api_key": "sk-test"}}
+    )
+    monkeypatch.setattr(llm_calls, "resolve_provider_api_key", lambda v: v)
+    body = {
+        "data": [{"embedding": [0.1, 0.2]}],
+        "usage": {"prompt_tokens": 7, "total_tokens": 7},
+    }
+    with patch("requests.Session.post", return_value=_mock_post(body)):
+        from tldw_chatbook.LLM_Calls.LLM_API_Calls import get_openai_embeddings
+
+        get_openai_embeddings("hello world", "text-embedding-3-small")
+    snap = session_usage().snapshot()
+    assert snap.embeddings_tokens == 7
+    assert snap.exact_tokens == 0
+    assert snap.calls == 0
