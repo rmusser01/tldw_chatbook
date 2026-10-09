@@ -136,9 +136,22 @@ async def test_late_ready_cannot_send_a_cancelled_or_changed_draft(hook_file, ch
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("later_edit", [False, True])
-async def test_ready_without_configured_hooks_still_fences_a_changed_stash(later_edit):
-    """A ready empty hook inventory keeps the same captured-draft gate."""
+@pytest.mark.parametrize("later", ["nothing", "navigation", "typed"])
+async def test_ready_without_configured_hooks_sends_the_captured_stash_once(later):
+    """A ready, empty hook inventory sends exactly the captured draft.
+
+    Lead ruling (TASK-33620.15): what is sent is what the composer held at
+    the press; whatever happens in the composer after it belongs to the next
+    draft. dev (3601b7134f) refused a ready send whose composer was edited
+    after the capture. Keys now flow while the hook snapshot is read, so that
+    turned ordinary type-ahead into "Draft, chat or hooks changed; Send
+    again." The captured draft is sent and committed; text typed after it
+    stays, and caret navigation is no new draft, so the sent draft leaves the
+    composer. (3601b7134f's own fix, the agent handoff commit in
+    ``session.py``, is unchanged; a review still re-checks the draft.)
+    """
+    from textual.events import Key
+
     from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
     owner = HookPermissions()
@@ -147,15 +160,19 @@ async def test_ready_without_configured_hooks_still_fences_a_changed_stash(later
     composer = ConsoleComposerBar()
     composer.load_draft("original")
     captured = composer.capture_draft_for_send()
-    if later_edit:
+    if later == "typed":
         composer.insert_text(" suffix")
+    elif later == "navigation":
+        assert composer.handle_console_key(Key("left", None))
     sent = []
 
     async def review(_snapshot, _waiting, _on_cancel):
         raise AssertionError("An empty ready inventory must not request review")
 
     async def dispatch():
-        sent.append("original")
+        # As the dispatcher does once runtime custody accepts the turn.
+        sent.append(captured.text)
+        composer.commit_captured_draft(captured)
         return ConsolePromptDispatchResult(
             ConsolePromptDispatchStatus.SENT, session_id="a"
         )
@@ -171,9 +188,9 @@ async def test_ready_without_configured_hooks_still_fences_a_changed_stash(later
     result = await hooks.dispatch(
         "original", session_id="a", stash=captured, dispatch=dispatch
     )
-    assert result.accepted is (not later_edit)
-    assert sent == ([] if later_edit else ["original"])
-    assert composer.draft_text() == ("original suffix" if later_edit else "original")
+    assert result.accepted
+    assert sent == ["original"]
+    assert composer.draft_text() == (" suffix" if later == "typed" else "")
 
 
 @pytest.mark.asyncio
