@@ -38,7 +38,7 @@ The in-repo merge queue dispatches the required check after rebasing a PR, but a
 scripts/merge_queue.py no longer dispatches the required check, which never counted: a workflow_dispatch run's checks are absent from the PR's statusCheckRollup (spec V4; #2874 and #3026 stranded, #3025 the pull_request control). Instead:
 - Every on-mode tick approves the front PR's held pull_request runs triggered by github-actions[bot] (approve_held_runs, best-effort), before deciding.
 - After a rebase the queue waits, bounded at 10 x 3 s, for the new head's held required run and approves it (_approve_until_required), then cancels old-head runs. The re-dispatch of other workflows and the deletion of held runs (cleanup_approval_runs) are gone.
-- 'dispatch' becomes 'start' (_start): approve a held run strictly, so a GitHub error re-raises and an outage never falls through to an eviction; else re-run a cancelled run in full; else evict (evict-no-run).
+- 'dispatch' becomes 'start' (_start): approve a held run strictly (an outage re-raises, never an eviction; a lasting refusal of a still-held run is an approve-error strike); else re-run a cancelled run in full (a final refusal evicts, evict-no-run); else a no-run strike.
 - 'retry' (_retry): re-run the failed run in its own check suite (rerun-failed-jobs; a broken run's stand-in is re-run in full), once per head (retry marker). If the run is the tick's own (still in progress), send a queue kick (derived-artifacts.yml dispatched on dev, input wait_run); a live run is left alone and a held one approved. Re-run errors: refused (409/422, month-old 403) evicts (evict-rerun); transient (5xx, 429, rate limit, network) re-raises; anything else re-raises with a rerun-error warning and evicts once that warning is 10 minutes old (rounds 2 and 7).
 - derived-artifacts.yml gains a wait_run workflow_dispatch input, passed to queue-tick as WAIT_RUN; run()/main() wait for that run, bounded at 50 x 6 s. merge-queue.yml is unchanged (not on main, so never dispatchable).
 
@@ -119,4 +119,9 @@ Independent review round 8: no critical or major findings; all fixed:
 4. A strict approval re-raised every error, so a lasting refusal failed every run without evicting. A non-transient refusal is re-read (a racing run may have approved it) and is otherwise an approve-error strike (evict-approve after the gap).
 5. Tests: bare and parenthesised 409/422, the no-run warning not waking, the re-read sleep; stale comments in merge_queue.py and the spec fixed. The parenthesised-403 mutant is equivalent (a body-less 403 cannot carry the 'month ago' text) and has no test.
 Mutation check: 49 mutants of the round-2 to round-8 guards, all killed.
+Independent review round 9: no critical or major findings; fixed:
+1. The approval re-read struck any run that was not live, so a run a racing queue run approved, which then finished before the re-read, drew a false approve-error warning (and, with an old one, an eviction). It now stands down unless the run is still held.
+2. Spec drift (sections 7 and 11), the _strike docstring, and this task's 'start' bullet now describe the approve-error strike.
+3. _retry passing the approval's eviction through was untested; a test now pins it. Both new guards were mutation-checked (killed).
+Left as is, per the reviewer: with two or more held required runs on one head, a refused first approval can strike before a later one is approved. Two held derived-artifacts pull_request runs on one head have not been seen; revisit if they are.
 <!-- SECTION:NOTES:END -->

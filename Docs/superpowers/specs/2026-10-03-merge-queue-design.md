@@ -221,8 +221,9 @@ never rebased, dispatched or commented on.
   and armed by someone with write access. The queue never dispatches the required check (V4).
 - **Start and retry** re-read the head's live `derived-artifacts.yml` runs first; if one is live (a racing queue run acted
   first), they do nothing. On the start and retry rows, approving a held run is not best-effort: a transient error
-  re-raises, so an outage fails the run instead of falling through to an eviction. Any other refusal is re-read (a
-  racing queue run may have approved it) and is otherwise an `approve-error` strike: warn, and evict (`evict-approve`)
+  re-raises, so an outage fails the run instead of falling through to an eviction. Any other refusal is re-read: a run
+  no longer held was approved by a racing queue run (it may even have finished), so the queue stands down; one still held
+  is an `approve-error` strike: warn, and evict (`evict-approve`)
   only once the warning is 10 minutes old. On the start row, GitHub refusing to re-run the cancelled run evicts at
   once (`evict-no-run`): the refusal is final, or an unclassified error has already served its gap. A re-run refusal (HTTP 409/422, or a
   403 for a run over a month old) evicts, after one re-read of the run: if it is live or held again, a racing queue run
@@ -255,8 +256,8 @@ never rebased, dispatched or commented on.
 - Every action is safe to repeat. Two queue runs racing produce at most one rebase: the pinned head makes the second
   mutation fail, and the post-failure re-read (above) makes the losing run see the moved head and do nothing, instead of
   counting the refusal as its own failure. Approving a run another queue run already approved is refused: the approval
-  pass logs it (best-effort), and a start or retry approval re-raises, so that queue run fails and the next event decides
-  afresh. Two runs re-running the same run: the second sees it live and stands down, or GitHub refuses its re-run and its
+  pass logs it (best-effort), and a start or retry approval re-reads the run and stands down because it is no longer
+  held. Two runs re-running the same run: the second sees it live and stands down, or GitHub refuses its re-run and its
   re-read finds the run going again, so it stands down too. Evictions are idempotent.
 
 ## 8. Failure handling
@@ -360,7 +361,9 @@ The rules depend on the mode, checked with `gh variable get MERGE_QUEUE`. A roll
     wakes nothing); a 5xx, 429, rate
     limit or network error fails the run and disarms nobody; an unclassified error fails once with a comment, then
     evicts;
-  - a held re-run whose approval failed is approved strictly, never evicted; a cancelled retry attempt is re-run without
+  - a held re-run whose approval failed is approved strictly, never counted as a second failure (a refusal that lasts is
+    an `approve-error` strike, and `_retry` hands the line on when it evicts); a refusal for a run no longer held, even
+    one already finished, stands down; a cancelled retry attempt is re-run without
     counting against the cap;
   - start looks again, then warns before a no-run eviction (evicting only 10 minutes after the warning), and approves
     only held runs the queue caused; an unclassified re-run error counts only 10 minutes after its warning; a bodiless

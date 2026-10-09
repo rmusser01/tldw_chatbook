@@ -1601,14 +1601,15 @@ def test_an_outage_that_mentions_a_lock_never_takes_a_pr_out_of_the_line():
     ("held", None, "warned"),
     ("held", 10, "evicted"),
     ("approved", None, "stood-down"),
+    ("finished", 10, "stood-down"),
 ])
 def test_a_lasting_approval_refusal_is_a_strike(state, warned_minutes_ago, outcome):
-    """Review round 8 of #3039: a strict approval re-raised every error, so a refusal that lasted would
-    fail every queue run without ever evicting. A non-transient refusal is re-read (a racing run may
-    have approved it) and is otherwise a strike.
+    """Review rounds 8-9 of #3039: a strict approval re-raised every error, so a refusal that lasted would
+    fail every queue run without ever evicting. A non-transient refusal is re-read: a run no longer
+    held was approved by a racing run, even one that has already finished; one still held is a strike.
 
     Args:
-        state: What a re-read of the run shows: still held, or approved (queued).
+        state: What a re-read of the run shows: still held, approved (queued), or approved and finished.
         warned_minutes_ago: The age of an existing approve-error warning, if any.
         outcome: What the queue does.
     """
@@ -1618,7 +1619,8 @@ def test_a_lasting_approval_refusal_is_a_strike(state, warned_minutes_ago, outco
         comments = {1: [(f"<!-- merge-queue:approve-error:{OLD} -->\nwarned", posted)]}
     gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_held(31)]}, comments=comments,
                 approve_error="gh api -X POST failed: gh: Unprocessable Entity (HTTP 422)",
-                run_status={31: ["queued"]} if state == "approved" else None)
+                run_status={"approved": {31: ["queued"]},
+                            "finished": {31: [{"status": "completed", "conclusion": "startup_failure"}]}}.get(state))
     pr = mq.read_prs(gh)[0]
     evicted = mq._start(gh, pr, lambda m: None, lambda s: None, lambda: NOW)
     assert evicted is (outcome == "evicted")
@@ -1629,3 +1631,16 @@ def test_a_lasting_approval_refusal_is_a_strike(state, warned_minutes_ago, outco
         assert ("disarm", "PR_1") in gh.calls and f"merge-queue:evict-approve:{OLD}" in comments_posted[0]
     else:
         assert comments_posted == [] and not any(c[0] == "disarm" for c in gh.calls)
+
+
+def test_a_retry_whose_approval_strike_evicts_moves_the_line_on():
+    """Review round 9 of #3039: _retry passes the approval's eviction through, so the run hands over to
+    the next front in the same run."""
+    warned = (NOW - mq.STRIKE_GAP).strftime("%Y-%m-%dT%H:%M:%SZ")
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_held_attempt(70, 700)]},
+                comments={1: [(f"<!-- merge-queue:approve-error:{OLD} -->\nwarned", warned)]},
+                approve_error="gh api -X POST failed: gh: Unprocessable Entity (HTTP 422)")
+    pr = mq.read_prs(gh)[0]
+    action = mq.Action("retry", "required check failed once; retrying", ("https://run/70",), suite_id=700)
+    assert mq._retry(gh, pr, action, lambda m: None, lambda s: None, lambda: NOW) is True
+    assert ("disarm", "PR_1") in gh.calls

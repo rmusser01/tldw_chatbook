@@ -643,9 +643,9 @@ def _approve_strictly(gh: GhApi, pr: PrState, run: dict, log: Callable[[str], No
     """Approve one held run the start or retry decision depends on.
 
     Not best-effort: an outage re-raises, so the queue run fails and the next event retries; it never
-    falls through to an eviction (spec section 8). Any other refusal is re-read first (a racing queue
-    run may have approved it) and is otherwise a strike (`approve-error`), so a lasting one cannot fail
-    every queue run forever.
+    falls through to an eviction (spec section 8). Any other refusal is re-read first: a run no longer
+    held was approved by a racing queue run. One still held is a strike (`approve-error`), so a lasting
+    refusal cannot fail every queue run forever.
 
     Args:
         gh: The GitHub client.
@@ -665,8 +665,9 @@ def _approve_strictly(gh: GhApi, pr: PrState, run: dict, log: Callable[[str], No
     except GhError as exc:
         if _transient(exc):
             raise
-        if gh.rest("GET", f"repos/{REPO}/actions/runs/{run['id']}").get("status") in LIVE_RUN_STATUSES:
-            log(f"  run {run['id']} was approved by a racing queue run")
+        if not _is_held(gh.rest("GET", f"repos/{REPO}/actions/runs/{run['id']}")):
+            # No longer held: a racing queue run approved it (it may even have finished already).
+            log(f"  run {run['id']} is no longer held; a racing queue run approved it")
             return False
         error = str(exc)[:200]
         return _strike(
@@ -943,12 +944,15 @@ def _disarm(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> None:
 
 def _strike(gh: GhApi, pr: PrState, kind: str, warning: str, eviction: Action, wake_first: bool,
             log: Callable[[str], None], now: Callable[[], datetime]) -> bool:
-    """Count one failure to get this head going: a rebase that did not take effect, or no run (see STRIKE_GAP).
+    """Count one failure to get this head going (see STRIKE_GAP).
+
+    A rebase that did not take effect, no CI run the queue can start, or a refused approval. (An
+    unclassified re-run error follows the same rule inside `_rerun`.)
 
     Args:
         gh: The GitHub client.
         pr: The front PR.
-        kind: The warning comment's kind (`rebase-failed`, `rebase-unmoved`, `no-run`).
+        kind: The warning comment's kind (`rebase-failed`, `rebase-unmoved`, `no-run`, `approve-error`).
         warning: The warning's text.
         eviction: The eviction for a strike at least STRIKE_GAP after the warning.
         wake_first: Wake a tick after the warning, to look again soon.
