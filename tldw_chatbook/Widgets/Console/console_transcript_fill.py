@@ -103,11 +103,15 @@ def pace(
         keep_following: A reader following the tail is detached while the
             batches land and follows it again once the window is whole.
     """
+    previous = transcript._window_fill
+    # A hand-off replacing a fill that detached a follower keeps that debt.
+    refollow = previous[1] if keep_following and previous is not None else None
     transcript._reveal_hidden_tail_through(_batch_end(transcript, first, end))
     if transcript._hidden_tail_start_index() >= end:
+        if refollow is not None:
+            _finish(transcript, previous)
         transcript._window_fill = None
         return
-    refollow = None
     if keep_following and transcript._raw_anchor_engaged():
         transcript._release_anchor_quietly()
         refollow = monotonic()
