@@ -5,6 +5,9 @@ commonly missing or narrow, geometric shapes are font-dependent, and emoji
 paint double-width or not at all. This module owns the opt-in escape hatch:
 when ``appearance.ascii_glyphs`` is enabled, every status marker resolves to
 a pure-ASCII substitute via ``resolve_glyph`` / ``resolve_glyph_text``.
+A second table, ``FRAME_GLYPH_FALLBACKS`` (the Roleplay frame's punctuation),
+is consulted by ``resolve_glyph`` only; ``resolve_glyph_text`` uses
+``ASCII_GLYPH_FALLBACKS`` alone, because its callers pass user text.
 
 Deliberately a zero-import leaf: ``Widgets.destination_rail`` must stay free
 of the Chat layer (ADR-034) and ``Workspaces.conversation_browser_state``
@@ -12,7 +15,7 @@ threads glyph strings without model imports, so the fallback machinery lives
 here, below both. ``Chat.console_glyphs`` documents the vocabulary; this
 module decides how it renders.
 
-The map is keyed by CHARACTER, not by constant, so every consumer of the
+Both maps are keyed by CHARACTER, not by constant, so every consumer of the
 same glyph gets the same substitute no matter which import path it took.
 Substitutes are bracketed where the marker carries meaning (state, urgency)
 and bare punctuation where it is a pure geometric affordance (disclosure

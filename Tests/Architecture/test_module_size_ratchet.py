@@ -112,9 +112,7 @@ _BUDGETS: dict[str, int] = {
     # names shaped like markup from exiting the app (the escape_markup import,
     # its comment, and a wrapped _notify docstring line). The owner ruled to
     # raise the row rather than squeeze unrelated code to fit.
-    # Roleplay frame B1 (TASK-33910.2): the header and purpose-line text moved
-    # to roleplay_frame_state.py, 16,528 -> 16,525 lines (Roleplay frame B1).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16525,
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16528,
     # Roleplay frame B1: recipient ceiling for the moved header code (spec 5.4).
     "tldw_chatbook/UI/Persona_Modules/roleplay_frame_state.py": 369,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,

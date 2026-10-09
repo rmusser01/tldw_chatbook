@@ -42,7 +42,10 @@ from tldw_chatbook.UI.Screens.personas_screen import (
     PERSONAS_COMPACT_WORKBENCH_MAX_WIDTH,
 )
 from tldw_chatbook.UI.Workbench.workbench_widgets import DestinationHeader, FittedText
-from tldw_chatbook.Widgets.glyph_fallback import ASCII_GLYPH_FALLBACKS
+from tldw_chatbook.Widgets.glyph_fallback import (
+    ASCII_GLYPH_FALLBACKS,
+    FRAME_GLYPH_FALLBACKS,
+)
 from tldw_chatbook.Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -606,6 +609,6 @@ async def test_header_row_paints_ascii_markers_in_ascii_mode(
         )
         await settle(pilot)
         row = painted_rows(screen)[parts["header"].region.y]
-        unmapped = set(row) & (set(ASCII_GLYPH_FALLBACKS) | {"…"})
+        unmapped = set(row) & (set(ASCII_GLYPH_FALLBACKS) | set(FRAME_GLYPH_FALLBACKS))
         assert not unmapped, (unmapped, row)
         assert "> Ser " in row and "..." in row, row
