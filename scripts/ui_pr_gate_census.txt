@@ -134,6 +134,7 @@ Tests/UI/test_server_chatbook_service_lease.py
 Tests/UI/test_settings_advanced_disclosures.py
 Tests/UI/test_settings_anthropic_auth_source.py
 Tests/UI/test_settings_connect_rows.py
+Tests/UI/test_settings_console_behavior_grammar.py
 Tests/UI/test_settings_console_fallback_rows.py
 Tests/UI/test_settings_default_model_picker.py
 Tests/UI/test_settings_discovered_model_toggle.py

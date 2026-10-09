@@ -1233,6 +1233,9 @@ NO_FOCUSED_SETTING_COPY = "None — Tab to a setting"
 #: TASK-33007.4: the focused-field guide row naming the config key; the
 #: Inspector shows it only inside its closed "config key" disclosure.
 CONFIG_KEY_ROW_LABEL = "Saved as"
+#: Captures review note 11: Context window's one-line help, known and unknown.
+CONTEXT_WINDOW_HELP = "total token capacity, not a chat length"
+CONTEXT_WINDOW_REQUIRED_HELP = "required for Automatic conversation budgets"
 #: TASK-33007.7: the legacy streaming key, said only inside Console
 #: Behavior's "config key" disclosure.
 STREAMING_CONFIG_KEY_FACT = (
@@ -1319,6 +1322,11 @@ CONSOLE_DEFAULT_FIELD_NAMES = {
     f"settings-console-default-{name.replace('_', '-')}": name
     for name in GENERATION_FIELD_REQUEST_KEYS
 }
+# Captures review note 10: every [chat_defaults] key the Global fallback
+# defaults rows save, said once in the Inspector's "config key" disclosure.
+CONSOLE_FALLBACK_KEYS_FACT = "chat_defaults: " + ", ".join(
+    ("user_display_name", *GENERATION_FIELD_REQUEST_KEYS)
+)
 # The fallbacks with a built-in value: their controls are never blank at
 # rest, and Save refuses a blank (TASK-33007.7).
 CONSOLE_BUILT_IN_FALLBACK_FIELDS = ("streaming", "temperature", "top_p")
@@ -12776,12 +12784,27 @@ class SettingsScreen(BaseAppScreen):
             str(model or "").strip(),
         )
 
-    def _provider_model_context_window_status(
+    def _context_window_row_copy(
         self, provider: str, model: str, value: object | None = None
-    ) -> str:
+    ) -> tuple[str, str]:
+        """Say the Context window row's Source word and one-line help.
+
+        Captures review note 11: the row reads Label | field | Source word |
+        help like Model defaults' rows; the long explanation is the focused
+        field guide's.
+
+        Args:
+            provider: The provider the card holds.
+            model: The default model the card holds.
+            value: The field's shown value; ``None`` reads the saved one.
+
+        Returns:
+            ``(Source word, help)``: "detected", "saved in config" (an
+            override), "edited *" (staged) or "not set" (unknown).
+        """
         model_id = str(model or "").strip()
         if not model_id:
-            return "Choose a model to inspect its context window."
+            return "", "choose a model first"
         state = model_context_window_state(
             self._app_config_mapping(), provider, model_id
         )
@@ -12790,26 +12813,33 @@ class SettingsScreen(BaseAppScreen):
             tokens = int(str(window).strip())
         except (TypeError, ValueError):
             tokens = 0
+        edited = tokens != (state.effective_tokens or 0)
         if tokens <= 0:
-            return (
-                "Context window unknown. Enter the provider's documented token "
-                "limit so Automatic conversation budgets can be verified."
-            )
-        if value is not None and tokens != state.effective_tokens:
-            detected = (
-                f"{state.detected_tokens:,}"
-                if state.detected_tokens is not None
-                else "unknown"
-            )
-            return f"Override staged: {tokens:,} tokens. Detected: {detected}."
+            return ("edited *" if edited else "not set"), CONTEXT_WINDOW_REQUIRED_HELP
+        detected = (
+            f"detected {state.detected_tokens:,}"
+            if state.detected_tokens is not None
+            else "nothing detected"
+        )
+        if edited:
+            return "edited *", detected
         if state.has_configured_override:
-            detected = (
-                f"{state.detected_tokens:,}"
-                if state.detected_tokens is not None
-                else "unknown"
-            )
-            return f"Configured override: {tokens:,} tokens. Detected: {detected}."
-        return f"Detected context window: {tokens:,} tokens."
+            return "saved in config", f"override · {detected}"
+        return "detected", CONTEXT_WINDOW_HELP
+
+    def _show_context_window_row(
+        self, provider: str, model: str, value: object
+    ) -> None:
+        """Re-say the Context window row's Source word and help for ``value``.
+
+        Args:
+            provider: The provider the card holds.
+            model: The default model the card holds.
+            value: The field's shown value.
+        """
+        word, help_line = self._context_window_row_copy(provider, model, value)
+        self._set_static_text("#settings-model-context-window-source", word)
+        self._set_static_text("#settings-model-context-window-status", help_line)
 
     def _clear_navigation_provider_context(self) -> None:
         self._navigation_provider = None
@@ -15300,17 +15330,18 @@ class SettingsScreen(BaseAppScreen):
                     context_input.value = self._profile_input_value(value)
         finally:
             self._syncing_provider_context_window = False
-        self._set_static_text(
-            "#settings-model-context-window-status",
-            self._provider_model_context_window_status(provider, model, value),
-        )
+        self._show_context_window_row(provider, model, value)
         try:
-            self.query_one("#settings-model-context-window-reset", Button).disabled = (
+            reset = self.query_one("#settings-model-context-window-reset", Button)
+        except QueryError:
+            pass
+        else:
+            reset.disabled = (
                 not state.has_configured_override
                 or self._provider_is_registry_id(provider)
             )
-        except QueryError:
-            pass
+            # Review note 11: nothing to return to while the window is unknown.
+            reset.display = state.effective_tokens is not None
 
     def _set_provider_context_window_input_value(
         self,
@@ -18564,7 +18595,9 @@ class SettingsScreen(BaseAppScreen):
             yield Static("Local reasoning history", classes="destination-section")
             # Parent AC#7 (TASK-33007): every Select on the card is one row.
             with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static("Replay", classes="settings-input-label")
+                # Captures review note 9: the global default and the override
+                # below were both "Replay"; each label says which it is.
+                yield Static("Default replay", classes="settings-input-label")
                 yield Select(
                     REASONING_HISTORY_OPTIONS,
                     value=self._console_behavior_value("reasoning_history"),
@@ -18594,7 +18627,7 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-detail-row",
                 )
                 with Horizontal(classes="settings-input-row settings-select-row"):
-                    yield Static("Replay", classes="settings-input-label")
+                    yield Static("This model's replay", classes="settings-input-label")
                     yield Select(
                         (("Use default", "inherit"), *REASONING_HISTORY_OPTIONS),
                         value=self._reasoning_override_value(),
@@ -19126,9 +19159,8 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-detail-row",
             )
             with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    "Default chat display name", classes="settings-input-label"
-                )
+                # Review note 10: 25 cells did not fit the 24-cell label.
+                yield Static("Chat display name", classes="settings-input-label")
                 yield Input(
                     value=self._console_input_value(
                         self._console_behavior_value("user_display_name")
@@ -21877,39 +21909,11 @@ class SettingsScreen(BaseAppScreen):
             with Vertical(
                 id="settings-console-behavior-detail", classes="settings-focus-card"
             ):
+                # Captures review note 10: the read-only summary that followed
+                # the card restated its own rows and the Inspector's Override
+                # rules; its config keys now sit in the Inspector's closed
+                # "config key" disclosure.
                 yield from self._render_console_behavior_card(compact=False)
-                yield Static("Composer behavior", classes="destination-section")
-                yield self._detail_row(
-                    "Paste collapse",
-                    "pasted chunks over the threshold display as compact placeholders",
-                )
-                yield self._detail_row(
-                    "Threshold", self._paste_collapse_threshold_label()
-                )
-                yield self._detail_row(
-                    "Typing rule",
-                    "normal typing remains literal and never auto-collapses",
-                )
-                yield self._detail_row(
-                    "Current default", self._collapse_large_pastes_label()
-                )
-                yield Static("Global fallback defaults", classes="destination-section")
-                yield self._detail_row(
-                    "Fallback source",
-                    "[chat_defaults].streaming, temperature, top_p, max_tokens",
-                )
-                yield self._detail_row(
-                    "Override order",
-                    "active Console session, then provider+model profile, then global fallback",
-                )
-                yield self._detail_row(
-                    "Save targets",
-                    "[console] paste settings and [chat_defaults] global fallbacks",
-                )
-                yield self._detail_row(
-                    "Console impact",
-                    "new/default sessions use these only when no narrower override applies",
-                )
         elif category is SettingsCategoryId.LIBRARY_RAG:
             yield from self._render_library_rag_detail()
         elif category is SettingsCategoryId.APPEARANCE:
@@ -22777,7 +22781,7 @@ class SettingsScreen(BaseAppScreen):
         if summary.category is SettingsCategoryId.CONSOLE_BEHAVIOR:
             yield Static("Control guide", classes="destination-section")
             yield self._detail_row(
-                "Default chat display name",
+                "Chat display name",
                 "Speaker label and trusted character-template human name",
             )
             for name in ("streaming", "temperature", "top_p", "max_tokens"):
@@ -22815,6 +22819,11 @@ class SettingsScreen(BaseAppScreen):
                     MODEL_FIELD_LABELS["streaming"],
                     STREAMING_CONFIG_KEY_FACT,
                     identifier="settings-console-streaming-compatibility",
+                ),
+                self._detail_row(
+                    "Fallbacks",
+                    CONSOLE_FALLBACK_KEYS_FACT,
+                    identifier="settings-console-fallback-keys",
                 ),
                 identifier="settings-console-behavior-config-key",
             )
@@ -29683,13 +29692,8 @@ class SettingsScreen(BaseAppScreen):
             draft.originals.pop("model_context_window_reset", None)
         self._stage_provider_value("model_context_window", value)
         values = self._provider_setting_values_mapping()
-        self._set_static_text(
-            "#settings-model-context-window-status",
-            self._provider_model_context_window_status(
-                str(values.get("provider") or ""),
-                str(values.get("model") or ""),
-                value,
-            ),
+        self._show_context_window_row(
+            str(values.get("provider") or ""), str(values.get("model") or ""), value
         )
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -29716,15 +29720,8 @@ class SettingsScreen(BaseAppScreen):
         finally:
             self._syncing_provider_context_window = False
         event.button.disabled = True
-        detected_copy = (
-            f"{state.detected_tokens:,} tokens"
-            if state.detected_tokens is not None
-            else "unknown"
-        )
-        self._set_static_text(
-            "#settings-model-context-window-status",
-            f"Reset staged. Detected context window: {detected_copy}.",
-        )
+        # The staged detected value reads "edited *" beside "detected N".
+        self._show_context_window_row(provider, model, detected)
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
     @on(Input.Changed, "#settings-provider-endpoint-value")

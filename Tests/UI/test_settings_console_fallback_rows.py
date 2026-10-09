@@ -159,7 +159,8 @@ async def test_fallbacks_use_model_defaults_rows_core_first_then_closed_sampling
             children[children.index(note) + 1].id == f"{_cid('reasoning_effort')}-row"
         )
         # A blank enum shows the word Chat settings shows for the same state
-        # ("default": nothing is sent), painted whole in the 16-cell control.
+        # ("default": nothing is sent), painted whole in the card's control
+        # column (review note 9 widened it from Model defaults' 16 cells).
         for name in _ENUM_FIELDS:
             select = screen.query_one(f"#{_cid(name)}", Select)
             assert select.value is Select.NULL

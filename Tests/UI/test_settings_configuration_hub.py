@@ -6944,7 +6944,9 @@ async def test_settings_console_behavior_renders_global_default_controls():
             == "50"
         )
         text = _visible_text(screen)
-        assert "Default chat display name" in text
+        # Captures review note 10, rewritten on purpose: "Default chat
+        # display name" did not fit the 24-cell label column.
+        assert "Chat display name" in text
         assert (
             "Used for your speaker label. Character chats also use it for trusted "
             "{{user}} templates."

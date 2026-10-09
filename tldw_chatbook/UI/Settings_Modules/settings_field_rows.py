@@ -97,9 +97,9 @@ _BUILT_IN = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.BUILT_IN]
 #: and their closed Sampling disclosure.
 CONSOLE_FALLBACKS_ID = "settings-console-fallbacks"
 CONSOLE_SAMPLING_ID = "settings-console-sampling"
-#: A fallback ``[chat_defaults]`` does not hold shows tldw's own value, which
-#: a provider's table outranks (the default chain's order).
-UNSET_FALLBACK_HELP = "not set here · a provider's own setting comes first"
+#: A fallback ``[chat_defaults]`` does not hold shows tldw's own value, which a
+#: provider's table outranks. Fits the 45-cell help column at 211x44 (note 9).
+UNSET_FALLBACK_HELP = "not set · a provider's setting comes first"
 #: A saved choice the Select has no option for (a hand-edited "High"): a new
 #: chat still takes it, so the row names it instead of reading blank.
 NOT_A_CHOICE_HELP = "saved '{value}' is not a choice"

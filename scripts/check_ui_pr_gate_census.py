@@ -213,7 +213,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # (6 cases; the real D1 reach save and Ctrl+T in Console) and
 # test_settings_providers_models_card_geometry.py (2 cases; the card's
 # hit-test net from the region-module move) were left out of the lane.
-MINIMUM_FILES = 170
+# The capture review's items 9-11 (p7cf-b) raised it to 143:
+# test_settings_console_behavior_grammar.py (4 cases) pins Console
+# Behavior's one frame, one control column and its labels.
+MINIMUM_FILES = 171
 
 
 def read_census(path: Path) -> list[str]:

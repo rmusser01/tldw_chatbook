@@ -10,6 +10,21 @@ from Tests.UI.test_settings_overview_search_journeys import _category, _painted
 from Tests.UI.test_settings_speech_tts_panel import _StyledDestinationHarness
 
 
+async def _press_again(pilot, button: Button) -> None:
+    """Press Enter on ``button`` once its previous press has finished.
+
+    Textual drops a press made during the previous one's 0.2 s effect (the
+    ``-active`` class), as it does a user's double press. Once Console
+    Behavior lost its nested frames (captures review note 9) Settings settled
+    fast enough for these second presses to land inside that window.
+    """
+    for _ in range(40):
+        if not button.has_class("-active"):
+            break
+        await pilot.pause(0.02)
+    await pilot.press("enter")
+
+
 @pytest.mark.asyncio
 @pytest.mark.timeout(180)
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
@@ -141,7 +156,7 @@ async def test_console_instant_toggle_failed_save_rolls_back_and_retries(
             module, "apply_settings_mutation_to_cli_config", real_writer
         )
         assert host.screen.focused is button
-        await pilot.press("enter")
+        await _press_again(pilot, button)
         await _settle(host, pilot)
         saved = tomllib.loads(path.read_text())
         if setting == "remote-images":
@@ -204,7 +219,7 @@ async def test_console_instant_toggle_latest_choice_survives_pending_write(
         try:
             await pilot.press("enter")
             assert await asyncio.to_thread(entered.wait, 3)
-            await pilot.press("enter")
+            await _press_again(pilot, button)
             await pilot.press("escape", "/", *"Storage", "enter")
             await pilot.pause()
         finally:
@@ -469,11 +484,12 @@ async def test_console_instant_toggle_drains_across_settings_recreation(
     monkeypatch.setattr(module, "apply_settings_mutation_to_cli_config", gated)
     async with host.run_test(size=(190, 55)) as pilot:
         await _category(host, pilot, "Console Behavior")
-        host.screen.query_one(f"#settings-console-{setting}-toggle", Button).focus()
+        button = host.screen.query_one(f"#settings-console-{setting}-toggle", Button)
+        button.focus()
         try:
             await pilot.press("enter")
             assert await asyncio.to_thread(entered.wait, 3)
-            await pilot.press("enter")
+            await _press_again(pilot, button)
             old_screen = host.screen
             await host.switch_screen(Screen())
             await pilot.pause()
