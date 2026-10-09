@@ -59,10 +59,18 @@ def _count_scope_reads(console) -> dict[str, int]:
 
     def counting(_database):
         state["reads"] += 1
+        state["revision"] += state.get("writes_per_read", 0)
         return ("harness-authority", state["revision"])
 
     async def loading_refresh():
-        snapshot = await context._capture_scope()
+        from tldw_chatbook.UI.Console_Modules.character_context import (
+            _ConsoleCharacterScopeChanged,
+        )
+
+        try:
+            snapshot = await context._capture_scope()
+        except _ConsoleCharacterScopeChanged:
+            return  # As refresh() does when the scope never settles.
         context._publish(replace(context.state, scope_fingerprint=snapshot.fingerprint))
 
     context._read_database_scope_metadata = counting
@@ -97,8 +105,9 @@ async def test_sync_ticks_during_a_run_check_the_character_scope_once_a_second(
             scope = _count_scope_reads(console)
             context = console._character_context
             try:
+                context.invalidate_scope()  # An invalidated scope checks at once.
                 await _tick(console)
-                assert scope["reads"] >= 1, "the run's first sync did not check"
+                assert scope["reads"] >= 1, "the invalidated scope was not checked"
                 first = scope["reads"]
                 for _ in range(5):
                     scope["revision"] += 1  # The send writes a message.
@@ -106,6 +115,21 @@ async def test_sync_ticks_during_a_run_check_the_character_scope_once_a_second(
                 assert scope["reads"] == first, (
                     f"{scope['reads'] - first} scope reads in 5 run ticks"
                 )
+                # Live, writes land between a check's two reads, so it never
+                # settles; an unsettled check still counts for the interval.
+                scope["writes_per_read"] = 1
+                context.invalidate_scope()
+                await _tick(console)
+                unsettled = scope["reads"]
+                assert unsettled > first
+                for _ in range(5):
+                    await _tick(console)
+                assert scope["reads"] == unsettled, (
+                    f"{scope['reads'] - unsettled} reads in 5 ticks after an "
+                    "unsettled check"
+                )
+                scope["writes_per_read"] = 0
+                first = scope["reads"]
                 # An ambient change (another open chat) is checked at once.
                 real_open = context._open_conversation_accessor
                 context._open_conversation_accessor = lambda: "another-chat"

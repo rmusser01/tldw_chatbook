@@ -288,7 +288,7 @@ class ConsoleCharacterContextController:
         self.return_reveal = False
         self._browse_snapshot: ConsoleCharacterBrowseSnapshot | None = None
         self._activation_cancellation: asyncio.Event | None = None
-        self._scope_checked_at: float | None = None
+        self._scope_checked: tuple[float, Any, tuple[int, str] | None, str] | None = None
         self.state = ConsoleCharacterContextState()
 
     def _publish(self, state: ConsoleCharacterContextState) -> None:
@@ -442,37 +442,27 @@ class ConsoleCharacterContextController:
         """Fence work and force the next lifecycle check to reload."""
 
         self._generation += 1
+        self._scope_checked = None
         self._publish(replace(self.state, scope_fingerprint=None))
 
     def _checked_recently(self) -> bool:
         """Whether a run's sync may skip the database scope check (TASK-33620.15.1).
 
         During a run the database scope is checked at most once per
-        ``SCOPE_RECHECK_DURING_RUN_SECONDS``: every message write bumps the
-        conversation revision, so each 0.2 s tick of a send reloaded the
-        browser. A skip needs a published projection whose ambient scope
-        (database handle, current character, open chat) has not moved.
-        Outside a run, or after any ambient change, every sync checks.
+        ``SCOPE_RECHECK_DURING_RUN_SECONDS``, whatever the last check found:
+        every message write bumps the conversation revision, so each 0.2 s
+        tick of a send reloaded (or failed to settle) the browser. A skip
+        needs the ambient scope (database handle, current character, open
+        chat) the last check started from. Outside a run, after any ambient
+        change or an invalidated scope, every sync checks.
         """
-        checked_at = self._scope_checked_at
-        fingerprint = self.state.scope_fingerprint
-        if checked_at is None or fingerprint is None or self._run_active is None:
+        checked = self._scope_checked
+        if checked is None or self._run_active is None or not self._run_active():
             return False
-        if not self._run_active():
-            return False
-        database = self._database_accessor()
-        current = (
-            None
-            if fingerprint.current_character_id is None
-            else (fingerprint.current_character_id, fingerprint.current_character_label)
-        )
-        return (
-            time.monotonic() - checked_at < SCOPE_RECHECK_DURING_RUN_SECONDS
-            and id(database) == fingerprint.database_identity
-            and self._ambient_scope_matches(
-                database, current, fingerprint.open_conversation_id
-            )
-        )
+        checked_at, database, current, open_conversation_id = checked
+        return time.monotonic() - checked_at < (
+            SCOPE_RECHECK_DURING_RUN_SECONDS
+        ) and self._ambient_scope_matches(database, current, open_conversation_id)
 
     async def refresh_if_scope_changed(self, *, force: bool = False) -> bool:
         """Reload the projection when its scope changed.
@@ -491,22 +481,27 @@ class ConsoleCharacterContextController:
             # tick's synchronous stretch must not grow by the read's absence.
             await asyncio.sleep(0)
             return False
-        checked_at = time.monotonic()
-        self._scope_checked_at = None
+        started = (
+            time.monotonic(),
+            self._database_accessor(),
+            self._current_character_identity(),
+            self._open_conversation_identity(),
+        )
+        self._scope_checked = None
         try:
             snapshot = await self._capture_scope()
         except _ConsoleCharacterScopeChanged:
             self.invalidate_scope()
         except _ConsoleCharacterScopeReadError:
             await self.refresh()
-            self._scope_checked_at = checked_at
+            self._scope_checked = started
             return True
         else:
             if not force and snapshot.fingerprint == self.state.scope_fingerprint:
-                self._scope_checked_at = checked_at
+                self._scope_checked = started
                 return False
         await self.refresh()
-        self._scope_checked_at = checked_at
+        self._scope_checked = started
         return True
 
     @staticmethod
