@@ -4037,7 +4037,13 @@ class NotesSyncExecutor:
 
         relative_path = metadata.get("cleanup_relative_path")
         return (
-            metadata.get("cleanup_reason_code") == "replacement_postcondition_failed"
+            # Fix round 1 (review Important 2): scoped to the two kinds a
+            # settle can close. A create_file that hit the same handle shape
+            # keeps today's Recovery cleanup path exactly (it refuses with
+            # ``recovery_authority_changed``, as on 9413696ea1) rather than
+            # a quiet "Review" that nothing can act on.
+            metadata.get("action") in NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS
+            and metadata.get("cleanup_reason_code") == "replacement_postcondition_failed"
             and metadata.get("cleanup_identity") is None
             and type(relative_path) is str
             and relative_path == metadata.get("file_relative_path")
@@ -5831,9 +5837,18 @@ class NotesSyncExecutor:
     def _recorded_profile(
         self, request: NotesSyncExecutionRequest
     ) -> NotesSyncSerializationProfile:
-        """The convention the binding records for the request's file (TASK-34000.48)."""
+        """The convention the binding records for the request's file (TASK-34000.48).
 
-        return self._store.get_binding(request.binding_id).serialization
+        Raises:
+            RuntimeError: ``binding_authority_changed`` when the request's
+                binding no longer exists -- the owner check's own answer,
+                never a storage error (fix round 1, review Minor 5).
+        """
+
+        try:
+            return self._store.get_binding(request.binding_id).serialization
+        except NotesDeviceStateError:
+            raise RuntimeError("binding_authority_changed") from None
 
     def _recorded_write_profile(
         self, request: NotesSyncExecutionRequest
@@ -5855,7 +5870,7 @@ class NotesSyncExecutor:
         file: NotesSyncFileSnapshot,
         note: NotesSyncNoteSnapshot,
         reviewed: NotesSyncFileSnapshot,
-        recorded: NotesSyncSerializationProfile | None = None,
+        recorded: NotesSyncSerializationProfile,
     ) -> bool:
         """Whether ``file`` is exactly what writing ``note`` over ``reviewed`` leaves.
 

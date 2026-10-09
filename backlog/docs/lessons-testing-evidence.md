@@ -16250,13 +16250,15 @@ line ending as `lf` -- the profile has no "indeterminate" -- so a CRLF file
 whose note shrank to one line was re-observed as `lf` after its own correct
 write and the folder wedged for good. The fix is one rule (a newline-free
 observation inherits the recorded `newline`), applied at ~25 sites. Of the
-170+ existing sync tests, exactly ONE went red:
-`test_create_file_rejects_representation_drift_before_membership_binding[crlf]`
+170+ existing sync tests, exactly TWO went red, the create pin and its move
+twin: `test_create_file_rejects_representation_drift_before_membership_binding[crlf]`
+and `test_move_file_rejects_representation_drift_before_membership_binding[crlf]`
 in `Tests/Notes/test_notes_sync_executor.py`, whose `DriftingCreatingFilesystem`
-fake reported `crlf` for the text `"from-note"`. No real filesystem can say
-that -- the bytes `b"from-note"` parse to `lf` -- so the test had pinned a
-drift that cannot exist, and it was the only thing in the suite that
-"knew" about newline drift on a one-line file. Meanwhile the real-stack RED
+/ `DriftingMovingFilesystem` fakes reported `crlf` for the texts `"from-note"`
+and `"before"`. No real filesystem can say that -- the bytes `b"from-note"`
+parse to `lf` -- so both tests had pinned a drift that cannot exist, and they
+were the only things in the suite that "knew" about newline drift on a
+one-line file. Meanwhile the real-stack RED
 file (`Tests/Notes/test_notes_sync_crlf_single_line.py`: real
 `PosixNotesSyncFilesystem`, real DB, real bytes) found the actual defect at
 the first assertion.

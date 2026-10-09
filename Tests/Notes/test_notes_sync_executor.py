@@ -192,6 +192,26 @@ async def test_create_file_rejects_representation_drift_before_membership_bindin
         store.get_binding("binding-1")
 
 
+def test_classify_on_a_vanished_binding_says_binding_authority_changed(
+    tmp_path: Path,
+) -> None:
+    """TASK-34000.48 fix round 1 (review Minor 5): the recorded profile is read
+    from the binding inside ``_classify``; a binding that no longer exists is
+    the owner check's own answer, never a storage error."""
+
+    store, _ = _store(tmp_path)
+    note = _note(content="before", version=4)
+    file = _file(content="before")
+    request = _request(action=NotesSyncActionKind.UPDATE_FILE, note=note, file=file)
+    executor = NotesSyncExecutor(
+        store, FakeNoteAuthority(note), FakeFilesystem(file), recovery_capacity_bytes=4096
+    )
+    with pytest.raises(RuntimeError, match="binding_authority_changed"):
+        executor._classify(request, note, file)
+    with pytest.raises(RuntimeError, match="binding_authority_changed"):
+        executor._classify_restore(request, note, file)
+
+
 @pytest.mark.asyncio
 async def test_move_file_executes_guarded_move_and_updates_binding_path(
     tmp_path: Path,
@@ -1153,7 +1173,7 @@ class BlockingFilesystem(FakeFilesystem):
     ) -> NotesSyncFileSnapshot:
         self.started.set()
         assert self.release.wait(3.0)
-        return super().replace(relative_path, text, expected=expected)
+        return super().replace(relative_path, text, expected=expected, profile=profile)
 
 
 class FakeWindowsObservationFilesystem:
@@ -1330,10 +1350,24 @@ class DriftingMovingFilesystem(MovingFilesystem):
         expected: NotesSyncFileSnapshot,
     ) -> NotesSyncFileSnapshot:
         moved = super().move(destination_path, expected=expected)
+        # Fix round 1 (review Minor 4): the bytes carry the drift too, as the
+        # create fake's do -- a fake may only report what the bytes can say.
+        payload = PosixNotesSyncFilesystem.serialize(moved.text, self._profile)
         self.destination = replace(
             moved,
-            observation=replace(moved.observation, serialization=self._profile),
-            reviewed_state=replace(moved.reviewed_state, mode=self._profile.mode),
+            observation=replace(
+                moved.observation,
+                serialization=self._profile,
+                size_bytes=len(payload),
+            ),
+            raw_bytes=payload,
+            reviewed_state=replace(
+                moved.reviewed_state,
+                content=payload,
+                mode=self._profile.mode,
+                size=len(payload),
+            ),
+            representation_digest=hashlib.sha256(payload).hexdigest(),
         )
         return self.destination
 

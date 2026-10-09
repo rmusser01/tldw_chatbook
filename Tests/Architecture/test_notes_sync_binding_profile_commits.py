@@ -23,7 +23,19 @@ one is a violation, whatever the shape (reversed, hoisted, tuple-wrapped,
 ``in`` a set, chained). A ``serialization=`` / ``baseline_serialization=``
 keyword on a binding commit (``replace(binding, ...)``,
 ``NotesSyncBindingRecord(...)``, ``BindingObservation(...)``) whose value
-mentions a raw profile and no proven one is a violation too. The census test
+mentions a raw profile and no proven one is a violation too.
+
+Fix round 1 (review Important 1): a helper call is PROVEN only when its
+recorded argument is a real record. ``None``, a raw profile of the SAME
+observation (``_bound_file_serialization(file, _file_serialization(file))``)
+or the call's own first operand make the call RAW -- proving an observation
+against itself proves nothing (``observe_root``'s discovered-candidate site
+is the one legitimate ``None`` and is allowlisted by name). A compare that
+mixes a proven call with a raw operand is allowed only when that raw operand
+IS the call's recorded argument (``_bound_file_serialization(x, R) == R``);
+``_bound_file_serialization(file, binding.serialization) != request.file
+.observation.serialization`` is flagged. And ``_file_holds_note`` must be
+called with its ``recorded`` argument. The census test
 lists the surviving sites by enclosing function so a new one of either shape
 fails loudly with its name, and the negative controls feed the scan each
 refactor shape plus the base's own ``_file_holds_note`` body.
@@ -78,8 +90,41 @@ def _is_raw_node(node: ast.AST) -> bool:
     )
 
 
-def _is_proven_node(node: ast.AST) -> bool:
+def _is_proven_call(node: ast.AST) -> bool:
     return isinstance(node, ast.Call) and _call_name(node) in _PROVEN_CALLS
+
+
+def _raw_base(node: ast.AST) -> ast.AST | None:
+    """The observation a raw profile expression was read from."""
+
+    if isinstance(node, ast.Call) and _call_name(node) in _RAW_CALLS:
+        return node.args[0] if node.args else None
+    if _is_raw_node(node):
+        return node.value.value  # type: ignore[attr-defined]
+    return None
+
+
+def _recorded_argument(call: ast.Call) -> ast.AST | None:
+    """The ``recorded`` argument of a helper call, however it is passed."""
+
+    for keyword in call.keywords:
+        if keyword.arg == "recorded":
+            return keyword.value
+    index = 1 if _call_name(call) == "_bound_file_serialization" else 2
+    return call.args[index] if len(call.args) > index else None
+
+
+def _first_operand(call: ast.Call) -> ast.AST | None:
+    for keyword in call.keywords:
+        if keyword.arg in {"snapshot", "observed"}:
+            return keyword.value
+    return call.args[0] if call.args else None
+
+
+#: Functions in which a helper call with ``recorded=None`` is legitimate: a
+#: discovered file has no recorded convention yet, so its own observation IS
+#: the record (``notes_sync_runtime.observe_root``'s candidate site).
+_UNRECORDED_ALLOWED = frozenset({"observe_root"})
 
 
 class _Scope:
@@ -94,7 +139,8 @@ class _Scope:
     from an earlier, unrelated ``candidate``.)
     """
 
-    def __init__(self, function: ast.AST) -> None:
+    def __init__(self, function: ast.AST, name: str) -> None:
+        self.name = name
         self.bound: dict[str, ast.AST] = {}
         for node in ast.walk(function):
             if isinstance(node, ast.Assign):
@@ -108,14 +154,53 @@ class _Scope:
                 if isinstance(node.target, ast.Name):
                     self.bound[node.target.id] = node.value
 
+    def resolve(self, node: ast.AST) -> ast.AST:
+        """Follow a local name to the expression it is bound to."""
+
+        seen: set[str] = set()
+        while isinstance(node, ast.Name) and node.id in self.bound and node.id not in seen:
+            seen.add(node.id)
+            node = self.bound[node.id]
+        return node
+
+    def helper_proves(self, call: ast.Call) -> bool:
+        """Whether a helper call proves against a REAL record.
+
+        ``None`` (outside the allowlisted function), a raw profile of the
+        call's own observation, or the call's own first operand prove
+        nothing: the observation is compared with itself.
+        """
+
+        recorded = _recorded_argument(call)
+        if recorded is None:
+            return False
+        if isinstance(recorded, ast.Constant) and recorded.value is None:
+            return self.name in _UNRECORDED_ALLOWED
+        resolved = self.resolve(recorded)
+        if isinstance(resolved, ast.Constant) and resolved.value is None:
+            return self.name in _UNRECORDED_ALLOWED
+        first = _first_operand(call)
+        if first is None:
+            return False
+        first_text = ast.unparse(self.resolve(first))
+        first_base = _raw_base(self.resolve(first))
+        if ast.unparse(resolved) == first_text:
+            return False
+        base = _raw_base(resolved)
+        if base is not None:
+            own = first_base if first_base is not None else self.resolve(first)
+            if ast.unparse(base) == ast.unparse(own):
+                return False
+        return True
+
     def kinds(self, node: ast.AST, seen: set[str] | None = None) -> set[str]:
         """The profile kinds (``raw``/``proven``) the VALUE of ``node`` can be."""
 
         seen = set() if seen is None else seen
         if _is_raw_node(node):
             return {"raw"}
-        if _is_proven_node(node):
-            return {"proven"}
+        if _is_proven_call(node):
+            return {"proven"} if self.helper_proves(node) else {"raw"}
         if isinstance(node, ast.IfExp):
             return self.kinds(node.body, seen) | self.kinds(node.orelse, seen)
         if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
@@ -136,6 +221,50 @@ class _Scope:
         """Whether any node in ``node``'s subtree has value kind ``kind``."""
 
         return any(kind in self.kinds(sub) for sub in ast.walk(node))
+
+    def raw_outside_helpers(self, node: ast.AST) -> bool:
+        """Whether ``node`` reads a raw profile anywhere a helper is not proving it.
+
+        A proving call is opaque: the raw observation and the record it is
+        proven against are its arguments, not operands of the comparison.
+        """
+
+        if _is_proven_call(node) and self.helper_proves(node):
+            return False
+        if "raw" in self.kinds(node):
+            return True
+        return any(self.raw_outside_helpers(child) for child in ast.iter_child_nodes(node))
+
+    def proven_calls(self, node: ast.AST) -> list[ast.Call]:
+        """Every proving helper call reachable from ``node``, through names."""
+
+        calls: list[ast.Call] = []
+        for sub in ast.walk(node):
+            candidate = self.resolve(sub) if isinstance(sub, ast.Name) else sub
+            if _is_proven_call(candidate) and self.helper_proves(candidate):
+                calls.append(candidate)
+        return calls
+
+    def compare_violates(self, operands: list[ast.AST]) -> bool:
+        """A raw operand is tolerated only as a proven call's own record."""
+
+        raw_operands = [operand for operand in operands if self.raw_outside_helpers(operand)]
+        if not raw_operands:
+            return False
+        calls = [call for operand in operands for call in self.proven_calls(operand)]
+        if not calls:
+            return True
+        records: set[str] = set()
+        for call in calls:
+            recorded = _recorded_argument(call)
+            if recorded is not None:
+                records.add(ast.unparse(recorded))
+                records.add(ast.unparse(self.resolve(recorded)))
+        return any(
+            ast.unparse(operand) not in records
+            and ast.unparse(self.resolve(operand)) not in records
+            for operand in raw_operands
+        )
 
 
 def _sites(source: str) -> list[tuple[str, str, int, str, bool]]:
@@ -158,7 +287,7 @@ def _sites(source: str) -> list[tuple[str, str, int, str, bool]]:
         while owner in parents and not isinstance(owner, _FunctionNode):
             owner = parents[owner]
         name = owner.name if isinstance(owner, _FunctionNode) else "<module>"
-        return name, scopes.setdefault(owner, _Scope(owner))
+        return name, scopes.setdefault(owner, _Scope(owner, name))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Compare):
@@ -170,14 +299,28 @@ def _sites(source: str) -> list[tuple[str, str, int, str, bool]]:
             proven = any(scope.mentions(operand, "proven") for operand in operands)
             if raw or proven:
                 found.append(
-                    ("compare", enclosing, node.lineno, ast.unparse(node), raw and not proven)
+                    (
+                        "compare",
+                        enclosing,
+                        node.lineno,
+                        ast.unparse(node),
+                        scope.compare_violates(operands),
+                    )
                 )
+        elif isinstance(node, ast.Call) and _call_name(node) == "_file_holds_note":
+            enclosing, _scope = owner_of(node)
+            carries_record = len(node.args) >= 4 or any(
+                keyword.arg == "recorded" for keyword in node.keywords
+            )
+            found.append(
+                ("call", enclosing, node.lineno, ast.unparse(node), not carries_record)
+            )
         elif isinstance(node, ast.Call) and _call_name(node) in _COMMIT_CALLS:
             enclosing, scope = owner_of(node)
             for keyword in node.keywords:
                 if keyword.arg not in _COMMIT_KEYWORDS:
                     continue
-                raw = scope.mentions(keyword.value, "raw")
+                raw = scope.raw_outside_helpers(keyword.value)
                 proven = scope.mentions(keyword.value, "proven")
                 found.append(
                     (
@@ -224,6 +367,7 @@ def test_no_raw_observed_profile_is_compared_or_committed(module: str) -> None:
 #: or commits a proven profile. A new site of either shape lands here first.
 _CENSUS = {
     "executor": {
+        "call": ["_classify", "_classify_restore"],
         "compare": [
             "_admit_undo",
             "_binding_matches_current",
@@ -252,9 +396,10 @@ _CENSUS = {
             "_proven_post_write_baseline",
         ],
     },
-    "runtime": {"compare": [], "commit": ["observe_root"]},
+    "runtime": {"call": [], "compare": [], "commit": ["observe_root"]},
     "filesystem": {
-        "compare": ["create", "move", "replace"],
+        "call": [],
+        "compare": ["_requested_write_profile", "create", "move", "replace"],
         "commit": [],
     },
 }
@@ -267,7 +412,7 @@ def test_the_surviving_sites_are_the_census(module: str) -> None:
     found = _sites(_source(module))
     census = {
         kind: sorted({function for k, function, _l, _t, _v in found if k == kind})
-        for kind in ("compare", "commit")
+        for kind in ("call", "compare", "commit")
     }
     assert census == _CENSUS[module], (
         f"{module}: profile comparison/commit sites are now {census}. Read the "
@@ -349,6 +494,43 @@ _MUST_BE_FLAGGED = (
         "p = _file_serialization(file)\nreturn replace(binding, serialization=p)",
         id="commit-hoisted",
     ),
+    # Fix round 1 (review Important 1): the six probed shapes.
+    pytest.param(
+        "return binding.serialization != _bound_file_serialization(file, _file_serialization(file))",
+        id="prove-against-itself",
+    ),
+    pytest.param(
+        "return proven_profile(file.observation.serialization, file.text, None) != binding.serialization",
+        id="proven-against-nothing-in-a-compare",
+    ),
+    pytest.param(
+        "return replace(binding, serialization=_bound_file_serialization(file, None))",
+        id="commit-proven-against-nothing",
+    ),
+    pytest.param(
+        "return _bound_file_serialization(file, binding.serialization) != request.file.observation.serialization",
+        id="proven-current-vs-a-different-raw-reviewed",
+    ),
+    pytest.param(
+        "return self._file_holds_note(file, note, reviewed)",
+        id="holds-note-without-recorded",
+    ),
+    pytest.param(
+        "return binding.serialization != file.observation.serialization",
+        id="binding-vs-observation-attribute",
+    ),
+    pytest.param(
+        "return proven_profile(file.observation.serialization, file.text, file.observation.serialization) != binding.serialization",
+        id="prove-against-own-first-operand",
+    ),
+    pytest.param(
+        "r = _file_serialization(file)\nreturn _bound_file_serialization(file, r) == r",
+        id="prove-against-itself-hoisted",
+    ),
+    pytest.param(
+        "r = None\nreturn _bound_file_serialization(file, r) == binding.serialization",
+        id="proven-against-hoisted-none",
+    ),
 )
 
 
@@ -386,6 +568,17 @@ _MUST_STAY_PERMITTED = (
         "return NotesSyncBindingRecord(serialization=request.candidate_serialization)",
         True,
         id="commit-candidate-profile",
+    ),
+    pytest.param(
+        "reviewed = _file_serialization(request.file)\n"
+        "return _bound_file_serialization(file, reviewed) == reviewed",
+        True,
+        id="proven-against-the-reviewed-observation",
+    ),
+    pytest.param(
+        "return self._file_holds_note(file, note, reviewed, binding.serialization)",
+        True,
+        id="holds-note-with-recorded",
     ),
     pytest.param(
         "return binding.serialization != self._decoded_binding_serialization(x)",
