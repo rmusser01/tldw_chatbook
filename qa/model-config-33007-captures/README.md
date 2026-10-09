@@ -7,8 +7,11 @@ captured from the real app at branch head `8a3d3395ec`. Every moment was capture
 escapes.
 
 **Re-take (2026-10-09).** After review notes 1-8 were fixed (commit `f80fdc05e4`),
-`01`, `01b`, `01c`, `02`, `03`, `03b`, `04`, `05a` and `07` were captured again from
-that commit, the same way, and overwrote the earlier files. `05b` and `06a`-`06c` are
+`01`, `01b`, `01c`, `02`, `03`, `03b`, `04`, `05a` and `07` were captured again the
+same way and overwrote the earlier files. They were taken from the working tree just
+before that commit; its last two edits (ruff formatting, and when the
+restored-connection read starts) change nothing these profiles show, and a run on the
+commit itself showed the same Anthropic card. `05b` and `06a`-`06c` are
 still the `8a3d3395ec` captures: Context window and Console Behavior are review notes
 9-11, fixed separately. The re-take differs from the procedure below only where
 noted: tmux server `-L capA33007`, `users_name = "verify_capA33007_capfix"`, fake keys
