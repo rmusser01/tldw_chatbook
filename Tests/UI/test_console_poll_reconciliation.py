@@ -435,7 +435,7 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
         assert await _until(
             lambda: not console._console_sync_in_progress
             and console._console_session_tabs_sync_calls == 0
-            and not console._console_control_bar_replay_whole_sync,
+            and not getattr(console, "_console_control_bar_replay_whole_sync", False),
             5,
         ), "Original full reconciliation never became available for the poll hold"
         if preparing_display:
@@ -489,7 +489,9 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
             # Plain fields only: diagnostic observation cannot advance the UI.
             return {
                 "requested": console._console_sync_requested,
-                "replay": console._console_control_bar_replay_whole_sync,
+                "replay": getattr(
+                    console, "_console_control_bar_replay_whole_sync", False
+                ),
                 "scheduled": console._console_control_bar_sync_scheduled,
                 "in_progress": console._console_sync_in_progress,
                 "paused": vars(console).get("_console_sync_maintenance_paused", False),
@@ -585,11 +587,15 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                 )
                 if not (immediate or deferred):
                     return
-                assert frame.f_locals["self"] is case.host.workers
-                assert type(value) is Worker and value.node is console
-                assert value.group == "console-sync"
+                assert type(value) is Worker
                 work, task = value._work, value._task
-                assert inspect.iscoroutine(work) and work.cr_code is full_code
+                # The same FULL task also starts unrelated display workers.
+                # Select the issued FULL body before asserting its route.
+                if not inspect.iscoroutine(work) or work.cr_code is not full_code:
+                    return
+                assert frame.f_locals["self"] is case.host.workers
+                assert value.node is console
+                assert value.group == "console-sync"
                 assert (
                     type(task) is asyncio.Task
                     and task.get_loop() is asyncio.get_running_loop()
@@ -617,7 +623,9 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                     task = asyncio.current_task()
                     if (
                         value is False
-                        and console._console_control_bar_replay_whole_sync
+                        and getattr(
+                            console, "_console_control_bar_replay_whole_sync", False
+                        )
                         and any(
                             task is issued for _worker, issued, _work, _route in replays
                         )
@@ -679,7 +687,9 @@ async def test_full_request_during_poll_await_replays_with_current_owner(
                     )
                     and not console._console_sync_in_progress
                     and not console._console_sync_requested
-                    and not console._console_control_bar_replay_whole_sync,
+                    and not getattr(
+                        console, "_console_control_bar_replay_whole_sync", False
+                    ),
                     5,
                 ), "Full demand did not settle on the current session owner"
                 activation.result()

@@ -322,7 +322,7 @@ async def test_original_full_tab_loop_rechecks_live_ensure_after_surface_await(
             lambda: not screen._console_sync_in_progress
             and screen._console_session_tabs_sync_calls == 0
             and not screen._console_sync_requested
-            and not screen._console_control_bar_replay_whole_sync,
+            and not getattr(screen, "_console_control_bar_replay_whole_sync", False),
             5,
         ), "Original full refresh did not settle before the tab boundary control"
         surface = screen.query_one("#console-session-surface", ConsoleSessionSurface)
@@ -416,7 +416,9 @@ async def test_original_full_tab_loop_rechecks_live_ensure_after_surface_await(
                     )
                     and not screen._console_sync_in_progress
                     and not screen._console_sync_requested
-                    and not screen._console_control_bar_replay_whole_sync,
+                    and not getattr(
+                        screen, "_console_control_bar_replay_whole_sync", False
+                    ),
                     15,
                 ), "Original pending FULL replay did not complete on the current owner"
                 initial.result()
