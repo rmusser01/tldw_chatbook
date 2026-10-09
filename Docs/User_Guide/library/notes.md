@@ -798,8 +798,14 @@ root's managed folder ("Vault sync" in both places) — so two roots are told
 apart by their titles alone. The row still carries no path. A migrated legacy
 candidate has no typed name until you activate it: its row reads "Migrated
 notes — review to finish setup", and once activated it takes its new folder's
-"Migrated notes …" name. A root still being set up reads "Sync folder (setting
-up)". (Was "Sync folder (name unavailable before cutover)" on every row,
+"Migrated notes …" name. A root still being set up — no managed folder yet —
+reads "Sync folder (setting up)". A root that has a folder but no name to show
+says which: "Sync folder (missing from Notes)" when its folder is gone from
+Notes (or its name is blank), "Sync folder (name unavailable)" when the app
+could not read the name; the status line beside it says what to do. Names are
+read when the app starts and when a folder is set up: rename a sync-managed
+folder in the Notes tree and its row keeps the old title until the next start.
+(Was "Sync folder (name unavailable before cutover)" on every row,
 whatever you had named it, so two roots could only be told apart by their
 status lines and order — task-32451.)
 

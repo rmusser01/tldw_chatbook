@@ -47,6 +47,8 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 MIGRATED_FALLBACK = "Migrated notes — review to finish setup"
 SETTING_UP_FALLBACK = "Sync folder (setting up)"
+MISSING_FALLBACK = "Sync folder (missing from Notes)"
+UNREADABLE_FALLBACK = "Sync folder (name unavailable)"
 
 
 def _seed_marker(state_path: Path) -> None:
@@ -277,6 +279,92 @@ async def test_deleted_folder_still_names_the_root(
         assert _names(reopened)[root_id] == "Vault sync"
     finally:
         await reopened.shutdown()
+
+
+async def _activated_root(
+    tmp_path: Path, database: CharactersRAGDB
+) -> tuple[str, str]:
+    """One activated root, runtime stopped; returns (root_id, folder_id)."""
+
+    owner = _build_owner(tmp_path, database)
+    await owner.start()
+    try:
+        root_id = await _activate(owner, tmp_path / "vault-a", "Vault sync")
+    finally:
+        await owner.shutdown()
+    record = NotesDeviceStateStore(tmp_path / "sync.sqlite3").get_root(root_id)
+    assert record.logical_folder_id is not None
+    return root_id, record.logical_folder_id
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        pytest.param("DELETE FROM note_folders WHERE id = ?", id="row-gone"),
+        pytest.param("UPDATE note_folders SET name = '   ' WHERE id = ?", id="blank-name"),
+    ],
+)
+async def test_a_root_whose_folder_row_is_gone_or_blank_says_so(
+    tmp_path: Path, database: CharactersRAGDB, statement: str
+) -> None:
+    """Fix round 1: a folder id with no name is never "setting up" -- the
+    folder is missing from Notes (row gone outright, or a blank name)."""
+
+    root_id, folder_id = await _activated_root(tmp_path, database)
+    with database.transaction() as cursor:
+        cursor.execute(statement, (folder_id,))
+
+    reopened = _build_owner(tmp_path, database)
+    await reopened.start()
+    try:
+        assert _names(reopened)[root_id] == MISSING_FALLBACK
+    finally:
+        await reopened.shutdown()
+
+
+async def test_a_failed_name_read_says_the_name_is_unavailable(
+    tmp_path: Path, database: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fix round 1: the read raising is neither "setting up" nor "missing"."""
+
+    from tldw_chatbook.Notes import notes_sync_runtime as runtime_module
+
+    root_id, _folder_id = await _activated_root(tmp_path, database)
+
+    async def unreadable(self, root):  # noqa: ANN001
+        raise OSError("private: disk")
+
+    monkeypatch.setattr(
+        runtime_module._ProductionRuntimeAdapter, "root_display_name", unreadable
+    )
+    reopened = _build_owner(tmp_path, database)
+    await reopened.start()
+    try:
+        names = _names(reopened)
+        assert names[root_id] == UNREADABLE_FALLBACK
+        assert reopened.snapshot().status == "active", "a name failure never fails the runtime"
+    finally:
+        await reopened.shutdown()
+
+
+async def test_an_adapter_without_a_name_route_reads_unavailable_for_a_root_with_a_folder(
+    tmp_path: Path,
+) -> None:
+    """Fix round 1: a test fake without ``root_display_name`` must not raise
+    and must not claim a root with a folder id is setting up."""
+
+    from Tests.Notes.test_notes_sync_runtime import _Adapter, _input, _owner, _store
+
+    assert not hasattr(_Adapter, "root_display_name")
+    store = _store(tmp_path)  # root-1 ACTIVE with logical_folder_id="folder-1"
+    owner, _coordinator, _watcher = _owner(
+        store=store, admitted=True, adapter=_Adapter([_input()])
+    )
+    await owner.start()
+    try:
+        assert _names(owner)["root-1"] == UNREADABLE_FALLBACK
+    finally:
+        await owner.shutdown()
 
 
 def test_snapshot_rejects_a_path_shaped_display_name() -> None:

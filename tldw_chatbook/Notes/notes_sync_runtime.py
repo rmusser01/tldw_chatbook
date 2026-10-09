@@ -274,10 +274,13 @@ class NotesSyncRootRefused(RuntimeError):
         super().__init__(code)
 
 
-#: TASK-32451: the row title for a root that has no managed folder yet.
-#: Both name what the root IS; neither claims a name is "unavailable".
+#: TASK-32451: the row titles for a root whose folder name cannot be shown.
+#: Each names what is actually the case for that root (fix round 1: a root
+#: WITH a folder id is never "setting up").
 MIGRATED_ROOT_DISPLAY_NAME = "Migrated notes — review to finish setup"
 SETTING_UP_ROOT_DISPLAY_NAME = "Sync folder (setting up)"
+MISSING_ROOT_DISPLAY_NAME = "Sync folder (missing from Notes)"
+UNREADABLE_ROOT_DISPLAY_NAME = "Sync folder (name unavailable)"
 _ROOT_LABEL_MAX_CHARS = 160
 
 
@@ -308,20 +311,30 @@ def _bounded_root_label(name: object) -> str:
     return label[:_ROOT_LABEL_MAX_CHARS].rstrip()
 
 
-def _fallback_root_display_name(root: NotesSyncRootRecord) -> str:
+def _fallback_root_display_name(
+    root: NotesSyncRootRecord, *, read_failed: bool
+) -> str:
     """The honest title for a root with no folder name to show.
 
-    A migrated legacy candidate has no user-typed name until it is activated
-    (activation names its folder); until then the row says what it is and
-    what finishes it. Any other folder-less root is mid-setup.
+    No folder id: a migrated legacy candidate has no user-typed name until
+    it is activated (activation names its folder), so the row says what it
+    is and what finishes it; any other folder-less root is mid-setup. A
+    folder id without a name is never "setting up": the folder row is gone
+    from Notes (or its name is blank) -- ``MISSING_ROOT_DISPLAY_NAME`` -- or
+    the read itself failed (``read_failed``; also an adapter with no name
+    route) -- ``UNREADABLE_ROOT_DISPLAY_NAME``.
     """
 
-    if (
-        root.state is NotesSyncRootState.PAUSED
-        and root.last_status_code == "migration_review_required"
-    ):
-        return MIGRATED_ROOT_DISPLAY_NAME
-    return SETTING_UP_ROOT_DISPLAY_NAME
+    if root.logical_folder_id is None:
+        if (
+            root.state is NotesSyncRootState.PAUSED
+            and root.last_status_code == "migration_review_required"
+        ):
+            return MIGRATED_ROOT_DISPLAY_NAME
+        return SETTING_UP_ROOT_DISPLAY_NAME
+    if read_failed:
+        return UNREADABLE_ROOT_DISPLAY_NAME
+    return MISSING_ROOT_DISPLAY_NAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -2527,12 +2540,16 @@ class NotesSyncRuntimeOwner:
         resolve = getattr(self._adapter, "root_display_name", None)
         for root_id, root in roots.items():
             name = ""
+            read_failed = not callable(resolve)
             if callable(resolve):
                 try:
                     name = _bounded_root_label(await resolve(root))
                 except Exception as error:
                     _log_bounded_failure("root name", error)
-            self._root_names[root_id] = name or _fallback_root_display_name(root)
+                    read_failed = True
+            self._root_names[root_id] = name or _fallback_root_display_name(
+                root, read_failed=read_failed
+            )
 
     async def _load_roots(self) -> dict[str, NotesSyncRootRecord]:
         summaries = await self._maintenance_offload(self._store.list_root_summaries)
