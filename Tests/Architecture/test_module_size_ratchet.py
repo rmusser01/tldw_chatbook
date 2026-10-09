@@ -139,8 +139,9 @@ _BUDGETS: dict[str, int] = {
     # Rebased onto dev (2026-10-09), which added its quit-time session summary
     # helpers here (+80 on dev): re-pinned at the rebased head's 33,712, still
     # under dev's 34,598 for the file; the Provider list's prefix-first
-    # highlight makes it 33,724.
-    "tldw_chatbook/UI/Screens/settings_screen.py": 33724,
+    # highlight makes it 33,724; dev's #3056 session-summary deferrals add 8
+    # (rebased again): 33,732.
+    "tldw_chatbook/UI/Screens/settings_screen.py": 33732,
     # TASK-33007.8: the two Settings region modules Phase 7 created, pinned
     # at birth so the split cannot regrow a god module there. New code for
     # either goes in a sibling module under UI/Settings_Modules/.
