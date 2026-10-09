@@ -51,7 +51,7 @@ pytest --cov=tldw_chatbook  # With coverage
 
 **Key Widgets**:
 - `chat_message_enhanced.py` - Rich messages with actions
-- `tool_message_widgets.py` - Tool calling UI (ToolCallMessage, ToolResultMessage)
+- `Console/console_transcript.py` - Tool-result rendering in the Console transcript (TOOL marker rows, `ConsoleToolDiffRow` file-write diffs; the old `tool_message_widgets.py` was removed)
 - `IngestTldwApi*Window.py` - Media-specific ingestion forms
 - `form_components.py` - Standardized form builders
 
